@@ -35,6 +35,10 @@
 //! | [`test_for_iso_circles`], [`IsoCircles`]          | `sm_TestForIsoCircles`                           |
 //!
 //! Deviations:
+//! - **Meridians keep their kind (opt-in, not upstream).** With
+//!   `fixes.plane_first_torus_section_exact` (WR-721, #2405), `IntersectWithPlane` through the
+//!   axis rotates a circle generator (a torus's) as the circle it is, where upstream rotates
+//!   its `SmBSplineCurve` part.
 //! - **Derived class.** `SmSurfOfRevolution` derives from `SmBSplineSurface`; the base
 //!   object is the [`SurfOfRevolution::base`] field. The surface joins
 //!   [`crate::surface::surface::SurfaceKind`] with the units porting its remaining
@@ -1035,21 +1039,21 @@ impl SurfOfRevolution {
             (
                 Point2::new(
                     iso_parameter,
-                    domain.map_or(nurb_domain.min().y, |d| d.min().y),
+                    domain.map_or_else(|| nurb_domain.min().y, |d| d.min().y),
                 ),
                 Point2::new(
                     iso_parameter,
-                    domain.map_or(nurb_domain.max().y, |d| d.max().y),
+                    domain.map_or_else(|| nurb_domain.max().y, |d| d.max().y),
                 ),
             )
         } else {
             (
                 Point2::new(
-                    domain.map_or(nurb_domain.min().x, |d| d.min().x),
+                    domain.map_or_else(|| nurb_domain.min().x, |d| d.min().x),
                     iso_parameter,
                 ),
                 Point2::new(
-                    domain.map_or(nurb_domain.max().x, |d| d.max().x),
+                    domain.map_or_else(|| nurb_domain.max().x, |d| d.max().x),
                     iso_parameter,
                 ),
             )
@@ -1219,7 +1223,7 @@ impl SurfOfRevolution {
         let mut written = Point2::new(0.0, 0.0);
         match self.convert_uv_from_nurbs_to_step_into(k, nurbs_uv, &mut written) {
             Ok(p) => Ok(p),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(written),
         }
     }
@@ -1679,19 +1683,32 @@ impl SurfOfRevolution {
                 if angle_rad > start_ang_rad - ang_tol_rad && angle_rad < end_ang_rad + ang_tol_rad
                 {
                     // the generator's SmBSplineCurve part, rotated about the axis
-                    let mut crv = gen_base(&gen)?.copy();
                     let rot_ang_rad = angle_rad; // was dAngleRad-dStartAngRad [B143]
                     let mut trans = Axis2Placement::IDENTITY;
                     trans.translate(-self.position.origin());
                     trans.rotate_about_axis(rot_ang_rad, axis);
                     trans.translate(self.position.origin());
-                    crv.transform(&trans, None)?;
+                    let crv = match gen.kind() {
+                        // Not upstream (WR-721, #2405, opt-in): a circle generator (a
+                        // torus's) rotated as the circle it is, so the meridian keeps its
+                        // kind
+                        CurveKind::Ellipse(_) if k.fixes.plane_first_torus_section_exact => {
+                            let mut c = gen.clone();
+                            c.transform(k, &trans, None)?;
+                            c
+                        }
+                        _ => {
+                            let mut c = gen_base(&gen)?.copy();
+                            c.transform(&trans, None)?;
+                            Curve::from(c)
+                        }
+                    };
 
                     if side == 1 {
                         // (upstream expands the plane box a second time here)
                         plane_pbox.expand_absolute(tol);
                     }
-                    for c in trim(&Curve::from(crv), &plane_pbox)? {
+                    for c in trim(&crv, &plane_pbox)? {
                         out.curves_3d.push(c);
                         out.curve_types.push(TsectCurveType::Crossing);
                     }
@@ -1979,7 +1996,7 @@ pub fn test_for_iso_circles(
                     (true, false)
                 }
                 Ok(PlanesIntersection::Parallel { coincident }) => (false, coincident),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => (false, false),
             };
 

@@ -81,18 +81,18 @@ use crate::topology::ObjectHandle;
 use super::p1::{fix_boundary_curves, DropPt, SM_ERR_OUTSIDE_OF_DOMAIN, SM_SUCCESS};
 
 /// `SM_ERR_INVALID_INPUT` (`SmMessages.h`).
-pub const SM_ERR_INVALID_INPUT: i32 = 1007;
+pub use crate::error::SM_ERR_INVALID_INPUT;
 
 /// `SM_ERR_NOT_WITHIN_TOLERANCE` (`SmMessages.h`): the curve point is not on the
 /// surface normal line at its drop point.
-pub const SM_ERR_NOT_WITHIN_TOLERANCE: i32 = 1021;
+pub use crate::error::SM_ERR_NOT_WITHIN_TOLERANCE;
 
 /// `SM_ERR_BAD_SURFACE_POINT` (`SmMessages.h`): the span start is outside the domain.
-pub const SM_ERR_BAD_SURFACE_POINT: i32 = 1030;
+pub use crate::error::SM_ERR_BAD_SURFACE_POINT;
 
 /// `SM_ERR_BAD_TANGENT_DROP` (`SmMessages.h`): the curve tangent dropped to a surface
 /// tangent that is not parallel to it.
-pub const SM_ERR_BAD_TANGENT_DROP: i32 = 1032;
+pub use crate::error::SM_ERR_BAD_TANGENT_DROP;
 
 /// `SM_SS_NONE`: the surface has no singularities.
 pub const SS_NONE: u32 = 0;
@@ -333,7 +333,7 @@ fn find_degen_param(
 ) -> Result<Point2> {
     match surface.find_degen_param_for_direction(k, uv, dir, dir_from_pole, singular_dir, 0.0001) {
         Ok(d) => Ok(d.uv),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(uv),
     }
 }
@@ -871,7 +871,7 @@ impl DropPt {
                 false,
             ) {
                 Ok(code) => code,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(e) => status_of(&e),
             };
 

@@ -240,6 +240,7 @@ impl<O: LoopObject> HealData<O> {
         healer_op: HealerOpType,
         make_uv_trim_curves: bool,
     ) -> Result<()> {
+        k.check_cancelled("heal::heal_data::HealData::heal_targets")?;
         self.stop_heal_op = healer_op;
         self.done_heal_op = HealerOpType::None;
         with_editing_enabled(b, |b| {
@@ -266,6 +267,7 @@ impl<O: LoopObject> HealData<O> {
         macro_rules! step {
             ($op:ident, $call:expr) => {
                 if self.done_heal_op.code() < through.code() {
+                    k.check_cancelled("heal::heal_data::HealData::heal_targets")?;
                     $call?;
                     self.done_heal_op = HealerOpType::$op;
                 }
@@ -510,6 +512,7 @@ fn capture_changes<T>(
         let value = edit(k, b)?;
         return Ok((value, Changes::default()));
     }
+    let stop_checks_own = k.fixes.stop_tracking_checks_own_callback;
     k.context
         .set_sys_notify_callback(Some(Box::new(TopologyChangeCallback::new(1))));
     let result = edit(k, b);
@@ -518,8 +521,11 @@ fn capture_changes<T>(
         .sys_notify_callback()
         .and_then(NotifyCallback::as_any)
         .and_then(|a| a.downcast_ref::<TopologyChangeCallback>())
+        .filter(|callback| !stop_checks_own || callback.tracker() == 1)
         .map(|callback| (callback.lists(), callback.failure()));
-    k.context.set_sys_notify_callback(None);
+    if !stop_checks_own || captured.is_some() {
+        k.context.set_sys_notify_callback(None);
+    }
     let value = result?;
     let (mut lists, failure) =
         captured.ok_or_else(|| invalid("edit replaced its topology tracker"))?;
@@ -591,7 +597,8 @@ fn tracked_edit<R>(
     use crate::topology::brep::p3 as brep_p3;
     let lent = brep_p3::with_lent_context(k, |k, ctx| {
         // (the tracker reads its B-rep only to tell it from null)
-        let mut tracker = TrackTopologyChanges::new(
+        let mut tracker = TrackTopologyChanges::new_with_kernel(
+            k,
             Some(crate::topology::BrepId::from_index(0)),
             EDIT_TRACKER,
             true,

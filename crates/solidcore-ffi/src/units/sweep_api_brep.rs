@@ -596,12 +596,23 @@ fn caps_of(caps: i32) -> Result<f64, FfiError> {
     }
 }
 
-fn reps_of(reps: u64) -> Result<f64, FfiError> {
+/// Rejects more than [`MAX_REPETITIONS`] repetitions, as [`run`] does for `LinearReps`
+/// and `RotationalReps`; the difftest runner's Rust side applies it too.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for such a count.
+pub fn check_repetitions(reps: u64) -> Result<(), FfiError> {
     if reps <= MAX_REPETITIONS {
-        Ok(reps as f64)
+        Ok(())
     } else {
         Err(bad("more than 2^20 repetitions"))
     }
+}
+
+fn reps_of(reps: u64) -> Result<f64, FfiError> {
+    check_repetitions(reps)?;
+    Ok(reps as f64)
 }
 
 /// Validates `call` and encodes it as the shim's program.
@@ -778,16 +789,18 @@ pub fn run(call: &Call) -> Result<Vec<f64>, FfiError> {
     })
 }
 
-/// Runs a linear sweep with an additive observation record after the legacy prefix.
+/// Runs a linear or rotational sweep with an additive observation record after the
+/// legacy prefix.
 ///
-/// Only `Call::Linear` is accepted. Observation order is reachable vertex xyz,
+/// Only `Call::Linear` and `Call::Rotational` are accepted. Observation order is reachable vertex xyz,
 /// edge intervals, three `(status, xyz)` samples per edge at 0.17/0.37/0.83,
-/// manifold status/flag, then volume status/value (requested accuracy 1e-6).
+/// manifold status/flag, then volume status/value (requested accuracy 1e-6); a rotational
+/// call then adds a second volume status/value at accuracy 1e-8.
 /// Failed sample/query values are zero placeholders with their statuses retained.
 /// The observation export bounds the result to 4096 vertices and edges each.
 pub fn observe_linear(call: &Call) -> Result<Vec<f64>, FfiError> {
-    if !matches!(call, Call::Linear { .. }) {
-        return Err(bad("linear observation requires a linear call"));
+    if !matches!(call, Call::Linear { .. } | Call::Rotational { .. }) {
+        return Err(bad("observation requires a linear or rotational call"));
     }
     let input = encode(call)?;
     call_with_buffer(256, |buf: &mut [f64], len| {
@@ -888,9 +901,9 @@ mod tests {
         };
         assert_eq!(
             observe_linear(&repetitions)
-                .expect_err("observer is linear-only")
+                .expect_err("observer is linear or rotational only")
                 .to_string(),
-            bad("linear observation requires a linear call").to_string()
+            bad("observation requires a linear or rotational call").to_string()
         );
     }
 }

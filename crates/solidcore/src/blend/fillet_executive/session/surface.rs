@@ -120,6 +120,15 @@ impl RailClassificationContext for SurfaceSurfaceSession<'_> {
         }
         .corner_type(corner)
     }
+    fn corner_blend_tests(
+        &self,
+        corner: crate::blend::fillet_geom::p1::FilletCornerId,
+    ) -> Result<(bool, bool)> {
+        classification::Context {
+            corners: self.corners,
+        }
+        .corner_blend_tests(corner)
+    }
     fn corners(&self) -> crate::blend::fillet_geom::p1::CornerLookup<'_> {
         crate::blend::fillet_geom::p1::CornerLookup::table(self.corners)
     }
@@ -150,6 +159,7 @@ impl SurfaceSurfaceContext for SurfaceSurfaceSession<'_> {
                 pseudo,
                 second: Some(second),
                 classified: FilletBody::SecondBase,
+                free: [None, None],
             };
             crate::query::face::p2::curve_on_classify_cached(
                 k, second, face, &objects, true, cc, true, false, true, &mut cache,
@@ -175,6 +185,7 @@ impl SurfaceSurfaceContext for SurfaceSurfaceSession<'_> {
             pseudo: &snapshot,
             second: bases.second.as_deref(),
             classified: FilletBody::Target,
+            free: [None, None],
         };
         solver.split_and_trim_fillet_surface_with(
             k,
@@ -490,7 +501,7 @@ impl FilletSession<'_> {
                 .objects
                 .calc_solver_geometry(k, id, &mut self.executive)
             {
-                Err(error) if error.is_unported() => return Err(error),
+                Err(error) if error.is_unported_or_cancelled() => return Err(error),
                 Err(_) => continue,
                 Ok(()) => {}
             }
@@ -501,7 +512,7 @@ impl FilletSession<'_> {
         // status is not read (void upstream)
         let zone = crate::geom::tol::zone_tol3d(k, tol);
         match self.objects.faces_set_tolerance(k, fillet, zone) {
-            Err(error) if error.is_unported() => return Err(error),
+            Err(error) if error.is_unported_or_cancelled() => return Err(error),
             _ => {}
         }
 
@@ -533,7 +544,7 @@ impl FilletSession<'_> {
                 .objects
                 .stitch_attribute(edge, self.executive.edge_attribute)
             {
-                Err(error) if error.is_unported() => return Err(error),
+                Err(error) if error.is_unported_or_cancelled() => return Err(error),
                 _ => {}
             }
         }

@@ -66,8 +66,8 @@ use crate::geom::extent1d::{Extent1d, ExtentNd};
 use crate::geom::matrix::Matrix;
 use crate::math::{BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT};
 
-/// Upstream status `SM_ERR`.
-const SM_ERR: i32 = 1001;
+// Upstream status `SM_ERR`.
+use crate::error::SM_ERR;
 
 fn sm_err(operation: &'static str) -> SolidError {
     SolidError::Upstream {
@@ -263,7 +263,7 @@ pub struct NdSolution {
 fn eval_outcome(r: Result<bool>) -> Result<Option<bool>> {
     match r {
         Ok(found) => Ok(Some(found)),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -360,7 +360,9 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
     /// takes its equations, Jacobian and found flag from the evaluation it uses (upstream
     /// kept the unscaled point's Jacobian and found flag for a clamped-and-scaled step),
     /// the line search stops when no evaluation of the step succeeded, and a best guess
-    /// that cannot be re-evaluated is no solution. Default `false` (upstream).
+    /// that cannot be re-evaluated is no solution, and so is a guess whose first
+    /// evaluation fails (WR-20; the fork's tangency-labs/smlib@d5c5cfd). Default `false`
+    /// (upstream).
     pub fn set_skips_failed_evaluations(&mut self, enabled: bool) {
         self.skips_failed_evaluations = enabled;
     }
@@ -456,8 +458,12 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
             Some(&mut jacobian),
         ))?
         else {
-            // exit case - the evaluation failed
-            return Ok(self.done(true, TerminationReason::UnableToConverge, solution));
+            // exit case - the evaluation failed. Upstream reports the unevaluated guess as
+            // found; with `skips_failed_evaluations` (WR-20; the fork's
+            // tangency-labs/smlib@d5c5cfd) it is no solution, as when an evaluation fails
+            // during the iteration.
+            let found = !self.skips_failed_evaluations;
+            return Ok(self.done(found, TerminationReason::UnableToConverge, solution));
         };
 
         // exit case - the evaluator signalled a converged answer
@@ -743,7 +749,7 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
                         let ext = self
                             .intervals
                             .and_then(|iv| iv.get(ii))
-                            .ok_or(invalid("out-of-bounds count without an interval"))?;
+                            .ok_or_else(|| invalid("out-of-bounds count without an interval"))?;
                         let step = step_unclamped.get(ii).copied().unwrap_or(0.0);
                         if step.abs() > 1.0e-3 * ext.length() {
                             boundary_hits += 1;
@@ -964,6 +970,18 @@ mod tests {
         assert!(r.found);
         assert_eq!(s.termination_reason(), TerminationReason::UnableToConverge);
         assert_eq!(r.x, vec![1.0, 2.0]);
+    }
+
+    /// WR-20 (the fork's tangency-labs/smlib@d5c5cfd): with the flag a guess whose first
+    /// evaluation fails is no solution, as when an evaluation fails mid-iteration.
+    #[test]
+    fn wr20_failing_first_evaluation_finds_no_solution_with_the_flag() {
+        let mut e = Failing;
+        let mut s = LocalSolveNd::new(&mut e, None, None);
+        s.set_skips_failed_evaluations(true);
+        let r = s.solve_it(&[1.0, 2.0], EFF_ZERO).unwrap();
+        assert!(!r.found);
+        assert_eq!(s.termination_reason(), TerminationReason::UnableToConverge);
     }
 
     struct Unported;

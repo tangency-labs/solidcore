@@ -192,14 +192,14 @@ fn index(i: u64, len: usize, what: &'static str) -> Result<usize> {
     usize::try_from(i)
         .ok()
         .filter(|&i| i < len)
-        .ok_or(SolidError::invalid_input(OP_MAKE, what))
+        .ok_or_else(|| SolidError::invalid_input(OP_MAKE, what))
 }
 
 fn at<T: Copy>(v: &[Option<T>], i: usize, what: &'static str) -> Result<T> {
     v.get(i)
         .copied()
         .flatten()
-        .ok_or(SolidError::invalid_input(OP_MAKE, what))
+        .ok_or_else(|| SolidError::invalid_input(OP_MAKE, what))
 }
 
 /// `sm_AddAttributes` (unit `topology.brep_p1`): adds the attributes listed by index
@@ -1653,7 +1653,7 @@ fn set_primary_edgeuses(b: &mut Brep, data: &BrepData, built: &Built) -> Result<
 
         // This takes care of next/last pointers.
         match edge::reset_primary_edgeuse(b, e, prim) {
-            Err(err) if err.is_unported() => return Err(err),
+            Err(err) if err.is_unported_or_cancelled() => return Err(err),
             Err(
                 err @ (SolidError::InvalidInput { .. }
                 | SolidError::PortInvariant { .. }
@@ -2387,12 +2387,18 @@ pub fn remove_all_topology_notified(
 
     for e in brep_wire_edges(b)? {
         // status ignored upstream
-        ignored(delete_edge(k, b, env, e))?;
+        ignored(crate::error::passed_on(
+            delete_edge(k, b, env, e),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
 
     for v in brep_shell_vertices(b)? {
         // status ignored upstream
-        ignored(delete_vertex(k, b, env, v))?;
+        ignored(crate::error::passed_on(
+            delete_vertex(k, b, env, v),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     Ok(())
 }

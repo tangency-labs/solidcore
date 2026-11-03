@@ -10,6 +10,11 @@
 //! | `FilletSession::holds_its_law` (private)   | `sm_HoldsItsLaw`                          |
 //!
 //! Deviations:
+//! - **Section ends (not the fork's).** With `fixes.fillet_round_ends_at_tangent_continuation`
+//!   (WR-674, #2176) an open end noted as a section is cut by the plane through its vertex
+//!   normal to the filleted edge, and a round whose two ends are both such ends is closed by
+//!   `close_section_ended_round` instead of `close_removal_region`; any other combination
+//!   is refused as no room.
 //! - **The removal region leaves the session first.** Once each round's law is checked
 //!   (which reads the fillet surfaces where the intermediate body owns them), the
 //!   intermediate body is taken out of the session, as the fork sets `m_pFilletBrep` to
@@ -20,12 +25,18 @@
 //! - **A failed subtraction keeps the target.** The Boolean consumes its operands, so the
 //!   target is copied before it and the copy put back when it fails (the fork's in-place
 //!   merge leaves whatever it reached).
+//! - **The target's application attributes go through the Boolean.** The session keeps
+//!   the bodies' attributes in its own store, so the target's application attributes
+//!   (`SM_AI_USER_1` and up) are handed to it for the Boolean and taken back from the
+//!   result, as the fork's ride on the objects it splits and merges (#1980); the
+//!   kernel's own ids stay in the session store, found by handle.
 
 use std::collections::BTreeMap;
 
 use super::{invalid, FilletBody, FilletObject, FilletSession, SolverObject};
 use crate::blend::fillet_cliff_overflow::{
-    close_removal_region, cut_fillet_at_open_end, Blended, Refusal,
+    close_removal_region, close_section_ended_round, cut_fillet_at_open_end, section_end, Blended,
+    Refusal,
 };
 use crate::blend::fillet_executive::p3::NoRoomReason;
 use crate::blend::fillet_geom::p1::{FilletErrorType, FilletGeomId, FilletSurfaceStorage};
@@ -36,8 +47,10 @@ use crate::geom::a_object::BooleanOperation;
 use crate::geom::attribute::ids;
 use crate::kernel::Kernel;
 use crate::math::{Vec3, EFF_ZERO, EFF_ZERO_SQRT, PI};
+use crate::surface::plane::Plane;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::p5::DropPointOptions;
+use crate::surface::surface::Surface;
 use crate::topology::brep::p3::{orient_trimmed_surfaces, with_kernel_callbacks};
 use crate::topology::topology_traverser::Marks;
 use crate::topology::{edge, edgeuse::p1 as eu1, face, vertex, Brep, FaceId};
@@ -76,14 +89,14 @@ fn status_of(e: &SolidError) -> i32 {
 
 impl FilletSession<'_> {
     /// `GetFilletErrorInfo()->NoteError(code, comment)` of a [`Refusal`].
-    fn note_refusal(&mut self, refusal: Refusal) {
+    pub(super) fn note_refusal(&mut self, refusal: Refusal) {
         self.executive.error.code = refusal.code as i32;
         self.executive.error.comment = refusal.comment.into();
         self.executive.error.no_room = refusal.reason;
     }
 
     /// Note `note`'s refusal, if any, and pass `result` on.
-    fn noted<T>(&mut self, note: Option<Refusal>, result: Result<T>) -> Result<T> {
+    pub(super) fn noted<T>(&mut self, note: Option<Refusal>, result: Result<T>) -> Result<T> {
         if let Some(refusal) = note {
             self.note_refusal(refusal);
         }
@@ -101,7 +114,14 @@ impl FilletSession<'_> {
     /// other solvers, with other than a circular section, on faces that are not both
     /// planes, with other than one fillet geometry, or along an edge that is not straight,
     /// pass.
-    fn holds_its_law(&self, k: &Kernel, solver: FilletObject) -> Result<bool> {
+    ///
+    /// With `fixes.fillet_gn_section_generator` (the fork's tangency-labs/smlib@8bedf89 =
+    /// d01d7b0's 6007a3d, WR-685) the point is on the round's touch circle, not the great
+    /// circle: the ball's centre `r / sin(a/2)` off the edge on the bisector, the circle
+    /// square to the centres' line, its centre moved along that line by `-r dr/ds` (`s` the
+    /// centres' arc length) and its radius `r sqrt(1 - (dr/ds)^2)`, its point in the
+    /// bisector plane on the edge's side; the law's value and slope are read with `SER`.
+    pub(super) fn holds_its_law(&self, k: &Kernel, solver: FilletObject) -> Result<bool> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };
@@ -150,16 +170,74 @@ impl FilletSession<'_> {
         let tol = 20.0 * base.approx_tol_3d;
         // (the law evaluates through its own caches: a copy, the solver stays shared)
         let mut law = vr.law.clone();
+        // the fork's tangency-labs/smlib@8bedf89 (= d01d7b0's 6007a3d; WR-685): the round
+        // touches each ball along its touch circle, not its great circle
+        let touch_circle = k.fixes.fillet_gn_section_generator;
         let mut holds = true;
         let mut i = 1;
         while i < 8 && holds {
             let t = interval.evaluate(f64::from(i) / 8.0);
             i += 1;
+            if touch_circle {
+                let edge_pv = curve.evaluate(k, t, 1, true, false)?;
+                let [pnt, edge_d, ..] = *edge_pv.as_slice() else {
+                    return Err(SolidError::sm_err(OP));
+                };
+                let [r, dr, _] = law.evaluate(t, &vr.law_interval, vr.law_orientation)?;
+                let radius = r.abs();
+                let slope = if r < 0.0 { -dr } else { dr }; // d|r|/dT
+                                                            // The ball's centre on the wedge's bisector, r / sin(a/2) off the edge, and
+                                                            // the touch circle's point on the bisector plane toward the edge. The planes'
+                                                            // normals are both outward (or inward), the bisector along their sum and the
+                                                            // angle pi less theirs, or one of each, the bisector along their difference.
+                let mut fits = false;
+                let mut c = 0;
+                while c < 4 && !fits {
+                    let bisector = if c < 2 { n0 + n1 } else { n0 - n1 };
+                    let angle = if c < 2 { PI - phi } else { phi };
+                    let sign = if c % 2 == 1 { -1.0 } else { 1.0 };
+                    c += 1;
+                    let len = bisector.length();
+                    if len <= EFF_ZERO_SQRT || angle <= EFF_ZERO_SQRT {
+                        continue;
+                    }
+                    let out = bisector * (sign / len); // edge to centre
+                    let off = 1.0 / (angle / 2.0).sin();
+                    let centre = pnt + out * (radius * off);
+                    let along = edge_d + out * (slope * off); // dC/dT
+                    let speed = along.length();
+                    if speed <= EFF_ZERO {
+                        continue;
+                    }
+                    let along = along / speed;
+                    let rate = slope / speed; // dr/ds
+                    if rate.abs() >= 1.0 {
+                        continue;
+                    }
+                    let to_edge = -out - along * (-out).dot(along);
+                    let to_edge_len = to_edge.length();
+                    if to_edge_len <= EFF_ZERO {
+                        continue;
+                    }
+                    let middle = centre
+                        + along * (-radius * rate)
+                        + to_edge * (radius * (1.0 - rate * rate).sqrt() / to_edge_len);
+                    let dropped = fillet.drop_point::<NoObject>(
+                        k,
+                        middle,
+                        &domain,
+                        &DropPointOptions::default(),
+                    )?;
+                    fits = dropped.success && dropped.gap <= tol + 1.0e-4 * radius;
+                }
+                holds = fits;
+                continue;
+            }
             let pnt = curve.evaluate_point(k, t)?;
             // SmVariableRadiusFS::GetFilletRadius: SER inside a `double` function
             let radius = match law.evaluate(t, &vr.law_interval, vr.law_orientation) {
                 Ok(values) => values.first().copied().unwrap_or(0.0),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(e) => f64::from(status_of(&e)),
             }
             .abs();
@@ -197,7 +275,10 @@ impl FilletSession<'_> {
 
     /// The face of the intermediate body each of `solver`'s fillet geometries' surfaces is
     /// on (`pFG->GetFilletSurface()->GetOwner()` in `m_pFilletBrep`), `None` for none.
-    fn fillet_faces(&self, solver: FilletObject) -> Result<Vec<(FilletGeomId, Option<FaceId>)>> {
+    pub(super) fn fillet_faces(
+        &self,
+        solver: FilletObject,
+    ) -> Result<Vec<(FilletGeomId, Option<FaceId>)>> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };
@@ -276,6 +357,27 @@ impl FilletSession<'_> {
             .take()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
 
+        // WR-674: a round left open where its edge runs on tangentially is built alone, both
+        // its ends such ends, and not with a cliff overflow
+        let sectioned = open_ends.iter().any(|end| end.section);
+        if sectioned
+            && (self.executive.cliff_overflow
+                || solvers.len() != 1
+                || open_ends.len() != 2
+                || !open_ends.iter().all(|end| end.section)
+                || open_ends.first().map(|end| end.vertex)
+                    == open_ends.get(1).map(|end| end.vertex))
+        {
+            self.objects.intermediate = Some(region);
+            self.note_refusal(Refusal {
+                code: FilletErrorType::NoRoom,
+                reason: Some(NoRoomReason::TangentContinuationEndUnsupported),
+                comment: "Fillet Error: a round ending where its edge runs on tangentially is built only alone, with both its ends such ends",
+            });
+            return Err(SolidError::sm_err(OP));
+        }
+        let mut section_ends = Vec::new();
+
         let mut note = None;
         for end in &open_ends {
             let FilletObject::Solver(id) = end.solver else {
@@ -291,9 +393,6 @@ impl FilletSession<'_> {
             let base = self.objects.solver(id)?.base();
             let solver_tol = base.approx_tol_3d;
             let target = &*self.objects.target;
-            let end_surface = face::p2::surface(target, end_face)?
-                .ok_or_else(|| SolidError::null_pointer(OP))?
-                .clone_for_evaluation()?;
             // the fillet's point nearest the middle of the filleted edge
             let eu = base
                 .edgeuse(0)?
@@ -303,6 +402,18 @@ impl FilletSession<'_> {
                 .ok_or_else(|| SolidError::null_pointer(OP))?
                 .evaluate_point(k, edge::interval(target, fil_edge)?.evaluate(0.5))?;
             let vertex_point = vertex::point(target, v)?;
+            let end_surface = if end.section {
+                // WR-674: the section through the vertex, normal to the filleted edge
+                let end =
+                    section_end(k, target, fil_edge, v)?.ok_or_else(|| SolidError::sm_err(OP))?;
+                let normal = end.normal;
+                section_ends.push(end);
+                Surface::from(Plane::from_normal(vertex_point, normal))
+            } else {
+                face::p2::surface(target, end_face)?
+                    .ok_or_else(|| SolidError::null_pointer(OP))?
+                    .clone_for_evaluation()?
+            };
             let entry = faces_of
                 .get_mut(&end.solver)
                 .ok_or_else(|| SolidError::null_pointer(OP))?;
@@ -332,14 +443,26 @@ impl FilletSession<'_> {
                 }
             }
         }
-        let closed = close_removal_region(
-            k,
-            &mut region,
-            self.objects.target,
-            &blended,
-            tol,
-            &mut note,
-        );
+        let closed = match (sectioned, section_ends.as_slice(), blended_edges.first()) {
+            (true, &[first, second], Some(&fil_edge)) => close_section_ended_round(
+                k,
+                &mut region,
+                self.objects.target,
+                fil_edge,
+                [first, second],
+                tol,
+                &mut note,
+            ),
+            (true, _, _) => Err(SolidError::null_pointer(OP)),
+            (false, _, _) => close_removal_region(
+                k,
+                &mut region,
+                self.objects.target,
+                &blended,
+                tol,
+                &mut note,
+            ),
+        };
         self.noted(note.take(), closed)?;
 
         // stitch the closing faces to the sheet, and orient the closed shell as a solid
@@ -390,7 +513,13 @@ impl FilletSession<'_> {
         // place; the region is deleted after)
         let kept = (*self.objects.target).clone();
         let target_solid = crate::topology::brep::p2::is_manifold_solid(&kept)?;
-        let taken: Brep = std::mem::take(&mut *self.objects.target);
+        let serial = self.objects.target_serial;
+        // (not upstream) the target's application attributes ride on its objects through
+        // the Boolean, as the fork's live on them, so a split, merged or copied edge keeps
+        // them (#1980); the session store takes the result's back once it succeeds
+        let carried = super::body_application_attributes(&self.objects.attributes, &kept, serial)?;
+        let mut taken: Brep = std::mem::take(&mut *self.objects.target);
+        taken.set_attributes(carried);
         match boolean(k, taken, region, BooleanOperation::Difference) {
             Ok(outcome) => {
                 // Not the fork's (WR-631 addendum): the subtraction from a manifold solid
@@ -410,12 +539,18 @@ impl FilletSession<'_> {
                     });
                     return Err(SolidError::sm_err(OP));
                 }
-                *self.objects.target = outcome.result;
+                let mut result = outcome.result;
+                super::replace_application_attributes(
+                    &mut self.objects.attributes,
+                    &mut result,
+                    serial,
+                )?;
+                *self.objects.target = result;
                 Ok(())
             }
             Err(e) => {
                 *self.objects.target = kept;
-                if e.is_unported() {
+                if e.is_unported_or_cancelled() {
                     return Err(e);
                 }
                 self.note_refusal(Refusal {

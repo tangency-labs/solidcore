@@ -39,6 +39,11 @@
 //! (`topology.brep_p9`) notify through that environment, so [`make_manifold`] and
 //! [`stitch_and_orient`] take the kernel. Curves have no identity in the port: `SetCurve`'s new/old curve
 //! data are null and a curve's own `SM_NO_CHANGE_OWNER` is not delivered.
+//! `SetOwner(pEdge)` on a joined or mirrored edge's curve owns it under the edge's
+//! [`Brep::owner_identity`] (the identity the B-rep check compares) when `b` names its
+//! geometry by a fixed scheme (`Notify`, `Arena`): a plain entry point's kernel keys
+//! would otherwise leave the curve owned by no edge `ValidateGeometry` knows. Under a
+//! caller's naming (`Caller`, `Unknown`) the environment's key owns it, recorded on `b`.
 //! Not upstream: with `Kernel::fixes.glue_vertices_joins_every_region` (WR-607; SolidCraft
 //! change, tangency-labs/smlib 661f79c) [`glue_vertices`] joins the pair of shells of every
 //! region both vertices are in, not only the last pair its search finds.
@@ -321,18 +326,33 @@ pub fn combine_with_notifications(
             true,
             true,
         ))?;
-        crate::error::ignore_status(delete_vertex(k, b, deleted, notifications.as_deref_mut()))?;
+        crate::error::ignore_status(crate::error::passed_on(
+            delete_vertex(k, b, deleted, notifications.as_deref_mut()),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         return Ok(());
     } else if edges.is_empty() {
         let first_uses = vertex::vertexuses(b, survivor)?;
         let last_uses = vertex::vertexuses(b, deleted)?;
         for vu in first_uses {
-            crate::error::ignore_status(remove_vertexuse(b, survivor, vu))?;
-            crate::error::ignore_status(post_insert_vertexuse(b, deleted, vu))?;
+            crate::error::ignore_status(crate::error::passed_on(
+                remove_vertexuse(b, survivor, vu),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
+            crate::error::ignore_status(crate::error::passed_on(
+                post_insert_vertexuse(b, deleted, vu),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         for vu in last_uses {
-            crate::error::ignore_status(remove_vertexuse(b, deleted, vu))?;
-            crate::error::ignore_status(post_insert_vertexuse(b, survivor, vu))?;
+            crate::error::ignore_status(crate::error::passed_on(
+                remove_vertexuse(b, deleted, vu),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
+            crate::error::ignore_status(crate::error::passed_on(
+                post_insert_vertexuse(b, survivor, vu),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         // Upstream ignores Notify's status here.
         crate::error::ignore_status(notify_merge(
@@ -350,7 +370,10 @@ pub fn combine_with_notifications(
             true,
             true,
         ))?;
-        crate::error::ignore_status(delete_vertex(k, b, deleted, notifications.as_deref_mut()))?;
+        crate::error::ignore_status(crate::error::passed_on(
+            delete_vertex(k, b, deleted, notifications.as_deref_mut()),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         return Ok(());
     }
     let mut common = None;
@@ -375,12 +398,15 @@ pub fn combine_with_notifications(
             .curve
             .as_ref()
             .ok_or_else(|| SolidError::invalid_input(OP, "common edge without curve"))?;
-        let length = crate::error::ignored(curve.length_with_zone_tol(
-            k,
-            &record.interval,
-            target.tolerance,
-            Some(record.tolerance),
-        ))?
+        let length = crate::error::ignored(crate::error::passed_on(
+            curve.length_with_zone_tol(
+                k,
+                &record.interval,
+                target.tolerance,
+                Some(record.tolerance),
+            ),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
         .unwrap_or(0.0);
         if length > target.minimum_edge_length {
             // Retain a long common edge; GlueVertices will close it.
@@ -443,14 +469,17 @@ pub fn combine_with_notifications(
     if let Some(edge) = common {
         squeeze_edge(k, b, notifications.as_deref_mut(), edge, survivor)?;
     } else {
-        crate::error::ignore_status(glue_with_notifications(
-            k,
-            b,
-            Some(survivor),
-            Some(deleted),
-            None,
-            notifications.as_deref_mut(),
-        ))?;
+        crate::error::ignore_status(crate::error::passed_on(
+            glue_with_notifications(
+                k,
+                b,
+                Some(survivor),
+                Some(deleted),
+                None,
+                notifications.as_deref_mut(),
+            ),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     set_vertex_point(k, b, survivor, target.point, notifications.as_deref_mut())?;
     crate::error::ignore_status(vertex::set_tolerance(
@@ -668,14 +697,10 @@ fn create_wire_edge_from_curve_in(
         Ok((first, edge, last))
     })?;
     if start.distance(end) < b.tolerance() {
-        crate::error::ignore_status(glue_with_notifications(
-            k,
-            b,
-            Some(first),
-            Some(last),
-            None,
-            Some(&mut *env),
-        ))?;
+        crate::error::ignore_status(crate::error::passed_on(
+            glue_with_notifications(k, b, Some(first), Some(last), None, Some(&mut *env)),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     Ok(edge)
 }
@@ -798,8 +823,8 @@ pub fn delete_topological_vertex_with_notifications(
         let survivor_range = survive_curve.natural_interval();
         // The native overload defaults bSnapToEnds to TRUE. Its additional-work
         // output is unused by this caller.
-        let coincidence =
-            crate::error::ignored(delete_curve.global_coincidence_checker::<JoinCurve>(
+        let coincidence = crate::error::ignored(crate::error::passed_on(
+            delete_curve.global_coincidence_checker::<JoinCurve>(
                 k,
                 &deleted_range,
                 &survive_curve,
@@ -810,7 +835,9 @@ pub fn delete_topological_vertex_with_notifications(
                     Some(JoinCurve::Deleted(deleted_range)),
                     Some(JoinCurve::Survivor(survivor_range)),
                 ],
-            ))?;
+            ),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         if let Some(coincidence) = coincidence {
             if let [solution] = coincidence.solutions.as_slice() {
                 if solution.solution_type
@@ -849,9 +876,11 @@ pub fn delete_topological_vertex_with_notifications(
                             let point = b.vertex(far_vertex)?.point;
                             // Native ignores EvaluatePoint's status. Its defined
                             // SM_UNDEF_DOUBLE sentinel remains explicit when an ordinary evaluation fails.
-                            let evaluated =
-                                crate::error::ignored(survive_curve.evaluate_point(k, far))?
-                                    .unwrap_or(Vec3::UNDEF);
+                            let evaluated = crate::error::ignored(crate::error::passed_on(
+                                survive_curve.evaluate_point(k, far),
+                                k.fixes.brep_edit_statuses_pass_on,
+                            )?)?
+                            .unwrap_or(Vec3::UNDEF);
                             if evaluated.closer_than(max_gap, point) {
                                 same_geometry = true;
                             }
@@ -1153,10 +1182,12 @@ pub(super) fn set_joined_edge_curve(
         },
     )
 }
-/// `pCurveSurviveCopy->SetOwner(pSurvivingEdge)`: the owner is the edge's identity in
-/// the notification environment. The curve's own `SM_NO_CHANGE_OWNER` notification
-/// (`SmObject::Notify` on the curve) is not delivered: the curve has no identity to
-/// notify under (the module's Deviations; as `topology.brep_p2`'s `SetCurve` helpers).
+/// `pCurveSurviveCopy->SetOwner(pSurvivingEdge)`: the owner is the edge, named by `b`'s
+/// own scheme ([`Brep::owner_identity`]) when that is fixed (`Notify`, `Arena`), else by
+/// its identity in the notification environment. The curve's own `SM_NO_CHANGE_OWNER`
+/// notification (`SmObject::Notify` on the curve) is not delivered: the curve has no
+/// identity to notify under (the module's Deviations; as `topology.brep_p2`'s `SetCurve`
+/// helpers).
 pub(super) fn set_edge_curve_owner(
     b: &mut Brep,
     edge: EdgeId,
@@ -1167,7 +1198,15 @@ pub(super) fn set_edge_curve_owner(
         key: b.key(),
     };
     with_notifications(b, notifications, None, |b, env, _| {
-        let owner = (env.key_of)(crate::error::EntityRef::Edge(edge));
+        let entity = crate::error::EntityRef::Edge(edge);
+        let owner = match b.naming() {
+            crate::topology::NamingScheme::Notify | crate::topology::NamingScheme::Arena => {
+                b.owner_identity(entity)
+            }
+            crate::topology::NamingScheme::Caller | crate::topology::NamingScheme::Unknown => {
+                (env.key_of)(entity)
+            }
+        };
         let curve = b
             .edge_mut(edge)?
             .curve
@@ -1385,7 +1424,10 @@ fn glue_with_notification_identity(
             .shell(shell)?
             .region
             .ok_or_else(|| SolidError::null_pointer(OP))?;
-        crate::error::ignore_status(remove_region_shell(b, region, shell))?;
+        crate::error::ignore_status(crate::error::passed_on(
+            remove_region_shell(b, region, shell),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         destroy_shell(k, b, notifications.as_deref_mut(), shell)?;
         first = None;
         remove_vertexuse(b, survivor, vu)?;
@@ -1426,7 +1468,10 @@ fn glue_with_notification_identity(
                 .vertexuse(vu)?
                 .vertex
                 .ok_or_else(|| SolidError::null_pointer(OP))?;
-            crate::error::ignore_status(remove_vertexuse(b, vertex, vu))?;
+            crate::error::ignore_status(crate::error::passed_on(
+                remove_vertexuse(b, vertex, vu),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             clear_shell_list(b, last)?;
             destroy_topology_record(b, crate::error::EntityRef::Vertexuse(vu))?;
         } else {
@@ -1436,7 +1481,10 @@ fn glue_with_notification_identity(
             .shell(last)?
             .region
             .ok_or_else(|| SolidError::null_pointer(OP))?;
-        crate::error::ignore_status(remove_region_shell(b, region, last))?;
+        crate::error::ignore_status(crate::error::passed_on(
+            remove_region_shell(b, region, last),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         destroy_shell(k, b, notifications.as_deref_mut(), last)?;
     }
     // WR-607: join the other regions' pairs as well.
@@ -2450,42 +2498,145 @@ pub fn stitch_and_orient_with_identity(
     options: &StitchAndOrientOptions,
     identity: Option<crate::query::brep::BrepIdentity<'_>>,
 ) -> Result<()> {
+    k.check_cancelled(OP)?;
     let mut lamina = 0;
     let mut tolerance = initial_stitch_tolerance(b.tolerance(), options.stitch_tolerance);
-    crate::error::ignore_status(stitch_faces(
-        k,
-        b,
-        tolerance,
-        options.allow_spine_edges,
-        &mut lamina,
-        identity,
-    ))?;
-    if lamina > 1 {
-        tolerance = if options.stitch_tolerance <= 0.0 {
-            tolerance * 20.0
-        } else {
-            tolerance * 10.0
-        };
-        crate::error::ignore_status(stitch_faces(
+    crate::error::ignore_status(crate::error::passed_on(
+        stitch_faces(
             k,
             b,
             tolerance,
             options.allow_spine_edges,
             &mut lamina,
             identity,
-        ))?;
+        ),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
+    if lamina > 1 {
+        tolerance = if options.stitch_tolerance <= 0.0 {
+            tolerance * 20.0
+        } else {
+            tolerance * 10.0
+        };
+        crate::error::ignore_status(crate::error::passed_on(
+            stitch_faces(
+                k,
+                b,
+                tolerance,
+                options.allow_spine_edges,
+                &mut lamina,
+                identity,
+            ),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     plain_edit(k, b, |k, b, env| {
-        crate::error::ignore_status(orient_trimmed_surfaces(
+        crate::error::ignore_status(crate::error::passed_on(
+            orient_trimmed_surfaces(
+                k,
+                b,
+                Some(env),
+                true,
+                options.just_unify.unwrap_or(lamina > 0),
+                options.faces_to_swap.as_deref(),
+            ),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
+        Ok(())
+    })
+}
+
+/// [`stitch_and_orient`] inside the caller's edit: the stitch passes and the orientation
+/// edit `b` through the caller's environment `env` (the stitch's glues, squeezes and
+/// splits as [`crate::heal::stitch::p1::BorrowedStitchEdits`] naming new curves by
+/// `curve_identity`), so no edit of their own nests in the caller's. A caller whose edit
+/// has lent the kernel context's callbacks uses this: there [`stitch_and_orient`]'s own
+/// edits are refused as nested.
+///
+/// # Errors
+///
+/// Those of [`stitch_and_orient`].
+pub(crate) fn stitch_and_orient_notified(
+    k: &mut Kernel,
+    b: &mut Brep,
+    options: &StitchAndOrientOptions,
+    env: &mut EditNotifyEnv<'_>,
+    curve_identity: crate::topology::brep::p9::CurveIdentity<'_>,
+) -> Result<()> {
+    k.check_cancelled(OP)?;
+    let mut lamina = 0;
+    let mut tolerance = initial_stitch_tolerance(b.tolerance(), options.stitch_tolerance);
+    crate::error::ignore_status(crate::error::passed_on(
+        stitch_faces_notified(
+            k,
+            b,
+            tolerance,
+            options.allow_spine_edges,
+            &mut lamina,
+            env,
+            curve_identity,
+        ),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
+    if lamina > 1 {
+        tolerance = if options.stitch_tolerance <= 0.0 {
+            tolerance * 20.0
+        } else {
+            tolerance * 10.0
+        };
+        crate::error::ignore_status(crate::error::passed_on(
+            stitch_faces_notified(
+                k,
+                b,
+                tolerance,
+                options.allow_spine_edges,
+                &mut lamina,
+                env,
+                curve_identity,
+            ),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
+    }
+    crate::error::ignore_status(crate::error::passed_on(
+        orient_trimmed_surfaces(
             k,
             b,
             Some(env),
             true,
             options.just_unify.unwrap_or(lamina > 0),
             options.faces_to_swap.as_deref(),
-        ))?;
-        Ok(())
-    })
+        ),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
+    Ok(())
+}
+
+/// [`stitch_faces`] editing through `env` ([`stitch_and_orient_notified`]).
+fn stitch_faces_notified(
+    k: &mut Kernel,
+    b: &mut Brep,
+    tolerance: f64,
+    allow_spine: bool,
+    lamina: &mut usize,
+    env: &mut EditNotifyEnv<'_>,
+    curve_identity: crate::topology::brep::p9::CurveIdentity<'_>,
+) -> Result<()> {
+    let mut edits = crate::heal::stitch::p1::BorrowedStitchEdits {
+        env,
+        curve_identity,
+    };
+    let out = crate::topology::brep::p4::stitch_faces_with_context(
+        k,
+        b,
+        tolerance,
+        None,
+        allow_spine,
+        None,
+        Some(&mut edits),
+    )?;
+    *lamina = usize::try_from(out.lamina_edges)
+        .map_err(|_| SolidError::invalid_input(OP, "lamina edge count"))?;
+    Ok(())
 }
 
 /// `StitchFaces(tol, lNumStitched, lNumLamina, dMaxVGap, dMaxEGap, NULL, bAllowSpine)`:
@@ -2623,6 +2774,17 @@ pub(crate) fn squeeze_face_in(
             keep_region = Some(if keep_first { r1 } else { r2 });
         }
         delete_face(k, b, Some(&mut *env), face, false, true, keep_region)?;
+        // The stitch's glues, squeezes and splits edit `b` within this edit, through its
+        // environment. Its plain helpers would each start an edit of their own, which the
+        // lent kernel context refuses as nested: with `ignore_problems` the refusal was
+        // silent, and a sliver's two edges stayed apart where upstream glues them.
+        let mut edits = crate::heal::stitch::p1::BorrowedStitchEdits {
+            env: &mut *env,
+            curve_identity: crate::topology::brep::p9::CurveIdentity::Actual(
+                &crate::topology::brep::p9::issue_curve_identity,
+            ),
+        };
+        stitch.edits = Some(&mut edits);
         // After face deletion, ordinary stitch failures record SM_ERR but do
         // not suppress the remaining cleanup calls or their partially filled outputs.
         let mut failed = false;
@@ -2754,7 +2916,10 @@ fn transform_in(
             || !crate::geom::tol::are_same(s.x, s.z)
             || s.x < crate::math::EFF_ZERO
     }) {
-        crate::error::ignore_status(turn_to_nurbs(k, b, notifications.as_deref_mut()))?;
+        crate::error::ignore_status(crate::error::passed_on(
+            turn_to_nurbs(k, b, notifications.as_deref_mut()),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     let mut bbox = Extent3d::new();
     let vertices = brep_vertices(b)?;
@@ -3023,6 +3188,11 @@ fn transformed_surface_base(
     use crate::surface::surface::SurfaceKind;
     Ok(match surface.kind_mut() {
         SurfaceKind::BSpline(base) => Some(base.clone()),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let base = pb.net();
+            Some(base.clone())
+        }
+        SurfaceKind::BallPatch(bp) => Some(bp.net().clone()),
         SurfaceKind::Plane(plane) => {
             if plane.base().gw_nurb().is_none() {
                 crate::error::ignore_status(plane.make_nurb())?;
@@ -3119,6 +3289,88 @@ fn set_face_tolerance(
 mod tests {
     use super::*;
     use crate::topology::Vertex;
+
+    /// A closed 1 x 2 x 3 box (stitched, no lamina edges).
+    fn status_box(k: &mut Kernel) -> Brep {
+        crate::primitive::api_primitives::create_box(k, Point3::new(0.0, 0.0, 0.0), 1.0, 2.0, 3.0)
+            .expect("box")
+    }
+
+    /// fork 60a8a51 (`SmBrep::StitchAndOrient`, `SER(this->StitchFaces(..))`): an edge
+    /// without curve fails the first stitch pass; with
+    /// `brep_edit_statuses_pass_on` the stitch's error reaches the caller, without it
+    /// the operation reports success.
+    #[test]
+    fn stitch_and_orient_passes_on_a_failed_stitch() {
+        for pass_on in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.brep_edit_statuses_pass_on = pass_on;
+            let mut b = status_box(&mut k);
+            let e = *b.edge_list().first().expect("edge");
+            b.edge_mut(e).expect("edge").curve = None;
+            let r = stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default());
+            if pass_on {
+                assert!(
+                    matches!(
+                        r,
+                        Err(SolidError::InvalidInput {
+                            operation: "heal::stitch::p2",
+                            ..
+                        })
+                    ),
+                    "{r:?}"
+                );
+            } else {
+                assert!(r.is_ok(), "{r:?}");
+            }
+        }
+    }
+
+    /// fork 60a8a51 (`SmBrep::FindInfiniteRegion`, `SER(CalculateBoundingBox(sBBox))`,
+    /// reached from the stitch pass of `SmBrep::StitchAndOrient`): a face without
+    /// surface fails the B-rep's box. Without `brep_edit_statuses_pass_on` the region
+    /// search goes on with an empty box, its ray finds nothing (`SM_ERR`) and
+    /// `StitchAndOrient` drops that; with it the box's error reaches the caller.
+    #[test]
+    fn stitch_and_orient_passes_on_a_failed_region_box() {
+        for pass_on in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.brep_edit_statuses_pass_on = pass_on;
+            let mut b = status_box(&mut k);
+            let f = *b.face_list().first().expect("face");
+            b.face_mut(f).expect("face").surface = None;
+            let mut lamina = 0;
+            let tolerance = initial_stitch_tolerance(b.tolerance(), 0.0);
+            let stitched =
+                stitch_faces(&mut k, &mut b.clone(), tolerance, false, &mut lamina, None);
+            let r = stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default());
+            let box_error = |r: &Result<()>| {
+                matches!(
+                    r,
+                    Err(SolidError::InvalidInput {
+                        operation: "query::face::p1::calculate_bounding_box",
+                        ..
+                    })
+                )
+            };
+            if pass_on {
+                assert!(box_error(&stitched), "{stitched:?}");
+                assert!(box_error(&r), "{r:?}");
+            } else {
+                assert!(
+                    matches!(
+                        stitched,
+                        Err(SolidError::Upstream {
+                            operation: "topology::brep::p9",
+                            ..
+                        })
+                    ),
+                    "{stitched:?}"
+                );
+                assert!(r.is_ok(), "{r:?}");
+            }
+        }
+    }
 
     #[test]
     fn supplied_uv_reaches_both_sectors_and_insertion() {

@@ -12,6 +12,7 @@
 //! | [`crate::topology::Edge`] (`Drop`)      | `SmEdge::~SmEdge`                                 |
 //! | [`edgeuse_count`], [`primary_edgeuse`]  | `SmEdge::GetEdgeuseCount`, `GetPrimaryEdgeuse`    |
 //! | [`interval`], [`set_interval`], [`curve`], [`tolerance`] | `SmEdge::GetInterval`, `SetInterval`, `GetCurve`, `GetTolerance` (`SM_USE_OLDTOL`) |
+//! | [`evaluation_curve`]                    | `GetCurve()` as `SmTol::GetZoneTol3d(const SmObject*)` reads it (the curve's `GetEdge()->GetTolerance()`) |
 //! | [`OdeEdgeLength`]                       | `SmODEEdgeLengthIFEO` (constructor, `Evaluate`)   |
 //! | [`end_tangent`]                         | `SmEdge::GetEndTangent`                           |
 //! | [`uv_trim_curve_of_surface`]            | `SmEdge::GetUVTrimCurveOfSurface`                 |
@@ -53,6 +54,9 @@
 //!   the next element, cyclically) and `m_lListSize` its length; `ReverseList` keeps
 //!   the head and reverses the rest. `GetPrimaryEdgeuse`, `IsLamina`, `GetBrep` and
 //!   `IsWire` were CO-PORTED by earlier units and are re-exported here.
+//! - **UB-290** (unconditional, the fork's tangency-labs/smlib@8d0fbff): [`is_topological`]
+//!   refuses an edge with one face on both sides whose primary edge use and its radial
+//!   are in two loop uses, which `SmBrep::DeleteEdge` would merge into itself.
 //! - **Surface identity.** Upstream compares `SmSurface*` pointers (the target of
 //!   `GetUVTrimCurveOfSurface`, `IsSeam(const SmSurface&)`, `IsTopological`'s two
 //!   surfaces). A port face owns its surface, so a surface is named by the face holding
@@ -103,6 +107,10 @@
 //!   port returns the error. [`SolidError::Unported`] always propagates.
 //! - **Recursion.** `sm_CoverOtherCoincidentFace` recurses once (its second call has
 //!   `bRefineDomains` set); no other recursion.
+//! - **Not upstream: a stored-domain cover stays within one period** (the fork's
+//!   tangency-labs/smlib@b518bbe, under `Kernel::fixes.cover_wraps_across_closed_seam`):
+//!   `sm_CoverOtherCoincidentFace` passes `bRefineDomains` as the cover's
+//!   `bAcrossWrappedSeams`, so only its trim-derived attempt crosses a wrapped seam.
 //! - **Unported callees** return [`SolidError::Unported`]: `SmBrep::GetInfiniteRegion`
 //!   (`topology.brep_p1`) and `SmFace::CalculateUVDomainFromUVTrimCurves`
 //!   (`topology.face_p1`). `SmSurface::CoverOtherCoincidentSurface` is wired to
@@ -162,8 +170,8 @@ pub const CLASS_STRING: &str = "SmEdge";
 
 /// `SmBrep_TYPE` (the `SM_CAST_PTR(SmBrep, ..)` of `Notify`).
 const BREP_TYPE: i64 = 16011;
-/// `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+// `SM_ERR_INVALID_INPUT`.
+use crate::error::SM_ERR_INVALID_INPUT;
 
 /// `SmEdge::IsKindOf`: `SmEdge_TYPE` or a base class type.
 #[must_use]
@@ -263,7 +271,7 @@ struct Cover {
 }
 
 /// `pSurf0->CoverOtherCoincidentSurface(pSurf1, dTol, rdMaxDist, rpCoveringSurf,
-/// &sDomain0, &sDomain1, &rMergedDomain)` (unit `surface.surface_p5`) on the surfaces
+/// &sDomain0, &sDomain1, &rMergedDomain, bAcrossWrappedSeams)` (unit `surface.surface_p5`) on the surfaces
 /// of `face0` and `face1` (two different faces). The covering surface may be expanded
 /// in place, as upstream. A merged domain that was not written stays the caller's
 /// default-constructed `sMergedDomain`.
@@ -285,6 +293,7 @@ fn cover_other_coincident_surface(
     tol: f64,
     domain0: &Extent2d,
     domain1: &Extent2d,
+    across_wrapped_seams: bool,
 ) -> Result<Cover> {
     use crate::query::brep::BrepFaceServices;
     use crate::surface::surface::p5::CoverSolveContext;
@@ -324,6 +333,7 @@ fn cover_other_coincident_surface(
                 Some(CacheObject::Surface(face1)),
             ],
         },
+        across_wrapped_seams,
     );
     b.face_mut(face0)?.surface = Some(this);
     b.face_mut(face1)?.surface = Some(other);
@@ -345,7 +355,12 @@ fn cover_other_coincident_surface(
                 "covered surface owned by another face",
             ));
         };
-        ignore_status(crate::topology::face::p1::remove_uv_trim_curves(b, face))?;
+        // (passed on with the opt-in fix: the fork's `SER` in CoverCoincidentSurface,
+        // WR-663, tangency-labs/smlib 21dcf69)
+        crate::error::ignore_or_pass_on(
+            crate::topology::face::p1::remove_uv_trim_curves(b, face),
+            k.fixes.query_statuses_pass_on,
+        )?;
     }
     Ok(Cover {
         max_dist: r.max_dist,
@@ -396,6 +411,37 @@ pub fn curve(b: &Brep, e: EdgeId) -> Result<Option<&Curve>> {
 /// `GetTolerance` (`SM_USE_OLDTOL`): `m_sZoneTol3d`.
 pub fn tolerance(b: &Brep, e: EdgeId) -> Result<f64> {
     Ok(b.edge(e)?.tolerance)
+}
+
+/// The edge's 3D curve as upstream's `GetCurve()` evaluates: an evaluation copy (the
+/// curve exactly, owner included) carrying, when the curve has an owner, the edge's
+/// tolerance ([`Curve::set_owner_zone_tol_3d`]): the value
+/// `SmTol::GetZoneTol3d(const SmObject*)` reads through the curve's edge
+/// (`GetEdge()->GetTolerance()`; a curve without owner has no edge there and gets the
+/// system tolerance, as `SmApiEdgeComputeLength` does). Not upstream: a port
+/// curve cannot reach its edge, so a curve borrowed from the edge record ([`curve`])
+/// builds no cache over its owner's tolerance (its length, arc-length parameter and
+/// solves return [`SolidError::Unported`] for `SmTol::GetZoneTol3d`); this copy builds
+/// them as upstream does. `None` for an edge without curve.
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dead edge; those of the curve copy (geometry nested
+/// deeper than the shared bound).
+pub fn evaluation_curve(b: &Brep, e: EdgeId) -> Result<Option<Curve>> {
+    const OP_EVALUATION_CURVE: &str = "topology::edge::evaluation_curve";
+    let edge = b.edge(e).map_err(|_| SolidError::NotFound {
+        operation: OP_EVALUATION_CURVE,
+        entity: EntityRef::Edge(e),
+    })?;
+    let Some(curve) = edge.curve.as_ref() else {
+        return Ok(None);
+    };
+    let mut copy = curve.clone_for_evaluation()?;
+    if copy.owner().is_some() {
+        copy.set_owner_zone_tol_3d(Some(edge.tolerance));
+    }
+    Ok(Some(copy))
 }
 
 fn curve_deref<'b>(b: &'b Brep, e: EdgeId, what: &'static str) -> Result<&'b Curve> {
@@ -1780,7 +1826,23 @@ fn cover_other_coincident_face(
         }
     }
 
-    let cover = cover_other_coincident_surface(k, b, face0, face1, tol, &domain0, &domain1)?;
+    // SolidCraft fork (tangency-labs/smlib@b518bbe), under
+    // `Kernel::fixes.cover_wraps_across_closed_seam`: across a seam the covering surface
+    // wraps only on the trim-derived bounds. The stored domains are conservative and may
+    // be the faces' whole surfaces: across the seam they cover too, and the merged face
+    // took them as its domain (360 x 208 for half-turn faces whose trims span 180 x 3).
+    // Within one period they cover as before; a cover that must cross the seam takes the
+    // faces' trims.
+    let cover = cover_other_coincident_surface(
+        k,
+        b,
+        face0,
+        face1,
+        tol,
+        &domain0,
+        &domain1,
+        refine_domains,
+    )?;
     let covering = cover.covering.map(|c| match c {
         Covering::This => face0,
         Covering::Other => face1,
@@ -1848,6 +1910,27 @@ pub fn is_topological(
     };
     // 1st edgeuse locals
     let (face1, surf1) = face_of(eu_a)?;
+
+    // UB-290 (the fork's tangency-labs/smlib@8d0fbff), unconditional: the same face on
+    // both sides, and the edge's primary edge use and its radial partner in two loop uses
+    // (the face meeting itself along the edge from its two sides, or its radial pairing
+    // the other way round): `SmBrep::DeleteEdge`, which reads that pair, would take the two
+    // sides for two faces and merge the face into itself, deleting it. Not removable. With
+    // the pair in one loop use it is a slit, which `DeleteEdge` splits off the loop.
+    {
+        let Some(primary) = primary_edgeuse(b, e)? else {
+            return Ok(out);
+        };
+        let Some(radial) = eu1::radial(b, primary)? else {
+            return Ok(out);
+        };
+        if eu1::face(b, primary)? == eu1::face(b, radial)?
+            && eu1::loopuse(b, primary)? != eu1::loopuse(b, radial)?
+        {
+            return Ok(out);
+        }
+    }
+
     // 3rd edgeuse locals = same oriented edgeuse on different face to edgeuse[0]
     let (face2_, surf2) = face_of(eu_c)?;
     let surfs = [&surf1, &surf2];

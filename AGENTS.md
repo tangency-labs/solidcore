@@ -1,9 +1,11 @@
 # AGENTS.md — solidcore
 
-solidcore is a port of NVIDIA's SMLib B-rep kernel (C++, Apache-2.0) to idiomatic safe
-Rust. Upstream is cloned (gitignored) at `upstream/`, pinned to v1.0.1, commit `3fd5b95`
+solidcore is a B-rep kernel in idiomatic safe Rust, based on NVIDIA's SMLib (C++, Apache-2.0)
+and going its own way from there: it started as a port, and new constructions are designed and
+built here. Upstream is cloned (gitignored) at `upstream/`, pinned to v1.0.1, commit `3fd5b95`
 (`scripts/upstream-pin.env` is the single source of truth for scripts, CI and the site). Many
-agents work here at once: read this whole file before your first change.
+agents work here at once: read this whole file before your first change. Where a construction has been
+redesigned (the generic blend), the new design is what solidcore builds, not upstream's (§4b). People: [CONTRIBUTING.md](CONTRIBUTING.md) has the same principles in short.
 
 ```
 crates/solidcore       the kernel (pure Rust, no unsafe, wasm-ok)        owner: unit porters
@@ -14,6 +16,11 @@ plan/                  units/<id>.toml, findings/<slug>.md, upstream-issues/<slu
 ```
 
 ## 1. Hard rules
+
+**Read first.** Before changing an area, read its design doc and records: `docs/generic-blend.md`
+for fillets and chamfers, the unit's `plan/units/<id>.toml`, and its `plan/findings/` and
+`plan/upstream-issues/` entries. If the docs and the code don't answer your question, ask the
+maintainers on the area's hub issue before you build.
 
 **Licence.** Read only `upstream/source/SMLib`, `upstream/source/SM_API`,
 `upstream/tests/SM_API_test`, `upstream/tests/prog_test`, `upstream/TestFiles/pt_TestFiles`,
@@ -29,7 +36,8 @@ anywhere (including dependencies; `deny.toml` bans copyleft crates).
 - Deterministic: no clock, no hashing of addresses, no `HashMap` iteration order in
   results (use `Vec`, `BTreeMap`, or sort), randomness only from `kernel.rng`.
 - No global or `static mut`/`thread_local` state. Everything lives in `Kernel`.
-- Must build for `wasm32-unknown-unknown`: no threads, filesystem or `std::time`.
+- Must build for `wasm32-unknown-unknown`: no filesystem or `std::time`, and no threads in
+  library code for now (§4c).
 - Never allocate from an input-declared size unchecked (file headers, counts in data):
   use checked arithmetic and call `DatabaseReader::ensure_available(count, min_bytes,
   op)` before allocating, as `BSplineSurface::read_from_db` does. Upstream `malloc`
@@ -48,7 +56,14 @@ anywhere (including dependencies; `deny.toml` bans copyleft crates).
   stack is allowed only if it visits in exactly the same order. Note each bound in the
   file header's Deviations line. `audit.recursion` (last unit) sweeps the whole crate.
 
-**Correctness gate.** A unit is **green** only when difftest runs the Rust and the C++
+**The gate.** solidcore's CI gates on its own checks: fmt, clippy, its tests and the wasm build.
+A pull request is green when they pass. The difftest against the C++ reference is a tool, not
+the gate: maintainers run it on a pull request that needs it, from the CI workflow's Run workflow
+with `difftest` set (`.github/workflows/ci.yml`), and the reference it builds is set in
+`scripts/upstream-pin.env`. Pushes to main still run the sweep and publish main's reports,
+which are the exact base a requested run checks against. When it runs, it holds the rules below.
+
+**Difftest parity.** A unit is **green** only when difftest runs the Rust and the C++
 (via FFI) on the same inputs and topology is identical and every value agrees within
 `1e-9` relative (`|a-b| <= 1e-9 * max(|a|,|b|)`; an absolute floor only where a unit
 documents one per key in `abs_floors()`, recorded in its report). Never loosen a tolerance to get green. The harness never feeds C++ outputs or C++ process state into the Rust side (`crates/difftest/README.md`, No C++ state reaches the Rust side). A disagreement you cannot fix
@@ -348,15 +363,29 @@ The kernel core is one big call cycle, so the plan dropped ~2,300 calls as *back
 
 ## 4b. Fixing upstream defects
 
-Every unit is ported; most new work fixes SMLib defects in the port. The long-term policy
-is still open in #1018. Until it is settled, the interim rule is the one in that thread:
+Every SMLib unit has a Rust counterpart; most new work fixes SMLib defects or builds solidcore's
+own constructions. The policy (owner, 2026-11-02; supersedes the interim rule of #1018):
 
-- **Default = the C++ reference.** Default behaviour matches the pinned C++ (usd-brep
-  v1.0.1 since #1277), and difftest keeps gating it at parity.
-- **Result-changing fixes are opt-in.** A fix that changes a result is a
-  `Kernel::fixes` (`UpstreamFixes`) field, off by default, with a regression test of the
-  issue's case and an addendum in `plan/upstream-issues/` naming the field. Examples:
-  #1233, #1285, #1287.
+- **Redesigned constructions are the reference, not upstream.** solidcore's default behaviour is
+  no longer upstream usd-brep v1.0.1's where a construction has been redesigned (the generic blend,
+  `docs/generic-blend.md`). Those steps were first built in the SolidCraft fork of SMLib, and their
+  results there are the baseline they keep, bit for bit; the difftest shows it when the
+  maintainers run it, against the reference set in `scripts/upstream-pin.env`. New construction
+  is designed on its solidcore issue and built here.
+- **Flags only while a step is being brought over.** A change of result lands behind its
+  `Kernel::fixes` (`UpstreamFixes`) field with a regression test of its case and an addendum in
+  `plan/upstream-issues/`. Once its construction's ports are in and parity is shown, the flag
+  becomes the default and is removed, and the old path is **deleted** together with the
+  solidcore-only `WR-` patches made to it. No flag is permanent, and nothing is kept as a
+  fallback.
+- **Cases with images.** A pull request that makes a SolidCraft rig case pass, or turns a known
+  failure into a correct refusal, updates its row in `docs/generic-blend.md` §7 and its render
+  (`docs/generic-blend/cases/<case>.jpg`) in the same change. No row changes without its image.
+  Choose the render's view from the case's geometry so it shows the issue (the corner, the seam,
+  the spot refused or fixed), framed close on it, with an inset of the whole part where it helps;
+  never a fixed angle.
+- **Don't extend code that is going away.** Fix an old path only when a parity gate needs it
+  before its replacement lands; say so in the PR, and it is deleted with the code.
 - **Crash, UB, hang and nondeterminism fixes are unconditional**, e.g. #1160 for UB-87.
 - **Check that the issue is still open work before you claim it.** Many issues were
   fixed by a PR that did not close them (see #1206). Search merged PRs for the issue
@@ -366,8 +395,53 @@ is still open in #1018. Until it is settled, the interim rule is the one in that
   of scope.
 - A fixing PR uses a closing keyword (`Fixes #n`) so the issue closes when it merges.
 
+**Root causes, not point solutions.**
+- **A fallback is a code smell.** If a fix ends up as try-then-fallback, a retry on failure, a
+  chain of methods tried in turn, or a branch for one case, stop: that patches a symptom.
+  Find the construction that is wrong for the case and fix it as a whole.
+- **Fillets and chamfers.** These follow the generic rolling-ball blend that is replacing
+  SMLib's fillet code step by step (hub: #2243). A failing case means some part of that one
+  construction is wrong for it: the spine, the rails, the section, an end, a corner, a fold
+  check or the overflow. Never add a special case for it.
+- **Literature first.** Before designing a geometry fix, search the literature for the
+  problem; most kernel failures are known problems with known constructions. Reading the papers
+  is most often the right way to solve a case; code invented to make one case pass is not.
+- **More than one issue.** Before fixing, look for the other open issues and failing cases
+  with the same cause, and fix the cause for all of them. A fix that closes one case and opens
+  another, or a growing set of per-case branches, means the cause is elsewhere.
+- **Events, not try/catch trains.** Decide from the geometry which case you are in (a tangent
+  end, a fold, a corner type, an empty offset) and build that one construction; never attempt
+  one construction, catch its failure and try the next. The generic blend is written this way:
+  its cases are events of the trace (`docs/generic-blend.md` §3).
+- **No code smells.** No patches, fallbacks, retries, magic tolerances, special-cased inputs,
+  dead flags or commented-out code left behind.
+- **Ask before you build.** Check open PRs and issues, and the hub issue for the area, for
+  contributors working on something similar. Ask there, and build on their work rather than
+  next to it. When the docs and the code can't answer a design question, ask the maintainers
+  there and wait for the answer rather than guessing.
+
+## 4c. Concurrency and parallelism
+
+- **The concurrency unit is the `Kernel`.** A `Kernel` is `Send` and holds no global state
+  (`crates/solidcore/src/kernel.rs`), so independent kernels run on separate threads or workers
+  without interfering: one `Kernel` per thread. Upstream SMLib's unit is the process, because
+  its default `SmContext` holds unlocked mutable state (the fork's
+  `.agents/operations/concurrency.md`); keeping all state in `Kernel` is what removes that limit,
+  so never add global, `static` or `thread_local` state.
+- **Inside an operation: parallel structure, serial for now.** Chains, spines, stations, spans and
+  corners are pure functions of immutable inputs (`docs/generic-blend.md` §5), so they can be spread
+  over threads later with identical results. Library code starts no threads today; wasm32 always
+  runs the same code serially.
+- **Same result, any thread count.** A parallel run must equal the serial one bit for bit: no
+  shared mutable state, no order-dependent reductions, no lazily filled caches without
+  synchronisation. State that latches on first use (ports of C++ function statics kept in
+  `Kernel`) makes a result depend on earlier calls; it goes when its construction is replaced, and
+  nothing new may be added like it.
+
 ## 5. Where things go
 
+- **Which layer a job belongs to:** [docs/layers.md](docs/layers.md). Each job lives in one layer: kernel, record, ops, tess, or the applications. The kernel computes; ops decides and sequences, and never computes a geometric quantity itself. Two implementations of one job are a bug.
+- `crates/solidcore/tests/kernel_cases/<area>/<case>.json`: a kernel-operation case (an entry, its operand records and exact expected values), one file per case; new ones come here, not to SolidCraft's rig (its README, "Adding a case").
 - `plan/units/<id>.toml`: one unit's plan entry (status, claims, notes). Edit only
   your unit's file. Every tool reads them through `harness/plan/units.py` (Rust:
   `crates/difftest/src/plan.rs`).

@@ -30,7 +30,7 @@ nice -n 10 cargo test -p difftest --features cpp                     # harness s
 | flag | meaning |
 |---|---|
 | `--unit <id>` | run one unit (repeatable; `*` and `?` match several registered runners, e.g. `--unit 'nlib.*'`) |
-| `--jobs N` / `-j N` | run N units at a time, each in its own child process (default `1`: one process, in order; `0`: every core). Output, reports and exit status are the same as with `1` (below) |
+| `--jobs N` / `-j N` | run N units at a time, each in its own child process (default `1`: one at a time; `0`: every core). Output, reports and exit status are the same as with `1` (below). A run of one unit runs in this process; with several, even `--jobs 1` gives each its own child, so C++ process state one unit latches cannot reach the next (`--digest-dir` runs in this process) |
 | `--green` | all port units with `status = "green"` or `"partial"` in `plan/units/*.toml`, excluding `audit.recursion` (a crate-wide audit with no runner; a port without a runner FAILS; a `green` port that comes out partial FAILS) |
 | `--status-of <id>` | run the unit (no report) and print only `green`, `partial` or `fail`; exit `1` on `fail` (also when no runner is registered) |
 | `--all` | every registered runner |
@@ -786,10 +786,12 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   the rolling ball of the constant-radius solver, the leg on each face for a right-angle edge
   between planes (`distance * cot(α/2)` for an interior angle `α`, varying along curved
   faces); one distance for all edges; `SmApiChamferFillet` is not used, it chamfers every
-  edge of a body), `offset_faces`
-  (faces by a point on each), `sweep_face` (the prism of a body's face: the face through
-  the point `face`, the one whose surface holds it and which classifies it inside, has its
-  loops' edge curves, trimmed to the edges, swept `distance` along `direction` with
+  edge of a body), `offset_faces` (faces by a point on each, moved by the SolidCraft fork's
+  `SmOffsetFacesExecutive`, `solidcore::offset::offset_faces`, the tangent blends on them
+  following), `sweep_face` (the prism of a body's face: the face through the point `face`,
+  the one whose surface holds it and which classifies it inside or on an edge bordering
+  no other face, such as its own seam, has its loops' edge curves, trimmed to the edges,
+  swept `distance` along `direction` with
   `SmApiCreateLinearSweep` and capped; for a cut by a face's own boundary, #968),
   `sheet_corner` (the deferred sheet-flange recipe below). Each
   writes the body `id`; the last writes `result`.
@@ -813,12 +815,26 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   void is a region of its own), `volume` (`value`, absolute `tol`, the `formula` it came
   from), `removed` (the same with the earlier body `from`: its volume minus `result`'s,
   for a result without a closed-form volume of its own), `cylinder_faces_max`,
-  `sheet_corner` (signed end distances and flat-pattern invariants).
+  `sheet_corner` (signed end distances and flat-pattern invariants), `manifold`
+  (`result` must, or must not, be a closed manifold solid, `SmBrep::IsManifoldSolid`, so a
+  blend that leaves an open body cannot pass on its volume alone), and `refused`
+  (`step`, `error`: the kernel must refuse; the case passes when that step fails with an
+  error containing `error`, fails when every step completes, and takes no other
+  expectation). `refused` is the opposite of `refused_by`: there the refusal is a known
+  defect and defers the case, here it is the right answer (a blend too large for its
+  faces, for example `199-*/round_past_the_end_face_is_refused`). `refused.fit_size`
+  (`value`, `tol`, `kind` `radius` (default), `scale` or `chord`, `source`) also requires the
+  largest size that builds, which a refusal reports with `fillet_gn_section_generator`
+  (`SolidError::FilletRefused`, WR-696): a refusal without a size fails it, and a refusal
+  with one is still an `ERROR` in a case that expects none.
 * **Verdicts**: `PASS`, `FAIL`, `UNCHECKED` (no expectations were supplied, or no check
   failed but one cannot be measured
   yet: `cylinder_faces_max` until solidcore has a cylinder surface kind), `ERROR` (a step
   returned an error other than `Unported`), `DEFERRED`. A step that reaches unported code
   defers the case on the unit in its `SolidError::Unported`; `fillet` has no Rust
+  `SmApiFilletEdges` yet and defers on `blend.fillet_executive_p1`; `sheet_corner` defers
+  on `no SM_API entry point` (sheet construction, corner joining and unfolding have no
+  adapter).
   `SmApiFilletEdges` yet and defers on `blend.fillet_executive_p1`; `offset_faces` defers
   on `no SM_API entry point`, since `SM_API` only offsets or shells whole bodies
   (`SmApiOffsetBrepFull`, `SmApiShellBrepFull`); `sweep` defers on
@@ -932,9 +948,11 @@ nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-cor
 
 ## Notes
 
-* Cases run sequentially in one process: the C++ kernel has global state. A
+* A unit's cases run sequentially in one process: the C++ kernel has global state. A
   C++ crash (segfault) kills the run; use `--filter` to bisect (`--fuzz` runs
-  its cases in child processes instead).
+  its cases in child processes instead). Several units each run in a child process
+  of their own (`--jobs`), so one unit's latched C++ state (ND-3's `sdStaticStep`)
+  never reaches another's forked `fresh_process` children.
 * Rust panics in a runner are caught and reported as a failing case.
 * `solidcore-ffi` without feature `cpp` is an empty crate that builds for
   `wasm32-unknown-unknown`; the difftest binary refuses to run without `cpp`, except for `--solidcraft-cases` (Rust only).

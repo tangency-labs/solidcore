@@ -317,7 +317,7 @@ pub fn min_edge_bbox_size(k: &Kernel, b: &Brep) -> Result<(f64, Option<EdgeId>)>
                     bbox = n;
                 }
             }
-            Err(err) if err.is_unported() => return Err(err),
+            Err(err) if err.is_unported_or_cancelled() => return Err(err),
             Err(_) => {}
         }
         let diff = bbox.size();
@@ -362,10 +362,11 @@ pub fn set_tolerance(
             k,
             &mut *b,
             BoundingBoxOptions::default(),
-        ))?
-        .unwrap_or_default();
-        let mut size = bbox.size().length();
-        if size >= 1.0e15 || size <= 0.0 {
+        ))?;
+        // fork 60a8a51: a box that cannot be computed is no size, as an absurd one is not
+        let no_box = bbox.is_none() && k.fixes.brep_edit_statuses_pass_on;
+        let mut size = bbox.unwrap_or_default().size().length();
+        if no_box || size >= 1.0e15 || size <= 0.0 {
             size = 1.0;
         }
         // the SmZoneTol3d assignment takes fabs of a positive value
@@ -432,7 +433,7 @@ pub fn rebuild_uv_trim_curves(k: &Kernel, b: &mut Brep) -> Result<()> {
         // rebuild UVTrimCurve
         match eu2::rebuild_uv_trim_curve(k, b, eu) {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(e) => ret = Err(e),
         }
     }
@@ -460,13 +461,19 @@ pub fn check_and_fix_uv_trim_curves(k: &Kernel, b: &mut Brep) -> Result<()> {
 }
 
 /// `SwapUV`: claims an unlocked mark and swaps the UV parameterisation of every face
-/// (`sm_SwapFaceUV`, which skips faces already marked).
+/// (`sm_SwapFaceUV`, which skips faces already marked). Each face's and surface's
+/// edit notifications go through `env` ([`p1::swap_face_uv`]).
 ///
 /// # Errors
 ///
 /// [`SolidError::Unported`] from `sm_SwapFaceUV` (`SmFace::SwapUV`,
 /// `topology.face_p1`).
-pub fn swap_uv(k: &mut Kernel, b: &mut Brep, marks: &mut Marks) -> Result<()> {
+pub fn swap_uv(
+    k: &mut Kernel,
+    b: &mut Brep,
+    marks: &mut Marks,
+    env: &mut NotifyEnv<'_>,
+) -> Result<()> {
     let faces = brep_faces(b)?;
 
     // increment and lock an unlocked mark
@@ -478,8 +485,8 @@ pub fn swap_uv(k: &mut Kernel, b: &mut Brep, marks: &mut Marks) -> Result<()> {
     for f in faces {
         // swap the face's orientation - watch for composites (sm_SwapFaceUV is void:
         // only an unported callee stops the loop)
-        if let Err(e) = p1::swap_face_uv(k, b, marks, f, mark) {
-            if e.is_unported() {
+        if let Err(e) = p1::swap_face_uv(k, b, marks, f, mark, env) {
+            if e.is_unported_or_cancelled() {
                 res = Err(e);
                 break;
             }
@@ -762,7 +769,7 @@ impl RegionNotifyState {
 /// carries its `SmTopology` part and attributes; such a caller models neither, so the
 /// notification runs on a default record for every object of the B-rep, keyed by its
 /// arena identity (`loopuse::notify_ref`), and an attribute store that is empty, or
-/// holds the B-rep's own attributes for the edit ([`Self::with_attributes_of`]). The records are never read back: they exist so that
+/// holds the B-rep's own attributes for the edit (`Self::with_attributes_of`). The records are never read back: they exist so that
 /// `SmTopology::Notify`'s flag propagation finds both objects, as upstream it always does.
 /// The identities are unique within one B-rep only.
 #[derive(Debug, Default)]
@@ -810,6 +817,35 @@ impl ArenaNotifyState {
         }
     }
 
+    /// [`Self::with_attributes_of`] reusing the records of an earlier state
+    /// ([`Self::into_records`]): they end exactly as [`Self::new`] makes them, a default
+    /// record for every object of `b` and the B-rep and no other, but only the records
+    /// the earlier edit changed are reset and only the difference in keys is removed or
+    /// added. For a caller that makes many edits of a large B-rep in a row (the stitch's
+    /// glues), where a fresh map per edit is quadratic.
+    pub(crate) fn with_attributes_of_reusing(
+        mut records: crate::topology::topology::NotifyRecords,
+        b: &mut Brep,
+    ) -> Self {
+        use crate::topology::loopuse::notify_ref;
+        let mut keys: Vec<_> = brep_entities(b)
+            .into_iter()
+            .map(|e| notify_ref(e).key)
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        records.reset_to_keys(&keys);
+        Self {
+            records,
+            attributes: b.take_attributes(),
+        }
+    }
+
+    /// The records, for [`Self::with_attributes_of_reusing`].
+    pub(crate) fn into_records(self) -> crate::topology::topology::NotifyRecords {
+        self.records
+    }
+
     /// [`Self::new`] holding `b`'s own attributes ([`Brep::add_attribute`], keyed by the
     /// same arena identities), so the edit's notifications propagate them with SMLib's
     /// handlers, as upstream's live on the objects the edit changes. `b` holds none
@@ -819,6 +855,15 @@ impl ArenaNotifyState {
         let mut state = Self::new(b);
         state.attributes = b.take_attributes();
         state
+    }
+
+    /// A default record for every object of `b` (and the B-rep itself) under its
+    /// [`copy_source_ref`] identity, disjoint from the arena identities [`Self::seed`]
+    /// gives: for a second B-rep notified in the same state.
+    pub(crate) fn seed_tagged(&mut self, b: &Brep) {
+        for e in brep_entities(b) {
+            self.records.or_default(copy_source_ref(e).key);
+        }
     }
 
     /// Gives `b` the attributes this state's notifications left on its live objects
@@ -898,7 +943,7 @@ impl CopyNotifyState {
     /// both B-reps' attributes. Pass an empty `dest` for a copy constructor.
     ///
     /// # Errors
-    /// Those of [`seed_brep_attributes`] (a B-rep store that names no object).
+    /// Those of `seed_brep_attributes` (a B-rep store that names no object).
     pub fn with_attributes_of(src: &mut Brep, dest: &mut Brep) -> Result<Self> {
         let mut state = Self::default();
         // (the destination's records, and under the destination identities those of
@@ -1175,7 +1220,7 @@ fn add_to_tree(
     .ok_or(null_deref("B-rep cache without spatial tree"))?;
     match tree.add_to_spatial_tree(bbox, object, NodeGeomType::Default) {
         Ok(()) => return Ok(()),
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => {}
     }
     let kernel = s.kernel;
@@ -1186,7 +1231,7 @@ fn add_to_tree(
     };
     let cache = match rebuilt {
         Ok(c) => Some(c),
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => None,
     };
     if let Some(s) = slot.as_deref_mut() {
@@ -1319,7 +1364,7 @@ fn rm_from_spatial_tree(
             };
             let bbox = match curve.calculate_bounding_box(k, &domain, req, true) {
                 Ok(boxes) => boxes.normal.unwrap_or_else(Extent3d::new),
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => Extent3d::new(),
             };
             rm_from_tree(slot, TreeKind::Curve, &bbox, CacheObject::Curve(e))
@@ -1356,7 +1401,7 @@ fn edge_box(k: &Kernel, b: &Brep, e: EdgeId) -> Result<Extent3d> {
     };
     match qedge::calculate_bounding_box(k, b, e, req, false) {
         Ok(boxes) => Ok(boxes.normal.unwrap_or_else(Extent3d::new)),
-        Err(err) if err.is_unported() => Err(err),
+        Err(err) if err.is_unported_or_cancelled() => Err(err),
         Err(_) => Ok(Extent3d::new()),
     }
 }
@@ -1366,7 +1411,7 @@ fn edge_box(k: &Kernel, b: &Brep, e: EdgeId) -> Result<Extent3d> {
 fn face_box(k: &Kernel, b: &Brep, f: FaceId) -> Result<Extent3d> {
     match qface1::calculate_bounding_box(k, b, f, false) {
         Ok(bbox) => Ok(bbox),
-        Err(err) if err.is_unported() => Err(err),
+        Err(err) if err.is_unported_or_cancelled() => Err(err),
         Err(_) => Ok(Extent3d::new()),
     }
 }
@@ -2319,7 +2364,7 @@ fn shell_transfer_children(k: &mut Kernel, b: &mut Brep, from: ShellId, to: Shel
 // ---- merging curves into faces ------------------------------------------------------------
 
 /// What [`merge_curves_on_surface`] needs of the caller's classification handles, on
-/// top of [`CurveOnClassifyObjects`] (which includes [`ClassGeometry`]) and
+/// top of [`CurveOnClassifyObjects`](crate::query::face::p2::CurveOnClassifyObjects) (which includes [`ClassGeometry`]) and
 /// [`MergeIntervalBrep`]: the adapter holds the B-rep the curves merge into, which
 /// upstream's `MergeIntervals` edits through the classification's topology pointers.
 pub trait MergeCurvesObjects<O: ClassObject>:
@@ -2482,7 +2527,7 @@ fn merge_curves_body<O: ClassObject + Copy>(
             // (the new faces made before a failure are kept, as upstream's list)
             let (new_faces, r) = merge_intervals(k, objects, &mut cc)?;
             if let Err(e) = r {
-                if e.is_unported() {
+                if e.is_unported_or_cancelled() {
                     return Err(e);
                 }
             }
@@ -2716,7 +2761,7 @@ pub fn mate_lamina_edge_to_surface(
         domain.expand_absolute(domain.size().length() * surface_extension_factor);
         // status ignored
         if let Err(e) = p.adjust_step_uv_domain(&domain) {
-            if e.is_unported() {
+            if e.is_unported_or_cancelled() {
                 return Err(e);
             }
         }
@@ -2865,28 +2910,37 @@ pub fn mate_lamina_edge_to_surface(
     // length curves.
     let ccw_trim = sol_ccw.start.param(0)?;
     let mut ccw_trim_ivl = ccw_ext.natural_interval();
-    let _ = if ccw_orient == OrientType::Same {
+    // (fork 60a8a51 passes both interval statuses on: `SER`)
+    let set = if ccw_orient == OrientType::Same {
         ccw_trim_ivl.set_min_max(ccw_trim, ccw_trim_ivl.max())
     } else {
         ccw_trim_ivl.set_min_max(ccw_trim_ivl.min(), ccw_trim)
     };
+    ignore_status(crate::error::passed_on(
+        set,
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     // may snap sIvl by tol to existing knots
     match ccw_ext.trim(k, &mut ccw_trim_ivl, TrimMode::Notify) {
         Ok(()) => {}
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(()),
     }
 
     let cw_trim = sol_cw.start.param(0)?;
     let mut cw_trim_ivl = cw_ext.natural_interval();
-    let _ = if cw_orient == OrientType::Same {
+    let set = if cw_orient == OrientType::Same {
         cw_trim_ivl.set_min_max(cw_trim_ivl.min(), cw_trim)
     } else {
         cw_trim_ivl.set_min_max(cw_trim, cw_trim_ivl.max())
     };
+    ignore_status(crate::error::passed_on(
+        set,
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     match cw_ext.trim(k, &mut cw_trim_ivl, TrimMode::Notify) {
         Ok(()) => {}
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(()),
     }
 
@@ -3076,7 +3130,11 @@ fn set_vertex_point(b: &mut Brep, env: &mut NotifyEnv<'_>, v: VertexId, p: Point
 /// whose NURB `GetOrCreateGwNurbPointer` makes (`MakeNurb`, the `SmLine` override; status
 /// ignored) when missing. A curve of another kind is [`SolidError::InvalidInput`].
 fn uv_trim_curve_copy(k: &Kernel, b: &mut Brep, eu: EdgeuseId) -> Result<BSplineCurve> {
-    let _ = eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+    let fetched = eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+    // (fork 60a8a51 passes this status on: `SER`)
+    if k.fixes.brep_edit_statuses_pass_on {
+        fetched.status?;
+    }
     let curve = eu1::uv_trim_curve(b, eu)?
         .0
         .ok_or(null_deref("edge use without UV trim curve"))?;
@@ -3113,7 +3171,9 @@ fn trim_uv_trim_curve(k: &Kernel, b: &mut Brep, eu: EdgeuseId, ivl: &Extent1d) -
     // may snap sIvl by tol to existing knots
     let mut trim_ivl = *ivl;
     match curve.trim(k, &mut trim_ivl, TrimMode::Notify) {
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
+        // (fork 60a8a51 passes the trim's status on: `SER`)
+        Err(e) if k.fixes.brep_edit_statuses_pass_on => Err(e),
         _ => Ok(()),
     }
 }

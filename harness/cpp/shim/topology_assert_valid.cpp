@@ -158,8 +158,8 @@ SmBrep* primitive(const double* in, int64_t n, SmStatus& status) {
 // SmApiCreateBox(v, v, v; 10, 10, 10), 2 the same with that box's SmApiBrepCopy, 3
 // SmApiFilletEdges of edge `index` (GetEdges order, modulo the count) radius v (circular,
 // G1, thumbweight 1), 4 SmApiShellBrepFull distance v (extended, merged, no offset solid)
-// with face `index` (GetFaces order, modulo the count) open. The result, or NULL with
-// `status` on failure.
+// with face `index` (GetFaces order, modulo the count) open, 5 SmApiOffsetBrepFull
+// distance v (extended, merged; #2111). The result, or NULL with `status` on failure.
 SmBrep* copy_operation(SmBrep* copy, int kind, size_t index, double v, SmStatus& status) {
     SmBrep* result = nullptr;
     if (kind == 1 || kind == 2) {
@@ -201,6 +201,17 @@ SmBrep* copy_operation(SmBrep* copy, int kind, size_t index, double v, SmStatus&
         if (status != SM_SUCCESS) { delete result; return nullptr; }
         return result;
     }
+    if (kind == 5) {
+        status = (SmStatus)SmApiOffsetBrepFull(copy, v, TRUE, TRUE, result);
+        // (the result may be the consumed copy itself)
+        if (status != SM_SUCCESS) {
+            if (result && result != copy) delete result;
+            delete copy;
+            return nullptr;
+        }
+        if (result != copy) delete copy;
+        return result;
+    }
     status = SM_ERR;
     delete copy;
     return nullptr;
@@ -215,11 +226,15 @@ SmBrep* copy_operation(SmBrep* copy, int kind, size_t index, double v, SmStatus&
 // sequence of op 1 on the body's SmApiBrepCopy (no mutation), as a caller checks a copy
 // (#1584); op 4: the capi sequence of op 1 on the result of an operation on the body's
 // SmApiBrepCopy (`copy_operation`; args[2] is its kind, no mutation), as a caller checks
-// an edit of a copy (#1631). args: level, walk, mutation kind, index, value.
+// an edit of a copy (#1631); op 5: ValidateAndUpdateTolerances(FALSE, .., &reports,
+// level) after the mutation (status, violated-or-updated, max vertex/edge and
+// vertex/face gaps and their vertex uses, the reports, every vertex then edge tolerance
+// in graph order), then the capi sequence of op 1 on the updated body (#2111, WR-679).
+// args: level, walk, mutation kind, index, value.
 SC_EXPORT int32_t sc_topology_assert_valid_eval(int32_t op, const char* path, const double* input, int64_t n,
                                                const double* args, int64_t na, double* out, int64_t cap, int64_t* len) {
-    if (op < 0 || op > 4 || !input || n < 1 || !args || na != 5) return SC_ERR_ARG;
-    if (op == 4 && (args[2] < 1 || args[2] > 4)) return SC_ERR_ARG;
+    if (op < 0 || op > 5 || !input || n < 1 || !args || na != 5) return SC_ERR_ARG;
+    if (op == 4 && (args[2] < 1 || args[2] > 5)) return SC_ERR_ARG;
     if (op == 3 && args[2] != 0) return SC_ERR_ARG;
     SC_TRY
     Rd rd{input, 0};
@@ -276,6 +291,32 @@ SC_EXPORT int32_t sc_topology_assert_valid_eval(int32_t op, const char* path, co
                 for (size_t i = 0; i < g.faces.size(); i++)
                     if (g.faces[i] == face) at = (double)i;
                 values.push_back(at);
+            }
+        } else if (op == 5) {
+            SmAssertArray reports;
+            SmBoolean violated = FALSE;
+            double max_trim = 0, max_vertex_edge = 0, max_vertex_face = 0;
+            SmVertexuse *vertex_edge_use = NULL, *vertex_face_use = NULL;
+            const SmStatus st = built.brep->ValidateAndUpdateTolerances(
+                FALSE, violated, max_trim, max_vertex_edge, max_vertex_face, &reports, level, NULL, NULL,
+                &vertex_edge_use, &vertex_face_use);
+            values.push_back((double)st);
+            if (st == SM_SUCCESS) {
+                values.insert(values.end(), {flg(violated), max_vertex_edge, max_vertex_face});
+                put_id(values, identity(g, vertex_edge_use, built.brep));
+                put_id(values, identity(g, vertex_face_use, built.brep));
+                put_reports(values, g, built.brep, reports);
+                values.push_back((double)g.vertices.size());
+                for (SmVertex* v : g.vertices) values.push_back(v->GetTolerance());
+                values.push_back((double)g.edges.size());
+                for (SmEdge* e : g.edges) values.push_back(e->GetTolerance());
+                SmAssertArray pointers, asserts;
+                values.push_back((double)built.brep->ValidatePointers(&pointers, level));
+                put_reports(values, g, built.brep, pointers);
+                bool failed = false;
+                for (ULONG i = 0; i < pointers.GetSize(); i++) failed |= !pointers[i]->m_bOK;
+                values.push_back(failed ? -1.0 : flg(built.brep->AssertValid(&asserts, level, SM_WALK)));
+                put_reports(values, g, built.brep, asserts);
             }
         } else if (op == 0) {
             SmAssertArray reports;
