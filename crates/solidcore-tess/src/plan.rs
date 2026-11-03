@@ -130,13 +130,14 @@ impl TessPlan {
                     },
                     // No surface: every vertex's position and normal are the plan's own (checked
                     // by `malformed` above).
-                    None => match (f.fixed.get(k), f.normals.get(k)) {
-                        (Some(p), Some(n)) => (*p, *n),
-                        _ => {
+                    None => {
+                        if let (Some(p), Some(n)) = (f.fixed.get(k), f.normals.get(k)) {
+                            (*p, *n)
+                        } else {
                             why = Some(format!("vertex {k} has no position or normal"));
                             break;
                         }
-                    },
+                    }
                 };
                 positions.push(p);
                 normals.push(if f.flip { -n } else { n });
