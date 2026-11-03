@@ -71,7 +71,8 @@ fn offset_wave(k: &mut Kernel) -> Brep {
             .unwrap();
     let moved = offset_fixture::offset_full(k, &mut sheet, 0.5).unwrap();
     assert_eq!(moved.face_list().len(), 1);
-    let surface = moved.face(moved.face_list()[0]).unwrap().surface.as_ref().unwrap();
+    let face = moved.face(moved.face_list()[0]).unwrap();
+    let surface = face.surface.as_ref().unwrap();
     assert!(
         matches!(surface.kind(), SurfaceKind::OffsetSurface(_)),
         "the moved face is not on an offset surface"
@@ -85,7 +86,8 @@ fn default_kernel_gets_success_without_a_surface() {
     let mut k = Kernel::default();
     assert!(!k.fixes.approximate_surface_bezier_starter);
     let moved = offset_wave(&mut k);
-    let surface = moved.face(moved.face_list()[0]).unwrap().surface.as_ref().unwrap();
+    let face = moved.face(moved.face_list()[0]).unwrap();
+    let surface = face.surface.as_ref().unwrap();
     let tol = brep_approx_tol_3d(&k, &moved, SmallTopoType::NormalSize);
     for (subdivisions, copy) in CALLS {
         // as the pinned C++: success, no surface, nothing tested
