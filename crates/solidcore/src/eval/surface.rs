@@ -469,19 +469,13 @@ impl SurfaceEval {
     /// torus's ring or tube of radius zero). Refused with a typed error where that cannot be
     /// decided.
     pub fn collapse(&self, uv: [f64; 2], reach: f64) -> Result<Collapse, EvalError> {
-        let [u, v] = uv;
-        if !(u.is_finite() && v.is_finite()) {
-            return Err(EvalError::Unevaluable(format!(
-                "pole classification: parameters ({u}, {v}) not finite"
-            )));
-        }
-        if !(reach >= 0.0 && reach.is_finite()) {
-            return Err(EvalError::Invalid(format!(
-                "pole classification: reach {reach} is not a finite length"
-            )));
-        }
-        let (g, unit) = (super::collapse::gamma, super::collapse::ROUNDOFF);
-        let circle = super::collapse::circle;
+        super::collapse::check(uv, reach)?;
+        let v = uv[1];
+        let (g, unit, circle) = (
+            super::collapse::gamma,
+            super::collapse::UNIT,
+            super::collapse::circle,
+        );
         // The circle along u of radius `r`, rounded within `err`; v moves the point along a
         // straight line or a circle of radius `along_v` (a cylinder's and cone's generator never
         // stands still; a torus's tube does when its radius is zero).

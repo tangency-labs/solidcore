@@ -11,7 +11,7 @@
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // NaN-refusing tests
 
-use super::collapse::collapse;
+use super::collapse::collapsed;
 use super::spline::{EvalCurve, EvalSurface};
 use super::vec::VecExt;
 use super::EvalError;
@@ -406,7 +406,7 @@ pub fn unwrap(x: f64, near: f64, period: Option<f64>) -> f64 {
 /// along `d` does not move the point ([`super::collapse::collapse`] at no reach). Refused with
 /// a typed error where that cannot be decided, and for `d` past v.
 pub fn degenerate(s: &EvalSurface, uv: [f64; 2], d: usize) -> Result<bool, EvalError> {
-    collapse(s, uv, 0.0)?.along(d)
+    collapsed(s, uv, d, 0.0)
 }
 
 /// [`degenerate`], or collapsed to within `reach` mm: moving along `d` across the iso-line's
@@ -419,7 +419,7 @@ pub fn degenerate_within(
     d: usize,
     reach: f64,
 ) -> Result<bool, EvalError> {
-    collapse(s, uv, reach)?.along(d)
+    collapsed(s, uv, d, reach)
 }
 
 #[cfg(test)]

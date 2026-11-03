@@ -256,3 +256,315 @@ fn what_cannot_be_decided_is_refused() {
     let bad = spline([2, 2], &rows);
     assert!(collapse(&bad, [0.0, 0.0], 0.0).is_err());
 }
+
+// ---- Round 2 ----
+
+/// The tess test surfaces with no point somewhere (a weight with a root there): an exact
+/// cylinder of radius 3 about z whose rational profile's weight 3 (1 − 2u)² has its double
+/// root at u = 1/2, its homogeneous weights 3, −1, −1, 3 of both signs.
+fn cylinder_without_its_middle() -> EvalSurface {
+    let ctrl = vec![
+        [9.0, 0.0, 0.0, 3.0],
+        [-3.0, 0.0, 40.0, -1.0],
+        [-3.0, 0.0, -80.0, -1.0],
+        [9.0, 0.0, 120.0, 3.0],
+    ];
+    EvalSurface::Revolved {
+        profile: EvalCurve::new(3, vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], ctrl),
+        origin: Vec3::ZERO,
+        axis: Vec3::Z,
+        transform: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+        swap: false,
+    }
+}
+
+/// The plane z = 0, x = u, y = v over [0, 1]² as a rational bicubic whose weight
+/// (u − ½)² + (v − ½)² has its root at (½, ½), of both signs in its net.
+fn plane_without_its_middle() -> EvalSurface {
+    let a36 = [9.0, -3.0, -3.0, 9.0];
+    let ta36 = [0.0, 3.0, -6.0, 9.0];
+    let t3 = [0.0, 1.0, 2.0, 3.0];
+    let a12 = [3.0, -1.0, -1.0, 3.0];
+    let mut ctrl = Vec::new();
+    for j in 0..4 {
+        for i in 0..4 {
+            let x = ta36[i] + t3[i] * a12[j];
+            let y = a12[i] * t3[j] + ta36[j];
+            ctrl.push([x, y, 0.0, a36[i] + a36[j]]);
+        }
+    }
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+    EvalSurface::nurbs([3, 3], [knots.clone(), knots], [4, 4], ctrl)
+}
+
+/// The parabolic cylinder z = u² over [0, 1]² as a rational quartic-by-cubic with no point at
+/// (½, ½), of both signs in its net.
+fn parabola_without_its_middle() -> EvalSurface {
+    let ctrl: Vec<[f64; 4]> = [
+        [0, 0, 0, 36],
+        [9, 0, 0, 18],
+        [6, 0, 6, 12],
+        [9, 0, 0, 18],
+        [36, 0, 36, 36],
+        [0, 12, 0, 12],
+        [3, 6, 0, -6],
+        [-6, 4, 2, -12],
+        [-9, 6, -12, -6],
+        [12, 12, 12, 12],
+        [0, 0, 0, 12],
+        [3, -12, 0, -6],
+        [-6, -16, 2, -12],
+        [-9, -12, -12, -6],
+        [12, 0, 12, 12],
+        [0, 36, 0, 36],
+        [9, 18, 0, 18],
+        [6, 12, 6, 12],
+        [9, 18, 0, 18],
+        [36, 36, 36, 36],
+    ]
+    .iter()
+    .map(|c| c.map(f64::from))
+    .collect();
+    EvalSurface::nurbs(
+        [4, 3],
+        [
+            vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        ],
+        [5, 4],
+        ctrl,
+    )
+}
+
+/// R2-1: the weights asked about are the iso-line's own. A point away from the bad weight of
+/// the tess no-value surfaces classifies (no pole), exactly and within a reach: the net-wide
+/// "every weight positive" requirement refused them all. A net whose weights are all negative
+/// is as good as one whose weights are all positive, and a negative weight away from a pole row
+/// leaves the row a pole. Only a weight on the iso-line not certified non-zero is refused.
+#[test]
+fn only_the_iso_lines_own_weights_matter() {
+    let cyl = cylinder_without_its_middle();
+    for q in [[0.1, 0.3], [0.9, 2.0], [0.0, 0.0]] {
+        for reach in [0.0, 1e-6] {
+            assert_eq!(
+                collapse(&cyl, q, reach).unwrap(),
+                Collapse::Neither,
+                "{q:?} {reach}"
+            );
+        }
+    }
+    // On the circle with no point the profile point's weight is zero: refused.
+    assert!(collapse(&cyl, [0.5, 0.3], 0.0).is_err());
+    for s in [plane_without_its_middle(), parabola_without_its_middle()] {
+        for q in [[0.3, 0.7], [0.5, 0.25], [0.9, 0.5], [0.0, 1.0]] {
+            for reach in [0.0, 1e-6] {
+                assert_eq!(
+                    collapse(&s, q, reach).unwrap(),
+                    Collapse::Neither,
+                    "{q:?} {reach}"
+                );
+            }
+        }
+    }
+    // All weights negative: the cone's apex is the same pole.
+    let EvalSurface::Nurbs(n) = cone(10.0, [1.0, 2.0, 3.0]) else {
+        unreachable!()
+    };
+    let negated: Vec<[f64; 4]> = n.ctrl().iter().map(|h| h.map(|x| -x)).collect();
+    let neg = EvalSurface::nurbs(n.degree(), n.knots().clone(), n.count(), negated);
+    for reach in [0.0, 1e-6] {
+        assert_eq!(collapse(&neg, [0.0, 0.3], reach).unwrap(), Collapse::V);
+    }
+    // One weight of the rim made negative (far from the apex row): the apex is still a pole.
+    let mut ctrl = n.ctrl().to_vec();
+    ctrl[2 + 3] = ctrl[2 + 3].map(|x| -x); // u index 2 (the rim), v index 1 (the arc's middle)
+    let far = EvalSurface::nurbs(n.degree(), n.knots().clone(), n.count(), ctrl);
+    assert_eq!(collapse(&far, [0.0, 0.3], 0.0).unwrap(), Collapse::V);
+}
+
+/// R2-3: the bounds are the control points' bounding box (not twice the spread from the first)
+/// and the map's spectral bound (1 for the identity, not √3). A circle of diameter 0.8 is
+/// collapsed within 1.0; doubled by the map, within 1.7 and not 1.0. A row whose points lie at
+/// x = −e, e, −e (e = 1e-7) moves by at most 2e-7: collapsed within 2.1e-7, not 1.9e-7.
+#[test]
+fn reach_bounds_are_tight() {
+    let profile = EvalCurve::new(
+        1,
+        vec![0.0, 0.0, 1.0, 1.0],
+        vec![[0.4, 0.0, 0.0, 1.0], [0.4, 0.0, 1.0, 1.0]],
+    );
+    let identity = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    let doubled = [
+        [0.0, -2.0, 0.0, 5.0],
+        [2.0, 0.0, 0.0, -1.0],
+        [0.0, 0.0, 2.0, 0.0],
+    ];
+    let tube = |transform| EvalSurface::Revolved {
+        profile: profile.clone(),
+        origin: Vec3::ZERO,
+        axis: Vec3::Z,
+        transform,
+        swap: false,
+    };
+    assert_eq!(
+        collapse(&tube(identity), [0.5, 1.0], 1.0).unwrap(),
+        Collapse::V
+    );
+    assert_eq!(
+        collapse(&tube(identity), [0.5, 1.0], 0.79).unwrap(),
+        Collapse::Neither
+    );
+    assert_eq!(
+        collapse(&tube(doubled), [0.5, 1.0], 1.0).unwrap(),
+        Collapse::Neither
+    );
+    assert_eq!(
+        collapse(&tube(doubled), [0.5, 1.0], 1.7).unwrap(),
+        Collapse::V
+    );
+
+    let e = 1e-7;
+    let rows: Vec<Vec<([f64; 3], f64)>> = (0..3)
+        .map(|i| {
+            (0..3)
+                .map(|j| {
+                    let p = if i == 0 {
+                        [if j == 1 { e } else { -e }, 0.0, 0.0]
+                    } else {
+                        [f64::from(i), f64::from(j), f64::from(i * j)]
+                    };
+                    (p, 1.0)
+                })
+                .collect()
+        })
+        .collect();
+    let s = spline([2, 2], &rows);
+    assert!(degenerate_within(&s, [0.0, 0.4], 1, 2.1e-7).unwrap());
+    assert!(!degenerate_within(&s, [0.0, 0.4], 1, 1.9e-7).unwrap());
+    assert!(!degenerate(&s, [0.0, 0.4], 1).unwrap());
+}
+
+/// R2-5: a row collapsed over only part of its range (v in [0, ½] of a two-span quadratic: its
+/// first three points coincide, the fourth does not) is a pole of a face trimmed to that part,
+/// and not of the whole spline or of a face reaching past it.
+#[test]
+fn a_row_collapsed_over_part_of_its_range_is_a_pole_there() {
+    let c = [1.0, 2.0, 3.0];
+    let rows: Vec<Vec<([f64; 3], f64)>> = (0..3)
+        .map(|i| {
+            (0..4)
+                .map(|j| {
+                    let p = match (i, j) {
+                        (0, 3) => [1.0, 2.0, 4.0],
+                        (0, _) => c,
+                        _ => [
+                            1.0 + f64::from(i),
+                            2.0 + f64::from(j),
+                            3.0 + f64::from(i * j),
+                        ],
+                    };
+                    (p, 1.0)
+                })
+                .collect()
+        })
+        .collect();
+    let s = spline([2, 2], &rows); // v knots 0 0 0 ½ 1 1 1
+    let at = [0.0, 0.2];
+    assert!(collapsed_on(&s, at, 1, 0.0, Some((0.0, 0.5))).unwrap());
+    assert!(collapsed_on(&s, at, 1, 0.0, Some((0.1, 0.4))).unwrap());
+    assert!(!collapsed_on(&s, at, 1, 0.0, Some((0.25, 0.75))).unwrap());
+    assert!(!collapsed(&s, at, 1, 0.0).unwrap());
+}
+
+/// R2-6: knots with an empty span where one is needed are malformed (Invalid), not a point off
+/// the surface; a revolution's axis must be of unit length.
+#[test]
+fn malformed_knots_and_axes_are_named() {
+    let rows = vec![vec![([0.0, 0.0, 0.0], 1.0); 3]; 3];
+    let ctrl: Vec<[f64; 4]> = rows
+        .iter()
+        .flatten()
+        .map(|(p, w)| [p[0], p[1], p[2], *w])
+        .collect();
+    let flat = EvalSurface::nurbs(
+        [2, 2],
+        [vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], vec![1.0; 6]],
+        [3, 3],
+        ctrl,
+    );
+    assert!(matches!(
+        collapse(&flat, [0.5, 1.0], 0.0),
+        Err(EvalError::Invalid(_))
+    ));
+    let long = EvalSurface::Revolved {
+        profile: EvalCurve::new(
+            1,
+            vec![0.0, 0.0, 1.0, 1.0],
+            vec![[0.0, 0.0, 0.0, 1.0], [1.0, 0.0, 1.0, 1.0]],
+        ),
+        origin: Vec3::ZERO,
+        axis: Vec3::new(0.0, 0.0, 2.0),
+        transform: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+        swap: false,
+    };
+    assert!(matches!(
+        collapse(&long, [0.0, 0.0], 0.0),
+        Err(EvalError::Invalid(_))
+    ));
+}
+
+/// The cone's apex as a revolution with its parameters swapped (u the angle) and a rigid map off
+/// the origin: collapsed along u there. A row that coincides only to an importer's tolerance
+/// (spread by 1e-10 of its size) is no pole to rounding, and one within a reach covering it.
+#[test]
+fn a_swapped_mapped_revolution_and_a_producer_tolerance_row() {
+    let profile = EvalCurve::new(
+        2,
+        vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        vec![
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [10.0, 0.0, 10.0, 1.0],
+        ],
+    );
+    let (s, c) = 0.6f64.sin_cos();
+    let s = EvalSurface::Revolved {
+        profile,
+        origin: Vec3::ZERO,
+        axis: Vec3::Z,
+        transform: [
+            [c, -s, 0.0, 100.0],
+            [s, c, 0.0, -50.0],
+            [0.0, 0.0, 1.0, 7.0],
+        ],
+        swap: true,
+    };
+    for a in [0.0, 1.3, 5.0] {
+        assert_eq!(collapse(&s, [a, 0.0], 0.0).unwrap(), Collapse::U);
+        assert_eq!(collapse(&s, [a, 0.5], 1e-6).unwrap(), Collapse::Neither);
+    }
+
+    let EvalSurface::Nurbs(n) = cone(10.0, [1.0, 2.0, 3.0]) else {
+        unreachable!()
+    };
+    let mut ctrl = n.ctrl().to_vec();
+    // The apex row (u index 0) spread by ±1e-9 mm (1e-10 of the cone's size).
+    for (j, h) in ctrl.iter_mut().enumerate().filter(|(k, _)| k % 3 == 0) {
+        h[0] += if j % 2 == 0 { 1e-9 } else { -1e-9 } * h[3];
+    }
+    let s = EvalSurface::nurbs(n.degree(), n.knots().clone(), n.count(), ctrl);
+    assert_eq!(collapse(&s, [0.0, 0.3], 0.0).unwrap(), Collapse::Neither);
+    assert_eq!(collapse(&s, [0.0, 0.3], 1e-6).unwrap(), Collapse::V);
+}
