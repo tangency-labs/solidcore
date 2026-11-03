@@ -23,7 +23,7 @@
 //! | [`FilletBrep::set_up_rail_point`]            | `SmFilletGeom::SetUpRailPoint`            |
 //! | [`move_tsp`]                                 | `sm_MoveTSP`                              |
 //! | [`FilletBrep::rail_edgeuse_intersect`]       | `SmFilletGeom::RailEdgeuseIntersect`      |
-//! | [`FilletBrep::trim_original_surfaces`]       | `SmFilletGeom::TrimOriginalSurfaces`      |
+//! | [`FilletBrep::trim_original_surfaces_with_solver`] | `SmFilletGeom::TrimOriginalSurfaces` |
 //! | [`FilletBrep::record_fillet_error`], [`FilletBrep::record_fillet_error_in`] | `SmFilletGeom::RecordFilletError` |
 //! | [`FilletBrep::new`](super::p1::FilletBrep::new) (in part 1) | `SmFilletBrep::SmFilletBrep` (CO-PORTED in `blend.fillet_geom_p1`) |
 //!
@@ -118,7 +118,7 @@ use crate::topology::edge;
 use crate::topology::edgeuse::p1::{self as eu1, primary_edgeuse};
 use crate::topology::edgeuse::p3::{evaluate_binormal, BinormalOptions};
 use crate::topology::face::p2 as face2;
-use crate::topology::topology_traverser::{collect_faces, Entity, FaceTraversalMarks, Marks};
+use crate::topology::topology_traverser::{collect_faces, Entity, FaceTraversalMarks};
 use crate::topology::{Brep, EdgeId, EdgeuseId, FaceId, VertexId, VertexuseId};
 
 use super::p1::{
@@ -142,7 +142,7 @@ const OP_RAIL_V: &str = "blend::fillet_geom::p6::FilletBrep::rail_vertex";
 const OP_SETUP: &str = "blend::fillet_geom::p6::FilletBrep::set_up_rail_point";
 const OP_MOVE: &str = "blend::fillet_geom::p6::move_tsp";
 const OP_RAIL_EU: &str = "blend::fillet_geom::p6::FilletBrep::rail_edgeuse_intersect";
-const OP_TRIM: &str = "blend::fillet_geom::p6::FilletBrep::trim_original_surfaces";
+const OP_TRIM: &str = "blend::fillet_geom::p6::FilletBrep::trim_original_surfaces_with_solver";
 const OP_ERROR: &str = "blend::fillet_geom::p6::FilletBrep::record_fillet_error";
 
 /// Object handle recorded by [`FilletBrep::record_fillet_error_in`] into the
@@ -291,8 +291,8 @@ pub fn move_tsp<T>(
     Ok(())
 }
 
-/// The inputs of [`FilletBrep::trim_original_surfaces`] that upstream reaches through
-/// the solver's executive and the B-reps' contexts.
+/// The inputs of [`FilletBrep::trim_original_surfaces_with_solver`] that upstream reaches
+/// through the solver's executive and the B-reps' contexts.
 pub struct TrimOriginalSurfacesEnv<'a> {
     /// `GetFilletExecutive()->GetTopologyIntersector().GetBrepMate(pFBEdge)`: the
     /// target B-rep edge mated to a fillet B-rep edge.
@@ -344,33 +344,6 @@ impl<M: TrimOriginalSurfacesMarks> FaceTraversalMarks for TrimTraversalMarks<'_,
 
     fn mark(&mut self, k: &Kernel, entity: Entity, mark: MarkType) {
         self.marks.mark(k, self.body, entity, mark);
-    }
-}
-
-struct IndexedTrimMarks<'a> {
-    fillet: &'a mut Marks,
-    target: &'a mut Marks,
-}
-
-impl TrimOriginalSurfacesMarks for IndexedTrimMarks<'_> {
-    fn is_marked(
-        &self,
-        k: &Kernel,
-        body: TrimOriginalBody,
-        entity: Entity,
-        mark: MarkType,
-    ) -> bool {
-        match body {
-            TrimOriginalBody::Fillet => self.fillet.is_marked(k, entity, mark),
-            TrimOriginalBody::Target => self.target.is_marked(k, entity, mark),
-        }
-    }
-
-    fn mark(&mut self, k: &Kernel, body: TrimOriginalBody, entity: Entity, mark: MarkType) {
-        match body {
-            TrimOriginalBody::Fillet => self.fillet.mark(k, entity, mark),
-            TrimOriginalBody::Target => self.target.mark(k, entity, mark),
-        }
     }
 }
 
@@ -2084,7 +2057,8 @@ impl FilletBrep {
     /// the target faces reachable from its face without crossing marked edges (marked
     /// with the target context's mark). Unless one of those faces is the use's
     /// radial face (the trim leaked), they are added to `deleted`. Faces are added
-    /// once each.
+    /// once each. The geometry's solver is the retained `solver`, whose id is
+    /// `solver_id`; the marks are body-qualified (`marks`).
     ///
     /// # Errors
     ///
@@ -2092,47 +2066,8 @@ impl FilletBrep {
     /// `SM_ERR_NULL_POINTER` without the target edge's curve;
     /// [`SolidError::InvalidInput`] without solver, rails, mark locks, the target
     /// context's mark lock, or a fillet edge without primary edge use or curve
-    /// (upstream dereferences `NULL`); those of the traversals, binormal evaluations
-    /// and `DropPoint`.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn trim_original_surfaces(
-        &self,
-        k: &Kernel,
-        g: FilletGeomId,
-        fillet_brep: &mut Brep,
-        fillet_marks: &mut Marks,
-        target: &mut Brep,
-        target_marks: &mut Marks,
-        kept: &mut Vec<FaceId>,
-        deleted: &mut Vec<FaceId>,
-        mark_locks: &[MarkLock],
-        env: &TrimOriginalSurfacesEnv<'_>,
-        solvers: &[FilletSolver],
-    ) -> Result<()> {
-        let mut marks = IndexedTrimMarks {
-            fillet: fillet_marks,
-            target: target_marks,
-        };
-        self.trim_original_surfaces_resolved(
-            k,
-            g,
-            fillet_brep,
-            target,
-            &mut marks,
-            kept,
-            deleted,
-            mark_locks,
-            env,
-            |id| solver_of(solvers, id, OP_TRIM),
-        )
-    }
-
-    /// Trim original surfaces using one retained solver and body-qualified marks.
-    /// The solver is checked at the same point as the indexed entrypoint's lookup.
-    ///
-    /// # Errors
-    ///
-    /// Those of [`Self::trim_original_surfaces`], including a mismatched solver id.
+    /// (upstream dereferences `NULL`), or when the geometry's solver id is not
+    /// `solver_id`; those of the traversals, binormal evaluations and `DropPoint`.
     #[allow(clippy::too_many_arguments)]
     pub fn trim_original_surfaces_with_solver(
         &self,
@@ -3299,122 +3234,4 @@ mod tests {
         assert!(records.is_marked(&k, TrimOriginalBody::Target, Entity::Face(face), mark));
     }
 
-    #[test]
-    fn trim_original_surfaces_skips_rails_without_mated_edges() {
-        let mut k = Kernel::default();
-        let mut fb = FilletBrep::new();
-        let (g, rails) = two_rail_geom(&mut fb, &k);
-        let solvers = [solver(false)];
-        let lock = MarkLock::new(core::slice::from_mut(&mut k.context), 0, ALL_MARKS).unwrap();
-        let locks = [lock];
-
-        // a fillet B-rep edge (a wire: no face) for rail 0, its curve owned by it
-        let mut fillet = Brep::new();
-        let a = fillet.add_vertex(Point3::new(0.0, 0.0, 0.0)).unwrap();
-        let b = fillet.add_vertex(Point3::new(1.0, 0.0, 0.0)).unwrap();
-        let fe = fillet.add_edge(a, b).unwrap();
-        let key = |e: EdgeId| ObjectRef {
-            type_code: 16001,
-            key: ObjectKey(u64::from(e.index())),
-        };
-        let mut c = line(
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-            0.0,
-            1.0,
-            3,
-        );
-        let _ = c.set_owner(Some(key(fe)), None);
-        fillet.edge_mut(fe).unwrap().curve = Some(c);
-        fb.fillet_edge_mut(rails[0]).unwrap().fillet_brep_edge1 = Some(fe);
-
-        let mut target = Brep::new();
-        let (mut fm, mut tm) = (Marks::default(), Marks::default());
-        let (mut kept, mut deleted) = (Vec::new(), Vec::new());
-        let unmated = |_: EdgeId| None;
-        let env = TrimOriginalSurfacesEnv {
-            brep_mate: &unmated,
-            fillet_edge_key: &key,
-            target_context: Some(0),
-        };
-        fb.trim_original_surfaces(
-            &k,
-            g,
-            &mut fillet,
-            &mut fm,
-            &mut target,
-            &mut tm,
-            &mut kept,
-            &mut deleted,
-            &locks,
-            &env,
-            &solvers,
-        )
-        .unwrap();
-        assert!(kept.is_empty() && deleted.is_empty());
-
-        // mated to a target edge without faces: the (empty) fillet faces are collected,
-        // the non-manifold target edge is skipped
-        let ta = target.add_vertex(Point3::new(0.0, 0.0, 0.0)).unwrap();
-        let tb = target.add_vertex(Point3::new(1.0, 0.0, 0.0)).unwrap();
-        let te = target.add_edge(ta, tb).unwrap();
-        let mated = move |_: EdgeId| Some(te);
-        let env = TrimOriginalSurfacesEnv {
-            brep_mate: &mated,
-            fillet_edge_key: &key,
-            target_context: Some(0),
-        };
-        let err = fb
-            .trim_original_surfaces(
-                &k,
-                g,
-                &mut fillet,
-                &mut fm,
-                &mut target,
-                &mut tm,
-                &mut kept,
-                &mut deleted,
-                &locks,
-                &env,
-                &solvers,
-            )
-            .unwrap_err();
-        // the fillet B-rep edge has no edge use (upstream dereferences NULL)
-        assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
-
-        // no solver, no mark locks
-        let err = fb
-            .trim_original_surfaces(
-                &k,
-                g,
-                &mut fillet,
-                &mut fm,
-                &mut target,
-                &mut tm,
-                &mut kept,
-                &mut deleted,
-                &[],
-                &env,
-                &solvers,
-            )
-            .unwrap_err();
-        assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
-        fb.geom_mut(g).unwrap().solver = None;
-        let err = fb
-            .trim_original_surfaces(
-                &k,
-                g,
-                &mut fillet,
-                &mut fm,
-                &mut target,
-                &mut tm,
-                &mut kept,
-                &mut deleted,
-                &locks,
-                &env,
-                &solvers,
-            )
-            .unwrap_err();
-        assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
-    }
 }
