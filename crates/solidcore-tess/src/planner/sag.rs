@@ -483,50 +483,15 @@ pub(crate) fn flip(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use solidcore::eval::EvalCurve;
-
-    /// A cylinder of radius 3 along z, 40 long, whose profile is a rational quadratic with weights
-    /// (1, -1, 1): its weight vanishes at the profile's middle, so the surface has no point on the
-    /// circle u = 0.5 and one everywhere else.
-    pub(crate) fn cylinder_without_its_middle() -> EvalSurface {
-        let s = EvalSurface::Revolved {
-            profile: EvalCurve::new(
-                2,
-                vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
-                vec![
-                    [3.0, 0.0, 0.0, 1.0],
-                    [-3.0, 0.0, -20.0, -1.0],
-                    [3.0, 0.0, 40.0, 1.0],
-                ],
-            ),
-            origin: solidcore::Vec3::ZERO,
-            axis: solidcore::Vec3::Z,
-            transform: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ],
-            swap: false,
-        };
-        assert!(
-            s.derivs(0.5, 0.3).is_none(),
-            "the weight vanishes at the middle"
-        );
-        assert!(
-            s.derivs(0.25, 0.3).is_some() && s.derivs(0.75, 0.3).is_some(),
-            "and nowhere else"
-        );
-        s
-    }
 
     /// Two triangles of the strip u in [0, 1], v in [0, 1] whose inner side, the diagonal, has its
     /// middle on the circle the surface has no point on: refinement stops there and names it,
     /// leaving the triangles as they were.
     #[test]
     fn refine_names_the_middle_the_surface_does_not_evaluate_at() {
-        let s = cylinder_without_its_middle();
+        let s = super::super::refusals::cylinder_without(0.5);
         let mut uv = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
         let fixed: Vec<Vec3> = uv
             .iter()
@@ -546,7 +511,7 @@ pub(crate) mod tests {
     /// named, not left out of the check.
     #[test]
     fn refine_names_a_node_the_surface_does_not_evaluate_at() {
-        let s = cylinder_without_its_middle();
+        let s = super::super::refusals::cylinder_without(0.5);
         let mut uv = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]];
         let fixed: Vec<Vec3> = uv
             .iter()
@@ -564,52 +529,5 @@ pub(crate) mod tests {
             flip(&s, 0.01, 1e-9, &fixed, &uv, &mut tris),
             Err(NoValue([0.5, 0.5]))
         );
-    }
-
-    /// A face on that surface, its boundary the circles u = 0 and u = 1 joined along v = 0 and
-    /// v = 1 (a quarter of a turn, its nodes from the edges): whatever layout meshes it puts nodes
-    /// or middles inside, where the surface stops at u = 0.5. The face is refused with the point,
-    /// not meshed around it, and not filled leniently: no layout can mesh a surface that is not
-    /// there.
-    #[test]
-    fn a_face_whose_surface_refuses_an_inner_point_is_refused_whole() {
-        let s = cylinder_without_its_middle();
-        let quarter = std::f64::consts::FRAC_PI_2;
-        let mut uv: Vec<[f64; 2]> = Vec::new();
-        uv.extend((0..8).map(|k| [0.0, quarter * f64::from(k) / 8.0]));
-        uv.extend([0.0, 0.25, 0.75].map(|u| [u, quarter]));
-        uv.extend((0..8).map(|k| [1.0, quarter * (1.0 - f64::from(k) / 8.0)]));
-        uv.extend([1.0, 0.75, 0.25].map(|u| [u, 0.0]));
-        // Counter-clockwise in (u, v): up u = 0 is clockwise, so reverse.
-        uv.reverse();
-        let pts: Vec<Vec3> = uv
-            .iter()
-            .map(|q| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))
-            .collect::<Option<_>>()
-            .unwrap_or_default();
-        assert_eq!(pts.len(), uv.len());
-        let loops = [super::super::seam::Loop { uv, pts }];
-        let rules = super::super::size::Rules::new(0.01, 40.0, None);
-        let r = super::super::plan_or_fill(
-            0,
-            "revolution",
-            &s,
-            &loops,
-            &rules,
-            (1.0, [40.0, 3.0]),
-            0.0,
-            None,
-        );
-        match r {
-            Err(e) => assert!(
-                e.to_string().contains("the surface does not evaluate at"),
-                "{e}"
-            ),
-            Ok((fp, stats)) => panic!(
-                "meshed with {} triangles, lenient {:?}",
-                fp.triangles.len(),
-                stats.lenient
-            ),
-        }
     }
 }

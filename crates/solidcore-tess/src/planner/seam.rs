@@ -445,7 +445,7 @@ fn seam_nodes(
     while i + 1 < ys.len() {
         let (a, b) = (ys[i], ys[i + 1]);
         if ys.len() < MAX_SEAM_NODES
-            && !super::uv::fine_between(s, rules, h, uv(a), uv(b))
+            && !super::uv::fine_between(s, rules, h, uv(a), uv(b))?
             && b - a > 1e-12 * (1.0 + a.abs())
         {
             ys.insert(i + 1, 0.5 * (a + b));
@@ -469,13 +469,13 @@ mod tests {
     use super::*;
 
     /// A seamless face on a revolution whose surface has no point on the circle u = 0.5 (see
-    /// [`super::super::sag::tests::cylinder_without_its_middle`]): its two loops, the circles
+    /// [`super::super::refusals::cylinder_without`]): its two loops, the circles
     /// u = 0 and u = 1 a whole turn round, wind round it and are cut along a line v = const from
     /// u = 0 to u = 1. That line's node at u = 0.5 does not evaluate: the cut names it, not drops
     /// it from the line.
     #[test]
     fn the_cut_names_a_node_the_surface_does_not_evaluate_at() {
-        let s = super::super::sag::tests::cylinder_without_its_middle();
+        let s = super::super::refusals::cylinder_without(0.5);
         let tau = std::f64::consts::TAU;
         let n = 16;
         let circle = |u: f64, up: bool| {

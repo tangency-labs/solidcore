@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use crate::vec::VecExt as _;
 use solidcore_record::Vec3;
 
+use super::NoValue;
 use super::size::Turn;
 use spade::handles::FixedVertexHandle;
 use spade::{
@@ -33,8 +34,9 @@ const SAG_ROUNDS: usize = 16;
 
 /// The surface, for refining where the triangles leave it.
 pub(crate) struct Sag<'a> {
-    /// Point and unit normal (when not degenerate) at (u, v).
-    pub eval: &'a dyn Fn(f64, f64) -> Option<(Vec3, Option<Vec3>)>,
+    /// Point and unit normal (when not degenerate) at (u, v); the error where the surface does
+    /// not evaluate.
+    pub eval: &'a dyn Fn(f64, f64) -> Result<(Vec3, Option<Vec3>), NoValue>,
     pub tol: f64,
     /// Longest triangle side (mm).
     pub h: f64,
@@ -62,11 +64,22 @@ pub(crate) struct Fill<'a> {
 
 /// Triangulate the region bounded by `loops` (ranges of `boundary`, each closed). Boundary
 /// vertices keep their indices; added points follow. Triangles are counter-clockwise in
-/// (u, v). `None` when a loop cannot be kept as constraints (it crosses itself or another).
+/// (u, v). `Ok(None)` when a loop cannot be kept as constraints (it crosses itself or another);
+/// the error where the sag refinement needs a point the surface does not evaluate at.
 pub(crate) fn triangulate(
     boundary: &[[f64; 2]],
     loops: &[std::ops::Range<usize>],
     fill: Fill,
+) -> Result<Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)>, NoValue> {
+    super::layout(|stopped| triangulate_in(boundary, loops, fill, stopped))
+}
+
+/// [`triangulate`]'s body: the sag refinement's error goes to `stopped`.
+fn triangulate_in(
+    boundary: &[[f64; 2]],
+    loops: &[std::ops::Range<usize>],
+    fill: Fill,
+    stopped: &mut Option<NoValue>,
 ) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     if boundary.iter().flatten().any(|x| !x.is_finite()) {
         return None;
@@ -127,7 +140,7 @@ pub(crate) fn triangulate(
     }
     if let Some((sag, budget)) = &fill.refine {
         let constraints = cdt.num_constraints();
-        let added = refine_sag(&mut cdt, sag, *budget, &from, &slits);
+        let added = super::stop(stopped, refine_sag(&mut cdt, sag, *budget, &from, &slits))?;
         if fill.shape {
             let params = RefinementParameters::<f64>::new()
                 .keep_constraint_edges()
@@ -140,13 +153,16 @@ pub(crate) fn triangulate(
             // Shaping flips sides and adds points of its own; the triangles it leaves may
             // sag again (a long strip round a cylinder), so the sag is checked once more.
             if shaped > 0 {
-                refine_sag(
-                    &mut cdt,
-                    sag,
-                    budget.saturating_sub(added + shaped),
-                    &from,
-                    &slits,
-                );
+                super::stop(
+                    stopped,
+                    refine_sag(
+                        &mut cdt,
+                        sag,
+                        budget.saturating_sub(added + shaped),
+                        &from,
+                        &slits,
+                    ),
+                )?;
             }
         }
         // A split constraint would put a point on the boundary the neighbour does not have.
@@ -260,15 +276,16 @@ pub(crate) fn band(
 /// under the middle of every non-constraint side that sags more than the tolerance or is
 /// longer than [`LONG`] times `h`, until none does or `budget` points were added. Returns the points added.
 /// `slits`: constraint sides the loops run along both ways, inside the region on both sides.
+/// A point the check needs and the surface does not evaluate at is the error.
 fn refine_sag(
     cdt: &mut Cdt,
     sag: &Sag,
     budget: usize,
     from: &dyn Fn(Point2<f64>) -> [f64; 2],
     slits: &std::collections::HashSet<(FixedVertexHandle, FixedVertexHandle)>,
-) -> usize {
+) -> Result<usize, NoValue> {
     let mut added = 0;
-    let mut cache: HashMap<FixedVertexHandle, Option<(Vec3, Option<Vec3>)>> = HashMap::new();
+    let mut cache: HashMap<FixedVertexHandle, (Vec3, Option<Vec3>)> = HashMap::new();
     // The widest turn between two corner normals.
     let spread = |n: [Option<Vec3>; 3]| match n {
         [Some(a), Some(b), Some(c)] => [(a, b), (b, c), (c, a)]
@@ -279,12 +296,16 @@ fn refine_sag(
     };
     for _ in 0..SAG_ROUNDS {
         let mut todo: Vec<Point2<f64>> = Vec::new();
-        let mut at = |h: FixedVertexHandle, p: Point2<f64>| {
-            *cache.entry(h).or_insert_with(|| {
+        let mut at =
+            |h: FixedVertexHandle, p: Point2<f64>| -> Result<(Vec3, Option<Vec3>), NoValue> {
+                if let Some(&known) = cache.get(&h) {
+                    return Ok(known);
+                }
                 let q = from(p);
-                (sag.eval)(q[0], q[1])
-            })
-        };
+                let known = (sag.eval)(q[0], q[1])?;
+                cache.insert(h, known);
+                Ok(known)
+            };
         let region = region(cdt, slits);
         for face in cdt.inner_faces() {
             if !region.get(face.index()).copied().unwrap_or(false) {
@@ -296,20 +317,15 @@ fn refine_sag(
                 (ps[0].x + ps[1].x + ps[2].x) / 3.0,
                 (ps[0].y + ps[1].y + ps[2].y) / 3.0,
             );
-            let (Some((a, na)), Some((b, nb)), Some((d, nd))) = (
-                at(vs[0].fix(), ps[0]),
-                at(vs[1].fix(), ps[1]),
-                at(vs[2].fix(), ps[2]),
-            ) else {
-                continue;
-            };
+            let (a, na) = at(vs[0].fix(), ps[0])?;
+            let (b, nb) = at(vs[1].fix(), ps[1])?;
+            let (d, nd) = at(vs[2].fix(), ps[2])?;
             // How far the surface lies from the triangle at `q`.
-            let gap = |q: Point2<f64>, chord: Vec3| {
+            let gap = |q: Point2<f64>, chord: Vec3| -> Result<f64, NoValue> {
                 let uv = from(q);
-                (sag.eval)(uv[0], uv[1]).map_or(0.0, |(s, _)| s.dist(chord))
+                Ok((sag.eval)(uv[0], uv[1])?.0.dist(chord))
             };
-            let off = |q: Point2<f64>, chord: Vec3| gap(q, chord) > sag.tol;
-            let middle = gap(c, (a + b + d) * (1.0 / 3.0));
+            let middle = gap(c, (a + b + d) * (1.0 / 3.0))?;
             if middle > sag.tol
                 || sag
                     .turn
@@ -343,7 +359,7 @@ fn refine_sag(
                 }
                 let [p, q] = e.positions();
                 let m = Point2::new(0.5 * (p.x + q.x), 0.5 * (p.y + q.y));
-                if pa.dist(pb) > LONG * sag.h || off(m, (pa + pb) * 0.5) {
+                if pa.dist(pb) > LONG * sag.h || gap(m, (pa + pb) * 0.5)? > sag.tol {
                     todo.push(m);
                 }
             }
@@ -355,7 +371,7 @@ fn refine_sag(
         todo.dedup();
         for p in todo {
             if added >= budget {
-                return added;
+                return Ok(added);
             }
             // The boundary's nodes are its edges', shared with the neighbouring face: a point that
             // lands on the boundary (a sliver's middle on a nearly straight stretch, on the chord to
@@ -370,7 +386,7 @@ fn refine_sag(
             }
         }
     }
-    added
+    Ok(added)
 }
 
 /// The sides a boundary runs along an even number of times (a slit: out along a line and back),
@@ -634,7 +650,7 @@ mod tests {
         let mut b = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
         b.extend([[0.4, 0.4], [0.4, 0.6], [0.6, 0.6], [0.6, 0.4]]);
         let loops = [0..4, 4..8];
-        let flat = |u: f64, v: f64| Some((Vec3::new(u, v, 0.0), Some(Vec3::Z)));
+        let flat = |u: f64, v: f64| Ok((Vec3::new(u, v, 0.0), Some(Vec3::Z)));
         for refine in [false, true] {
             let refine = refine.then_some((
                 Sag {
@@ -647,7 +663,7 @@ mod tests {
                 2000,
             ));
             let label = refine.is_some();
-            let Some((extra, tris)) = triangulate(
+            let Ok(Some((extra, tris))) = triangulate(
                 &b,
                 &loops,
                 Fill {
@@ -696,11 +712,10 @@ mod tests {
                     shape: false,
                     lenient: false
                 }
-            )
-            .is_none()
+            ) == Ok(None)
         );
         // Lenient, the crossing side is left out and what the rest encloses is filled.
-        let Some((_, tris)) = triangulate(
+        let Ok(Some((_, tris))) = triangulate(
             &b,
             whole,
             Fill {
@@ -752,7 +767,7 @@ mod tests {
         // A parameter that is zero in exact arithmetic, left at 1e-300 by projection.
         let b = [[1e-300, 0.0], [1.0, -1e-310], [1.0, 1.0], [0.0, 1.0]];
         let whole = std::slice::from_ref(&(0..4));
-        let Some((extra, tris)) = triangulate(
+        let Ok(Some((extra, tris))) = triangulate(
             &b,
             whole,
             Fill {
