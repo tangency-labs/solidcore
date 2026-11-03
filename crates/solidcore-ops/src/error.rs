@@ -4,7 +4,7 @@
 use solidcore::SolidError;
 
 /// SMLib's `SM_ERR_INVALID_INPUT`, the status of input the kernel refuses.
-pub const INVALID_INPUT: i32 = 1007;
+pub const INVALID_INPUT: i32 = solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// Why an operation failed.
 #[derive(Clone, Debug, PartialEq)]
@@ -43,8 +43,9 @@ pub enum Error {
         /// The largest wall that works.
         largest: Option<f64>,
     },
-    /// The kernel cannot build this exactly yet (a variable radius whose law has a corner).
-    Unsupported,
+    /// The kernel cannot build this exactly yet (a variable radius whose law has a corner):
+    /// what it cannot.
+    Unsupported(&'static str),
     /// A blend's edges meet at a vertex of a kind no blend corner handles yet.
     CornerUnsupported,
     /// The kernel does not set back corner `corner` (an index into the call's corners): it sets
@@ -58,12 +59,15 @@ pub enum Error {
     NoEffect,
     /// The answer is not exact in the input's geometry.
     NotExact,
-    /// The kernel found its own state inconsistent part way through a call.
+    /// The kernel found its own state inconsistent part way through a call, or was called
+    /// before the preparation it needs.
     Exception,
+    /// The application cancelled the call.
+    Cancelled,
+    /// Ops was called from inside a kernel call or from the failure callback.
+    Reentered,
     /// A record the conversion cannot carry to the kernel, and why.
     Record(String),
-    /// The kernel reported an error: the call, then its message.
-    Kernel(String),
     /// The kernel panicked; the session caught it: the call, then the panic's message.
     Internal(String),
     /// A step the kernel has not ported yet, refused rather than built another way: what is
@@ -114,25 +118,36 @@ pub enum FitKind {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Status(INVALID_INPUT) => write!(f, "solidcore rejected the input (SM_ERR_INVALID_INPUT)"),
+            Error::Status(INVALID_INPUT) => {
+                write!(f, "solidcore rejected the input (SM_ERR_INVALID_INPUT)")
+            }
             Error::Status(s) => write!(f, "solidcore failed (status {s})"),
             Error::Argument => write!(f, "invalid argument"),
             Error::Empty => write!(f, "the result is empty"),
             Error::NotSolid => write!(f, "the result is not a closed solid"),
             Error::NoRoom => write!(f, "no room"),
             Error::WallsTouch => write!(f, "the offset's walls meet"),
-            Error::TooLarge { size, kind, .. } => write!(f, "too large: the largest {kind:?} that fits is {size}"),
+            Error::TooLarge { size, kind, .. } => {
+                write!(f, "too large: the largest {kind:?} that fits is {size}")
+            }
             Error::WallFolds { largest } => write!(f, "the wall folds (largest {largest:?})"),
-            Error::Unsupported => write!(f, "not supported yet"),
-            Error::CornerUnsupported => write!(f, "a blend corner of this kind is not supported yet"),
+            Error::CornerUnsupported => {
+                write!(f, "a blend corner of this kind is not supported yet")
+            }
             Error::CornerRefused { corner } => write!(f, "corner {corner} is not set back"),
             Error::NoEffect => write!(f, "the operation did nothing"),
             Error::NotExact => write!(f, "not exact in the input's geometry"),
             Error::Exception => write!(f, "solidcore raised an internal exception"),
+            Error::Cancelled => write!(f, "cancelled"),
+            Error::Reentered => write!(
+                f,
+                "solidcore-ops was called from inside a call or the failure callback"
+            ),
             Error::Record(w) => write!(f, "record: {w}"),
-            Error::Kernel(e) => write!(f, "solidcore: {e}"),
             Error::Internal(e) => write!(f, "solidcore failed internally in {e}"),
-            Error::Unported(what) => write!(f, "not supported yet: {what}"),
+            Error::Unsupported(what) | Error::Unported(what) => {
+                write!(f, "not supported yet: {what}")
+            }
         }
     }
 }
@@ -142,14 +157,24 @@ impl std::error::Error for Error {}
 /// An operation's result.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// A kernel error as the operation's: the kernel's status where it stands for one, a
-/// port gap as [`Error::Unsupported`], any other as [`Error::Kernel`].
+/// A kernel error as the operation's, by its type: a kernel status where it stands for one
+/// (input refused, not converged, the kernel's other failures), a refusal of what the kernel does
+/// not support or has not ported, a cancellation, or an inconsistency the kernel found in itself.
 #[must_use]
-pub fn status(e: SolidError) -> Error {
+pub(crate) fn status(e: SolidError) -> Error {
+    use solidcore::error::{SM_ERR, SM_ERR_INVALID_INPUT, SM_ERR_NOT_CONVERGING};
     match e {
-        SolidError::Upstream { code, .. } => Error::Status(code),
-        SolidError::InvalidInput { .. } => Error::Status(INVALID_INPUT),
-        e if e.is_unported() => Error::Unsupported,
-        e => Error::Kernel(e.to_string()),
+        SolidError::InvalidInput { .. } => Error::Status(SM_ERR_INVALID_INPUT),
+        SolidError::NotConverged { .. } => Error::Status(SM_ERR_NOT_CONVERGING),
+        SolidError::NotFound { .. } | SolidError::Degenerate { .. } => Error::Status(SM_ERR),
+        SolidError::Unsupported { reason, .. } => Error::Unsupported(reason),
+        SolidError::Unported { upstream, .. } => Error::Unported(upstream),
+        SolidError::Cancelled { .. } => Error::Cancelled,
+        SolidError::PortInvariant { .. } | SolidError::PreparationRequired { .. } => {
+            Error::Exception
+        }
+        // the kernel's statuses (Upstream, Nlib, the refusals the families map further), and any
+        // kind the kernel adds by the status it stands for
+        e => Error::Status(e.sm_status().unwrap_or(SM_ERR)),
     }
 }

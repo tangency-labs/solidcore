@@ -8,9 +8,10 @@
 //! construction history is built on it.
 
 use solidcore::geom::attribute::{
-    ApplicationValue, Attribute, AttributeHandlers, AttributeValue, AttributeView, Behavior, ObjectKey, Placement, ids,
+    ids, ApplicationValue, Attribute, AttributeHandlers, AttributeValue, AttributeView, Behavior,
+    ObjectKey, Placement,
 };
-use solidcore::{Brep, EntityRef, SolidError};
+use solidcore::{Brep, EntityRef};
 
 /// An application's provenance data and its rules for the kernel's edits. Each rule returns what
 /// the entity it names carries afterwards: `Some` replaces what it carried (`None` there before
@@ -35,26 +36,110 @@ pub trait Provenance: Clone + PartialEq + std::fmt::Debug + Send + Sync + 'stati
 /// The lowest [`Provenance::ID`] an application may take.
 pub const FIRST_ID: u64 = ids::USER_1;
 
+/// `P::ID` is an application's, checked when the code using `P` is compiled.
+struct ApplicationId<P>(std::marker::PhantomData<P>);
+
+impl<P: Provenance> ApplicationId<P> {
+    const OK: () = assert!(
+        P::ID >= FIRST_ID,
+        "a provenance ID below ids::USER_1 is the kernel's"
+    );
+}
+
+/// The attribute id `P`'s data is stored under, [`Provenance::ID`], checked when the code using
+/// it is compiled: an ID below [`FIRST_ID`] is the kernel's and does not build.
+///
+/// ```
+/// # use solidcore_ops::provenance::{id, Provenance, FIRST_ID};
+/// # #[derive(Clone, PartialEq, Debug)]
+/// # struct Mine;
+/// # impl Provenance for Mine {
+/// #     const ID: u64 = FIRST_ID;
+/// #     fn split(&self, _: Option<&Self>) -> Option<Self> { None }
+/// #     fn merge(&self, _: Option<&Self>) -> Option<Self> { None }
+/// #     fn coincident(&self, _: Option<&Self>) -> Option<Self> { None }
+/// # }
+/// assert_eq!(id::<Mine>(), FIRST_ID);
+/// ```
+///
+/// ```compile_fail,E0080
+/// # use solidcore_ops::provenance::{id, Provenance, FIRST_ID};
+/// # #[derive(Clone, PartialEq, Debug)]
+/// # struct Kernels;
+/// # impl Provenance for Kernels {
+/// #     const ID: u64 = FIRST_ID - 1;
+/// #     fn split(&self, _: Option<&Self>) -> Option<Self> { None }
+/// #     fn merge(&self, _: Option<&Self>) -> Option<Self> { None }
+/// #     fn coincident(&self, _: Option<&Self>) -> Option<Self> { None }
+/// # }
+/// let _ = id::<Kernels>();
+/// ```
+#[must_use]
+pub const fn id<P: Provenance>() -> u64 {
+    let () = ApplicationId::<P>::OK;
+    P::ID
+}
+
+/// Which provenance type took each ID: one type per ID, so one kind of data never reads as
+/// another.
+static TAKEN: std::sync::Mutex<Vec<(u64, std::any::TypeId)>> = std::sync::Mutex::new(Vec::new());
+
+/// `P` takes its ID, or has it already.
+///
+/// # Errors
+/// [`Error::Argument`](crate::Error::Argument) when another type took `P::ID` first.
+pub(crate) fn take<P: Provenance>() -> crate::Result<()> {
+    let id = id::<P>();
+    let me = std::any::TypeId::of::<P>();
+    let mut taken = TAKEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match taken.iter().find(|(i, _)| *i == id) {
+        Some((_, t)) if *t == me => Ok(()),
+        Some(_) => Err(crate::Error::Argument),
+        None => {
+            taken.push((id, me));
+            Ok(())
+        }
+    }
+}
+
 /// The data as the kernel's application attribute, its handlers the application's rules.
 #[derive(Clone, Debug, PartialEq)]
-struct Carried<P: Provenance>(P);
+pub(crate) struct Carried<P: Provenance>(pub(crate) P);
 
-fn on<P: Provenance>(view: &AttributeView<'_>, x: ObjectKey) -> Option<(solidcore::geom::attribute::AttributeHandle, P)> {
+fn on<P: Provenance>(
+    view: &AttributeView<'_>,
+    x: ObjectKey,
+) -> Option<(solidcore::geom::attribute::AttributeHandle, P)> {
     let (h, a) = view.find_attribute(x, P::ID)?;
-    a.application_value::<Carried<P>>().map(|c| (h, c.0.clone()))
+    a.application_value::<Carried<P>>()
+        .map(|c| (h, c.0.clone()))
 }
 
 /// What `x` carries afterwards, as placements: `new` replacing what it carries.
 fn place<P: Provenance>(view: &AttributeView<'_>, x: ObjectKey, new: Option<P>) -> Vec<Placement> {
     let Some(new) = new else { return Vec::new() };
     if let Some((handle, _)) = view.find_attribute(x, P::ID) {
-        return vec![Placement::Edit { handle, value: AttributeValue::Application(ApplicationValue::new(Carried(new))) }];
+        return vec![Placement::Edit {
+            handle,
+            value: AttributeValue::Application(ApplicationValue::new(Carried(new))),
+        }];
     }
-    vec![Placement::Add { on: x, attribute: Attribute::application(P::ID, Behavior::Copy, Carried(new)) }]
+    vec![Placement::Add {
+        on: x,
+        attribute: Attribute::application(P::ID, Behavior::Copy, Carried(new)),
+    }]
 }
 
 impl<P: Provenance> AttributeHandlers for Carried<P> {
-    fn split(&self, view: &AttributeView<'_>, split: ObjectKey, a: ObjectKey, b: ObjectKey) -> solidcore::Result<Vec<Placement>> {
+    fn split(
+        &self,
+        view: &AttributeView<'_>,
+        split: ObjectKey,
+        a: ObjectKey,
+        b: ObjectKey,
+    ) -> solidcore::Result<Vec<Placement>> {
         let mut out = Vec::new();
         for x in [a, b] {
             if x != split {
@@ -65,33 +150,61 @@ impl<P: Provenance> AttributeHandlers for Carried<P> {
         Ok(out)
     }
 
-    fn merge(&self, view: &AttributeView<'_>, _a: ObjectKey, _b: ObjectKey, result: ObjectKey) -> solidcore::Result<Vec<Placement>> {
+    fn merge(
+        &self,
+        view: &AttributeView<'_>,
+        _a: ObjectKey,
+        _b: ObjectKey,
+        result: ObjectKey,
+    ) -> solidcore::Result<Vec<Placement>> {
         let now = on::<P>(view, result).map(|(_, p)| p);
         Ok(place(view, result, self.0.merge(now.as_ref())))
     }
 
-    fn coincident(&self, view: &AttributeView<'_>, _from: ObjectKey, to: ObjectKey) -> solidcore::Result<Vec<Placement>> {
+    fn coincident(
+        &self,
+        view: &AttributeView<'_>,
+        _from: ObjectKey,
+        to: ObjectKey,
+    ) -> solidcore::Result<Vec<Placement>> {
         let now = on::<P>(view, to).map(|(_, p)| p);
         Ok(place(view, to, self.0.coincident(now.as_ref())))
     }
 }
 
-/// Attaches `data` to `e` (a face or an edge), replacing what of its kind `e` carried.
+/// Attaches `data` to `e` (a face or an edge), replacing what of its kind `e` carried. `P` takes
+/// its ID first ([`take`]): an ID below [`FIRST_ID`] does not compile, one another type took is
+/// refused.
 ///
 /// # Errors
-/// The kernel's, for an entity not in `b`.
-pub fn attach<P: Provenance>(b: &mut Brep, e: EntityRef, data: P) -> Result<(), SolidError> {
-    let old = b.entity_attributes(e).into_iter().find(|(_, a)| a.attribute_id() == P::ID).map(|(h, _)| h);
+/// [`Error::Argument`](crate::Error::Argument) for an ID another type took; the kernel's, for an
+/// entity not in `b`.
+#[allow(dead_code)] // the application's handle on it comes with the record's order
+pub(crate) fn attach<P: Provenance>(b: &mut Brep, e: EntityRef, data: P) -> crate::Result<()> {
+    take::<P>()?;
+    let old = b
+        .entity_attributes(e)
+        .into_iter()
+        .find(|(_, a)| a.attribute_id() == P::ID)
+        .map(|(h, _)| h);
     if let Some(h) = old {
-        b.remove_attribute(e, h)?;
+        b.remove_attribute(e, h).map_err(crate::error::status)?;
     }
-    b.add_attribute(e, Attribute::application(P::ID, Behavior::Copy, Carried(data)))?;
+    b.add_attribute(
+        e,
+        Attribute::application(P::ID, Behavior::Copy, Carried(data)),
+    )
+    .map_err(crate::error::status)?;
     Ok(())
 }
 
 /// What of kind `P` `e` carries.
 #[must_use]
-pub fn read<P: Provenance>(b: &Brep, e: EntityRef) -> Option<P> {
-    let (_, a) = b.entity_attributes(e).into_iter().find(|(_, a)| a.attribute_id() == P::ID)?;
+#[allow(dead_code)] // as attach
+pub(crate) fn read<P: Provenance>(b: &Brep, e: EntityRef) -> Option<P> {
+    let (_, a) = b
+        .entity_attributes(e)
+        .into_iter()
+        .find(|(_, a)| a.attribute_id() == P::ID)?;
     a.application_value::<Carried<P>>().map(|c| c.0.clone())
 }

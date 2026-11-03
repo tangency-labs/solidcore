@@ -4,18 +4,20 @@
 //! Operations take a body and change it, as the kernel does; an application that keeps its
 //! input calls [`Body::copy`] first.
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
+
+use solidcore::kernel::Kernel;
 
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
-use solidcore::mass::integrator::properties::{PropertyAttributes, brep_volume};
+use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::primitive::api_primitives as primitives;
+use solidcore::topology::brep::is_outward_solid;
 use solidcore::topology::brep::mirror::transform_matrix;
-use solidcore::topology::brep::p2::is_manifold_solid;
 use solidcore::topology::brep::p3::brep_copy;
 use solidcore::{Brep, Vec3};
 
 use crate::error::status;
-use crate::session::{run, run_on, with_body};
+use crate::session::{measure_body, read_body, run, with_body};
 use crate::{Error, Result};
 
 /// A kernel body, with its own lock: the kernel's operations take `&mut Brep`, even to measure.
@@ -25,25 +27,35 @@ pub struct Body(Mutex<Brep>);
 impl Body {
     /// A body the kernel made.
     #[must_use]
-    pub fn new(b: Brep) -> Body {
+    pub(crate) fn new(b: Brep) -> Body {
         Body(Mutex::new(b))
     }
 
     /// The kernel's body, locked. A body an earlier panic left unfinished is still handed out;
     /// [`with_body`] refuses it first.
-    pub fn lock(&self) -> MutexGuard<'_, Brep> {
+    pub(crate) fn lock(&self) -> MutexGuard<'_, Brep> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The kernel's body, locked, unless a panic left it unfinished or it is held now (never
+    /// waited for): why not, if not.
+    pub(crate) fn try_read(&self) -> std::result::Result<MutexGuard<'_, Brep>, &'static str> {
+        self.0.try_lock().map_err(|e| match e {
+            TryLockError::Poisoned(_) => "the body was left unfinished by a panic: not written",
+            TryLockError::WouldBlock => "the body was held: not written",
+        })
     }
 
     /// Whether a panic interrupted an edit of this body.
     #[must_use]
-    pub fn is_poisoned(&self) -> bool {
+    pub(crate) fn is_poisoned(&self) -> bool {
         self.0.is_poisoned()
     }
 
     /// The kernel's body, taken out.
     #[must_use]
-    pub fn into_inner(self) -> Brep {
+    #[allow(dead_code)] // the families' operations take their operands out
+    pub(crate) fn into_inner(self) -> Brep {
         self.0.into_inner().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -53,24 +65,25 @@ impl Body {
     /// # Errors
     /// Those of the kernel's copy; [`Error::Internal`] for a body a panic left unfinished.
     pub fn copy(&self) -> Result<Body> {
-        if self.is_poisoned() {
-            return Err(Error::Internal("SmApiBrepCopy: the body was left unfinished by an earlier panic".into()));
-        }
-        run_on("SmApiBrepCopy", &[("brep", self)], |k| brep_copy(k, &self.lock())).map(Body::new)
+        read_body("SmApiBrepCopy", self, brep_copy).map(Body::new)
     }
 
     /// Moves this body by the affine `matrix` (`SmBrep::Transform(matrix, TRUE)`): rows 0-2 the
-    /// images of x, y and z, row 3 the translation (`p' = p·A + t`), the fourth column unread.
-    /// Reflections mirror it, a non-uniform scale or a shear turns its geometry into NURBS,
-    /// tolerances scale with it.
+    /// images of x, y and z, row 3 the translation (`p' = p·A + t`), the fourth column
+    /// `(0, 0, 0, 1)`. Reflections mirror it, a non-uniform scale or a shear turns its geometry
+    /// into NURBS, tolerances scale with it.
     ///
     /// # Errors
-    /// [`Error::Argument`] for an entry that is not finite; the kernel's status.
+    /// [`Error::Argument`] for an entry that is not finite or a fourth column that is not
+    /// `(0, 0, 0, 1)` (a projective map, no motion of a body); the kernel's status.
     pub fn transform(&self, matrix: &[[f64; 4]; 4]) -> Result<()> {
-        if !matrix.iter().flatten().all(|x| x.is_finite()) {
+        let affine = matrix.iter().map(|row| row[3]).eq([0.0, 0.0, 0.0, 1.0]);
+        if !(affine && matrix.iter().flatten().all(|x| x.is_finite())) {
             return Err(Error::Argument);
         }
-        with_body("SmBrep::Transform", self, |k, b| Ok(transform_matrix(k, b, matrix, true).map_err(status)))?
+        with_body("SmBrep::Transform", self, |k, b| {
+            Ok(transform_matrix(k, b, matrix, true).map_err(status))
+        })?
     }
 
     /// Face, edge and vertex counts.
@@ -78,57 +91,73 @@ impl Body {
     /// # Errors
     /// Those of [`with_body`].
     pub fn counts(&self) -> Result<[usize; 3]> {
-        with_body("counts", self, |_, b| Ok([b.face_list().len(), b.edge_list().len(), b.vertex_list().len()]))
+        read_body("counts", self, |_, b| {
+            Ok([
+                b.face_list().len(),
+                b.edge_list().len(),
+                b.vertex_list().len(),
+            ])
+        })
     }
 
-    /// The enclosed volume (`SmApiBrepComputeVolume`) at `relative_accuracy`, which must be
-    /// finite and is clamped to [1e-8, 1e-1].
+    /// The enclosed volume (`SmApiBrepComputeVolume`) at `relative_accuracy`, as the kernel's
+    /// contract takes it (ops passes it on as given).
     ///
     /// # Errors
-    /// [`Error::Argument`] for an accuracy that is not finite; the kernel's error.
+    /// The kernel's (an accuracy it refuses is its status).
     pub fn volume(&self, relative_accuracy: f64) -> Result<f64> {
-        let relative_accuracy = accuracy(relative_accuracy)?;
-        with_body("brep_volume", self, |k, b| {
+        measure_body("brep_volume", self, |k, b| {
             let store = AttributeStore::default();
-            let attrs = PropertyAttributes { store: &store, key_of: &|_| ObjectKey(0) };
+            let attrs = PropertyAttributes {
+                store: &store,
+                key_of: &|_| ObjectKey(0),
+            };
             brep_volume(k, b, relative_accuracy, &attrs)
         })
     }
 }
 
-/// The accuracy the kernel's integrators take: finite, clamped to [1e-8, 1e-1].
-///
-/// # Errors
-/// [`Error::Argument`] when it is not finite.
-// `f64::clamp` is on the kernel's panic-site list (it panics on a reversed range); these bounds
-// are constants in order.
-#[allow(clippy::manual_clamp)]
-pub fn accuracy(relative_accuracy: f64) -> Result<f64> {
-    if !relative_accuracy.is_finite() {
-        return Err(Error::Argument);
-    }
-    Ok(relative_accuracy.max(1e-8).min(1e-1))
+/// What an operation's result must be ([`finish`]), as its input says: a solid input must give
+/// a solid. Made from the input ([`Expect::of`]), never chosen by a caller; the two exceptions
+/// are an operation's own contract, stated by the operation: [`Expect::FACES`] for one with no
+/// solid input, [`Expect::SOLID`] for one that makes a solid from a sheet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Expect {
+    solid: bool,
 }
 
-/// What an operation's result must be ([`finish`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Expect {
-    /// Any body with faces.
-    Faces,
-    /// A closed manifold solid: what a solid input must give.
-    Solid,
+impl Expect {
+    /// What a result of an operation on `input` must be.
+    ///
+    /// # Errors
+    /// The kernel's, from the solid test.
+    #[allow(dead_code)] // the families' operations derive it from their inputs
+    pub(crate) fn of(k: &mut Kernel, input: &mut Brep) -> solidcore::Result<Expect> {
+        Ok(Expect {
+            solid: is_outward_solid(k, input)?,
+        })
+    }
+
+    /// A result of an operation with no solid input (a primitive, a sheet's).
+    #[allow(dead_code)]
+    pub(crate) const FACES: Expect = Expect { solid: false };
 }
 
 /// The result contract: a result has faces ([`Error::Empty`] if not), and a solid input gives a
-/// closed manifold solid ([`Error::NotSolid`] if not).
+/// solid ([`Error::NotSolid`] if not): closed, manifold, valid and oriented out.
 ///
 /// # Errors
-/// The kernel's error from the manifold test.
-pub fn finish(b: Brep, expect: Expect) -> solidcore::Result<Result<Brep>> {
+/// The kernel's error from the solid test.
+#[allow(dead_code)] // the families' operations finish with it
+pub(crate) fn finish(
+    k: &mut Kernel,
+    mut b: Brep,
+    expect: Expect,
+) -> solidcore::Result<Result<Brep>> {
     if b.face_list().is_empty() {
         return Ok(Err(Error::Empty));
     }
-    if expect == Expect::Solid && !is_manifold_solid(&b)? {
+    if expect.solid && !is_outward_solid(k, &mut b)? {
         return Ok(Err(Error::NotSolid));
     }
     Ok(Ok(b))
@@ -167,7 +196,10 @@ pub fn make_cylinder(origin: [f64; 3], radius: f64, height: f64) -> Result<Body>
     if !(positive(radius) && positive(height)) {
         return Err(Error::Argument);
     }
-    run("create_cylinder", |k| primitives::create_cylinder(k, o, radius, height)).map(Body::new)
+    run("create_cylinder", |k| {
+        primitives::create_cylinder(k, o, radius, height)
+    })
+    .map(Body::new)
 }
 
 /// A sphere, radius positive (`SmApiCreateSphere`).
@@ -189,11 +221,18 @@ pub fn make_sphere(center: [f64; 3], radius: f64) -> Result<Body> {
 /// [`Error::Argument`] for a number out of range.
 pub fn make_cone(origin: [f64; 3], base_radius: f64, top_radius: f64, height: f64) -> Result<Body> {
     let o = point(origin)?;
-    let ok = positive(base_radius) && positive(height) && top_radius.is_finite() && top_radius >= 0.0 && top_radius != base_radius;
+    let ok = positive(base_radius)
+        && positive(height)
+        && top_radius.is_finite()
+        && top_radius >= 0.0
+        && top_radius != base_radius;
     if !ok {
         return Err(Error::Argument);
     }
-    run("create_cone", |k| primitives::create_cone(k, o, base_radius, top_radius, height)).map(Body::new)
+    run("create_cone", |k| {
+        primitives::create_cone(k, o, base_radius, top_radius, height)
+    })
+    .map(Body::new)
 }
 
 /// A ring torus about +Z, major radius > minor radius > 0 (`SmApiCreateTorus`).
@@ -205,5 +244,8 @@ pub fn make_torus(center: [f64; 3], major_radius: f64, minor_radius: f64) -> Res
     if !(positive(minor_radius) && minor_radius < major_radius && major_radius.is_finite()) {
         return Err(Error::Argument);
     }
-    run("create_torus", |k| primitives::create_torus(k, o, major_radius, minor_radius)).map(Body::new)
+    run("create_torus", |k| {
+        primitives::create_torus(k, o, major_radius, minor_radius)
+    })
+    .map(Body::new)
 }
