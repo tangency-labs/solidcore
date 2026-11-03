@@ -1,0 +1,37 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_p5"
+case = "isolated_op1_editing_False"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[0] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p5"
+case = "identity_scale_delta_1e-11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 1.0000000000100002e-5, Rust 1e-7 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p5"
+case = "combine_alias_isolated_00_False_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[0] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p5"
+case = "combine_alias_isolated_00_False_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[0] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p5"
+case = "combine_alias_isolated_02_False_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[0] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p5"
+case = "gen0162"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[44] C++ 0e0, Rust 1e-5 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p5"
+case = "gen0427"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[44] C++ 0e0, Rust 1e-5 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

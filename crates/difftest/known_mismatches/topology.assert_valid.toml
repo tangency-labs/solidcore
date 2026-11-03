@@ -1,0 +1,47 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "l2_file_Solids_revolution_360_tests"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_test13_max_gap[6] C++ 4.650131134789e-6, Rust 4.650131140555114e-6 (+11 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "l2_file_Solids_nurb_fillet_tests"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_test13_max_gap[16] C++ 6.7765969503806375e-15, Rust 5.195152019200581e-15 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "l2_file_box_with_large_fillet_tests"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_test13_max_gap[3] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "sphere_mutation6_capi"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pointer_report_values.len C++ 8, Rust 6 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "update_patch_sheet_m1_i0_v1e-12_l2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.update_report_values.len C++ 0, Rust 2 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "update_patch_sheet_m6_i0_v0.0001_l2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.report_values.len C++ 2, Rust 4 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "update_patch_sheet_m6_i0_v0.0001_l0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.report_values.len C++ 0, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "update_patch_sheet_m6_i0_v1_l2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.update_report_values.len C++ 0, Rust 2 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.assert_valid"
+case = "update_patch_sheet_m6_i0_v1_l0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.update_report_values.len C++ 0, Rust 2 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

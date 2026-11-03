@@ -1,0 +1,32 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_p3"
+case = "nurbs_Mouse"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2459, Rust 2477 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p3"
+case = "nurbs_Mouse_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2459, Rust 2477 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p3"
+case = "nurbs_box_with_large_fillet"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2326, Rust 2346 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p3"
+case = "nurbs_box_with_large_fillet_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2326, Rust 2346 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p3"
+case = "nurbs_off_Mouse_0.1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2535, Rust 2571 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p3"
+case = "nurbs_off_Mouse_-0.05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2535, Rust 2571 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

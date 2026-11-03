@@ -1,0 +1,32 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.vertexuse"
+case = "sphere_vu5_sector1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 7.7186622104696095e-22, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertexuse"
+case = "sphere_vu5_sector0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 7.7186622104696095e-22, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertexuse"
+case = "surf_sphere150_vu0_sector1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ -1.6087134117362813e-6, Rust -9.325577052466682e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertexuse"
+case = "surf_sphere150_vu0_sector0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ -1.6087134117362813e-6, Rust -9.325577052466682e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertexuse"
+case = "surf_sphere150_vu5_sector1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 1.2332264379345452e-6, Rust -7.967188290082883e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertexuse"
+case = "surf_sphere150_vu5_sector0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 1.2332264379345452e-6, Rust -7.967188290082883e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

@@ -23,3 +23,71 @@ unit = "topology.brep_p7"
 case = "read_ellips_ts2.smb_index1"
 why = "edge use 11's edge 11 -> 19: C++ builds an inconsistent radial list (status 0, counts 1 1 1 3 20 20); Rust's MakeTopologyFromData returns InvalidInput (radial list leaves out an edge use of its edge), a documented brep_p10 deviation; C++ SmBrep::ValidatePointers rejects the B-rep its read returned as SM_SUCCESS (WR-470; plan/findings/topology.brep_p7--modified-stream-inconsistent-radial-list.md)"
 cpp_defect = "WR-470"
+
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "gen0014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_plane_square.smb_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 316, Rust 180 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_disk.smb_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 176, Rust 108 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_plane_circ.smb_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 106, Rust 72 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_merge_n1_repeat1_box_with_large_fillet.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 316, Rust 180 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_merge_n3_repeat1_box_with_large_fillet.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 928, Rust 486 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_merge_n1_repeat1_cone.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 212, Rust 110 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_merge_n2_repeat1_Mouse.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 553, Rust 281 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_merge_n2_repeat2_plane_square.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 622, Rust 350 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "copy_merge_n2_repeat3_disk.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 508, Rust 304 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "read_ellips_ts2.smb_index3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "read_torus.smb_index2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p7"
+case = "read_toruswvy.smb_index2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

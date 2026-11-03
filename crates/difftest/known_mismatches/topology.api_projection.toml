@@ -1,0 +1,37 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.api_projection"
+case = "project_brep_fillet_box"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[9] C++ 5e0, Rust 4.964894150531214e0 (+75 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_projection"
+case = "project_brep_fillet_box_long_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[9] C++ 5e0, Rust 4.964894150531214e0 (+75 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_projection"
+case = "silhouette_fillet_box_oblique"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[3] C++ 5.196102397445207e-1, Rust 5.268161424175952e-1 (+80 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_projection"
+case = "project_curve_brep"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[168] C++ -2.220446049250313e-15, Rust -1.9984014443252818e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_projection"
+case = "project_curve_brep_appended"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[168] C++ -2.220446049250313e-15, Rust -1.9984014443252818e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_projection"
+case = "gen0007"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[3] C++ 1.1475153969945342e1, Rust 1.1472800253272268e1 (+67 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_projection"
+case = "gen0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[9] C++ 5.452787912440047e1, Rust 5.380773258960897e1 (+75 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

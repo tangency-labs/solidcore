@@ -1,0 +1,72 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "mate_Endcap_e0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "mate_Endcap_e1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "mate_Endcap_e2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "mate_Endcap_e3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "refine_cci_f7_plane_b_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 810, Rust 822 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "sector_surf_extrude_104_extrapolated"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "sector_surf_rev_104_extrapolated"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "sector_surf_sphere150_104_extrapolated"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "sector_torus_104_extrapolated"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "sector_vase_rev_103_extrapolated"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "sector_vase_rev_104_extrapolated"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "rebuild_box_with_large_fillet"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[66] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "gen0119"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[66] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p2"
+case = "gen0363"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

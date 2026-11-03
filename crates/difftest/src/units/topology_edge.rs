@@ -2834,6 +2834,7 @@ mod tests {
             let faces = ed::faces(&im.b, EdgeId::from_index(e as u32), None).unwrap();
             assert!(!faces.is_empty(), "{name}");
             let mut saw_expected = expected.is_none();
+            let mut seen = Vec::new();
             for id in faces {
                 let face = im.b.face(id).unwrap();
                 assert!(
@@ -2849,9 +2850,11 @@ mod tests {
                 if let Some(expected) = expected {
                     saw_expected |= expected.matches(surface.kind());
                 }
+                let kind = format!("{:?}", surface.kind());
+                seen.push(kind.split(['(', ' ', '{']).next().unwrap_or("").to_string());
             }
             if let Some(expected) = expected {
-                assert!(saw_expected, "{name}: expected {expected:?}");
+                assert!(saw_expected, "{name}: expected {expected:?}, saw {seen:?}");
             }
             let cpp = Runner.run_cpp(case).unwrap();
             let rust = Runner.run_rust(case).unwrap();

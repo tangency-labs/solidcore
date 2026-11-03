@@ -1,0 +1,12 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.loopuse"
+case = "level0_gen_020"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.loopuse"
+case = "level0_gen_026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

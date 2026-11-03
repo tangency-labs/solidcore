@@ -1,0 +1,727 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_yz_at_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[98] C++ -8.000000000000001e-16, Rust -6.123233995736778e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_xy_at_z12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[98] C++ -8.000000000000001e-16, Rust -6.123233995736771e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_nurb_fillet_smb_yz_at_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156026028e-4, Rust 5.321193916502756e-4 (+26 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_nurb_fillet_smb_xz_at_y3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156026064e-4, Rust 5.321193916481561e-4 (+28 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_nurb_fillet_smb_xy_at_z12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193155983189e-4, Rust 5.321193916481868e-4 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_nurb_fillet_smb_oblique"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156027974e-4, Rust 5.321193916459092e-4 (+27 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_revolution_360_smb_yz_at_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[555] C++ 1e-5, Rust 2.1618739746028453e-5 (+76 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_revolution_360_smb_xz_at_y3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[555] C++ 1e-5, Rust 2.161873974802187e-5 (+81 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_revolution_360_smb_xy_at_z12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[555] C++ 1e-5, Rust 2.1618739746028453e-5 (+72 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_revolution_360_smb_oblique"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[555] C++ 1e-5, Rust 2.161873974064739e-5 (+78 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "box_with_large_fillet_smb_yz_at_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663226973e-3, Rust 4.360565399607079e-3 (+23 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "box_with_large_fillet_smb_xz_at_y3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663226947e-3, Rust 4.360565399607583e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "box_with_large_fillet_smb_xy_at_z12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.3575066632272775e-3, Rust 4.360565399600382e-3 (+22 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "box_with_large_fillet_smb_oblique"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663228891e-3, Rust 4.3605653996120755e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_box_smb_uniform_scale_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 2e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_box_smb_non_uniform_2_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 2e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_box_smb_issue_1570_shear"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1.2807764064044155e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_box_smb_mirror_rotated_scaled"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 3.0000000000000004e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_box_smb_singular_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[114] C++ 1e1, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_box_smb_huge_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1e1, Rust 1e-2 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_box_smb_tiny_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1e-5, Rust 1e-8 (+486 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_cylinder_smb_uniform_scale_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 2e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_cylinder_smb_non_uniform_2_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 2e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_cylinder_smb_issue_1570_shear"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 1.2807764064044155e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_cylinder_smb_mirror_rotated_scaled"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 3.0000000000000004e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_cylinder_smb_singular_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[26] C++ 5e0, Rust 0e0 (+11 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_cylinder_smb_huge_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 1e1, Rust 1e-2 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_cylinder_smb_tiny_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[26] C++ 5e0, Rust 4.9999999999999996e-6 (+143 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_identity"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[98] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_uniform_scale_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 2e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_non_uniform_2_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 2e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_issue_1570_shear"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 1.2807764064044155e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_mirror_x"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[98] C++ -8.000000000000001e-16, Rust -6.123233995736778e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_mirror_rotated_scaled"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 3.0000000000000004e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_near_singular"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 1e-5, Rust 1e-9 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_singular_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[10] C++ -5e0, Rust 0e0 (+39 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_huge_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 1e1, Rust 1e-2 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "Solids_sphere_smb_tiny_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[10] C++ -5e0, Rust -4.9999999999999996e-6 (+27 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "cone_smb_uniform_scale_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 2e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "cone_smb_non_uniform_2_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 2e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "cone_smb_issue_1570_shear"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 1.2807764064044155e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "cone_smb_mirror_rotated_scaled"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 3.0000000000000004e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "cone_smb_singular_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[14] C++ -9e-16, Rust 0e0 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "cone_smb_huge_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 1e1, Rust 1e-2 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "cone_smb_tiny_uniform"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[12] C++ 1.0000000000000002e1, Rust 1e-5 (+51 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156033071e-4, Rust 5.321193916522181e-4 (+28 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663261424e-3, Rust 4.3605653995724344e-3 (+23 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663229356e-3, Rust 4.360565399611998e-3 (+19 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156093845e-4, Rust 5.321193916601959e-4 (+27 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663894578e-3, Rust 4.36056539963225e-3 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663226206e-3, Rust 4.360565399613009e-3 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.3575066632284935e-3, Rust 4.360565399603377e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193230478454e-4, Rust 5.321193918083897e-4 (+26 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0050"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[431] C++ 1.169220656802118e-5, Rust 1.1692206477167165e-5 (+30 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[99] C++ 8.205698631791652e-16, Rust -2.8117521352997115e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0059"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663121966e-3, Rust 4.360565399314788e-3 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0061"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[431] C++ 1.169220631873442e-5, Rust 1.1692206340392437e-5 (+31 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0067"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663230719e-3, Rust 4.360565399642299e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663484568e-3, Rust 4.360565401180113e-3 (+23 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[431] C++ 1.169220640537992e-5, Rust 1.1692206487485252e-5 (+32 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0081"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.3575066632262965e-3, Rust 4.360565399584874e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663230297e-3, Rust 4.36056539961495e-3 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663228801e-3, Rust 4.360565399599403e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663225958e-3, Rust 4.360565399593591e-3 (+19 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.3575066632297495e-3, Rust 4.360565399602072e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0105"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[98] C++ -8.000000000000001e-16, Rust -6.123233995736766e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[98] C++ -8.000000000000001e-16, Rust -6.123233995736782e-16 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0109"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156021206e-4, Rust 5.321193916451571e-4 (+30 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[431] C++ 1.1692206784923243e-5, Rust 1.1692206242919164e-5 (+30 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0116"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663234593e-3, Rust 4.360565399574716e-3 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0119"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663197569e-3, Rust 4.3605653996894094e-3 (+24 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0121"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156031322e-4, Rust 5.321193916546804e-4 (+27 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "gen0125"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[143] C++ 4.357506663219683e-3, Rust 4.360565399609794e-3 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1.1419586504828758e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4.911567940589892e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[123] C++ 1.5208356163297447e-5, Rust 1e-5 (+32 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 3.063837885531707e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 1.3167327937105571e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4.702323818960775e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[123] C++ 3.9722020366425394e-5, Rust 1e-5 (+31 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0007"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4.5645172444187064e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0008"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1.2285630145123893e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 4.62474820990071e-5, Rust 1e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 3.340288165380244e-5, Rust 1.2459049113135687e-13 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0011"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[8] C++ 0e0, Rust 8.223402276199721e2 (+70 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156017134e-4, Rust 5.321193916473412e-4 (+30 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 1e-5, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0016"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 9.559051782733864e2 (+54 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0017"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 1.3918406158100206e-5, Rust 1e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[379] C++ 1.1859328115358225e-2, Rust 2.287663292316495e-3 (+135 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0020"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1.0738283209473716e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[139] C++ 2.374395088787454e-3, Rust 1e-5 (+48 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 3.041238307993623e-5, Rust 1.1612325168673872e-13 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[219] C++ 1e0, Rust 1e-3 (+55 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 1.1199748431697221e-5, Rust 1.0026906815341547e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[123] C++ 1.0102391777284857e-5, Rust 1e-5 (+48 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 1.1267843144762019e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0031"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[155] C++ 1.0913145428717147e-3, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[379] C++ 1.6766254874691824e-2, Rust 3.3676808765110795e-3 (+137 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[219] C++ 2.7713087155184623e-5, Rust 1e-5 (+55 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 3.17369381472891e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[67] C++ 1.0825951361114466e-5, Rust 1e-5 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0040"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 3.440216450592779e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0041"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 1e-5, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 4.075365213580366e-5, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 1.010722251929863e-5, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0044"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[219] C++ 4.15084523367036e-5, Rust 1e-5 (+55 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0046"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[8] C++ 5e0, Rust 9.519498739297777e0 (+8 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 2.890818770599993e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 2.4365018891912843e-5, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 5.321193156031803e-4, Rust 5.321193916583183e-4 (+31 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0050"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 1.5897956119258006e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0054"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 3.4760580323176225e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0057"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 1.3424767930347527e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0058"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[379] C++ 1.1066535179492852e-3, Rust 1e-5 (+101 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0059"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[379] C++ 5.298048329134278e-3, Rust 1e-5 (+56 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 3.671562917494593e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0061"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 3.148021328262485e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0062"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[27] C++ 1.5730564592298237e-5, Rust 1e-5 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 1.0000004680904072e-1, Rust 1e-3 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0064"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[120] C++ 0e0, Rust 1.4630361280776043e2 (+770 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4.728892894498094e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[15] C++ 3.230269582240556e-5, Rust 1e-5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0067"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 1.0894181697170043e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[219] C++ 1.1918655691257151e-5, Rust 1e-5 (+55 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0069"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 3.706491918398835e-5, Rust 1e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[123] C++ 4.053369784826153e-5, Rust 1e-5 (+31 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[12] C++ 1.0000000000000002e1, Rust -2.2287836087386128e2 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0074"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 1e-4, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0076"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[164] C++ 1.02452826451937e-5, Rust 1e-5 (+53 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0077"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 4.814106194888459e-5, Rust 1e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0078"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 1.1377043191014074e-5, Rust 1e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[120] C++ 0e0, Rust -5.400036194426785e0 (+73 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 4.445059150505401e-5, Rust 1e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0081"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[123] C++ 4.679718143056801e-5, Rust 1e-5 (+74 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[219] C++ 2.6662203828985394e-5, Rust 1e-5 (+55 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0086"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 2.751598384202213e-5, Rust 1e-5 (+25 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4.268428958050272e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0088"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[123] C++ 1.2641094341383413e-5, Rust 1e-5 (+31 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 2.498669019264337e-5, Rust 1e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 1e-5, Rust 8.565282493038633e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[127] C++ 1.0071552352332888e-5, Rust 1e-5 (+24 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[139] C++ 2.374395088787454e-3, Rust 1e-5 (+48 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_mirror"
+case = "mat0094"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 2.3631110822219052e-4, Rust 5.321193916488394e-4 (+48 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

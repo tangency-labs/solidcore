@@ -1,0 +1,132 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "api_cut_fillet_box_z7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[276] C++ 5e0, Rust 0e0 (+1036 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "api_cut_fillet_box_zero_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[405] C++ 5e-1, Rust 9.5e0 (+1850 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "api_cut_fillet_box_z7_long_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[276] C++ 5e0, Rust 0e0 (+1036 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "cut_fillet_box_through_fillets"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[405] C++ 5e-1, Rust 9.5e0 (+2155 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "cut_fillet_box_oblique"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[276] C++ 5e0, Rust 0e0 (+1045 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[128] C++ 2.2852719873518823e0, Rust 1.1259913999168175e1 (+819 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[124] C++ 1.455753018642061e0, Rust 0e0 (+24 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[160] C++ 3.86651349619797e2, Rust 5.599567221485971e1 (+804 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[405] C++ 1.721008713276019e-2, Rust 1.4609958802499226e0 (+1843 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0022"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[256] C++ 0e0, Rust 1.2661937438367288e3 (+1127 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[384] C++ 1.0965535607572615e3, Rust 1.3035726323120764e2 (+2233 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[257] C++ 1.6470725325922487e1, Rust 1.30796406441935e1 (+1350 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0037"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[609] C++ 1.5002e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0044"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[213] C++ 1.256392296834772e1, Rust 1e0 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[956] C++ 1.5002e4, Rust 1.502e4 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0050"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1486] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[256] C++ 2.8136582294470056e0, Rust 2.366114799120697e0 (+1360 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[384] C++ 5.6451903021652035e0, Rust 1.7885755975526768e-1 (+1912 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[256] C++ 5.135855721587572e-3, Rust 0e0 (+1098 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[256] C++ 5.017426898330776e-1, Rust 2.6355185041203297e-2 (+1161 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[71] C++ 0e0, Rust 7.567333445656027e-16 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1359] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[368] C++ 1.358446255348203e1, Rust 2.636587132446384e-1 (+1718 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0072"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[257] C++ 1.1014580834654245e1, Rust 7.04836831766197e0 (+1220 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[256] C++ -4.163336342344337e-16, Rust 1.1752439659366984e0 (+1103 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_cutting"
+case = "gen0095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[368] C++ 1.9851143569361462e-1, Rust 1.4490625940982598e0 (+2102 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

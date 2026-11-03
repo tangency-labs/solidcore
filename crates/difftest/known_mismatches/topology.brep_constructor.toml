@@ -1,0 +1,7 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_constructor"
+case = "regions_swapped_and_nested"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.ops[27] C++ 1001, Rust 0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

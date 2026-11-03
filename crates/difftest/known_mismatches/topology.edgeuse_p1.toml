@@ -1,0 +1,262 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "face_pinched_huge_gaps0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 2.1600499167107046e-12, Rust 5.278275086186592e-9 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "face_pinched_huge_gaps0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 2.1600499167107046e-12, Rust 5.278275086186592e-9 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "face_pinched_huge_gaps0_2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 2.1600499167107046e-12, Rust 5.278275086186592e-9 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "face_pinched_huge_gaps0_2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 2.1600499167107046e-12, Rust 5.278275086186592e-9 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_2_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_4_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_4_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_6_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_6_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_8_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_8_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_10_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_10_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_12_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_12_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_14_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_14_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_16_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_16_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_18_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_18_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_20_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_20_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_22_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_0_22_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_2_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_4_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_4_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_6_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_6_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_8_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_8_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_10_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_10_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_12_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_12_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_14_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_14_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_16_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_16_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_18_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_18_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_20_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_20_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_22_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p1"
+case = "review_gapval_surf_sphere150.smb_1_22_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

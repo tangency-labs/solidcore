@@ -1,0 +1,207 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.8620274421478206e-3, Rust 6.95115100281493e-4 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.8620274421478206e-3, Rust 6.95115100281493e-4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.1930466626883492e-3, Rust 6.912139700099413e-4 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.1930466626883492e-3, Rust 6.912139700099413e-4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.196947792959901e-3, Rust 6.95115100281493e-4 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.196947792959901e-3, Rust 6.95115100281493e-4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_1_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 4.363860134826229e-3, Rust 2.1930466626883492e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_1_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 4.363860134826229e-3, Rust 2.1930466626883492e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_1_1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 4.417962051052996e0, Rust 4.417949234539402e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_1_3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 4.417933917834013e0, Rust 4.417935677187111e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 4.2438676510609294e0, Rust 4.243822747208837e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.1182028127934453e1, Rust 1.1181973404827572e1 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 4.363860134826229e-3, Rust 2.8620274421478206e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 4.363860134826229e-3, Rust 2.8620274421478206e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 4.2438676510609294e0, Rust 4.243822747208837e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.1182028127934453e1, Rust 1.1181973404827572e1 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 4.363860134826229e-3, Rust 2.8620274421478206e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_2_3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 4.363860134826229e-3, Rust 2.8620274421478206e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_3_3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_covered_eu0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_covered_eu1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_covered_eu3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_too_wide_eu0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_too_wide_eu1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_too_wide_eu3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 6, Rust 12 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 6, Rust 12 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "gen0117"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "gen0130"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "gen0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.5017725546786674e-5, Rust 2e-5 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "gen0248"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "gen0394"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 4.363860134826229e-3, Rust 2.8620274421478206e-3 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

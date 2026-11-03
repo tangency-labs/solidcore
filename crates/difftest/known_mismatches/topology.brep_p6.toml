@@ -1,0 +1,617 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "cube_faces_6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[25] C++ 16, Rust 18 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "edge_used_three_times"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[5] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "edge_used_three_times_trims"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[5] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "zero_loop"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[5] C++ 6, Rust 8 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "zero_then_loop"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[5] C++ 6, Rust 8 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "two_cubes_at_a_vertex"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[49] C++ 36, Rust 40 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "two_disjoint_cubes"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[49] C++ 32, Rust 36 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "cube_in_cube"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[49] C++ 32, Rust 36 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "cube_with_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[25] C++ 18, Rust 20 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "cube_with_inner_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[25] C++ 16, Rust 18 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "cube_with_inner_vertex"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[25] C++ 16, Rust 18 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "cube_with_outer_vertex"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[25] C++ 16, Rust 18 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "cube_faces_6_reversed"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[25] C++ 16, Rust 18 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask0_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask0_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask0_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask0_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask1_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask1_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask1_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask1_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask2_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask2_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask2_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask2_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask4_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask4_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask4_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask4_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask8_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask8_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask8_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask8_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask16_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask16_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask16_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask16_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask31_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask31_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask31_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed0_mask31_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask0_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask0_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask0_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask0_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask1_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask1_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask1_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask1_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask2_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask2_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask2_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask2_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask4_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask4_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask4_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask4_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask8_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask8_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask8_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask8_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask16_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask16_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask16_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask16_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask31_repeat1_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask31_repeat1_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 2, Rust 4 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask31_repeat2_infinite0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "open_box_seed5_mask31_repeat2_infinite1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[15] C++ 4, Rust 8 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_0_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_0_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_0_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_1_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_1_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_1_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_1_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_3_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_3_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_3_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_3_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_7_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_7_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_7_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_7_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_7_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_box_with_large_fillet.smb_7_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[736] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_0_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_0_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_0_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_1_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_1_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_1_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_1_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_3_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_3_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_3_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_3_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_7_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_7_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_7_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_7_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_7_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "closure_sphere.smb_7_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geom[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "plane_edgeless_1e-09_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "plane_edgeless_1e-09_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[7] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "plane_edgeless_1e-09_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "plane_edgeless_1e-06_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "plane_edgeless_1e-06_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[7] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p6"
+case = "plane_edgeless_1e-06_16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.state[3] C++ 4, Rust 6 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

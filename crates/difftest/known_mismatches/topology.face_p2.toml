@@ -1,0 +1,17 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.face_p2"
+case = "fix_file_Mouse.smb_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 380, Rust 365 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p2"
+case = "extra00702"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[1] C++ 5.997856171225904e-5, Rust 8.501171443409645e-5 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p2"
+case = "extra00861"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[128] C++ 0e0, Rust 6.456448613119753e-14 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

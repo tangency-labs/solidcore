@@ -1,0 +1,12 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_validation"
+case = "vertices_coincidence_no_walk"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.reports[131] C++ 1, Rust 0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_validation"
+case = "vertices_coincidence_walk"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.reports[131] C++ 1, Rust 0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

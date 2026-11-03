@@ -1,0 +1,692 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[656] C++ 1.6576713519257575e-17, Rust 1.6576713646572875e-17 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu0_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[392] C++ 1.6576713519257575e-17, Rust 1.6576713646572875e-17 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.1088273981495877e-14, Rust 2.1943483395610794e-14 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu3_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.1088273981495877e-14, Rust 2.1943483395610794e-14 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 4.36038912451013e-7, Rust 4.360388857749328e-7 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu6_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 4.36038912451013e-7, Rust 4.360388857749328e-7 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 9.439509388954502e-15, Rust 1.8423787898607716e-14 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu12_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 9.439509388954502e-15, Rust 1.8423787898607716e-14 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu15"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.1088273981495877e-14, Rust 2.1943483395610794e-14 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu15_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.1088273981495877e-14, Rust 2.1943483395610794e-14 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu18"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[446] C++ -9.536742969008648e-7, Rust -9.536743196351049e-7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_create_eu18_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[281] C++ -9.536742969008648e-7, Rust -9.536743196351049e-7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_get_or_create_eu13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 4.3728649074688686e-7, Rust 4.3728650337578843e-7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_diff_3cylinders_get_or_create_eu19"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 4.372862968295956e-7, Rust 4.372862899102542e-7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 776 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu0_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 1418 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu3_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu6_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 2063, Rust 1166 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu9_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 1793, Rust 1688 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 776 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu12_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 1418 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu15"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu15_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu18"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu18_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu21"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 2063, Rust 1166 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu21_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 1793, Rust 1688 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu24"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 776 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu24_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 1418 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu27"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu27_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu30"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu30_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu33"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 2063, Rust 1166 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu33_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 1793, Rust 1688 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu36"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 776 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu36_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 134, Rust 1418 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu39"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu39_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu42"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu42_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0212020908318288e-14, Rust 9.734377788849275e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu45"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 2063, Rust 1166 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_create_eu45_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 1793, Rust 1688 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0883017474393234e-14, Rust 1.0834775653339658e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 6.215373294989042e-14, Rust 6.956068339028163e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0883017474393234e-14, Rust 1.0834775653339658e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu19"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 6.215373294989042e-14, Rust 6.956068339028163e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu25"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0883017474393234e-14, Rust 1.0834775653339658e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu31"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 6.215373294989042e-14, Rust 6.956068339028163e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu37"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.0883017474393234e-14, Rust 1.0834775653339658e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "own_reader_sphere_plane_get_or_create_eu43"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 6.215373294989042e-14, Rust 6.956068339028163e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu26_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.2212453270876702e-15, Rust 2.5535129566378565e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu26_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.2212453270876702e-15, Rust 2.5535129566378565e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu26_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 5.5511151231254746e-17, Rust 1.2698175844150668e-15 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu26_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 5.5511151231254746e-17, Rust 1.2698175844150668e-15 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu27_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.7406915440739185e-15, Rust 5.0242958677880506e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu27_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.7406915440739185e-15, Rust 5.0242958677880506e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu27_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -2.6110373161108747e-15, Rust 4.710277376051297e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu27_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -2.6110373161108747e-15, Rust 4.710277376051297e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu28_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 3.3384944061179913e-21, Rust 6.676988812235731e-22 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu28_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 3.3384944061179913e-21, Rust 6.676988812235731e-22 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu28_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.1102230246251417e-16, Rust -1.242062008799362e-15 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu28_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.1102230246251417e-16, Rust -1.242062008799362e-15 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu29_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -3.336325459475004e-15, Rust -3.689717277906851e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu29_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -3.336325459475004e-15, Rust -3.689717277906851e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu29_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -2.3209220587652215e-15, Rust -3.375698786170098e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb0_eu29_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -2.3209220587652215e-15, Rust -3.375698786170098e-15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu9_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu9_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu9_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu9_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu18_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663226973e-3, Rust 4.360565399610972e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu18_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663226973e-3, Rust 4.360565399610972e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu18_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663226973e-3, Rust 4.360565399610972e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu18_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663226973e-3, Rust 4.360565399610972e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu26_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.2212453270876702e-15, Rust 2.5535129566378565e-15 (+29 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu26_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.2212453270876702e-15, Rust 2.5535129566378565e-15 (+29 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu26_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 1.6653345369377632e-16, Rust 1.2559397966072259e-15 (+28 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu26_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 1.6653345369377632e-16, Rust 1.2559397966072259e-15 (+28 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu27_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.7406915440739185e-15, Rust 4.710277376051296e-15 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu27_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.7406915440739185e-15, Rust 4.710277376051296e-15 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu27_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -2.3209220587652215e-15, Rust 4.867286621919673e-15 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu27_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -2.3209220587652215e-15, Rust 4.867286621919673e-15 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu28_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 3.3384944061179913e-21, Rust 6.676988812235719e-22 (+59 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu28_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 3.3384944061179913e-21, Rust 6.676988812235719e-22 (+59 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu28_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.1102230246251442e-16, Rust -1.2698175844150043e-15 (+57 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu28_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ -1.1102230246251442e-16, Rust -1.2698175844150043e-15 (+57 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu29_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -3.4451186809796056e-15, Rust -3.76822190084104e-15 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu29_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -3.4451186809796056e-15, Rust -3.76822190084104e-15 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu29_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -2.0308068014195518e-15, Rust -3.611212654972662e-15 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu29_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ -2.0308068014195518e-15, Rust -3.611212654972662e-15 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu42_f0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu42_f0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu42_f0.5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_bwlf_sweep_rb1_eu42_f0.5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[74] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu0_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu0_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu1_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu1_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu2_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu2_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu3_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu3_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu4_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu4_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu6_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu6_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ -1.5630555824350223e-32, Rust -2.3796104329159444e-33 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu7_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_sphere_eu7_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 0e0, Rust 2.8881501215784496e-32 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu1_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu1_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu3_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu3_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu5_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu5_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu7_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "review_surf_sphere150_eu7_3d"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 3.6488011454910376e-31, Rust -3.5000603867465075e-31 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b16_eu1_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 6.413334168623952e-17, Rust 9.065912268875144e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b16_eu5_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 6.413334168623952e-17, Rust 9.065912268875144e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b16_eu9_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 6.413334168623952e-17, Rust 9.065912268875144e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b17_eu7_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 6.413334168623952e-17, Rust 9.065912268875144e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b22_eu0_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 0e0, Rust -3.8358803867480977e-16 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b22_eu0_getcreate_all"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b22_eu0_create_dev"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 2.252453872141044e-15, Rust 2.127305617682787e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b22_eu0_create_plain"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 3.0442492494900656e-15, Rust 7.548819734781194e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b22_eu1_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 1.0393659948957717e-16, Rust -5.514449002271731e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b22_eu5_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 1.0393659948957717e-16, Rust -5.514449002271731e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b22_eu9_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 1.0393659948957717e-16, Rust -5.514449002271731e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b23_eu2_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 2.739914561962926e-17, Rust -2.739914561962927e-16 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b23_eu2_getcreate_all"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b23_eu2_create_dev"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 2.252453872141044e-15, Rust 2.127305617682787e-15 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b23_eu2_create_plain"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 3.0442492494900656e-15, Rust 7.548819734781194e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p3"
+case = "upstream_files_b23_eu7_binormal_uv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 1.0393659948957717e-16, Rust -5.514449002271731e-17 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

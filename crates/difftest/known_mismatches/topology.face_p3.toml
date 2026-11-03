@@ -1,0 +1,372 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_46"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_46_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_47"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_47_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_set_tol_09"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_set_tol_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_set_tol_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_set_tol_12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_set_tol_13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_46"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_46_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_47"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_47_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_46_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_46_gaps_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_47_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "Mouse_rebuilt_uv_trim_47_gaps_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3676, Rust 3661 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_46_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_46_gaps_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_47_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_uv_trim_47_gaps_own"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+90 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "box_with_large_fillet_rebuilt_set_tol_negative"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f0_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 4.3170424161335236e-16, Rust 3.9394936985311734e-16 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f1_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 4.728401937922728e-16, Rust 4.604870934344032e-16 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f2_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7256] C++ 1.6576713519257575e-17, Rust 1.6576713646572875e-17 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f3_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7373] C++ 1.6576713519257575e-17, Rust 1.6576713646572875e-17 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2838] C++ 2.81249985609527e-1, Rust 2.812499849211334e-1 (+11 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f4_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[5343] C++ 2.656249845816359e-1, Rust 2.6562498384407207e-1 (+28 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3481] C++ 2.81250017087283e-1, Rust 2.812500163988888e-1 (+11 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f5_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7049] C++ 1.6576713519257575e-17, Rust 1.6576713646572875e-17 (+28 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[5224] C++ 1.2760417471848415e-1, Rust 1.2760417484960704e-1 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f6_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6868] C++ 1.3020834121383557e-1, Rust 1.302083413449584e-1 (+8 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 9749, Rust 9509 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f7_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 13379, Rust 13139 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f8_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 4.3170424161335236e-16, Rust 3.9394936985311734e-16 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f9_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 4.728401937922728e-16, Rust 4.604870934344032e-16 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f10_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7256] C++ 1.6576713519257575e-17, Rust 1.6576713646572875e-17 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_diff_3cylinders_uv_trim_f11_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7373] C++ 1.6576713519257575e-17, Rust 1.6576713646572875e-17 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_blade_hub_uv_trim_f7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2581] C++ 2.92006891160255e-1, Rust 2.9200688862963997e-1 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_blade_hub_uv_trim_f7_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[4739] C++ 2.92006891160255e-1, Rust 2.92006888630604e-1 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_open_shell_uv_trim_f4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1786] C++ 2.591808356341e-3, Rust 2.5918090457815687e-3 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_open_shell_uv_trim_f10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1907] C++ 2.591808356341e-3, Rust 2.5918090457815687e-3 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 3905 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f0_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 2813 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f1_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 3905 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f2_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 2813 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f3_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 3905 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f4_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 2813 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f5_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 3905 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f6_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 2813 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f7_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 3905 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f8_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 2813 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f9_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 3905 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f10_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3695, Rust 2813 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "own_reader_sphere_plane_uv_trim_f11_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1880, Rust 3074 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_sphere_plane_overlap_1e-9_01_tol1e-6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 18, Rust 7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_sphere_plane_overlap_1e-9_01_tol1e-6_nopts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 18, Rust 4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_sphere_plane_overlap_1e-9_10_tol1e-6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 18, Rust 7 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_sphere_plane_overlap_1e-9_10_tol1e-6_nopts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 18, Rust 4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_cylinder_sphere_01_tol1e-6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_cylinder_sphere_01_tol1e-4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_cylinder_sphere_10_tol1e-6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p3"
+case = "touching_cylinder_sphere_10_tol1e-4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7, Rust 4 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

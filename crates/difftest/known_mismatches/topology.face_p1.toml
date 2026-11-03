@@ -1,0 +1,1747 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "gen0003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "gen0006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Mouse.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "Endcap.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f0_op6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[438] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f0_op7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[566] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f1_op6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[438] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f1_op7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[566] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f2_op6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[421] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f2_op7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[566] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f3_op6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[438] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f3_op7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[566] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f4_op6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[421] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f4_op7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[566] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f5_op6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[438] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f5_op7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[566] C++ 7.455984247924441e-1, Rust 7.357168421543803e-1 (+17 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "box_with_large_fillet.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "cone.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "disk.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "ellips_ts2.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_circ.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "plane_square.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_extrude.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_rev.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_0_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f0_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f0_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f1_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f1_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f2_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f2_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f3_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f3_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f4_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f4_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "surf_sphere150.smb_1_f5_op10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "vase_rev.smb_1_f5_op9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p0_f3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p1_f3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p2_f3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p3_f3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p4_f3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p5_f3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f1_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f2_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f2_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "seam_surf_rev.smb_p6_f3_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c10_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c10_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c10_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c10_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c01_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c01_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c01_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c01_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c11_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c11_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c11_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m0_c11_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c10_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c10_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c10_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c10_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c01_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c01_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c01_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c01_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c11_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c11_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c11_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m1_c11_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c10_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c10_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c10_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c10_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c01_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c01_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c01_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c01_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c11_00"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c11_01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c11_10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.face_p1"
+case = "guard_vase_rev_m3_c11_11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.005e3, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

@@ -17,3 +17,821 @@ case = "fc0016"
 libc = "glibc"
 cpp_defect = "ND-493"
 why = "C++ clock-seeded rand() in IsInnerShell's sample points (ND-493): in 10 fresh-process runs 1 s apart the C++ result had 255 geometry values (the Rust result) in 9 and 765 in 1"
+
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_cone_face0_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_cone_face0_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_cone_face0_tilt"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face0_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1e-5, Rust 1.0000047702872735e-5 (+23 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face0_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[97] C++ 0e0, Rust 1.7763568394002505e-15 (+62 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face0_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1e-5, Rust 1.0000047702872726e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face1_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 8.881784197001252e-16 (+70 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face2_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[98] C++ 0e0, Rust 8.881784197001252e-16 (+62 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face3_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust -3.1086244689504383e-15 (+47 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face4_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[102] C++ 0e0, Rust 8.881784197001252e-16 (+66 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_box_face5_tilt"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[97] C++ 0e0, Rust 5.724136298858368e-16 (+66 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_nurb_fillet_face0_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 52 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_nurb_fillet_face1_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 51 (+3010 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_nurb_fillet_face2_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 51 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_nurb_fillet_face3_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 31 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_nurb_fillet_face4_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 52 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_nurb_fillet_face6_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 49 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "attributed_nurb_fillet_face7_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 49 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "cone_face0_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "cone_face0_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "cone_face0_tilt"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face0_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1e-5, Rust 1.0000047702872735e-5 (+23 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face0_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[97] C++ 0e0, Rust 1.7763568394002505e-15 (+62 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face0_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1e-5, Rust 1.0000047702872726e-5 (+44 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face1_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 8.881784197001252e-16 (+70 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face2_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[98] C++ 0e0, Rust 8.881784197001252e-16 (+62 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face3_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust -3.1086244689504383e-15 (+47 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face4_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[102] C++ 0e0, Rust 8.881784197001252e-16 (+66 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "box_face5_tilt"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[97] C++ 0e0, Rust 5.724136298858368e-16 (+66 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "nurb_fillet_face0_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 52 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "nurb_fillet_face1_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 51 (+3010 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "nurb_fillet_face2_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 51 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "nurb_fillet_face3_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 31 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "nurb_fillet_face4_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 52 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "nurb_fillet_face6_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 49 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "nurb_fillet_face7_same"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 49 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 0e0, Rust 1.2284849250515174e-15 (+124 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[187] C++ 1e-5, Rust 1.0000047702872745e-5 (+65 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[25] C++ 3.268642301268443e-12, Rust 9.860761315262648e-32 (+18 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 1.00001095967761e-5, Rust 1.0000000005024297e-5 (+115 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.957746216969564e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.95720741713235e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0007"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[120] C++ 0e0, Rust -2.851047782394226e-16 (+412 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0008"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.958882480173781e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 25, Rust 15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0011"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[121] C++ 0e0, Rust 2.6645352591003757e-15 (+69 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 15, Rust 17 (+33 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 27, Rust 33 (+57 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0016"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1.0000931322574616e-5, Rust 1.0000000001986029e-5 (+72 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0017"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 19, Rust 11 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 15, Rust 21 (+33 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0020"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 9.850590839043253e-11, Rust 1.0658141036401503e-14 (+120 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0022"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[4] C++ 0e0, Rust 5.551115123125783e-17 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0024"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.957406730076178e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 1.00001863554422e-5, Rust 1.000005993028267e-5 (+117 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[98] C++ 0e0, Rust 8.881784197001252e-16 (+66 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.956923320164946e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 9, Rust 5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 15, Rust 19 (+33 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0031"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 0e0, Rust 1.3285537328293346e-15 (+122 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 0e0, Rust 1.2284849250515174e-15 (+151 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 5.426770144367765e-13 (+79 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0034"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 9, Rust 5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 9, Rust 5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 21, Rust 9 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0037"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[5] C++ 5e0, Rust 0e0 (+11 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0039"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 8.881784197001252e-16 (+80 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0040"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 8, Rust 12 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0041"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 0e0, Rust 1.1102230246251565e-16 (+714 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 8.881784197001252e-16 (+72 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 1.000006820954912e-5, Rust 1.0000000003580362e-5 (+87 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0044"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 11, Rust 9 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0045"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 0e0, Rust 6.78168458889683e-16 (+703 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0046"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[25] C++ -2.475962143644317e-13, Rust -2.9103830456733704e-11 (+14 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 0e0, Rust 1.2284849250515174e-15 (+692 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0050"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 17, Rust 15 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0051"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust -4.8762966031326766e-11 (+73 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0052"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[25] C++ 1.9721522630525295e-31, Rust 9.860761315262648e-32 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0054"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[139] C++ 4.135095427151058e-3, Rust 4.233222150963083e-3 (+47 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[183] C++ 1e-5, Rust 1.0000029103830796e-5 (+94 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0057"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[25] C++ 1.9721522630525295e-31, Rust 9.860761315262648e-32 (+15 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0058"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[98] C++ 0e0, Rust 8.881784197001252e-16 (+77 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0059"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 5.941008269889523e-11, Rust 1.3321697767333701e-15 (+119 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.957547189459397e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0061"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.957831205996796e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0062"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 9, Rust 5 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 14, Rust 11 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0064"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 18, Rust 12 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[168] C++ 0e0, Rust -1.7763568394002505e-15 (+115 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.956923320164946e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0067"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[25] C++ 1.9721522630525295e-31, Rust 9.860761315262648e-32 (+13 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 14, Rust 12 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0069"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust -2.220446049250313e-15 (+73 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[216] C++ 0e0, Rust 2.673000902434798e-11 (+724 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[97] C++ 0e0, Rust 1.7763568394002505e-15 (+62 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0072"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 8.881784197001252e-16 (+80 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0074"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust 1.2863488052516914e-11 (+72 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0075"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 16, Rust 11 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0076"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 16, Rust 8 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0077"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.957547188379093e-6, Rust 8.956674406812539e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0078"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[171] C++ 1.0000530116839315e-5, Rust 1.0000000005515474e-5 (+120 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[96] C++ 0e0, Rust -1.3635759188446173e-11 (+77 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0081"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[24] C++ 0e0, Rust -1.2824378558434546e0 (+86 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[195] C++ 1e-5, Rust 1.0000033608671402e-5 (+69 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 16, Rust 10 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0084"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0086"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 27, Rust 23 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[24] C++ 0e0, Rust 1.7763568394002505e-15 (+16 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0088"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 14, Rust 11 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[7] C++ 8.958590279044154e-6, Rust 8.956624637021139e-6 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 16, Rust 11 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1.0000232830643655e-5, Rust 1.0000049507328859e-5 (+72 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 15, Rust 17 (+33 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0094"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "gen0095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[99] C++ 1e-5, Rust 1.0000047702872735e-5 (+74 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[378] C++ 2e-16, Rust 9.433222857292705e-32 (+1183 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 52 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 49 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 53 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[378] C++ 2e-16, Rust 9.433222857292705e-32 (+1158 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0007"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 53 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0008"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[378] C++ 2e-16, Rust 9.433222857292705e-32 (+1161 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0011"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 52 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[378] C++ 2e-16, Rust 9.433222857292705e-32 (+1164 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0017"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0020"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 49 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0022"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0024"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 54 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[378] C++ 2e-16, Rust 9.433222857292705e-32 (+1164 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 49 (+97 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[447] C++ 2.3631110822219052e-4, Rust 5.238277689001029e-4 (+43 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 47, Rust 64 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_local_operation"
+case = "fc0031"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 2, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

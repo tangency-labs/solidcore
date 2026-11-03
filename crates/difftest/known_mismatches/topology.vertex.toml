@@ -1,0 +1,72 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "point_curve_v2_topo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "failed_tangent_constant0_rev0_v1_topological"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "failed_tangent_constant1_rev0_v1_topological"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "corner_box_with_large_fillet_v4_none"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 0e0, Rust 2.893063117941766e-14 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "corner_box_with_large_fillet_v7_none"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 1.2436480258895385e-14, Rust 1.0995132274107486e-14 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "corner_sphere_v1_off1em7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[6] C++ 1.4142135490386642e-7, Rust 1e-7 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "corner_surf_sphere150_v0_off1em7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 1e0, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "corner_surf_sphere150_v2_off1em7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 1e0, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "zerotan_line_v1_topo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "zerotan_line_v2_topo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "zerotan_arc_v1_topo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "zerotan_arc_v2_topo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "rev_tiny_scale1e-12_v1_topo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.vertex"
+case = "rev_tiny_scale_bsl1e-12_v1_topo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

@@ -1,0 +1,247 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_r0_g0_e3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_r0_g1_e3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_r1_g0_e3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_r1_g1_e3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_e3_move1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_e3_move3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_e3_move5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g0_e0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g0_e2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g0_e4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g0_e6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g0_e8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g1_e0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g1_e2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g1_e4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g1_e6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r0_g1_e8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g0_e0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g0_e2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g0_e4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g0_e6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g0_e8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g1_e0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g1_e2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g1_e4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g1_e6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_r1_g1_e8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e0_move0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e0_move2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e0_move4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e2_move0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e2_move2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e2_move4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e4_move0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e4_move2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e4_move4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e6_move0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e6_move2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "surf_sphere150_e6_move4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_reverse"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[481] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_reset_primary"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[453] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_add_pair"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[469] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_manifold_end_start"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[453] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_manifold_end_end"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[453] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_notify_split"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[453] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_notify_post_edit"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[453] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_notify_merge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[453] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_set_tol"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[453] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edge"
+case = "box_with_large_fillet_rb_e0_set_orient"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[452] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

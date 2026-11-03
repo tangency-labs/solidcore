@@ -1,0 +1,17 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.edgeuse_p2"
+case = "surf_sphere150_rb_cs2_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.2755491433176288e-15, Rust 3.66205343881779e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p2"
+case = "surf_sphere150_rb_cs2_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.2755491433176288e-15, Rust 3.66205343881779e-15 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.edgeuse_p2"
+case = "surf_sphere150_rb_cs2_1_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[0] C++ 1.2175228688703466e-8, Rust 1.2175232978718308e-8 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

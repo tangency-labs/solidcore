@@ -1,0 +1,42 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces_values[10] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces_values[10] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces_values[10] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces_values[10] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0076"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edges_values[20] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0114"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edges_values[20] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0142"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces_values[10] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.brep_p4"
+case = "gen0145"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edges_values[20] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

@@ -1,0 +1,937 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "upstream_planar_union_crossings_1e-3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 107, Rust 561 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 299, Rust 298 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 120, Rust 131 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 363, Rust 436 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[83] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 234, Rust 334 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[94] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0041"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 329, Rust 330 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 333, Rust 334 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 380, Rust 381 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[63] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[74] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[114] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 318, Rust 348 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 397, Rust 470 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[109] C++ 1.001e3, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0138"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 401, Rust 439 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 56, Rust 68 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0148"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 339, Rust 412 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0160"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0167"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0168"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[104] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0172"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 414, Rust 415 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0176"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[90] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 120, Rust 710 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0194"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 465, Rust 466 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0203"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[109] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 296, Rust 369 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0212"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[114] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0221"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 389, Rust 390 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0222"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[114] C++ 1.001e3, Rust 1.006e3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0231"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 433, Rust 471 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0258"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[89] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0266"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[86] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 406, Rust 77 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0272"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[91] C++ 1.001e3, Rust 0e0 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0279"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 358, Rust 388 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0288"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[104] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0292"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 99, Rust 506 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0318"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 85, Rust 494 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0325"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 296, Rust 392 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0329"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 244, Rust 317 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0334"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 360, Rust 361 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0342"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 100, Rust 434 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0356"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 89, Rust 503 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0364"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[109] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0372"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 489, Rust 554 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0375"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[120] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0381"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[81] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0382"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 376, Rust 377 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0391"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[101] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0392"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[127] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0396"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[71] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0411"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[74] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0423"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[110] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0439"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 83, Rust 74 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0449"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[76] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0450"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 67, Rust 345 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0459"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[100] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0463"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 67, Rust 74 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0467"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 88, Rust 366 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0472"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[53] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0490"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[51] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0491"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 437, Rust 467 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0495"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 424, Rust 425 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0498"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 329, Rust 402 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0502"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 311, Rust 312 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0503"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[49] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0513"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 333, Rust 406 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0517"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 330, Rust 403 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0518"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 330, Rust 403 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0531"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 398, Rust 428 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0545"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 138, Rust 130 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0550"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 112, Rust 102 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0553"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[80] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0554"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 380, Rust 453 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0556"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[87] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0565"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[89] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0574"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 371, Rust 401 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0576"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[59] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0578"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[57] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0585"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 590, Rust 591 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0607"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 316, Rust 315 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0629"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 405, Rust 478 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0645"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 109, Rust 443 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0649"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[112] C++ 1.001e3, Rust 0e0 (+14 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0661"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[63] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0676"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[105] C++ 5.710465253856827e-1, Rust 4.665492257009602e0 (+30 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0685"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[69] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0701"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[125] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0715"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[118] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0716"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 348, Rust 421 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0736"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 373, Rust 403 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0751"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[118] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0761"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 411, Rust 441 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0765"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[107] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0775"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[110] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0784"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 320, Rust 358 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0814"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[91] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0822"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[93] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0824"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[93] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0825"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[124] C++ 1.001e3, Rust 0e0 (+13 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0826"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[53] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0844"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[97] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0850"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 109, Rust 556 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0852"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[87] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0856"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[146] C++ 1.001e3, Rust 0e0 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0870"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[61] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0871"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[66] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0877"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[58] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0888"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[79] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0892"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[90] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0900"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 484, Rust 522 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0904"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 96, Rust 405 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0905"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[49] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0913"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 68, Rust 431 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0914"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 117, Rust 537 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0923"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 303, Rust 376 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0924"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[104] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0946"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 517, Rust 518 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0950"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[76] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0956"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0960"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 368, Rust 64 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0961"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 56, Rust 377 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0966"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 50, Rust 45 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0975"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 461, Rust 462 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0976"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 93, Rust 390 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen0983"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 113, Rust 578 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 603, Rust 676 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1007"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 118, Rust 755 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[98] C++ 1.001e3, Rust 1.006e3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 81, Rust 452 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ 1.001e3, Rust 0e0 (+14 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1064"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 423, Rust 496 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 65, Rust 113 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1077"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[121] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[54] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[73] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[74] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[94] C++ 1.001e3, Rust 1.006e3 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[90] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 77, Rust 101 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1112"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 139, Rust 152 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 389, Rust 485 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1125"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 273, Rust 311 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1126"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 122, Rust 125 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 540, Rust 541 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1149"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 105, Rust 718 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1150"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[65] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1171"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 493, Rust 566 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[50] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1193"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[107] C++ 1.001e3, Rust 0e0 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[72] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1223"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[107] C++ 1.001e3, Rust 0e0 (+4 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1239"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 276, Rust 349 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1256"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[100] C++ 5.837474340043484e-1, Rust 4.83480313617682e0 (+12 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1261"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 47, Rust 97 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1294"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[90] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1299"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 83, Rust 133 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1321"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 69, Rust 255 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1348"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 358, Rust 388 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1372"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 450, Rust 480 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1374"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 54, Rust 53 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1395"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[77] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1406"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[104] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1412"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 417, Rust 447 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1416"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[237] C++ 1e0, Rust 0e0 (+9 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1420"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[67] C++ 1.001e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1422"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 58, Rust 326 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1439"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 479, Rust 509 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1448"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 380, Rust 476 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1459"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 358, Rust 359 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1462"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[68] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1465"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[94] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1473"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[83] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1477"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 417, Rust 418 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1486"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[60] C++ 1.001e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1489"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 400, Rust 430 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1495"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[64] C++ 1.001e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "gen1499"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[75] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "edge_pe_closed_unit"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[32] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "edge_vertex_defs_unit"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 376, Rust 347 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "edge_pe_closed_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 176, Rust 241 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "edge_vertex_defs_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 376, Rust 347 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "edge_pe_closed_tiny"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[32] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.proto_topology_p2"
+case = "edge_vertex_defs_tiny"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 376, Rust 347 (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"

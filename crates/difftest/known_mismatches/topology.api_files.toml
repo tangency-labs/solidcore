@@ -1,0 +1,107 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-topology-known-mismatches.md.
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "turn_fillet_box_10_r1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[177] C++ 1e1, Rust 0e0 (+1321 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "turn_fillet_box_5_10_20_r05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[177] C++ 4.5e0, Rust 0e0 (+1249 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes_box_far_ascii"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26418] C++ 49, Rust 48 (+79 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes_box_far_binary"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11534] C++ 0, Rust 192 (+29 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26128] C++ 49, Rust 48 (+35 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0045"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11533] C++ 0, Rust 2 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11541] C++ 0, Rust 2 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0084"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11533] C++ 0, Rust 2 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11533] C++ 0, Rust 254 (+41 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[12185] C++ 0, Rust 250 (+13 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0135"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11541] C++ 0, Rust 1 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0138"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26013] C++ 49, Rust 48 (+67 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0146"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11541] C++ 0, Rust 1 (+15 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0152"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11533] C++ 0, Rust 253 (+13 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0159"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26054] C++ 48, Rust 50 (+5 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0171"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26209] C++ 48, Rust 50 (+35 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0173"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26165] C++ 48, Rust 52 (+3 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0175"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26083] C++ 49, Rust 48 (+33 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0186"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[11533] C++ 0, Rust 1 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0194"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[12185] C++ 0, Rust 255 (+13 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
+
+[[mismatch]]
+unit = "topology.api_files"
+case = "write_bytes0198"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.rec[26189] C++ 48, Rust 50 (+1 more) (plan/findings/general--2502-fork-pin-topology-known-mismatches.md)"
