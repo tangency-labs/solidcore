@@ -24,6 +24,9 @@
 )] // test helpers
 use solidcore::blend::blend_corner::chamfer::ChamferWidth;
 use solidcore::blend::blend_corner::BlendChamferCorner;
+use solidcore::blend::definition_check::{
+    bare_blend_faces, BlendFaceKind, BlendFaceLog, CornerKind,
+};
 use solidcore::blend::fillet_executive::api::{chamfer_fillet, fillet_edges_per_edge};
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_executive::{FitKind, FitSize};
@@ -1419,6 +1422,9 @@ fn an_irregular_apex_of_four_chamfers_is_a_corner_patch() {
 // along a diagonal can fold), so its cone is their mean. For n = 5 that is 771.1342754128,
 // for n = 6 850.3378387820.
 //
+// The quadrilaterals are not yet definitions: each is in the ledger of bare blend faces
+// (#2489) as a chamfer corner's, until the corner definitions take it (#2488).
+//
 // Topology: faces n + 1 + n chamfers + n quadrilaterals; edges n on the base, n x (2 rails
 // + 1 on the base), n spokes and 2n halves of the end sections; vertices 2n on the base, n
 // crossings, n middles and C.
@@ -1498,8 +1504,8 @@ fn five_and_six_chamfers_at_an_apex_are_bilinear_quadrilaterals() {
                     .abs()
             })
             .sum();
-        for i in 0..n {
-            let (m0, x, m1) = (mid(i + n - 1), xs[i], mid(i));
+        for (i, &x) in xs.iter().enumerate() {
+            let (m0, m1) = (mid(i + n - 1), mid(i));
             let one = tet(centre, m0, x) + tet(centre, x, m1);
             let other = tet(centre, m0, m1) + tet(m0, x, m1);
             want += one.signum() * 0.5 * (one + other);
@@ -1519,11 +1525,22 @@ fn five_and_six_chamfers_at_an_apex_are_bilinear_quadrilaterals() {
                     pick(&k, &b, [m.x, m.y, m.z])
                 })
                 .collect();
+            k.blend_face_log = Some(BlendFaceLog::default());
             chamfer(&mut k, &mut b, &edges, &r, corner).unwrap();
+            // each quadrilateral is in the ledger of faces not yet definitions (#2489), as a
+            // chamfer corner's, until the corner definitions take it (#2488)
+            let made = k.blend_face_log.take().unwrap().last().to_vec();
+            let bare: Vec<_> = bare_blend_faces(&b, &made)
+                .unwrap()
+                .into_iter()
+                .filter(|f| f.kind == BlendFaceKind::Corner(CornerKind::Chamfer))
+                .collect();
+            assert_eq!(bare.len(), n, "{bare:?}");
+            assert!(bare.iter().all(|f| f.surface == "b-spline"), "{bare:?}");
             let (counts, lines, v) = report(&mut k, &mut b);
             let mut off = 0.0_f64;
-            for i in 0..n {
-                for (p, q) in [(centre, mid(i)), (mid(i + n - 1), xs[i]), (xs[i], mid(i))] {
+            for (i, &x) in xs.iter().enumerate() {
+                for (p, q) in [(centre, mid(i)), (mid(i + n - 1), x), (x, mid(i))] {
                     let es = edges_between(&b, p, q);
                     assert_eq!(es.len(), 1, "n {n}: one edge from {p:?} to {q:?}");
                     off = off.max(off_exact_segment(&k, &b, es[0], p, q));
