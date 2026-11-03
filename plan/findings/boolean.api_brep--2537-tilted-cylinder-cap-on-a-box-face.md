@@ -28,7 +28,7 @@
   `UpstreamFixes::all()` (SolidCraft runs all but its held-back ones). The volumes are
   1486369.884197 and 1486369.884304 (primitive, no fixes and all fixes) and
   1486369.887650 and 1486369.884296 (revolve, the same two) against the closed form's
-  1486369.8843794577: 1.2e-10, 5.1e-11, 2.3e-9 and 5.6e-11 relative. The volume is
+  1486369.8843794577: 1.2e-10, 5.1e-11, 2.2e-9 and 5.6e-11 relative. The volume is
   right, not merely plausible.
 - **Why the difference is not the geometry.** The closed form for the family (cap centre
   `offset` mm up the axis from the face) is
@@ -53,7 +53,7 @@
   (its revolve, which asserts its result check runs and at which level, its `fixes()`
   preset minus `HELD_BACK`, and the pick/retry path). Narrowing it further wants the
   case driven through SolidCraft, or SolidCraft's traced operand records for it;
-  neither is available here. The entry below holds the case as data so that a
+  neither is available here. The entry named below holds the case as data so that a
   re-export, or the corpus runner when it lands with `solidcore-ops`, can be compared
   against it directly.
 - **Pinned.** The case is in the kernel-rig corpus as
@@ -61,4 +61,4 @@
   with both operands as hand-written records and the closed-form volume, and in
   `crates/solidcore/tests/issue_2537_tilted_cylinder_cap_on_face.rs`, which grades three
   cap offsets against that closed form.
-- **PR.** tangency-labs/solidcore#PRNUM.
+- **PR.** tangency-labs/solidcore#2616.
