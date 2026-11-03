@@ -26,7 +26,7 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // the fork's NaN-safe tests
 
 use super::{live_solver_ops, SessionObjects};
-use crate::blend::blend_setback::{ease_surface, interval_in, uv_at, EaseRamp};
+use crate::blend::blend_setback::{ease_surface_of, interval_in, uv_at, EaseRamp};
 use crate::blend::fillet_geom::p1::{FilletGeomId, FilletVertexType, SurfaceHandle};
 use crate::blend::fillet_section::section::{GnFaces, GnSectionFsg};
 use crate::blend::fillet_solver::p1::{
@@ -48,7 +48,7 @@ use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as eu;
 use crate::topology::face::p2 as face2;
-use crate::topology::{edge, VertexId};
+use crate::topology::{edge, EdgeId, VertexId};
 
 use super::FilletObject;
 
@@ -133,8 +133,17 @@ impl SessionObjects<'_> {
             if !(corner.set_back_dist() > 0.0) || !(corner.ease_dist() > 0.0) {
                 continue;
             }
-            let dist_at = corner.set_back_dist() + corner.ease_dist();
             let cp_vertex: VertexId = corner.filleted_vertex().ok_or_else(null)?;
+            // the corner's setback along each of its edges (GetSetBackDistAlong), read while
+            // the surfaces change
+            let ease_dist = corner.ease_dist();
+            let mut along_edge: Vec<(EdgeId, f64)> = Vec::new();
+            for &eu in corner.all_eus.as_deref().unwrap_or_default() {
+                if let Some(e) = eu::edge(self.target, eu)? {
+                    along_edge.push((e, corner.set_back_dist_along(self.target, e)?));
+                }
+            }
+            let set_back_dist = corner.set_back_dist();
             let mut fvs = Vec::new();
             corner.fillet_vertices(&mut fvs);
             for fv in fvs {
@@ -198,6 +207,12 @@ impl SessionObjects<'_> {
                 // setback's)
                 let edgeuse = base.edgeuse(0)?.ok_or_else(null)?;
                 let e = eu::edge(self.target, edgeuse)?.ok_or_else(null)?;
+                // each edge's own setback (the fork's 61547af, GetSetBackDistAlong)
+                let dist_at = along_edge
+                    .iter()
+                    .find(|(edge, _)| *edge == e)
+                    .map_or(set_back_dist, |&(_, d)| d)
+                    + ease_dist;
                 let edge_curve = edge::curve(self.target, e)?.ok_or_else(null)?;
                 let edge_ivl = edge::interval(self.target, e)?;
                 let from_start = edge::start_vertex(self.target, e)? == Some(cp_vertex);
@@ -442,25 +457,29 @@ impl SessionObjects<'_> {
                     },
                 )?
             } else {
-                g2_generator.create_surface_from_curves(
-                    k,
-                    &mut c0,
-                    &mut c1,
-                    &mut c2,
-                    tol,
-                    need_g1,
-                    RailSurface {
-                        surface: Some(surf0),
-                        uv_curve: uvs.first(),
-                    },
-                    RailSurface {
-                        surface: Some(surf1),
-                        uv_curve: uvs.get(1),
-                    },
-                )?
+                g2_generator
+                    .create_surface_from_curves(
+                        k,
+                        &mut c0,
+                        &mut c1,
+                        &mut c2,
+                        tol,
+                        need_g1,
+                        RailSurface {
+                            surface: Some(surf0),
+                            uv_curve: uvs.first(),
+                        },
+                        RailSurface {
+                            surface: Some(surf1),
+                            uv_curve: uvs.get(1),
+                        },
+                    )
+                    .map(Surface::from)?
             };
 
-            let eased = ease_surface(&own, &g2, along, geom_ramps)?;
+            // (the fork's EaseSurface takes the G^n target, a blend by its definition with
+            // `fillet_round_as_definition`, and the round's own surface as they are)
+            let eased = ease_surface_of(k, &own_surface, &g2, along, geom_ramps)?;
             self.pseudo
                 .geom_mut(fg)?
                 .set_fillet_surface(Some(Surface::from(eased)));

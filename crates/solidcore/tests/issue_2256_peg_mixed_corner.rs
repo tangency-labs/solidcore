@@ -54,10 +54,13 @@ fn key_of(e: EntityRef) -> ObjectRef {
     }
 }
 
-/// Every opt-in fix on (SolidCraft's set), with WR-710's refusal on or off.
+/// Every opt-in fix on (SolidCraft's set) but the blend corner (`fillet_blend_corner`,
+/// whose Mixed corner builds this corner: `issue_2360_mixed_corner.rs`), with WR-710's
+/// refusal on or off.
 fn kernel(refuse: bool) -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     k.fixes = UpstreamFixes::all();
+    k.fixes.fillet_blend_corner = false;
     k.fixes.fillet_refuse_mixed_corner_crossing_rails = refuse;
     k
 }
@@ -152,12 +155,15 @@ fn front_and_concave_arc_built_without_refusal() {
     r.unwrap();
     let bb = brep_bounding_box(&k, &b, true).unwrap();
     assert!(
-        (bb.min_at(1) + 6.544244339992678e-3).abs() < 1e-9,
+        // 6.544244339992678e-3 with the front round's cylinder on the solved stations; on
+        // its exact spine (#2405) the corner patch moves 8.1e-7
+        (bb.min_at(1) + 6.543433008971893e-3).abs() < 1e-9,
         "min y {}",
         bb.min_at(1)
     );
     let v = volume(&k, &mut b);
-    assert!((v - 9402.870799856591).abs() < 1e-6, "volume {v}");
+    // 9402.870799856591 with the front round on the solved stations (#2405)
+    assert!((v - 9402.870802612037).abs() < 1e-6, "volume {v}");
     assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
         .unwrap()
         .is_valid());

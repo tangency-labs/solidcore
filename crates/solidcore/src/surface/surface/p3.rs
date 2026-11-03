@@ -167,6 +167,14 @@ fn surface_approx_tol_3d(
 pub(crate) fn out_of_bounds_enabled(surface: &Surface) -> Option<bool> {
     match surface.kind() {
         SurfaceKind::BSpline(s) => Some(s.is_out_of_bounds_enabled()),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let s = pb.net();
+            Some(s.is_out_of_bounds_enabled())
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let s = bp.net();
+            Some(s.is_out_of_bounds_enabled())
+        }
         SurfaceKind::Plane(s) => Some(s.is_out_of_bounds_enabled()),
         SurfaceKind::Cone(s) => Some(s.rev().is_out_of_bounds_enabled()),
         SurfaceKind::Sphere(s) => Some(s.base().is_out_of_bounds_enabled()),
@@ -187,6 +195,11 @@ pub(crate) fn out_of_bounds_enabled(surface: &Surface) -> Option<bool> {
 pub(crate) fn set_out_of_bounds_enabled(surface: &mut Surface, enabled: bool) {
     match surface.kind_mut() {
         SurfaceKind::BSpline(s) => *s.out_of_bounds_enabled_mut() = enabled,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let s = pb.net_mut();
+            *s.out_of_bounds_enabled_mut() = enabled;
+        }
+        SurfaceKind::BallPatch(bp) => *bp.net_mut().out_of_bounds_enabled_mut() = enabled,
         SurfaceKind::Plane(s) => s.set_out_of_bounds_enabled(enabled),
         SurfaceKind::Cone(s) => *s.rev.base_mut().out_of_bounds_enabled_mut() = enabled,
         SurfaceKind::Sphere(s) => *s.base.base_mut().out_of_bounds_enabled_mut() = enabled,
@@ -1232,23 +1245,32 @@ impl Surface {
         let wraps_across_seam = k.fixes.cover_wraps_across_closed_seam && across_wrapped_seams;
         let (wraps_u, wraps_v) = if wraps_across_seam {
             let this_domain = self.natural_uv_domain_with_nurb(k)?;
-            (
-                self.is_closed(
-                    k,
-                    &this_domain,
-                    crate::nurbs::b_spline_surface::SurfParamType::U,
-                    None,
-                    false,
-                )?
-                .0,
-                self.is_closed(
-                    k,
-                    &this_domain,
+            // The steps are in STEP parameters (u round a surface of revolution's axis), the
+            // closure is the NURBS's: a surface whose NURBS swaps them (the B-spline part's
+            // `GetSwapUVBit`) wraps in STEP u where its NURBS closes in v (the fork's
+            // tangency-labs/smlib@dda881f, WR-599)
+            let swap_uv = match self.kind() {
+                SurfaceKind::SurfOfRevolution(s) => s.swap_uv,
+                SurfaceKind::SurfOfExtrusion(s) => s.swap_uv,
+                SurfaceKind::Cone(s) => s.rev.swap_uv,
+                SurfaceKind::Sphere(s) => s.base.swap_uv,
+                SurfaceKind::Torus(s) => s.base.swap_uv,
+                _ => false,
+            };
+            let (dir_u, dir_v) = if swap_uv {
+                (
                     crate::nurbs::b_spline_surface::SurfParamType::V,
-                    None,
-                    false,
-                )?
-                .0,
+                    crate::nurbs::b_spline_surface::SurfParamType::U,
+                )
+            } else {
+                (
+                    crate::nurbs::b_spline_surface::SurfParamType::U,
+                    crate::nurbs::b_spline_surface::SurfParamType::V,
+                )
+            };
+            (
+                self.is_closed(k, &this_domain, dir_u, None, false)?.0,
+                self.is_closed(k, &this_domain, dir_v, None, false)?.0,
             )
         } else {
             (false, false)
