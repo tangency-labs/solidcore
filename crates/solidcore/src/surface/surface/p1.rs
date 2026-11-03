@@ -2570,6 +2570,15 @@ impl Surface {
                 BlendRef::Procedural(p) => {
                     procedural_offset(k, self, p, signed_offset_distance, approx_tol_3d)?
                 }
+                // a chamfer between planes (#2486), the chord: its offset is the chamfer of
+                // other sizes on the offset faces, which no definition is built for yet, so
+                // the plane offsets as its net does, exactly, and keeps no definition
+                BlendRef::Exact { round, .. }
+                    if round.class()
+                        == crate::surface::procedural_blend::exact::ExactClass::Chord =>
+                {
+                    None
+                }
                 BlendRef::Exact { round, .. } => {
                     let mut kind_only = self.clone();
                     kind_only.set_exact_round(None);
