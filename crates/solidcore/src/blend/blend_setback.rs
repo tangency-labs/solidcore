@@ -1834,6 +1834,7 @@ pub fn fill_hole_counted(
 /// `<= 0` where met; `margin` asks it), one quadratic programme each; or (`fill`) the fill as
 /// [`fill_hole`]'s, its degrees tried from the least up only.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // the fork's three switches and solidcore's margin
 pub struct Probe {
     /// `m_bFill`: the fill itself, from the least degree up (no degree-9 proof first).
     pub fill: bool,

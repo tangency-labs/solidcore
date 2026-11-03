@@ -1513,7 +1513,7 @@ fn grow_curved<S: SetbackSolvers>(
             "Fillet Error: no setbacks up to twice the rule's within the corner's edges keep its fill no more concave than its faces".to_owned()
         };
         return Ok(Err(SetbackRefusal::no_room(why, Some(0.0))));
-    };
+    }
     // The planar search's (`certified_scale`, #2382, the fork's 20b1c01): the smallest
     // certifying scale on the grid of thousandths whose neighbour below fails, by bisection
     // from 1 (the fill at the setbacks themselves, refused) and 2.

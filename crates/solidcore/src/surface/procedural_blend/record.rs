@@ -858,11 +858,12 @@ impl CornerRecord {
                                 q.radius > 0.0 && q.slope == 0.0
                             }
                         };
-                        if !points_finite(&[q.axis])
-                            || !(q.radius.is_finite() && q.slope.is_finite())
-                            || !radius_ok
-                            || !(q.side == 1.0 || q.side == -1.0)
-                        {
+                        let valid = points_finite(&[q.axis])
+                            && q.radius.is_finite()
+                            && q.slope.is_finite()
+                            && radius_ok
+                            && (q.side == 1.0 || q.side == -1.0);
+                        if !valid {
                             return Err(refuse(
                                 "faces",
                                 "a curved face is a cylinder or sphere of positive radius or a cone opening along its axis, with a side of +1 or -1",

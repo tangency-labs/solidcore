@@ -354,7 +354,7 @@ fn control_distance(
             count += 1.0;
         }
     }
-    if !(rho < 1.0) || count == 0.0 {
+    if rho.is_nan() || rho >= 1.0 || count == 0.0 {
         return None;
     }
     centre *= 1.0 / count;

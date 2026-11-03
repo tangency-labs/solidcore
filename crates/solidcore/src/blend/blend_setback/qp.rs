@@ -143,9 +143,9 @@ fn dual_run(
         let mut worst = -tol;
         for i in 0..m {
             let s = if rounding {
-                violation(cm, b, &y, i, n)?
+                violation(cm, b, y, i, n)?
             } else {
-                slack(&y, i)?
+                slack(y, i)?
             };
             if s < worst {
                 worst = s;
@@ -161,7 +161,7 @@ fn dual_run(
             for (c, dc) in d.iter_mut().enumerate() {
                 let mut s = 0.0;
                 for k in 0..n {
-                    s += at(&jm, k * n + c)? * at(cm, p * n + k)?;
+                    s += at(jm, k * n + c)? * at(cm, p * n + k)?;
                 }
                 *dc = s;
             }
@@ -170,7 +170,7 @@ fn dual_run(
             for (k, zk) in z.iter_mut().enumerate() {
                 let mut s = 0.0;
                 for c in q..n {
-                    s += at(&jm, k * n + c)? * at(&d, c)?;
+                    s += at(jm, k * n + c)? * at(&d, c)?;
                 }
                 *zk = s;
                 dz = smax(dz, s.abs());
@@ -178,14 +178,14 @@ fn dual_run(
             for i in (0..q).rev() {
                 let mut s = at(&d, i)?;
                 for j in i + 1..q {
-                    s -= at(&rm, i * n + j)? * at(&r, j)?;
+                    s -= at(rm, i * n + j)? * at(&r, j)?;
                 }
-                *el_mut(&mut r, i)? = s / at(&rm, i * n + i)?;
+                *el_mut(&mut r, i)? = s / at(rm, i * n + i)?;
             }
             let mut t1 = f64::INFINITY;
             let mut drop = q;
             for k in 0..q {
-                let (rk, uk) = (at(&r, k)?, at(&u, k)?);
+                let (rk, uk) = (at(&r, k)?, at(u, k)?);
                 if rk > 0.0 && uk / rk < t1 {
                     t1 = uk / rk;
                     drop = k;
@@ -196,7 +196,7 @@ fn dual_run(
                 zn += zk * at(cm, p * n + k)?;
             }
             let t2 = if dz > 1.0e-14 && zn > 0.0 {
-                -slack(&y, p)? / zn
+                -slack(y, p)? / zn
             } else {
                 f64::INFINITY
             };
@@ -243,7 +243,7 @@ fn dual_run(
                     *el_mut(&mut d, j - 1)? = dj1;
                     *el_mut(&mut d, j)? = dj;
                     for k in 0..n {
-                        let (a, bb) = (at(&jm, k * n + j - 1)?, at(&jm, k * n + j)?);
+                        let (a, bb) = (at(jm, k * n + j - 1)?, at(jm, k * n + j)?);
                         *el_mut(jm, k * n + j - 1)? = cs * a + sn * bb;
                         *el_mut(jm, k * n + j)? = -sn * a + cs * bb;
                     }
@@ -268,22 +268,22 @@ fn dual_run(
             u.remove(drop);
             for i in 0..q {
                 for j in drop..q.saturating_sub(1) {
-                    *el_mut(rm, i * n + j)? = at(&rm, i * n + j + 1)?;
+                    *el_mut(rm, i * n + j)? = at(rm, i * n + j + 1)?;
                 }
                 *el_mut(rm, i * n + q - 1)? = 0.0;
             }
             for j in drop..q.saturating_sub(1) {
-                let (mut a, mut bb) = (at(&rm, j * n + j)?, at(&rm, (j + 1) * n + j)?);
+                let (mut a, mut bb) = (at(rm, j * n + j)?, at(rm, (j + 1) * n + j)?);
                 let (cs, sn) = givens(&mut a, &mut bb);
                 *el_mut(rm, j * n + j)? = a;
                 *el_mut(rm, (j + 1) * n + j)? = 0.0;
                 for k in j + 1..q.saturating_sub(1) {
-                    let (x1, x2) = (at(&rm, j * n + k)?, at(&rm, (j + 1) * n + k)?);
+                    let (x1, x2) = (at(rm, j * n + k)?, at(rm, (j + 1) * n + k)?);
                     *el_mut(rm, j * n + k)? = cs * x1 + sn * x2;
                     *el_mut(rm, (j + 1) * n + k)? = -sn * x1 + cs * x2;
                 }
                 for k in 0..n {
-                    let (x1, x2) = (at(&jm, k * n + j)?, at(&jm, k * n + j + 1)?);
+                    let (x1, x2) = (at(jm, k * n + j)?, at(jm, k * n + j + 1)?);
                     *el_mut(jm, k * n + j)? = cs * x1 + sn * x2;
                     *el_mut(jm, k * n + j + 1)? = -sn * x1 + cs * x2;
                 }
