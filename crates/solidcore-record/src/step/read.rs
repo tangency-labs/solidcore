@@ -604,11 +604,9 @@ impl<'a> Reader<'a> {
                     curve: basis,
                     height,
                 } = self.curve_in(b, depth + 1)?;
-                // Conic parameters are angles; every other basis curve's are plain numbers.
-                let kind = match &*basis {
-                    Curve::Circle { .. } | Curve::Ellipse { .. } => ParamKind::Angle,
-                    _ => ParamKind::Plain,
-                };
+                // A trimmed curve's parameters are its basis's: angles on a conic, also through
+                // an offset or trimmed curve of one; plain numbers otherwise.
+                let kind = Self::curve_param_kind(&basis);
                 let trim_1 = self.trims(p.get(2), kind, sp)?;
                 let trim_2 = self.trims(p.get(3), kind, sp)?;
                 let sense = boolean(p.get(4), "trimmed curve sense")?;
@@ -672,6 +670,18 @@ impl<'a> Reader<'a> {
                 _ => Err("bad trim".into()),
             })
             .collect()
+    }
+
+    /// How a curve's parameter scales from file units. Recursion follows the curve's basis
+    /// links, each read bounded by [`MAX_GEOM_DEPTH`].
+    fn curve_param_kind(c: &Curve) -> ParamKind {
+        match c {
+            Curve::Circle { .. } | Curve::Ellipse { .. } => ParamKind::Angle,
+            Curve::Trimmed { basis, .. } | Curve::OffsetCurve3d { basis, .. } => {
+                Self::curve_param_kind(basis)
+            }
+            _ => ParamKind::Plain,
+        }
     }
 
     fn bspline_curve(&mut self, e: &Entity, sp: Space) -> R<Curve> {
