@@ -18,10 +18,13 @@ use crate::{Result, TessError};
 pub(crate) fn eval_surface(surface: &brep::Surface) -> Result<EvalSurface> {
     match SurfaceEval::new(&kernel::surface(surface)) {
         Ok(SurfaceEval::Eval(e, _)) => Ok(e),
-        // The record requires the form ([`brep::Brep::validate`]).
-        Ok(_) => Err(TessError::Invalid(
-            "tessellation: a cylinder, cone, sphere or torus face without its NURBS form".into(),
-        )),
+        // The record requires the form ([`brep::Brep::validate`]): a label the kernel's
+        // evaluator keeps in its closed form (a cylinder, cone, sphere or torus) stands here
+        // without it.
+        Ok(_) => Err(TessError::Invalid(format!(
+            "tessellation: a {} face without its NURBS form",
+            super::kind(surface)
+        ))),
         Err(e) => Err(TessError::Failed(format!(
             "not supported yet: tessellation: {}",
             crate::eval_message(e)
