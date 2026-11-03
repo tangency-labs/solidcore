@@ -45,8 +45,24 @@ use crate::topology::{
     edge, edgeuse::p1 as eu, face::p2 as face, loopuse, vertex, vertexuse, LoopuseStart,
 };
 
-/// Most repetitions one `do_sweep` call executes (not upstream: a work bound).
-const MAX_REPETITIONS: u64 = 4096;
+/// Most repetitions one [`TopologySweep::do_sweep`] executes (not upstream).
+pub const MAX_SWEEP_REPETITIONS: u64 = 4096;
+
+/// [`SolidError::InvalidInput`] past [`MAX_SWEEP_REPETITIONS`], for `do_sweep` and for
+/// callers whose own work before it grows with the count.
+///
+/// # Errors
+///
+/// `InvalidInput` for more than [`MAX_SWEEP_REPETITIONS`] repetitions.
+pub fn check_sweep_repetitions(repetitions: u64) -> Result<()> {
+    if repetitions > MAX_SWEEP_REPETITIONS {
+        return Err(SolidError::invalid_input(
+            OP,
+            "sweep repetitions exceed 4096",
+        ));
+    }
+    Ok(())
+}
 
 /// `Kernel::fixes.sweep_statuses_pass_on` of `brep`'s kernel (fork c8f6a31, WR-662).
 fn pass_on(a: &impl SweepAccess, brep: crate::topology::BrepId) -> Result<bool> {
@@ -782,7 +798,7 @@ impl TopologySweep {
     /// `DoSweep` / `DoAdvSweep`. Temporary B-reps and both boolean flags are restored
     /// on every return. A wire sub-sweep always has explicit target arrays, so
     /// whole-B-rep recursion can nest only once (independent of input size).
-    /// At most [`MAX_REPETITIONS`] repetitions are executed per call: the next one
+    /// At most [`MAX_SWEEP_REPETITIONS`] repetitions are executed per call: the next one
     /// fails with `InvalidInput`, after upstream's own per-repetition checks have had
     /// their turn on the ones before it.
     pub fn do_sweep(
@@ -837,12 +853,7 @@ impl TopologySweep {
                 // 4096 repetitions (a rotational `IsSweepClosed` past 360 degrees, which
                 // `SmApiCreateRotationalSweepWithRepetitions` reports as `SM_ERR`) comes
                 // first, as upstream's does.
-                if repetition >= MAX_REPETITIONS {
-                    return Err(SolidError::invalid_input(
-                        OP,
-                        "sweep repetitions exceed 4096",
-                    ));
-                }
+                check_sweep_repetitions(repetition + 1)?;
                 check_cancelled(a, destination_brep)?;
                 if repetition > 0 {
                     targets.update(self)?;
@@ -1713,7 +1724,7 @@ mod tests {
         assert!(result.is_err());
         assert!(!access.kernel.context.doing_boolean());
     }
-    /// The work bound: the repetitions up to [`MAX_REPETITIONS`] run (nothing to sweep
+    /// The work bound: the repetitions up to [`MAX_SWEEP_REPETITIONS`] run (nothing to sweep
     /// here), the next one fails with `InvalidInput` without a B-rep allocated per
     /// repetition, and the shared context is restored. The bound is checked inside the
     /// loop so that upstream's own per-repetition failures come first (a rotational
@@ -1721,8 +1732,8 @@ mod tests {
     #[test]
     fn extreme_repetitions_fail_at_the_work_bound_without_allocating() {
         for (repetitions, ok) in [
-            (MAX_REPETITIONS, true),
-            (MAX_REPETITIONS + 1, false),
+            (MAX_SWEEP_REPETITIONS, true),
+            (MAX_SWEEP_REPETITIONS + 1, false),
             (u64::MAX, false),
         ] {
             let mut access = Access::new();
