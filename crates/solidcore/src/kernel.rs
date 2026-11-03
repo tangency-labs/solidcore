@@ -856,6 +856,8 @@ pub struct UpstreamFixes {
     pub offset_missing_surface_fails: bool,
     /// `ApproximateSurface` raises the starter's inner knots to full multiplicity (exact knot insertion) before each round of cubic Bezier patches, which needs every inner knot of full multiplicity; and a patch that runs past the control points is `SM_ERR`. Upstream uses a starter copied from a root B-spline with simple inner knots (the offset of a fitted bicubic patch) as it is, its patches run past its control points, and it returns success with no surface, so exporting an offset B-spline sheet as B-splines fails (1001) (WR-573, #1501; the fork's tangency-labs/smlib@eae96cb).
     pub approximate_surface_bezier_starter: bool,
+    /// `ApproximateSurface` rejects a pass of cubic Bezier patches when any row (or column) of patches has a sample outside the tolerance, so the next subdivision runs, and fails (`SM_ERR`) when the last allowed one is still outside it: an approximation it returns is within the tolerance it was asked for. Upstream starts the failed flag over with every row and has the break after a failed row commented out, so a pass is accepted when its last row is within the tolerance and returns `SM_SUCCESS` with an achieved tolerance above the requested one (WR-726, #2507; the offset wave of #2476 with `approximate_surface_bezier_starter`: 1.12e-5 for 5e-6).
+    pub approximate_surface_checks_every_row: bool,
     /// A surface of revolution whose generatrix is one circular arc (a fillet's round along a circular edge, a torus in all but its type) collapses when an offset runs towards the arc's centre by its radius or more: `Surface::offset_collapses` says so, as a torus's does, and `create_offset_surface` builds no surface, where upstream says it never collapses and builds the generatrix's offset past the arc's centre as the arc turned inside out, so an inward shell thicker than the round fails with 1001 or leaves a wrong volume (WR-567; the fork's tangency-labs/smlib@8b2090f, smlib#64; SolidCraft `shell_of_a_disc_rounded_smaller_than_the_wall`, solidcraft#319). The faces either side are mated across it with `offset_collapsed_rounds_mated`.
     pub revolution_round_offset_collapses: bool,
     /// At an Nx1 corner whose end rib cannot be built because a rail missed a side edge ending within the fillet's width, the rib is deleted and the global merge cuts the round off (WR-303, #841).
@@ -1483,7 +1485,8 @@ pub struct UpstreamFixes {
     ///
     /// With it (smlib#79 step 4d, the fork's 794946e, 3e26f76, 68e039c, 543d25a and 53c47b8) a vertex where one blended edge ends is the blend corner's End, of the kind the pinned degenerate, open or Nx1 corner's construction builds (moved unchanged), and every G1 continuation of blends (two edges among two to four, or one closed edge meeting itself) is its Join: one shared section, each blend's section solved on its own faces in the plane through the vertex square to the first blend's edge (`SM_FV_JOIN_SECTION`), or where one edge stands between the blends on a side, where the rails cross it; more than one edge there is refused (`CornerUnsupported`). Every blend corner is of type `SM_FCR_BLEND` (here [`crate::blend::fillet_geom::p1::FilletCornerType::NByTwo`]). A mixed-convexity End's rail ends at its crossing with the end face's surface (`CalcRailIntEndSurface`), and `TrimOriginalSurfaces` collects a round's faces from its rail edge's edge use on its own face, so a square bar rounded on its four long edges is the rod (80 pi, 6 faces) where upstream drops a round.
     ///
-    /// With it, since the fork's tangency-labs/smlib#104 (61547af to f1d81f4, merged at b5bb747): a vertex of three or more blends of one convexity on planes and straight edges that no Ball takes (rounds of unequal radii, of curvature sections, or a vertex the caller sets back with `FilletSession::set_set_back_fill`, the fork's `SetSetBackFill`) is the blend corner's Setback (`SmBlendCorner::ClassifySetBack`, [`crate::blend::blend_corner::setback`]): each blend ends at its setback along its edge (asked for, else the owner's rule, a default too long for its edge shrinking to its room less a quarter of its radius) and the hole is filled by the setback split (`SmBlendSetback::FillHole`). A G1 fill is a graph over the corner's axis whose heights are held convex by linear conditions on their Bernstein coefficients (a quadratic programme) and is taken only once certified convex; the rule's setbacks grow to the least scale that certifies (`SmBlendSetback::CertifiedScale`, to 1e-2), and an asked-for setback that does not fit, or is too short for a certified fill, is refused as `FilletErrorType::NoRoom` naming the setback that fits or builds (`FilletSession::fit_setback`, the fork's `GetFitSetBack`).
+    /// With it, since the fork's tangency-labs/smlib#104 (61547af to f1d81f4, merged at b5bb747): a vertex of three or more blends of one convexity on planes and straight edges that no Ball takes (rounds of unequal radii, of curvature sections, or a vertex the caller sets back with `FilletSession::set_set_back_fill`, the fork's `SetSetBackFill`) is the blend corner's Setback (`SmBlendCorner::ClassifySetBack`, [`crate::blend::blend_corner::setback`]): each blend ends at its setback along its edge (asked for, else the owner's rule, a default too long for its edge shrinking to its room less a quarter of its radius) and the hole is filled by the setback split (`SmBlendSetback::FillHole`). A G1 fill is a graph over the corner's axis whose heights are held convex by linear conditions on their Bernstein coefficients (a quadratic programme) and is taken only once certified convex; the rule's setbacks grow to the least scale that certifies (`SmBlendSetback::CertifiedScale`: the smallest certifying scale on the grid whose neighbour below fails; monotonicity checked, not proved), and an asked-for setback that does not fit, or is too short for a certified fill, is refused as `FilletErrorType::NoRoom` naming the setback that fits or builds (`FilletSession::fit_setback`, the fork's `GetFitSetBack`).
+
     pub fillet_blend_corner: bool,
     /// The executive's circular rounds (`SetFilletParameters` with `SM_FSG_CIRCULAR`, and
     /// the corners' constant rounds, `SmFilletCorner::MakeConstantRadiusFillet`) take the
@@ -1527,6 +1530,8 @@ pub struct UpstreamFixes {
     pub keep_exact_pcurves: bool,
     /// Shell, offset and thicken as one construction (tangency-labs/solidcore#2350; solidcore-native, no fork commit; WR-718). Built so far: its first stage, S1, each face's offset sheet exact or certified ([`crate::offset::construction::sheets`]), run inside today's executive. A B-spline face whose offset folds (the wall is thicker than a radius of curvature on its side: `(1 - k1 d)(1 - k2 d) > 0` not certified on the face) is refused with [`crate::SolidError::ShellRefused`] (`ShellRefusal::Fold`, status `SM_ERR`), naming the largest wall that works, instead of being built into a folded body or failing on its broken topology; and `ShellBrep`'s `ReplaceImplicitOffsets` replaces each implicit offset surface by a bicubic B-spline certified within the shell's tolerance of the exact offset at every parameter (Elber & Cohen's bound, from exact Bernstein products), instead of `N_SrfOffset`'s sampled fit. Offset faces and draft (`LocalOperation`) are not affected. Off: SMLib's behaviour.
     pub shell_one_construction: bool,
+    /// `N_SrfIsClosedSmooth` ([`crate::nurbs::srf_basic::Surface::is_closed_smooth_with_fixes`]) takes the G1 test across the seam at a station where the derivative across the seam vanishes (a collapsed row, a pole on the seam: shorter than `0.001 * NL_MTOL`, the pole test of `N_SrfEvalPtNormalAtPole`) by its limit, the mixed derivative `S_uv` (`S_uv` for the v seam), negated at the end of the domain, where upstream takes the angle of the two vanishing vectors: their rounding then decides between `NL_GEO_ERR` (two exact zeros), not smooth (two noise vectors at any angle) and smooth, so a sphere is not reported closed and smooth in u (WR-725, #2521; solidcore-native, no fork commit).
+    pub closed_smooth_pole_tangent_limit: bool,
 }
 }
 
@@ -1683,6 +1688,20 @@ pub struct Kernel {
         std::sync::Weak<()>,
         crate::topology::topology::NotifyRecords,
     ),
+    /// Not upstream: the fork's `thread_local` memo of equal area thumbweights
+    /// (`t_sWMemo`, b8ec238, smlib#109;
+    /// [`crate::blend::fillet_section::section::ThumbweightMemo`]). A [`RefCell`]: the
+    /// stations and the definition solve through `&Kernel`; it is never borrowed across a
+    /// solve, and a hit returns what a fresh solve of the same order and u gives.
+    pub blend_w_memo: RefCell<crate::blend::fillet_section::section::ThumbweightMemo>,
+    /// Not upstream: the fork's `thread_local` count of open blend operation scopes
+    /// (`t_lOperationScopes`; [`crate::blend::fillet_section::section::OperationScope`]).
+    /// Shared, so that a scope can outlive a borrow of the kernel (a fillet session holds
+    /// one while it takes `&mut Kernel`); an atomic keeps the kernel `Send`. Its updates are
+    /// `Relaxed`: a kernel runs on one thread at a time (it is `Send`, not shared), so the
+    /// count orders nothing between threads; a copy of the kernel (`cache_kernel`) takes its
+    /// own count, never this one.
+    pub blend_operation_scopes: Arc<core::sync::atomic::AtomicU32>,
     /// Not upstream (the SolidCraft fork's `SmWorkCounters`): counts of the work done by
     /// the steps of a boolean whose cost once grew with the square of the body's size, for
     /// tests and profiling. They change no result.
@@ -1719,6 +1738,8 @@ impl Kernel {
                 std::sync::Weak::new(),
                 crate::topology::topology::NotifyRecords::new(),
             ),
+            blend_w_memo: RefCell::default(),
+            blend_operation_scopes: Arc::default(),
             work_counters: WorkCounters::default(),
         }
     }
