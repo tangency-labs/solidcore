@@ -238,7 +238,9 @@ fn smin(a: f64, b: f64) -> f64 {
 }
 
 /// `SM_GN_W_MEMO`: the most equal area thumbweights [`ThumbweightMemo`] keeps before it
-/// starts again.
+/// starts again. A guard on memory only: no case reaches it (one operation solved 9 at most
+/// here, on the boss root; the fork's largest gate, the twisted wedge with its definition's
+/// grading, 12150), and clearing it changes no result.
 const GN_W_MEMO: usize = 65536;
 
 /// `t_sWMemo` (b8ec238, smlib#109): the equal area thumbweights [`gn_equal_area_w`]
@@ -293,7 +295,9 @@ impl Drop for OperationScope {
 
 /// `sm_GnEqualAreaW` (b8ec238): [`gn_equal_area_w_solve`], each order and u solved once
 /// in an operation, kept in the kernel's [`ThumbweightMemo`]. A solve that fails is not
-/// kept.
+/// kept. The solve is a pure function of exactly the key (the order and u), so a w kept for
+/// one round or definition is the w every other round or definition of the operation would
+/// solve for the same order and u: sharing the memo between them cannot change a result.
 pub(crate) fn gn_equal_area_w(k: &Kernel, order: usize, u: f64) -> Result<f64> {
     let key = (order, u.to_bits());
     if let Some(&w) = k.blend_w_memo.borrow().roots.get(&key) {
