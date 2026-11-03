@@ -9,6 +9,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use solidcore::kernel::Kernel;
 
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
+use solidcore::geom::certified::Verdict;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::primitive::api_primitives as primitives;
 use solidcore::topology::brep::is_outward_solid;
@@ -74,11 +75,14 @@ impl Body {
     /// into NURBS, tolerances scale with it.
     ///
     /// # Errors
-    /// [`Error::Argument`] for an entry that is not finite or a fourth column that is not
-    /// `(0, 0, 0, 1)` (a projective map, no motion of a body); the kernel's status.
+    /// [`Error::Argument`], before the body is touched, for a matrix the kernel does not prove
+    /// regular ([`solidcore::Transform::is_regular`] at [`REGULAR_RATIO`]: an entry not finite, a
+    /// fourth column that is not `(0, 0, 0, 1)`, a smallest scale not proved above the ratio of
+    /// the largest: a flattening, a zero scale; a uniform scale of any size is regular); the
+    /// kernel's status, the body put back as it was.
     pub fn transform(&self, matrix: &[[f64; 4]; 4]) -> Result<()> {
-        let affine = matrix.iter().map(|row| row[3]).eq([0.0, 0.0, 0.0, 1.0]);
-        if !(affine && matrix.iter().flatten().all(|x| x.is_finite())) {
+        let map = solidcore::Transform { m: *matrix };
+        if map.is_regular(REGULAR_RATIO) != Verdict::Yes {
             return Err(Error::Argument);
         }
         with_body("SmBrep::Transform", self, |k, b| {
@@ -116,6 +120,11 @@ impl Body {
         })
     }
 }
+
+/// The conditioning a body's motion must be proved above, its smallest scale against its
+/// largest (a choice of ops: SolidCraft's station maps take the same): a map flattening a body
+/// more than this is refused as singular.
+pub const REGULAR_RATIO: f64 = 1e-9;
 
 /// What an operation's result must be ([`finish`]), as its input says: a solid input must give
 /// a solid. Made from the input ([`Expect::of`]), never chosen by a caller; the two exceptions
