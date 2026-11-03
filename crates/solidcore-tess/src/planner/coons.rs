@@ -43,6 +43,7 @@ fn candidates(uv: &[[f64; 2]], scale: [f64; 2]) -> Option<Vec<usize>> {
     if n < 4 {
         return None;
     }
+    // Proven: n = uv.len() >= 4, checked above.
     let p = |i: usize| uv.get(i % n).map(|q| [q[0] * scale[0], q[1] * scale[1]]);
     let mut found = Vec::new();
     for i in 0..n {
@@ -135,10 +136,11 @@ fn min_angle(uv: &[[f64; 2]], r: &UvMesh, scale: [f64; 2]) -> f64 {
 }
 
 fn side(fixed: &[Vec3], n: usize, from: usize, to: usize) -> Option<Side> {
-    let len = (to + n - from) % n;
+    let len = (to + n - from).checked_rem(n)?;
     if len == 0 {
         return None;
     }
+    // Proven: n > 0, or `checked_rem(n)` above returned None.
     let nodes: Vec<u32> = (0..=len).map(|k| ((from + k) % n) as u32).collect();
     let mut at = vec![0.0];
     let mut total = 0.0;
@@ -167,6 +169,7 @@ fn along(side: &Side, uv: &[[f64; 2]], s: f64) -> Option<[f64; 2]> {
     let k = side
         .at
         .partition_point(|x| *x < s)
+        // Proven: the upper bound is at least the lower bound 1, by `.max(1)`.
         .clamp(1, side.at.len().saturating_sub(1).max(1));
     let (a0, a1) = (*side.at.get(k - 1)?, *side.at.get(k)?);
     let (p, q) = (
@@ -209,6 +212,7 @@ fn lines(a: &Side, b: &Side, h: f64) -> Vec<f64> {
     };
     let size = if size.is_finite() { size as usize } else { 1 };
     let outer = a.at.len().max(b.at.len()).saturating_sub(1);
+    // Proven: clamp bounds are constants 2 <= MAX_LEVEL = 4096.
     let n = outer.max(size).clamp(2, MAX_LEVEL);
     (1..n).map(|i| i as f64 / n as f64).collect()
 }
@@ -397,6 +401,7 @@ fn coons_in<E>(
                 }
             })
             .collect();
+        // Proven: k = at_t.len(), already allocated with larger (f64) elements.
         let mut mid: Vec<u32> = Vec::with_capacity(k);
         for &x in &at_t {
             let [sx, tx] = place(x);
@@ -444,9 +449,11 @@ fn coons_in<E>(
     }
     if sign < 0.0 {
         for t in &mut tris {
-            t.swap(1, 2);
+            let [a, b, c] = *t;
+            *t = [a, c, b];
         }
     }
+    // Proven: `out` starts as `uv.to_vec()` (n = uv.len()) and only grows.
     let extra = out.split_off(n);
     Some((extra, tris))
 }
@@ -590,10 +597,10 @@ mod tests {
     #[test]
     fn the_interior_level_is_the_larger_sides_and_the_sparser_side_steps_down() {
         // A 4 × 4 square: bottom in 20 segments, the other sides in 4.
-        let mut b: Vec<[f64; 2]> = (0..20).map(|k| [k as f64 * 0.2, 0.0]).collect();
-        b.extend((0..4).map(|k| [4.0, k as f64]));
-        b.extend((0..4).map(|k| [4.0 - k as f64, 4.0]));
-        b.extend((0..4).map(|k| [0.0, 4.0 - k as f64]));
+        let mut b: Vec<[f64; 2]> = (0..20).map(|k| [f64::from(k) * 0.2, 0.0]).collect();
+        b.extend((0..4).map(|k| [4.0, f64::from(k)]));
+        b.extend((0..4).map(|k| [4.0 - f64::from(k), 4.0]));
+        b.extend((0..4).map(|k| [0.0, 4.0 - f64::from(k)]));
         let fixed: Vec<Vec3> = b.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
         let Some((extra, tris)) =
             super::super::infallible(coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None))

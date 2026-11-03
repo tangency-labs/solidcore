@@ -80,6 +80,7 @@ fn cut_in<E>(
     let mut cut_uv: Vec<[f64; 2]> = Vec::new();
     let mut points: HashMap<[u64; 2], u32> = HashMap::new();
     // Each segment's end nodes, and the T-nodes other segments put on it.
+    // Proven: capacity of allocated `segments`' length, its elements larger
     let mut ends: Vec<(u32, u32)> = Vec::with_capacity(segments.len());
     let mut along: Vec<Vec<u32>> = vec![Vec::new(); segments.len()];
     for s in segments {
@@ -123,6 +124,7 @@ fn cut_in<E>(
         };
         let m = r.len();
         let i = k - r.start;
+        // Proven: m = r.len() > 0, as `r` contains k
         let (prev, next) = (r.start + (i + m - 1) % m, r.start + (i + 1) % m);
         match (boundary.get(prev), boundary.get(k), boundary.get(next)) {
             (Some(&p), Some(&q), Some(&x)) => 0.5 * (dist(p, q) + dist(q, x)),
@@ -136,6 +138,7 @@ fn cut_in<E>(
         for k in 0..m {
             let (a, b) = (
                 u32::try_from(r.start + k).ok()?,
+                // Proven: m = r.len() > 0 inside `for k in 0..m`
                 u32::try_from(r.start + (k + 1) % m).ok()?,
             );
             sides.insert((a.min(b), a.max(b)));
@@ -201,6 +204,7 @@ fn cut_in<E>(
             for k in 0..m {
                 let (Some(a), Some(b)) = (
                     boundary.get(r.start + k).map(|p| metric(*p)),
+                    // Proven: m = r.len() > 0 inside `for k in 0..m`
                     boundary.get(r.start + (k + 1) % m).map(|p| metric(*p)),
                 ) else {
                     continue;
@@ -220,7 +224,7 @@ fn cut_in<E>(
         let side = |k: usize| -> Option<(u32, u32)> {
             Some((
                 u32::try_from(r.start + k).ok()?,
-                u32::try_from(r.start + (k + 1) % m).ok()?,
+                u32::try_from(r.start + (k + 1).checked_rem(m)?).ok()?,
             ))
         };
         // Which way round the face lies to the left: test beside the loop's longest side.
@@ -459,14 +463,15 @@ mod tests {
     #[test]
     fn no_segments_no_cut() {
         let b = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-        assert!(
+        assert_eq!(
             cut(
                 &b,
                 &[std::ops::Range { start: 0, end: 4 }],
                 &[],
                 [1.0, 1.0],
                 &|_, _, _, _| Ok::<_, ()>(Vec::new())
-            ) == Ok(None)
+            ),
+            Ok(None)
         );
     }
 }

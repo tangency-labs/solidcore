@@ -133,7 +133,7 @@ fn a_flat_sheet_keeps_its_outline() {
     assert!(l.triangles.len() <= tris.len() / 16);
     assert!(l.error < 1e-6, "flat: {}", l.error);
     assert!(l.positions.iter().all(|p| p.z.abs() < 1e-9));
-    let b = l.positions.iter().fold(nearest::Aabb3::EMPTY, |mut b, p| {
+    let b = l.positions.iter().fold(Aabb3::EMPTY, |mut b, p| {
         b.add(*p);
         b
     });
@@ -193,7 +193,7 @@ fn hostile_meshes_never_panic() {
 /// Timing, not a check (`SOLIDCRAFT_BENCH_STL=part.stl cargo test --release -p solidcraft-geom
 /// --lib simplify_timing -- --ignored --nocapture`): the levels of a binary STL.
 #[test]
-#[ignore]
+#[ignore = "timing, not a check"]
 fn simplify_timing() {
     let Some(path) = std::env::var_os("SOLIDCRAFT_BENCH_STL") else {
         return;

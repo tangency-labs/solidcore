@@ -116,6 +116,7 @@ pub(crate) fn traces(
         .iter()
         .flat_map(|r| {
             let n = r.len();
+            // Proven: n = r.len() > 0: `k` ranges over `0..n`
             (0..n).map(move |k| (r.start + k, r.start + (k + 1) % n))
         })
         .collect();
@@ -142,6 +143,7 @@ pub(crate) fn traces(
         }
         for k in 0..n {
             let (Some(&a), Some(&b), Some(&c)) = (
+                // Proven (both `% n` here): n = r.len() >= 3, checked above
                 p.get(r.start + (k + n - 1) % n),
                 p.get(r.start + k),
                 p.get(r.start + (k + 1) % n),

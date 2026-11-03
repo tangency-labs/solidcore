@@ -30,6 +30,7 @@ pub(crate) fn segments(
             .filter_map(|k| {
                 let (a, b) = (
                     metric(*uvs.get(r.start + k)?),
+                    // Proven: m > 0: `k` ranges over `0..m`
                     metric(*uvs.get(r.start + (k + 1) % m)?),
                 );
                 Some(0.5 * (a[0] * b[1] - b[0] * a[1]))
@@ -88,14 +89,15 @@ pub(crate) fn segments(
     };
     // The arc of loop `r` (in nodes) between its support points `a` and `b`, the way that passes
     // neither of the other two.
+    // Proven: divisor is the constant 2
     let side_count = |n: usize| if flat { n.div_ceil(2).max(1) } else { n.max(1) };
     let arc = |r: &std::ops::Range<usize>, p: &[usize; 4], k: usize| -> Option<usize> {
         let m = r.len();
         let (a, b) = (*p.get(k)? - r.start, *p.get((k + 1) % 4)? - r.start);
-        let fwd = (b + m - a) % m;
+        let fwd = (b + m - a).checked_rem(m)?;
         let others: Vec<usize> = (0..4)
             .filter(|&j| j != k && j != (k + 1) % 4)
-            .filter_map(|j| p.get(j).map(|x| (x - r.start + m - a) % m))
+            .filter_map(|j| p.get(j).and_then(|x| (x - r.start + m - a).checked_rem(m)))
             .collect();
         Some(if others.iter().all(|&o| o > fwd) {
             fwd
@@ -206,12 +208,14 @@ pub(crate) fn segments(
     // Each square: the hole's box grown by half its clearance to the outer loop and a quarter of
     // its gap to another hole's box (both squares grow into that gap), so squares never touch.
     let m = outer.len();
+    // Proven: with_capacity of the length of `boxes`, allocated with the same element type
     let mut squares: Vec<([f64; 2], [f64; 2])> = Vec::with_capacity(boxes.len());
     for (i, &bx) in boxes.iter().enumerate() {
         let mut clear = f64::INFINITY;
         for k in 0..m {
             let (a, b) = (
                 metric(*uvs.get(outer.start + k)?),
+                // Proven: m = outer.len() > 0 inside `for k in 0..m`
                 metric(*uvs.get(outer.start + (k + 1) % m)?),
             );
             clear = clear.min(to_box(a, bx));
