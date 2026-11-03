@@ -52,7 +52,7 @@ fn split(starts: &[f64], flat: &dyn Fn(f64, f64) -> bool, max_lines: usize) -> V
 /// Whether the surface between the parameter points `a` and `b` is within the tolerance (at
 /// their middle), the side length `h` and the facet angle: no point is needed between them.
 pub(crate) fn fine_between(s: &EvalSurface, rules: &Rules, h: f64, a: [f64; 2], b: [f64; 2]) -> bool {
-    let at = |q: [f64; 2]| s.derivs(q[0], q[1]).map(kernel::triple);
+    let at = |q: [f64; 2]| s.derivs(q[0], q[1]).map(kernel::record_triple);
     let (Some((pa, _, _)), Some((pb, _, _))) = (at(a), at(b)) else { return true };
     if pa.dist(pb) > h * (1.0 + 1e-9) {
         return false;
@@ -86,11 +86,11 @@ fn limits<'a>(s: &'a EvalSurface, d: usize, across: (f64, f64), rules: &'a Rules
     let uv = move |x: f64, y: f64| if d == 0 { (x, y) } else { (y, x) };
     let at = move |x: f64, y: f64| {
         let (u, v) = uv(x, y);
-        s.derivs(u, v).map(kernel::triple).map(|(p, _, _)| p)
+        s.derivs(u, v).map(kernel::record_triple).map(|(p, _, _)| p)
     };
     let normal = move |x: f64, y: f64| {
         let (u, v) = uv(x, y);
-        s.derivs(u, v).map(kernel::triple).and_then(|(_, su, sv)| su.cross(sv).normalized())
+        s.derivs(u, v).map(kernel::record_triple).and_then(|(_, su, sv)| su.cross(sv).normalized())
     };
     const ACROSS: usize = 5;
     let ys: Vec<f64> = (0..ACROSS).map(|k| across.0 + (across.1 - across.0) * k as f64 / (ACROSS - 1) as f64).collect();

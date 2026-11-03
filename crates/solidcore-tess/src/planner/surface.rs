@@ -84,7 +84,7 @@ pub(crate) fn eval_surface(surface: &brep::Surface, domain: [[f64; 2]; 2]) -> Re
     };
     let revolved = |profile: EvalCurve, origin: Vec3, axis: Vec3| -> Result<EvalSurface> {
         let axis = axis.normalized().ok_or_else(|| invalid("an analytic surface's frame"))?;
-        Ok(EvalSurface::Revolved { profile, origin: kernel::kvec3(origin), axis: kernel::kvec3(axis), transform: IDENTITY, swap: false })
+        Ok(EvalSurface::Revolved { profile, origin: kernel::vec3(origin), axis: kernel::vec3(axis), transform: IDENTITY, swap: false })
     };
     // The generator of a cylinder or cone over the face's heights, run from the top down so the
     // revolution's (generator, angle) normal is the record's natural normal (outward).
@@ -193,8 +193,8 @@ mod tests {
                 for j in 0..=6 {
                     let uv = [u0 + (u1 - u0) * i as f64 / 6.0, v0 + (v1 - v0) * j as f64 / 6.0];
                     let q = map.to_eval(uv);
-                    let (p, n) = kernel::pair(eval.eval(q[0], q[1]));
-                    let Some((want, su, sv)) = reference.derivs(uv[0], uv[1]).map(kernel::triple) else { panic!("reference at {uv:?}") };
+                    let (p, n) = kernel::record_pair(eval.eval(q[0], q[1]));
+                    let Some((want, su, sv)) = reference.derivs(uv[0], uv[1]).map(kernel::record_triple) else { panic!("reference at {uv:?}") };
                     assert!(p.dist(want) < 1e-9 * (1.0 + want.len()), "point at {uv:?}: {p:?} vs {want:?}");
                     if let Some(wn) = su.cross(sv).normalized().filter(|_| su.cross(sv).len() > 1e-9 * (su.len() * sv.len()).max(1e-12)) {
                         assert!(n.dist(wn) < 1e-6, "normal at {uv:?}: {n:?} vs {wn:?} ({:?})", face.surface);

@@ -22,14 +22,14 @@ pub(crate) fn refine(s: &EvalSurface, tol: f64, reach: f64, fixed: &[Vec3], uv: 
     if !(tol.is_finite() && tol > 0.0) || tris.is_empty() {
         return;
     }
-    let at = |q: [f64; 2]| s.derivs(q[0], q[1]).map(|d| kernel::vec3(d.0));
+    let at = |q: [f64; 2]| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0));
     let dom = solidcore::eval::uv::domain(s);
     let mean = |qs: &[[f64; 2]]| mean(s, &dom, reach, qs);
     // How far the flat point `c` lies from the surface, measured along the normal at the surface
     // point of the same parameters: those parameters need not be the nearest (a straight line in
     // the parameters is no geodesic near a pole), and only the departure across the surface
     // counts. Where the normal is undefined (a pole), the whole distance.
-    let off = |q: [f64; 2], c: Vec3| match s.derivs(q[0], q[1]).map(kernel::triple) {
+    let off = |q: [f64; 2], c: Vec3| match s.derivs(q[0], q[1]).map(kernel::record_triple) {
         Some((p, su, sv)) => su.cross(sv).normalized().map_or_else(|| p.dist(c), |n| (p - c).dot(n).abs()),
         // Where the surface does not evaluate there is nothing to measure against.
         None => 0.0,
@@ -202,13 +202,13 @@ pub(crate) fn flip(s: &EvalSurface, tol: f64, reach: f64, fixed: &[Vec3], uv: &[
     let dom = solidcore::eval::uv::domain(s);
     let mean = |qs: &[[f64; 2]]| mean(s, &dom, reach, qs);
     // A face whose nodes do not all evaluate is left as it is.
-    let Some(pos) = uv.iter().enumerate().map(|(i, q)| fixed.get(i).copied().or_else(|| s.derivs(q[0], q[1]).map(|d| kernel::vec3(d.0)))).collect::<Option<Vec<Vec3>>>()
+    let Some(pos) = uv.iter().enumerate().map(|(i, q)| fixed.get(i).copied().or_else(|| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))).collect::<Option<Vec<Vec3>>>()
     else {
         return;
     };
     let p = |i: u32| pos.get(i as usize).copied();
     let q = |i: u32| uv.get(i as usize).copied();
-    let off = |m: [f64; 2], c: Vec3| match s.derivs(m[0], m[1]).map(kernel::triple) {
+    let off = |m: [f64; 2], c: Vec3| match s.derivs(m[0], m[1]).map(kernel::record_triple) {
         Some((x, su, sv)) => su.cross(sv).normalized().map_or_else(|| x.dist(c), |n| (x - c).dot(n).abs()),
         // Where the surface does not evaluate there is nothing to measure against.
         None => 0.0,
@@ -232,7 +232,7 @@ pub(crate) fn flip(s: &EvalSurface, tol: f64, reach: f64, fixed: &[Vec3], uv: &[
         let (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) = (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2])) else { return 0.0 };
         let m = mean(&[qa, qb, qc]);
         let facet = (b - a).cross(c - a).normalized();
-        match (facet, s.derivs(m[0], m[1]).map(kernel::triple).and_then(|(_, su, sv)| su.cross(sv).normalized())) {
+        match (facet, s.derivs(m[0], m[1]).map(kernel::record_triple).and_then(|(_, su, sv)| su.cross(sv).normalized())) {
             (Some(f), Some(n)) => f.dot(n).abs().clamp(0.0, 1.0).acos(),
             _ => 0.0,
         }
@@ -242,7 +242,7 @@ pub(crate) fn flip(s: &EvalSurface, tol: f64, reach: f64, fixed: &[Vec3], uv: &[
     let upright = |t: [u32; 3], sign: f64| -> bool {
         let (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) = (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2])) else { return false };
         let m = mean(&[qa, qb, qc]);
-        match s.derivs(m[0], m[1]).map(kernel::triple) {
+        match s.derivs(m[0], m[1]).map(kernel::record_triple) {
             Some((_, su, sv)) => (b - a).cross(c - a).dot(su.cross(sv)) * sign > 0.0,
             None => true,
         }

@@ -348,5 +348,5 @@ fn seam_nodes(s: &EvalSurface, swap: bool, x: f64, y0: f64, y1: f64, rules: &Rul
         }
     }
     let inner = ys.get(1..ys.len() - 1)?;
-    inner.iter().map(|&y| s.derivs(uv(y)[0], uv(y)[1]).map(|d| (y, kernel::vec3(d.0)))).collect()
+    inner.iter().map(|&y| s.derivs(uv(y)[0], uv(y)[1]).map(|d| (y, kernel::record_vec3(d.0)))).collect()
 }

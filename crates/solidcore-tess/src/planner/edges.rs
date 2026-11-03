@@ -66,7 +66,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
     }
     let curve = CurveEval::new(&kernel::curve(edge.parameters())).map_err(|e| fail(crate::eval_message(e)))?;
     let at = |t: f64| -> Result<Vec3> {
-        curve.point(t).map(kernel::vec3).filter(|p| p.is_finite()).ok_or_else(|| fail(format!("the curve does not evaluate at t = {t}")))
+        curve.point(t).map(kernel::record_vec3).filter(|p| p.is_finite()).ok_or_else(|| fail(format!("the curve does not evaluate at t = {t}")))
     };
     // A closed curve's chord between its ends is empty: start it from a few segments. An open
     // one starts whole, so an arc the tolerance leaves flat stays one segment.
@@ -160,7 +160,7 @@ pub(crate) fn split_segments(b: &brep::Brep, ei: usize, nodes: &mut Nodes, segs:
         }
         let pm = match &curve {
             None => (p + q) * 0.5,
-            Some(c) => c.point(m).map(kernel::vec3).filter(|p| p.is_finite()).ok_or_else(|| fail(format!("the curve does not evaluate at t = {m}")))?,
+            Some(c) => c.point(m).map(kernel::record_vec3).filter(|p| p.is_finite()).ok_or_else(|| fail(format!("the curve does not evaluate at t = {m}")))?,
         };
         points.push(pm);
         params.push(m);
@@ -320,7 +320,7 @@ mod tests {
                 for (t, p) in n.params.iter().zip(&n.points) {
                     let Some(q) = oe.pcurve.eval(*t) else { panic!("pcurve at {t}") };
                     let q = map.to_eval(q);
-                    let Some((at, _, _)) = s.derivs(q[0], q[1]).map(kernel::triple) else { panic!("evaluates") };
+                    let Some((at, _, _)) = s.derivs(q[0], q[1]).map(kernel::record_triple) else { panic!("evaluates") };
                     assert!(at.dist(*p) < 1e-6 + e.tolerance, "{at:?} vs {p:?}");
                     checked += 1;
                 }
