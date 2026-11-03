@@ -916,7 +916,10 @@ fn a_round_on_a_reopened_round_lies_on_it() {
     assert_eq!(faces, plain_faces, "the faces");
     for (a, b) in rail.iter().zip(plain_rail) {
         let d = (*a - *b).length();
-        assert!(d <= *bound, "the rail {d:e} off the plain one's, the bound {bound:e}");
+        assert!(
+            d <= *bound,
+            "the rail {d:e} off the plain one's, the bound {bound:e}"
+        );
     }
     assert!(
         (volume - plain_volume).abs() <= 1e3 * f64::EPSILON * plain_volume,
@@ -952,8 +955,15 @@ fn a_query_below_the_bound_takes_s_and_one_at_it_the_net() {
             let at = NetScope::with_tolerance(&k, bound, || s.evaluate_point(&k, uv).unwrap());
             let c2 = k.blend_counts.get();
             assert_eq!((c2.evaluations, c2.net_evaluations), (1, 1), "{c2:?}");
-            assert_eq!(at, pb.net().evaluate_point(uv).unwrap(), "at the bound: the net");
-            assert!((at - on_s[0][0]).length() <= bound, "the net within its bound of S");
+            assert_eq!(
+                at,
+                pb.net().evaluate_point(uv).unwrap(),
+                "at the bound: the net"
+            );
+            assert!(
+                (at - on_s[0][0]).length() <= bound,
+                "the net within its bound of S"
+            );
         }
     }
 }

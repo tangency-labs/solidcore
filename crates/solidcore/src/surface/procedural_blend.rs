@@ -141,9 +141,7 @@ impl<'k> NetScope<'k> {
     #[must_use]
     pub fn within(k: &'k Kernel, tolerance: f64) -> Self {
         let cell = &k.blend_net_tolerance;
-        let outer = cell.get();
-        // (NaN, zero and negative ask for the definition itself)
-        cell.set(if tolerance > 0.0 { tolerance } else { 0.0 });
+        let outer = cell.replace(requested(tolerance));
         Self {
             tolerance: cell,
             outer,
@@ -173,9 +171,7 @@ impl<'k> NetScope<'k> {
     /// changes the kernel (a scope holds the kernel borrowed). The scope around it is
     /// restored when `f` returns.
     pub fn within_mut<R>(k: &mut Kernel, tolerance: f64, f: impl FnOnce(&mut Kernel) -> R) -> R {
-        let outer = k
-            .blend_net_tolerance
-            .replace(if tolerance > 0.0 { tolerance } else { 0.0 });
+        let outer = k.blend_net_tolerance.replace(requested(tolerance));
         let r = f(k);
         k.blend_net_tolerance.set(outer);
         r
@@ -192,6 +188,15 @@ impl<'k> NetScope<'k> {
     #[must_use]
     pub fn tolerance(k: &Kernel) -> f64 {
         k.blend_net_tolerance.get()
+    }
+}
+
+/// The tolerance a scope asks for: NaN, zero and a negative number ask for S (0).
+fn requested(tolerance: f64) -> f64 {
+    if tolerance > 0.0 {
+        tolerance
+    } else {
+        0.0
     }
 }
 
