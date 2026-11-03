@@ -6,6 +6,11 @@
 //! `create_plane_with_3d_curves`, so through `order_curves_into_loops` (#2423), with
 //! `join_touching_loops` (WR-405) on as SolidCraft runs it.
 //!
+//! The fork has this case in one order: tangency-labs/smlib@1f2b0c4, capi test
+//! `capi/tests/sweeps.cpp` "extrude plate notched at a corner" (`smlib_extrude` of the same
+//! plate and hole, 2 up: volume 118, the level 2 check clean, 10 faces of one loop each,
+//! two regions). These tests add the other 23 orders.
+//!
 //! Without the flag the cap plane is refused in 15 of the 24 orders, and the sweep still
 //! returns its eight side faces as an open skin. With it the plane is one loop of all eight
 //! lines (area 59) in every order, and the swept body has ten faces, every edge manifold
@@ -178,12 +183,14 @@ fn is_plate(s: &Swept) -> bool {
         && s.check.is_empty()
 }
 
-/// Without the flag the cap plane is refused in 15 orders (the loop ordering ends on a
+/// The defect WR-591 is about, pinned while the flag is opt-in, not a result to keep:
+/// without the flag the cap plane is refused in 15 orders (the loop ordering ends on a
 /// curve it already used, or runs round the hole the wrong way), and the capped sweep
-/// returns the eight side faces as an open skin: no solid region, volume 0. In the other
-/// orders the plane is the one loop.
+/// still returns `Ok`, the eight side faces as an open skin: no solid region, volume 0.
+/// In the other orders the plane is the one loop. This test goes when the flag becomes
+/// the default.
 #[test]
-fn wr591_off_cap_plane_refused_in_15_orders() {
+fn wr591_without_the_flag_the_capped_sweep_returns_an_open_skin() {
     assert!(!Kernel::default().fixes.loops_go_on_round_the_vertex);
     let mut refused = Vec::new();
     for (variant, turn, curves) in orders() {
