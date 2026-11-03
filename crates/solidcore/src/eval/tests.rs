@@ -423,7 +423,9 @@ fn hostile_surfaces_do_not_panic() {
     ];
     for s in &bad {
         for &(u, v) in &[(0.5, 0.5), (f64::NAN, 0.0), (1e300, -1e300)] {
-            assert!(s.eval(u, v).is_none_or(|(p, n)| p.is_finite() && n.is_finite()));
+            if let Ok((p, n)) = s.eval(u, v) {
+                assert!(p.is_finite() && n.is_finite());
+            }
         }
     }
 }

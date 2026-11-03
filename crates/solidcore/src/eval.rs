@@ -42,6 +42,13 @@ pub enum EvalError {
     /// More knots or control points than the evaluator takes.
     #[error("too large: {0}")]
     TooLarge(String),
+    /// No value at the parameters asked: not finite, or a vanishing weight there.
+    #[error("cannot be evaluated: {0}")]
+    Unevaluable(String),
+    /// A degenerate point with no limit for the quantity asked (a pole where the normal's
+    /// limit from the second derivatives vanishes too).
+    #[error("degenerate: {0}")]
+    Degenerate(String),
 }
 
 #[cfg(test)]
