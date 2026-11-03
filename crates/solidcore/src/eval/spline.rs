@@ -19,6 +19,7 @@ use crate::nurbs::crv_basic::Curve as NlCurve;
 use crate::nurbs::knots::Side;
 use crate::nurbs::math::{CPoint, NOW, NOZ};
 use crate::nurbs::srf_basic::Surface as NlSurface;
+use crate::nurbs::srf_nurb::EuclidNet;
 
 /// The highest spline degree the evaluator takes.
 pub const MAX_SPLINE_DEGREE: usize = 16;
@@ -187,8 +188,9 @@ pub struct Nurbs {
     /// Whether it closes on itself along each direction ([`uv::closed`]), worked out once
     /// (every evaluation outside the knot interval asks, and the test walks the whole net).
     closed: [bool; 2],
-    /// NLib's surface, `None` when the data are malformed (nothing then evaluates).
-    nl: Option<NlSurface>,
+    /// NLib's surface and its Euclidean net, `None` when the data are malformed (nothing
+    /// then evaluates).
+    nl: Option<(NlSurface, EuclidNet)>,
 }
 
 impl Nurbs {
@@ -265,7 +267,9 @@ impl EvalSurface {
                 // NLib's net: rows along u, `net[i][j]`.
                 let net: Option<Vec<Vec<CPoint>>> =
                     (0..nu).map(|i| (0..nv).map(|j| ctrl.get(j * nu + i).map(|h| cpoint(*h, r))).collect()).collect();
-                NlSurface::new(net?, pu, pv, knots[0].clone(), knots[1].clone()).ok()
+                let nl = NlSurface::new(net?, pu, pv, knots[0].clone(), knots[1].clone()).ok()?;
+                let euclid = nl.euclid_net().ok()?;
+                Some((nl, euclid))
             })
             .flatten();
         EvalSurface::Nurbs(Box::new(Nurbs { degree, knots, count, ctrl, closed, nl }))
@@ -355,7 +359,8 @@ impl EvalSurface {
             EvalSurface::Nurbs(n) => {
                 let [u, v] = self.wrap([u, v]);
                 let mut d = [[Vec3::ZERO; 2]; 2];
-                n.nl.as_ref()?.first_derivs_into(u, v, Side::Left, Side::Left, true, &mut d).ok()?;
+                let (nl, euclid) = n.nl.as_ref()?;
+                nl.first_derivs_net_into(Some(euclid), u, v, Side::Left, Side::Left, true, &mut d).ok()?;
                 let [[p, sv], [su, _]] = d;
                 (p.is_finite() && su.is_finite() && sv.is_finite()).then_some((p, su, sv))
             }
@@ -386,7 +391,7 @@ impl EvalSurface {
             EvalSurface::Plane { .. } => Some((Vec3::ZERO, Vec3::ZERO, Vec3::ZERO)),
             EvalSurface::Nurbs(n) => {
                 let [u, v] = self.wrap([u, v]);
-                let d = n.nl.as_ref()?.derivs(u, v, Side::Left, Side::Left, true, 2, 2).ok()?;
+                let d = n.nl.as_ref()?.0.derivs(u, v, Side::Left, Side::Left, true, 2, 2).ok()?;
                 let at = |i: usize, j: usize| d.get(i).and_then(|r| r.get(j)).copied().filter(|x| x.is_finite());
                 Some((at(2, 0)?, at(1, 1)?, at(0, 2)?))
             }
@@ -416,7 +421,7 @@ impl EvalSurface {
             }),
             EvalSurface::Nurbs(n) => {
                 let [u, v] = self.wrap([u, v]);
-                let d = n.nl.as_ref()?.derivs(u, v, Side::Left, Side::Left, true, MAX_PARTIAL_ORDER, MAX_PARTIAL_ORDER).ok()?;
+                let d = n.nl.as_ref()?.0.derivs(u, v, Side::Left, Side::Left, true, MAX_PARTIAL_ORDER, MAX_PARTIAL_ORDER).ok()?;
                 tabulate(|i, j| d.get(i)?.get(j).copied())
             }
             EvalSurface::Revolved { profile, origin, axis, transform, swap } => {

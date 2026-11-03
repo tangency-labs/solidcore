@@ -487,6 +487,79 @@ fn univariate_derivs<const N: usize>(
     Ok(ku)
 }
 
+/// [`univariate_derivs`] for `dr = 1`: the span index, with the basis functions and
+/// their first derivatives (`du[0]`, `du[1]`) for degree `pu < N`. The same arithmetic in
+/// the same order (`compute_basis_functions`, then `compute_derivatives` at `k = 1`, then
+/// the factor `p`), on unchecked-free stack tables: every index is below `N`, which the
+/// caller has checked.
+fn univariate_first<const N: usize>(
+    uk: &[f64],
+    m: usize,
+    pu: usize,
+    t: f64,
+    side: Side,
+    op: &'static str,
+) -> Result<(usize, [f64; N], [f64; N])> {
+    if pu >= N {
+        return Err(oob(op));
+    }
+    let knt = KnotVector::new(uk, m)?;
+    let ku = knt.find_span(pu, t, side)?;
+    let at = |i: usize| uk.get(i).copied();
+    let g = |a: &[[f64; N]; N], i: usize, j: usize| a.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0.0);
+    let put = |a: &mut [[f64; N]; N], i: usize, j: usize, v: f64| {
+        if let Some(x) = a.get_mut(i).and_then(|r| r.get_mut(j)) {
+            *x = v;
+        }
+    };
+    // `left[j] = t - U[ku + 1 - j]`, `right[j] = U[ku + j] - t` (rows of upstream's `a`).
+    let mut left = [0.0_f64; N];
+    let mut right = [0.0_f64; N];
+    let mut ndu = [[0.0_f64; N]; N];
+    put(&mut ndu, 0, 0, 1.0);
+    for j in 1..=pu {
+        let lo = (ku + 1).checked_sub(j).and_then(at).ok_or_else(|| oob(op))?;
+        let hi = at(ku + j).ok_or_else(|| oob(op))?;
+        if let (Some(l), Some(r)) = (left.get_mut(j), right.get_mut(j)) {
+            *l = t - lo;
+            *r = hi - t;
+        }
+        let mut saved = 0.0;
+        for r in 0..j {
+            let rt = right.get(r + 1).copied().unwrap_or(0.0);
+            let lf = left.get(j - r).copied().unwrap_or(0.0);
+            put(&mut ndu, j, r, rt + lf);
+            let temp = g(&ndu, r, j - 1) / g(&ndu, j, r);
+            put(&mut ndu, r, j, saved + rt * temp);
+            saved = lf * temp;
+        }
+        put(&mut ndu, j, j, saved);
+    }
+    let mut d0 = [0.0_f64; N];
+    let mut d1 = [0.0_f64; N];
+    for (j, x) in d0.iter_mut().enumerate().take(pu + 1) {
+        *x = g(&ndu, j, pu);
+    }
+    if pu >= 1 {
+        // `compute_derivatives` at k = 1: `a[s1][0] = 1`, so `a[s2][0] = 1 / ndu[p][r-1]`
+        // and `a[s2][1] = -1 / ndu[p][r]`; then the factor `p`.
+        let p = pu - 1;
+        for (r, x) in d1.iter_mut().enumerate().take(pu + 1) {
+            let mut d = 0.0;
+            if r >= 1 {
+                let v = 1.0 / g(&ndu, p + 1, r - 1);
+                d = v * g(&ndu, r - 1, p);
+            }
+            if r <= p {
+                let v = -1.0 / g(&ndu, p + 1, r);
+                d += v * g(&ndu, r, p);
+            }
+            *x = d * pu as f64;
+        }
+    }
+    Ok((ku, d0, d1))
+}
+
 // ---- specialised point helpers ----------------------------------------------------
 
 /// `NI_VectorBlendCPt_specialized`: `b += alpha * a` with `z` / `w` dropped by the
@@ -573,6 +646,14 @@ fn derivative_matrix<const N: usize, R: AsMut<[Vec3]>, A: Fn(usize) -> Result<f6
         }
     }
     Ok(())
+}
+
+/// A surface's control points divided by their weights, with the weights, row by row
+/// ([`Surface::euclid_net`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EuclidNet {
+    points: Vec<Vec<Vec3>>,
+    weights: Vec<Vec<f64>>,
 }
 
 impl Surface {
@@ -959,6 +1040,44 @@ impl Surface {
         upper: bool,
         sd: &mut [[Vec3; 2]; 2],
     ) -> Result<()> {
+        self.first_derivs_net_into(None, u, v, ufl, vfl, upper, sd)
+    }
+
+    /// The Euclidean control points and weights of the net, as
+    /// [`Surface::first_derivs_into`] reads them: made once for a surface that is evaluated
+    /// many times ([`Surface::first_derivs_net_into`]).
+    ///
+    /// Errors when the net is malformed.
+    pub fn euclid_net(&self) -> Result<EuclidNet> {
+        let p00 = self.cpt(0, 0)?;
+        let (no_w, no_z) = (p00.w == NOW, p00.z == NOZ);
+        let (n, _, _, _) = self.array_sizes();
+        let mut points = Vec::with_capacity(n + 1);
+        let mut weights = Vec::with_capacity(n + 1);
+        for i in 0..=n {
+            let row = self.row(i)?;
+            points.push(row.iter().map(|c| to_euclid_spec(no_z, no_w, *c)).collect());
+            weights.push(row.iter().map(|c| c.w).collect());
+        }
+        Ok(EuclidNet { points, weights })
+    }
+
+    /// [`Surface::first_derivs_into`] reading the control points from `euclid`, this
+    /// surface's [`Surface::euclid_net`] when given: the same bits, without dividing every
+    /// control point of the span by its weight on each call.
+    ///
+    /// Errors as [`Surface::first_derivs_into`].
+    #[allow(clippy::too_many_arguments)] // the evaluation arguments plus the net
+    pub fn first_derivs_net_into(
+        &self,
+        euclid: Option<&EuclidNet>,
+        u: f64,
+        v: f64,
+        ufl: Side,
+        vfl: Side,
+        upper: bool,
+        sd: &mut [[Vec3; 2]; 2],
+    ) -> Result<()> {
         const OP: &str = "nurbs::srf_nurb::Surface::derivs";
         const BD_OP: &str = "nurbs::srf_nurb::Surface::basis_derivs";
         let (pu, qu) = self.degrees();
@@ -974,11 +1093,11 @@ impl Surface {
             return Ok(());
         }
         if pu < TINY_NP && qu < TINY_NP {
-            self.first_derivs_span::<TINY_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<TINY_NP>(u, v, ufl, vfl, upper, sd, euclid, OP, BD_OP)
         } else if pu < SMALL_NP && qu < SMALL_NP {
-            self.first_derivs_span::<SMALL_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<SMALL_NP>(u, v, ufl, vfl, upper, sd, euclid, OP, BD_OP)
         } else {
-            self.first_derivs_span::<NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<NP>(u, v, ufl, vfl, upper, sd, euclid, OP, BD_OP)
         }
     }
 
@@ -997,6 +1116,7 @@ impl Surface {
         vfl: Side,
         upper: bool,
         sd: &mut [[Vec3; 2]; 2],
+        euclid: Option<&EuclidNet>,
         op: &'static str,
         bd_op: &'static str,
     ) -> Result<()> {
@@ -1005,22 +1125,32 @@ impl Surface {
             return Err(oob(op));
         }
         let (_, _, s1u, s2u) = self.array_sizes();
-        let mut du: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let mut dv: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let ku = univariate_derivs::<N>(self.u_knots(), s1u, pu, u, ufl, 1, &mut du, bd_op)?;
-        let kv = univariate_derivs::<N>(self.v_knots(), s2u, qu, v, vfl, 1, &mut dv, bd_op)?;
-        let [du0, du1, ..] = du;
-        let [dv0, dv1, ..] = dv;
+        let (ku, du0, du1) = univariate_first::<N>(self.u_knots(), s1u, pu, u, ufl, bd_op)?;
+        let (kv, dv0, dv1) = univariate_first::<N>(self.v_knots(), s2u, qu, v, vfl, bd_op)?;
         let p00 = self.cpt(0, 0)?;
         let no_w = p00.w == NOW;
         let no_z = p00.z == NOZ;
-        let first_u = ux(ku - sx(pu, op)?, op)?;
-        let first_v = ux(kv - sx(qu, op)?, op)?;
+        let first_u = ku.checked_sub(pu).ok_or_else(|| oob(op))?;
+        let first_v = kv.checked_sub(qu).ok_or_else(|| oob(op))?;
 
         // The span's (p+1) x (q+1) control points: weights and Euclidean points.
         let mut w = [[0.0_f64; N]; N];
         let mut pe = [[Vec3::ZERO; N]; N];
         for (i, (w_row, p_row)) in w.iter_mut().zip(pe.iter_mut()).take(pu + 1).enumerate() {
+            if let Some(net) = euclid {
+                // (made by `to_euclid_spec` on these points: the same values)
+                let (points, weights) = net
+                    .points
+                    .get(first_u + i)
+                    .zip(net.weights.get(first_u + i))
+                    .and_then(|(p, w)| Some((p.get(first_v..=first_v + qu)?, w.get(first_v..=first_v + qu)?)))
+                    .ok_or_else(|| oob(op))?;
+                for ((wij, pij), (p, wt)) in w_row.iter_mut().zip(p_row.iter_mut()).zip(points.iter().zip(weights)) {
+                    *wij = *wt;
+                    *pij = *p;
+                }
+                continue;
+            }
             let net_row = self
                 .row(first_u + i)?
                 .get(first_v..=first_v + qu)
@@ -2527,6 +2657,15 @@ mod tests {
                                 let full = s.derivs_general(u, v, ufl, vfl, upper, 1, 1);
                                 let mut block = [[Vec3::new(9.0, 9.0, 9.0); 2]; 2];
                                 let r = s.first_derivs_into(u, v, ufl, vfl, upper, &mut block);
+                                let net = s.euclid_net().unwrap();
+                                let mut by_net = [[Vec3::new(7.0, 7.0, 7.0); 2]; 2];
+                                let rn = s.first_derivs_net_into(Some(&net), u, v, ufl, vfl, upper, &mut by_net);
+                                assert_eq!(r.is_ok(), rn.is_ok());
+                                if r.is_ok() {
+                                    for (a, b) in block.iter().flatten().zip(by_net.iter().flatten()) {
+                                        assert_eq!([a.x.to_bits(), a.y.to_bits(), a.z.to_bits()], [b.x.to_bits(), b.y.to_bits(), b.z.to_bits()]);
+                                    }
+                                }
                                 match full {
                                     Ok(full) => {
                                         assert!(r.is_ok());
