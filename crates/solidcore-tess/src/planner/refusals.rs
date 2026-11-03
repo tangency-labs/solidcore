@@ -380,8 +380,8 @@ fn the_flips_name_a_middle_the_surface_does_not_evaluate_at() {
     let fixed: Vec<Vec3> = uv.iter().map(|q| point(&s, *q)).collect();
     let mut tris = vec![[0, 1, 2], [0, 2, 3]];
     match super::sag::flip(&s, 0.01, 1e-9, &fixed, &uv, &mut tris) {
-        Err(NoValue(q)) => assert_eq!(q[0], 0.5, "{q:?}"),
-        Ok(()) => panic!("flipped to {tris:?}"),
+        Err(super::sag::Stop::NoValue(NoValue(q))) => assert_eq!(q[0], 0.5, "{q:?}"),
+        other => panic!("{other:?}, flipped to {tris:?}"),
     }
 }
 
@@ -548,7 +548,50 @@ fn the_worst_sag_is_measured_where_the_surface_evaluates() {
     // Measured at its three sides' middles; its middle, unmeasured, is counted, so the face is
     // never taken as within its tolerance over it.
     assert!(
-        got.is_ok_and(|(w, unmeasured)| w.is_finite() && w > 0.0 && unmeasured == 1),
+        got.as_ref()
+            .is_ok_and(|(w, unmeasured)| w.is_finite() && *w > 0.0 && *unmeasured == 1),
         "{got:?}"
     );
+}
+
+/// A face whose surface's poles the kernel's classifier cannot tell: the plane x = u, y = v as a
+/// bilinear net over u in [0, 2], whose last column (the span u in [1, 2], away from the face)
+/// is not a number. The face, u in [0, 0.5], evaluates everywhere, but no point of it can be
+/// classified (the net is not finite along u), so it is refused, named, with the classifier's
+/// own reason; nothing takes "not a pole" for it.
+#[test]
+fn a_face_whose_poles_cannot_be_told_is_refused_with_the_classifiers_reason() {
+    let nan = f64::NAN;
+    let s = EvalSurface::nurbs(
+        [1, 1],
+        [vec![0.0, 0.0, 1.0, 2.0, 2.0], vec![0.0, 0.0, 1.0, 1.0]],
+        [3, 2],
+        vec![
+            [0.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0],
+            [nan, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0, 1.0],
+            [nan, 1.0, 0.0, 1.0],
+        ],
+    );
+    let uv: Vec<[f64; 2]> = vec![[0.0, 0.0], [0.5, 0.0], [0.5, 1.0], [0.0, 1.0]];
+    let pts: Vec<Vec3> = uv.iter().map(|q| point(&s, *q)).collect();
+    let loops = [seam::Loop { uv, pts }];
+    let rules = Rules::new(0.01, 2.0, None);
+    let size = FaceSize {
+        h: 1.0,
+        speed: [1.0, 1.0],
+        unevaluated: Vec::new(),
+    };
+    match plan_or_fill(3, "spline", &s, &loops, &rules, &size, 0.0, None) {
+        Err(e) => {
+            let why = e.to_string();
+            assert!(
+                why.contains("face 3 (spline): the surface's poles cannot be told at [0.0, 0.0]: pole classification: a control point is not finite"),
+                "{why}"
+            );
+        }
+        Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
+    }
 }

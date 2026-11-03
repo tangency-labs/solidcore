@@ -195,6 +195,54 @@ pub struct RefusedEdge {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NoValue(pub [f64; 2]);
 
+/// A parameter point whose poles the kernel's classifier cannot tell
+/// ([`solidcore::eval::uv::degenerate_within`]: not finite, off the surface's net, a weight not
+/// positive), with the classifier's reason. Nothing is taken for "not a pole" there: the face is
+/// refused, named with the point and the reason.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Unclassified {
+    pub at: [f64; 2],
+    pub why: String,
+}
+
+impl std::fmt::Display for Unclassified {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the surface's poles cannot be told at {:?}: {}",
+            self.at, self.why
+        )
+    }
+}
+
+/// Whether `s` is collapsed along `d` at `q`, to within `reach` (a pole, or a patch side
+/// collapsed to within a tolerance), as the kernel's classifier says; its refusal the error.
+pub(crate) fn pole_at(
+    s: &EvalSurface,
+    q: [f64; 2],
+    d: usize,
+    reach: f64,
+) -> std::result::Result<bool, Unclassified> {
+    solidcore::eval::uv::degenerate_within(s, q, d, reach).map_err(|e| Unclassified {
+        at: q,
+        why: crate::eval_message(e),
+    })
+}
+
+/// The first direction (u, then v) `s` is collapsed along at `q` ([`pole_at`]), if any.
+pub(crate) fn pole_dir(
+    s: &EvalSurface,
+    q: [f64; 2],
+    reach: f64,
+) -> std::result::Result<Option<usize>, Unclassified> {
+    for d in 0..2 {
+        if pole_at(s, q, d, reach)? {
+            return Ok(Some(d));
+        }
+    }
+    Ok(None)
+}
+
 /// Run a layout whose own refusals are `None` (it does not fit the face) and which also stops
 /// where a check it makes fails (a point the surface does not evaluate at): `body` records that
 /// error in its slot with [`stop`] and returns `None`, and the error comes out as this `Err`.
@@ -741,6 +789,8 @@ fn boundary(
             kind(&face.surface)
         ))
     };
+    let unclassified =
+        |u: Unclassified| unsupported(format!("face {fi} ({}): {u}", kind(&face.surface)));
     // How near a pole a node is one: the tolerance of a vertex of the face that lies on a patch
     // side collapsed to within it, not to a point, as the record check takes a loop's pole; at
     // most the chord tolerance, finer than which the mesh resolves nothing (a vertex tolerance
@@ -759,15 +809,11 @@ fn boundary(
         let Some(q) = kernel::curve2(&oe.pcurve).eval(if oe.forward { p0 } else { p1 }) else {
             continue;
         };
-        if tol.is_finite()
-            && tol > reach
-            && (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, &dom, q, d, tol))
-        {
+        if tol.is_finite() && tol > reach && pole_dir(s, q, tol).map_err(unclassified)?.is_some() {
             reach = tol;
         }
     }
-    let pole_along =
-        |q: [f64; 2], d: usize| solidcore::eval::uv::degenerate_within(s, &dom, q, d, reach);
+    let pole_along = |q: [f64; 2], d: usize| pole_at(s, q, d, reach).map_err(unclassified);
     let too_many = || {
         unsupported(format!(
             "face {fi} ({}): its {} loops cannot be held",
@@ -891,7 +937,7 @@ fn boundary(
                 #[allow(clippy::indexing_slicing)]
                 for d in 0..2 {
                     let Some(per) = dom.period[d] else { continue };
-                    if !(pole_along(e, d) || pole_along(start, d)) {
+                    if !(pole_along(e, d)? || pole_along(start, d)?) {
                         shift[d] = per * ((e[d] - start[d]) / per).round();
                     }
                 }
@@ -929,9 +975,21 @@ fn boundary(
                                 (p.dist(pw) <= tv.max(tw).min(rules.tol)).then_some(*wq)
                             })
                     });
-                    if let Some(mut w) =
-                        same.filter(|w| !(0..2).any(|d| pole_along(*w, d) || pole_along(*q, d)))
-                    {
+                    // The vertex's parameters taken only where neither it nor the other lies on a
+                    // pole.
+                    let off_poles = |w: [f64; 2]| -> Result<bool> {
+                        for d in 0..2 {
+                            if pole_along(w, d)? || pole_along(*q, d)? {
+                                return Ok(false);
+                            }
+                        }
+                        Ok(true)
+                    };
+                    let same = match same {
+                        Some(w) if off_poles(w)? => Some(w),
+                        _ => None,
+                    };
+                    if let Some(mut w) = same {
                         for ((x, y), per) in w.iter_mut().zip(q.iter()).zip(dom.period) {
                             *x = solidcore::eval::uv::unwrap(*x, *y, per);
                         }
@@ -954,8 +1012,12 @@ fn boundary(
             shared.extend(es);
         }
         let n = uvs.len();
-        let pole = |q: &[f64; 2]| (0..2).any(|d| pole_along(*q, d));
-        let off = |k: usize| uvs.get(k).is_some_and(|q| !pole(q));
+        // Whether each node is on a pole.
+        let mut on_pole: Vec<bool> = Vec::new();
+        for q in &uvs {
+            on_pole.push(pole_dir(s, *q, reach).map_err(unclassified)?.is_some());
+        }
+        let off = |k: usize| on_pole.get(k).is_some_and(|p| !p);
         // A node off the poles whose predecessor is off them too; failing that (a whole sphere's
         // seam in two segments: pole, equator, pole), one whose predecessor is a pole on the same
         // edge, so the step into it is the edge's own and the step into that pole, from the
@@ -1067,14 +1129,15 @@ fn untangle(
     face_boundary: &(dyn Fn(usize, &[edges::Nodes]) -> Result<Boundary> + Sync),
     refused: &mut Refused,
 ) -> Vec<(usize, String)> {
-    let crossing = |fi: usize, fb: &Boundary| -> Vec<(u32, u32)> {
+    let crossing = |fi: usize, fb: &Boundary| -> Result<Vec<(u32, u32)>> {
         let Some(s) = evals.get(fi).and_then(Option::as_ref) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        tangle::crossing(s, fb.reach, &fb.loops)
+        Ok(tangle::crossing(s, fb.reach, &fb.loops)
+            .map_err(|u| unclassified_face(b, fi, &u))?
             .into_iter()
             .filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied())
-            .collect()
+            .collect())
     };
     let indexed: Vec<usize> = (0..boundaries.len()).collect();
     let curved = evals
@@ -1087,9 +1150,9 @@ fn untangle(
         &indexed,
         curved >= PARALLEL_FACES,
         |&fi| {
-            Ok(boundaries
+            boundaries
                 .get(fi)
-                .map_or_else(Vec::new, |fb| crossing(fi, fb)))
+                .map_or_else(|| Ok(Vec::new()), |fb| crossing(fi, fb))
         },
     )
     .into_iter()
@@ -1196,7 +1259,20 @@ fn rebuild(
         return None;
     }
     let s = evals.get(fi).and_then(Option::as_ref)?;
-    Some(tangle::crossing(s, slot.reach, &slot.loops))
+    match tangle::crossing(s, slot.reach, &slot.loops) {
+        Ok(c) => Some(c),
+        Err(u) => {
+            refused.face(fi, unclassified_face(refused.b, fi, &u));
+            *slot = Boundary::default();
+            None
+        }
+    }
+}
+
+/// Face `fi`'s refusal where its poles cannot be told at a point ([`Unclassified`]).
+fn unclassified_face(b: &brep::Brep, fi: usize, u: &Unclassified) -> TessError {
+    let kind = b.faces.get(fi).map_or("?", |f| kind(&f.surface));
+    unsupported(format!("face {fi} ({kind}): {u}"))
 }
 
 /// A face whose boundary crosses itself, by index, with its crossing edge segments (edge, segment).
@@ -1230,12 +1306,13 @@ fn snap_touches(
     faces: &[usize],
     refused: &mut Refused,
 ) -> Vec<Tangled> {
-    let crossing = |fi: usize, fb: &Boundary| -> Vec<(usize, usize)> {
-        let Some(s) = evals.get(fi).and_then(Option::as_ref) else {
-            return Vec::new();
+    let crossing =
+        |fi: usize, fb: &Boundary| -> std::result::Result<Vec<(usize, usize)>, Unclassified> {
+            let Some(s) = evals.get(fi).and_then(Option::as_ref) else {
+                return Ok(Vec::new());
+            };
+            tangle::crossing(s, fb.reach, &fb.loops)
         };
-        tangle::crossing(s, fb.reach, &fb.loops)
-    };
     let mut tangled: Vec<usize> = faces.to_vec();
     for _ in 0..MAX_SNAP {
         // By edge, in order: which edge refuses a face first does not hang on hashing.
@@ -1245,7 +1322,14 @@ fn snap_touches(
             let Some(fb) = boundaries.get(fi) else {
                 continue;
             };
-            for (l, k) in crossing(fi, fb) {
+            let found = match crossing(fi, fb) {
+                Ok(c) => c,
+                Err(u) => {
+                    refused.face(fi, unclassified_face(refused.b, fi, &u));
+                    continue;
+                }
+            };
+            for (l, k) in found {
                 let Some(&(e, j)) = fb.segments.get(l).and_then(|s| s.get(k)) else {
                     continue;
                 };
@@ -1282,17 +1366,28 @@ fn snap_touches(
             return Vec::new();
         }
     }
-    tangled
-        .into_iter()
-        .filter_map(|fi| {
-            let fb = boundaries.get(fi)?;
-            let c: Vec<(u32, u32)> = crossing(fi, fb)
-                .into_iter()
-                .filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied())
-                .collect();
-            (!c.is_empty()).then_some((fi, c))
-        })
-        .collect()
+    let mut out: Vec<Tangled> = Vec::new();
+    for fi in tangled {
+        if refused.is(fi) {
+            continue;
+        }
+        let Some(fb) = boundaries.get(fi) else {
+            continue;
+        };
+        match crossing(fi, fb) {
+            Ok(c) => {
+                let c: Vec<(u32, u32)> = c
+                    .into_iter()
+                    .filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied())
+                    .collect();
+                if !c.is_empty() {
+                    out.push((fi, c));
+                }
+            }
+            Err(u) => refused.face(fi, unclassified_face(refused.b, fi, &u)),
+        }
+    }
+    out
 }
 
 /// The node of face boundary `fb` nearest the crossing chord `at` (loop, node) of its boundary,
@@ -1557,16 +1652,17 @@ fn open_pole_to_pole(
     dom: &solidcore::eval::uv::Domain,
     reach: f64,
     l: &mut seam::Loop,
-) {
+) -> std::result::Result<(), Unclassified> {
     let n = l.uv.len();
-    let poles: Vec<usize> = (0..n)
-        .filter(|&k| {
-            l.uv.get(k).is_some_and(|q| {
-                (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, dom, *q, d, reach))
-            })
-        })
-        .collect();
-    let [p0, p1] = poles.as_slice() else { return };
+    let mut poles: Vec<usize> = Vec::new();
+    for (k, q) in l.uv.iter().enumerate() {
+        if pole_dir(s, *q, reach)?.is_some() {
+            poles.push(k);
+        }
+    }
+    let [p0, p1] = poles.as_slice() else {
+        return Ok(());
+    };
     for (d, per) in dom.period.into_iter().enumerate() {
         let Some(per) = per else { continue };
         let near = |a: Option<&[f64; 2]>, b: Option<&[f64; 2]>| {
@@ -1633,35 +1729,34 @@ fn open_pole_to_pole(
                 });
             if hi - lo <= per * (1.0 + 1e-9) && area2(&ring) > 0.0 {
                 l.uv = moved;
-                return;
+                return Ok(());
             }
         }
     }
+    Ok(())
 }
 
 /// The poles of a loop where it turns straight back along a seam: the nodes either side have
 /// the same parameters.
 fn turning_poles(
     s: &EvalSurface,
-    dom: &solidcore::eval::uv::Domain,
     reach: f64,
     per: f64,
     uv: &[[f64; 2]],
-) -> Vec<usize> {
+) -> std::result::Result<Vec<usize>, Unclassified> {
     let n = uv.len();
     let near = |a: Option<&[f64; 2]>, b: Option<&[f64; 2]>| {
         a.zip(b)
             .is_some_and(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()) <= 1e-9 * per)
     };
-    (0..n)
-        .filter(|&k| {
-            uv.get(k).is_some_and(|q| {
-                (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, dom, *q, d, reach))
-            })
-        })
-        // Proven: n > 0 inside `0..n`.
-        .filter(|&k| near(uv.get((k + n - 1) % n), uv.get((k + 1) % n)))
-        .collect()
+    let mut out = Vec::new();
+    for (k, q) in uv.iter().enumerate() {
+        // Proven: n > 0 while enumerating `uv`.
+        if pole_dir(s, *q, reach)?.is_some() && near(uv.get((k + n - 1) % n), uv.get((k + 1) % n)) {
+            out.push(k);
+        }
+    }
+    Ok(out)
 }
 
 /// A loop with one pole, where it turns straight back along a seam, that winds once around the
@@ -1677,17 +1772,17 @@ fn open_at_pole(
     dom: &solidcore::eval::uv::Domain,
     reach: f64,
     l: &mut seam::Loop,
-) {
+) -> std::result::Result<(), Unclassified> {
     let n = l.uv.len();
     if n < 4 || l.pts.len() != n {
-        return;
+        return Ok(());
     }
     for (d, per) in dom.period.into_iter().enumerate() {
         let Some(per) = per else { continue };
         if (seam::drift(l, d, per).abs() - per).abs() > per * 1e-6 {
             continue;
         }
-        let [pole] = turning_poles(s, dom, reach, per, &l.uv)[..] else {
+        let [pole] = turning_poles(s, reach, per, &l.uv)?[..] else {
             continue;
         };
         // From the node after the pole round to the pole, unwrapped along the way.
@@ -1697,7 +1792,7 @@ fn open_at_pole(
         let mut uv: Vec<[f64; 2]> = Vec::with_capacity(n);
         for &k in &order {
             let Some(mut q) = l.uv.get(k).copied() else {
-                return;
+                return Ok(());
             };
             if let Some(pr) = uv.last() {
                 for ((x, y), per) in q.iter_mut().zip(pr).zip(dom.period) {
@@ -1742,9 +1837,10 @@ fn open_at_pole(
             && !seam::winds(std::slice::from_ref(&opened), d, per)
         {
             *l = opened;
-            return;
+            return Ok(());
         }
     }
+    Ok(())
 }
 
 /// Each loop is projected on its own, so along a closed direction a hole can come out a whole
@@ -1887,6 +1983,15 @@ fn plan_face(
             "face {fi} ({kind}): the surface does not evaluate at {q:?}"
         )))
     };
+    // A point whose poles the kernel's classifier cannot tell: refused with its reason.
+    let unclassified = |u: Unclassified| FaceError::Refused(fail(&u.to_string()));
+    let sag_stop = |e: sag::Stop, nodes: usize| match e {
+        sag::Stop::NoValue(q) => no_value(q),
+        sag::Stop::Unclassified(u) => unclassified(u),
+        sag::Stop::Corner(k) => FaceError::Refused(fail(&format!(
+            "triangle {k} has a corner past its {nodes} nodes"
+        ))),
+    };
     // A point the surface does not evaluate at that the face's loops, spanning more than
     // MAX_PERIODS periods, cannot place inside the face or out.
     let too_many = |TooManyCopies(n): TooManyCopies, q: [f64; 2]| {
@@ -1904,7 +2009,7 @@ fn plan_face(
     // A loop that runs up a seam from a pole and straight back down it (a half sphere bounded
     // by its rim and its seam used both ways) winds once as projected: it is opened at the pole.
     for l in &mut projected {
-        open_at_pole(s, &dom, reach, l);
+        open_at_pole(s, &dom, reach, l).map_err(unclassified)?;
     }
     let wound: Vec<(usize, f64)> = dom
         .period
@@ -1933,7 +2038,7 @@ fn plan_face(
     // kernel writes it) projects onto one parameter line: its second run is a period along.
     if !seamed {
         for l in &mut projected {
-            open_pole_to_pole(s, &dom, reach, l);
+            open_pole_to_pole(s, &dom, reach, l).map_err(unclassified)?;
         }
         holes_beside_outer(&dom, &mut projected);
     }
@@ -1952,8 +2057,7 @@ fn plan_face(
                 luv.get((k + n - 1) % n).copied(),
                 luv.get((k + 1) % n).copied(),
             );
-            let pole =
-                (0..2).find(|&d| solidcore::eval::uv::degenerate_within(s, &dom, *q, d, reach));
+            let pole = pole_dir(s, *q, reach).map_err(unclassified)?;
             if let (Some(d), Some(a), Some(b)) = (pole, prev, next) {
                 // The node with its parameter along the pole's direction `d` (0 or 1, from
                 // `0..2` above) taken from `from`.
@@ -2183,20 +2287,16 @@ fn plan_face(
     // Whatever the layout, no triangle leaves the surface by more than the tolerance.
     if !planar {
         if sag::refine(s, tol, reach, &fixed, &mut all, &mut triangles, MAX_REFINE)
-            .map_err(no_value)?
+            .map_err(|e| sag_stop(e, all.len()))?
         {
             caps.push(Cap::Refine);
         }
-        sag::flip(s, tol, reach, &fixed, &all, &mut triangles).map_err(no_value)?;
+        sag::flip(s, tol, reach, &fixed, &all, &mut triangles)
+            .map_err(|e| sag_stop(e, all.len()))?;
         // A face a bound limited is named with the sag its triangles reach.
         if !caps.is_empty() {
-            let (sag, unmeasured) =
-                sag::worst(s, reach, &fixed, &all, &triangles).map_err(|k| {
-                    FaceError::Refused(fail(&format!(
-                        "triangle {k} has a corner past its {} nodes",
-                        all.len()
-                    )))
-                })?;
+            let (sag, unmeasured) = sag::worst(s, reach, &fixed, &all, &triangles)
+                .map_err(|e| sag_stop(e, all.len()))?;
             stats.over_tolerance.push(OverTolerance {
                 face: fi as usize,
                 sag,

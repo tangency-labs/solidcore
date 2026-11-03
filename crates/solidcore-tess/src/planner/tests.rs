@@ -1968,7 +1968,7 @@ fn an_edge_untangling_cannot_split_refuses_its_faces() {
         c[1] + 1.5 * (c[1] - uv[1][1]),
     ];
     let fb = &boundaries[4];
-    let crossing = tangle::crossing(evals[4].as_ref().unwrap(), fb.reach, &fb.loops);
+    let crossing = tangle::crossing(evals[4].as_ref().unwrap(), fb.reach, &fb.loops).unwrap();
     let Some(&(l, k)) = crossing.first() else {
         panic!("the swapped loop crosses itself")
     };
