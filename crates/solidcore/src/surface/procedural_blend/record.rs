@@ -346,3 +346,157 @@ impl ProceduralBlendRecord {
         deepest
     }
 }
+
+/// The exact class of a round whose net is its definition (#2485).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExactClassRecord {
+    /// A straight spine: the cylinder about it.
+    Line,
+    /// A circle about a common axis: the section turned about it.
+    Circle,
+    /// One point: a piece of the ball.
+    Point,
+    /// A conic spine.
+    Conic,
+    /// One of a pair of conics.
+    ConicPair,
+    /// A nodal quartic spine.
+    NodalQuartic,
+}
+
+/// The analytic kind of an exact net, a label beside its NURBS form as a support's is
+/// ([`SupportKindRecord`]): the kernel derives the analytic surface from the form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExactNetKindRecord {
+    /// A plane.
+    Plane,
+    /// A cylinder.
+    Cylinder,
+    /// A cone.
+    Cone,
+    /// A sphere.
+    Sphere,
+    /// A torus.
+    Torus,
+    /// A surface of revolution: its first section turned about the axis of its circles.
+    Revolution,
+    /// A ball patch: a rational patch on its sphere.
+    BallPatch,
+    /// A B-spline surface, the form itself (the rational classes' exact surfaces).
+    BSpline,
+}
+
+/// An exact net: its analytic kind and its NURBS form, as stored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExactNetRecord {
+    /// The analytic kind.
+    pub kind: ExactNetKindRecord,
+    /// The NURBS form.
+    pub form: NurbsSurfaceRecord,
+}
+
+/// What an exact round's class is read with beside its supports.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClassInputsRecord {
+    /// The `(u, v)` each support's quadric is read at.
+    pub uv: [[f64; 2]; 2],
+    /// The signed offset of the ball's centre from each support along its normal.
+    pub offsets: [f64; 2],
+    /// The ball's centre the spine is classified at.
+    pub centre: [f64; 3],
+    /// The tolerance placements are decided within.
+    pub tol: f64,
+    /// Whether a collapsed offset crossed by the other is the ball's piece.
+    pub ball_on_collapsed: bool,
+    /// Whether the radii can change along the edge.
+    pub radii_can_change: bool,
+}
+
+/// A round of an exact class (#2485): its definition (supports, ball, section, leader and
+/// what its class is read with) and its net, the exact surface, at a bound of 0.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExactRoundRecord {
+    /// The class.
+    pub class: ExactClassRecord,
+    /// The supports S1, S2, by value.
+    pub supports: [SupportRecord; 2],
+    /// The ball's radius.
+    pub radius: f64,
+    /// The section's order: 1, the ball's circle.
+    pub order: u32,
+    /// The leader (the centre line), where the class's construction makes one.
+    pub leader: Option<NurbsCurveRecord>,
+    /// What the class is read with beside the supports.
+    pub inputs: ClassInputsRecord,
+    /// How the net's parameter runs along the leader: `a + b w`, `w` its u (or v).
+    pub leader_map: LeaderMapRecord,
+    /// The net, the exact surface.
+    pub net: ExactNetRecord,
+}
+
+/// How an exact round's net runs along its leader: the leader's parameter is `a + b w`,
+/// `w` the net's u, or its v when `along_v`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LeaderMapRecord {
+    /// The offset a.
+    pub a: f64,
+    /// The scale b.
+    pub b: f64,
+    /// Whether the leader runs along the net's v.
+    pub along_v: bool,
+}
+
+impl ExactRoundRecord {
+    /// The structural check: every curve and surface as their own checks, the supports
+    /// NURBS forms (an exact round's faces are never blends), its numbers finite, an
+    /// order of 1 and a positive radius.
+    ///
+    /// # Errors
+    ///
+    /// The first [`RecordError`] met.
+    pub fn validate(&self) -> Result<(), RecordError> {
+        for support in &self.supports {
+            match support {
+                SupportRecord::Nurbs { form, .. } => form.validate("supports")?,
+                SupportRecord::Blend(_) => {
+                    return Err(refuse("supports", "an exact round's supports are faces"))
+                }
+            }
+        }
+        let i = &self.inputs;
+        let numbers = [
+            self.radius,
+            i.uv[0][0],
+            i.uv[0][1],
+            i.uv[1][0],
+            i.uv[1][1],
+            i.offsets[0],
+            i.offsets[1],
+            i.centre[0],
+            i.centre[1],
+            i.centre[2],
+            i.tol,
+            self.leader_map.a,
+            self.leader_map.b,
+        ];
+        if !all_finite(&numbers) {
+            return Err(refuse("inputs", "an exact round's numbers are finite"));
+        }
+        if self.leader_map.b == 0.0 {
+            return Err(refuse("leader_map", "the leader's map is singular"));
+        }
+        if self.radius <= 0.0 {
+            return Err(refuse("radius", "the ball's radius is positive"));
+        }
+        if self.order != 1 {
+            return Err(refuse(
+                "order",
+                "an exact round's section is the ball's circle",
+            ));
+        }
+        if let Some(leader) = &self.leader {
+            leader.validate("leader")?;
+        }
+        self.net.form.validate("net.form")
+    }
+}

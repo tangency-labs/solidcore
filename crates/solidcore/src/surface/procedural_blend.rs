@@ -45,6 +45,7 @@
 //!   so every walk over the supports is bounded by 3.
 
 pub mod convert;
+pub mod exact;
 pub mod record;
 
 use std::cell::Cell;
@@ -1170,8 +1171,8 @@ pub fn recertify_faces(k: &Kernel, b: &crate::topology::Brep) -> Result<()> {
         let Some(surface) = b.face(f)?.surface.as_ref() else {
             continue;
         };
-        if let SurfaceKind::ProceduralBlend(pb) = surface.kind() {
-            pb.recertify(k).map_err(|e| {
+        if let Some(blend) = surface.procedural_blend() {
+            blend.recertify(k).map_err(|e| {
                 // (a cancel ends the operation; it is no refusal of the face)
                 if e.is_cancelled() {
                     return e;
@@ -1185,6 +1186,93 @@ pub fn recertify_faces(k: &Kernel, b: &crate::topology::Brep) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A blend face's net (#2485): a certified B-spline approximation of its definition, or
+/// its exact surface.
+#[derive(Debug, Clone, Copy)]
+pub enum BlendNet<'a> {
+    /// A procedural blend's net, within its bound of the definition.
+    Approx(&'a BSplineSurface),
+    /// An exact round's surface, which is its definition (bound 0).
+    Exact(&'a Surface),
+}
+
+/// A blend face by its definition (#2485), whatever its surface's kind: a procedural blend
+/// ([`SurfaceKind::ProceduralBlend`]), or a round of an exact class, which keeps its
+/// analytic kind and carries its definition ([`exact::ExactRound`]). Every blend face is
+/// reached through [`Surface::procedural_blend`], not by matching its kind.
+#[derive(Debug, Clone, Copy)]
+pub enum BlendRef<'a> {
+    /// A procedural blend.
+    Procedural(&'a ProceduralBlend),
+    /// An exact round and its surface.
+    Exact {
+        /// The definition.
+        round: &'a exact::ExactRound,
+        /// The surface, its net.
+        net: &'a Surface,
+    },
+}
+
+impl<'a> BlendRef<'a> {
+    /// The net.
+    #[must_use]
+    pub const fn net(&self) -> BlendNet<'a> {
+        match *self {
+            Self::Procedural(p) => BlendNet::Approx(&p.net),
+            Self::Exact { net, .. } => BlendNet::Exact(net),
+        }
+    }
+
+    /// The net's certified distance from the definition (0 for an exact round).
+    #[must_use]
+    pub const fn bound(&self) -> f64 {
+        match *self {
+            Self::Procedural(p) => p.def.bound,
+            Self::Exact { round, .. } => round.bound(),
+        }
+    }
+
+    /// The section's order.
+    #[must_use]
+    pub const fn order(&self) -> u32 {
+        match *self {
+            Self::Procedural(p) => p.def.order,
+            Self::Exact { round, .. } => round.order(),
+        }
+    }
+
+    /// The surface S1 (0) or S2 (1) the ball rolls on.
+    #[must_use]
+    pub fn support(&self, i: usize) -> Option<&'a Surface> {
+        match *self {
+            Self::Procedural(p) => p.support(i),
+            Self::Exact { round, .. } => round.support(i),
+        }
+    }
+
+    /// The exact round's definition, for an exact round.
+    #[must_use]
+    pub const fn exact(&self) -> Option<&'a exact::ExactRound> {
+        match *self {
+            Self::Procedural(_) => None,
+            Self::Exact { round, .. } => Some(round),
+        }
+    }
+
+    /// Re-certifies the net against the definition ([`ProceduralBlend::recertify`],
+    /// [`exact::ExactRound::recertify`]): the distance proved.
+    ///
+    /// # Errors
+    ///
+    /// Those of the two re-certifications.
+    pub fn recertify(&self, k: &Kernel) -> Result<f64> {
+        match *self {
+            Self::Procedural(p) => p.recertify(k),
+            Self::Exact { round, net } => round.recertify(k, net),
+        }
+    }
 }
 
 impl BlendDefinition {

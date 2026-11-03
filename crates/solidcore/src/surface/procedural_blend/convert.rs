@@ -11,22 +11,28 @@
 //! Deviations: none (no upstream counterpart). Recursion: nested supports are walked at
 //! most [`BLEND_MAX_DEPTH`] deep, with an explicit depth refused past it.
 
+use super::exact::{ExactClass, ExactRound};
 use super::record::{
-    BlendDefinitionRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
+    BlendDefinitionRecord, ClassInputsRecord, ExactClassRecord, ExactNetKindRecord, ExactNetRecord,
+    ExactRoundRecord, LeaderMapRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
     ProceduralBlendRecord, RadiusRecord, SupportKindRecord, SupportRecord,
 };
-use super::{BlendDefinitionInput, ProceduralBlend, BLEND_MAX_DEPTH};
+use super::{BlendDefinitionInput, BlendRef, ProceduralBlend, BLEND_MAX_DEPTH};
+use crate::blend::fillet_exact::{classify_supports, BlendSpine, ClassInputs};
 use crate::blend::fillet_section::section::GnSectionFsg;
 use crate::blend::fillet_section::station::as_b_spline;
 use crate::error::{EntityRef, Result, SolidError, SM_ERR_INVALID_INPUT};
+use crate::geom::vector2d::Point2;
 use crate::kernel::Kernel;
+use crate::math::Point3;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::crv_basic::Curve as NurbCurve;
 use crate::nurbs::knots::MAX_DEGREE;
 use crate::nurbs::math::{CPoint, NOW, NOZ};
 use crate::nurbs::srf_basic::Surface as NurbSurface;
-use crate::surface::implicit::{AnalyticSupport, SupportKind};
+use crate::surface::ball_patch::BallPatch;
+use crate::surface::implicit::{AnalyticSupport, LeaderMap, SupportKind};
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::FaceId;
 
@@ -385,4 +391,186 @@ fn surface_of(r: &NurbsSurfaceRecord) -> Result<BSplineSurface> {
         nurb: Some(nurb).into(),
         ..BSplineSurface::new()
     })
+}
+
+const OP_EXACT_TO: &str = "surface::procedural_blend::convert::exact_to_record";
+const OP_EXACT_FROM: &str = "surface::procedural_blend::convert::exact_from_record";
+
+/// The record of an exact round (#2485): its definition and its net, the exact surface,
+/// as its analytic kind's label and its NURBS form, every number as the kernel stores it.
+///
+/// # Errors
+///
+/// `InvalidInput` for a surface that is not an exact round; `Unsupported` for a net of a
+/// kind with no label; those of [`to_record`]'s supports and forms.
+pub fn exact_to_record(k: &Kernel, surface: &Surface) -> Result<ExactRoundRecord> {
+    let Some(BlendRef::Exact { round, net }) = surface.procedural_blend() else {
+        return Err(SolidError::invalid_input(
+            OP_EXACT_TO,
+            "the surface is not an exact round",
+        ));
+    };
+    let [s0, s1] = &round.supports;
+    let supports = [support_record(k, s0, 1)?, support_record(k, s1, 1)?];
+    let kind = match net.kind() {
+        SurfaceKind::Plane(_) => ExactNetKindRecord::Plane,
+        SurfaceKind::Cone(c) if c.cylinder => ExactNetKindRecord::Cylinder,
+        SurfaceKind::Cone(_) => ExactNetKindRecord::Cone,
+        SurfaceKind::Sphere(_) => ExactNetKindRecord::Sphere,
+        SurfaceKind::Torus(_) => ExactNetKindRecord::Torus,
+        SurfaceKind::SurfOfRevolution(_) => ExactNetKindRecord::Revolution,
+        SurfaceKind::BallPatch(_) => ExactNetKindRecord::BallPatch,
+        SurfaceKind::BSpline(_) => ExactNetKindRecord::BSpline,
+        _ => {
+            return Err(SolidError::Unsupported {
+                operation: OP_EXACT_TO,
+                reason: "an exact net of this kind has no label",
+            })
+        }
+    };
+    let Some(form) = as_b_spline(k, net)? else {
+        return Err(SolidError::sm_err(OP_EXACT_TO));
+    };
+    let i = round.inputs;
+    Ok(ExactRoundRecord {
+        class: match round.class {
+            ExactClass::Line => ExactClassRecord::Line,
+            ExactClass::Circle => ExactClassRecord::Circle,
+            ExactClass::Point => ExactClassRecord::Point,
+            ExactClass::Conic => ExactClassRecord::Conic,
+            ExactClass::ConicPair => ExactClassRecord::ConicPair,
+            ExactClass::NodalQuartic => ExactClassRecord::NodalQuartic,
+        },
+        supports,
+        radius: round.radius,
+        order: round.order,
+        leader: round.leader.as_ref().map(curve_record).transpose()?,
+        inputs: ClassInputsRecord {
+            uv: [[i.uv[0].x, i.uv[0].y], [i.uv[1].x, i.uv[1].y]],
+            offsets: i.offsets,
+            centre: [i.centre.x, i.centre.y, i.centre.z],
+            tol: i.tol,
+            ball_on_collapsed: i.ball_on_collapsed,
+            radii_can_change: i.radii_can_change,
+        },
+        leader_map: LeaderMapRecord {
+            a: round.map.a,
+            b: round.map.b,
+            along_v: round.map.along_v,
+        },
+        net: ExactNetRecord {
+            kind,
+            form: surface_record(&form)?,
+        },
+    })
+}
+
+/// The exact round a record holds: its supports and net derived from their forms by their
+/// labels (the analytic surfaces exact to rounding, their NURBS forms as stored), its
+/// definition as stored. The net is not checked against the definition:
+/// [`exact_rebuild`] does that.
+///
+/// # Errors
+///
+/// `InvalidInput` for a record its structural check refuses
+/// ([`ExactRoundRecord::validate`]) or a form not of its label's kind; those of making the
+/// supports, the leader and the net.
+pub fn exact_from_record(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> {
+    rec.validate()
+        .map_err(|e| SolidError::invalid_input(OP_EXACT_FROM, e.reason))?;
+    let mut supports = Vec::new();
+    for s in &rec.supports {
+        supports.push(match s {
+            SupportRecord::Nurbs { kind, form } => {
+                let form = surface_of(form)?;
+                match kind_of(*kind) {
+                    None => Surface::from(form),
+                    Some(kind) => {
+                        AnalyticSupport::derive(k, kind, &form).and_then(|a| a.build(k, form))?
+                    }
+                }
+            }
+            SupportRecord::Blend(_) => {
+                return Err(SolidError::invalid_input(
+                    OP_EXACT_FROM,
+                    "an exact round's supports are faces",
+                ))
+            }
+        });
+    }
+    let form = surface_of(&rec.net.form)?;
+    let analytic = |kind: SupportKind, form: BSplineSurface| {
+        AnalyticSupport::derive(k, kind, &form).and_then(|a| a.build(k, form))
+    };
+    let mut net = match rec.net.kind {
+        ExactNetKindRecord::Plane => analytic(SupportKind::Plane, form)?,
+        ExactNetKindRecord::Cylinder => analytic(SupportKind::Cylinder, form)?,
+        ExactNetKindRecord::Cone => analytic(SupportKind::Cone, form)?,
+        ExactNetKindRecord::Sphere => analytic(SupportKind::Sphere, form)?,
+        ExactNetKindRecord::Torus => analytic(SupportKind::Torus, form)?,
+        ExactNetKindRecord::Revolution => AnalyticSupport::derive_revolution(k, &form)?,
+        // (its sphere is the point class's ball, read from the supports below)
+        ExactNetKindRecord::BallPatch | ExactNetKindRecord::BSpline => Surface::from(form),
+    };
+    let i = &rec.inputs;
+    let inputs = ClassInputs {
+        uv: [
+            Point2::new(i.uv[0][0], i.uv[0][1]),
+            Point2::new(i.uv[1][0], i.uv[1][1]),
+        ],
+        offsets: i.offsets,
+        centre: Point3::new(i.centre[0], i.centre[1], i.centre[2]),
+        tol: i.tol,
+        ball_on_collapsed: i.ball_on_collapsed,
+        radii_can_change: i.radii_can_change,
+    };
+    let class = match rec.class {
+        ExactClassRecord::Line => ExactClass::Line,
+        ExactClassRecord::Circle => ExactClass::Circle,
+        ExactClassRecord::Point => ExactClass::Point,
+        ExactClassRecord::Conic => ExactClass::Conic,
+        ExactClassRecord::ConicPair => ExactClass::ConicPair,
+        ExactClassRecord::NodalQuartic => ExactClass::NodalQuartic,
+    };
+    let leader = rec.leader.as_ref().map(curve_of).transpose()?;
+    let (Some(s0), Some(s1)) = (supports.first(), supports.get(1)) else {
+        return Err(SolidError::sm_err(OP_EXACT_FROM));
+    };
+    if rec.net.kind == ExactNetKindRecord::BallPatch {
+        // a ball patch's sphere: the ball of its point class, from its supports
+        let blend = classify_supports(k, [s0, s1], &inputs)?;
+        if class != ExactClass::Point || blend.spine != BlendSpine::Point {
+            return Err(SolidError::invalid_input(
+                OP_EXACT_FROM,
+                "a ball patch is the net of a point class",
+            ));
+        }
+        let SurfaceKind::BSpline(form) = net.kind() else {
+            return Err(SolidError::sm_err(OP_EXACT_FROM));
+        };
+        net = Surface::from(BallPatch::create(form, blend.point, blend.radius)?);
+    }
+    let mut round = ExactRound::create(k, class, [s0, s1], rec.radius, leader.as_ref(), inputs)?;
+    round.map = LeaderMap {
+        a: rec.leader_map.a,
+        b: rec.leader_map.b,
+        along_v: rec.leader_map.along_v,
+    };
+    net.set_exact_round(Some(round));
+    Ok(net)
+}
+
+/// [`exact_from_record`] and the net re-certified against the definition
+/// ([`ExactRound::recertify`]: the class read again from the supports, the net on its
+/// surface), refused unless it is.
+///
+/// # Errors
+///
+/// Those of [`exact_from_record`] and [`ExactRound::recertify`].
+pub fn exact_rebuild(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> {
+    let net = exact_from_record(k, rec)?;
+    if let Some(blend) = net.procedural_blend() {
+        blend.recertify(k)?;
+    }
+    Ok(net)
 }
