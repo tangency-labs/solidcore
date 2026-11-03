@@ -56,7 +56,7 @@
 //!   blocks, `NSidedPatchRebuild` (upstream "does not work"; its only call is commented
 //!   out) and `RebuildBrepAll` (`#if 0`).
 //! - **Statuses.** Upstream logs and ignores many statuses (`SE`, ignored calls): those
-//!   stay ignored, through [`ignore_status`]. A status upstream returns becomes the
+//!   stay ignored, through `ignore_status`. A status upstream returns becomes the
 //!   `Err` of the Rust call; `SM_ERR_ASSERT_FAILURE` (`AERN`) is
 //!   [`SolidError::Upstream`] with that code. `AddFeature` returning `NULL` is `None`.
 //! - **Marks.** The executive locks and releases a mark in its constructor, as
@@ -76,20 +76,22 @@
 //!   rejects a patch (WR-640); the port keeps that: it runs the
 //!   face intersections (their status and edits count) and the classifications, and
 //!   accepts.
+//! - **Open base (opt-in).** Upstream's `DoDefeature` returns success when a feature's
+//!   base patch could not be built, with the feature's faces cut out of the base and the
+//!   hole open (WR-656). With `Kernel::fixes.defeature_refuses_open_base` (own design)
+//!   [`FeatureExecutive::do_defeature`] refuses it with `SM_ERR` and puts the base back.
 //! - **Notifications.** B-rep edits run on arena-only notification records
 //!   ([`crate::topology::brep::p2::ArenaNotifyState`]; a copy's records cover both
 //!   B-reps), as upstream's objects notify their context. `PartitionFeature`'s and
-//!   `RestoreFeature`'s `CopyFaces` run on a
-//!   [`crate::topology::brep::p2::CopyNotifyState`] holding both B-reps' own attributes,
-//!   so each attribute reaches the copies as its behaviour says (`SM_NO_COPY`), as
-//!   upstream's live on the objects. The patch copies (`ExtSurfaceRebuild`,
-//!   `ApplyPatches`) do not carry attributes yet: upstream's there depend on the merges
-//!   that still differ (plan/findings/blend.feature_executive--ext-surface-patch-faces-differ.md).
+//!   `RestoreFeature`'s `CopyFaces`, and the patch copies of `ExtSurfaceRebuild` and
+//!   `ApplyPatches`, run on a [`crate::topology::brep::p2::CopyNotifyState`] holding both
+//!   B-reps' own attributes, so each attribute reaches the copies as its behaviour says
+//!   (`SM_NO_COPY`), as upstream's live on the objects.
 //! - No recursion.
 
 use crate::boolean::merge::p3::BooleanDriver;
 use crate::curve::curve::Curve;
-use crate::error::{ignore_status, EntityRef, Result, SolidError};
+use crate::error::{ignore_status, EntityRef, Result, SolidError, SM_ERR};
 use crate::geom::a_object::BooleanOperation;
 use crate::geom::context::{with_mark_lock, MarkType, ALL_MARKS};
 use crate::geom::extent1d::Extent1d;
@@ -107,8 +109,8 @@ use crate::topology::{edge, vertex, Brep, EdgeId, FaceId, LoopId, VertexId};
 
 const OP: &str = "blend::feature_executive";
 
-/// `SM_ERR_ASSERT_FAILURE`.
-const SM_ERR_ASSERT_FAILURE: i32 = 1005;
+// `SM_ERR_ASSERT_FAILURE`.
+use crate::error::SM_ERR_ASSERT_FAILURE;
 
 /// `SM_ERR_ASSERT_FAILURE` (`AERN`).
 fn assert_failure(reason: &'static str) -> SolidError {
@@ -475,7 +477,7 @@ impl<'a> FeatureExecutive<'a> {
         let stat = collect_faces(k, self.base, &mut self.marks, self.mark, &mut feature, face);
         match stat {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // SE_MSG(SM_ERR, "Feature edges do not partition the brep")
             Err(_) => return Ok(None),
         }
@@ -537,7 +539,7 @@ impl<'a> FeatureExecutive<'a> {
                     floops.push(FeatureLoop::new(edges, base_rb_type, feature_rb_type));
                 }
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => {
                 // Treat edge loops as a single SmFeatureLoop
                 floops.push(FeatureLoop::new(
@@ -595,16 +597,41 @@ impl<'a> FeatureExecutive<'a> {
     /// `DoDefeature`: partitions each feature, builds its patches and applies them
     /// (their statuses ignored); the base B-rep is edited in place.
     ///
+    /// Not upstream unless opted in (`fixes.defeature_refuses_open_base`, WR-656): a
+    /// feature whose base patch could not be built is refused before its patches are
+    /// applied, the base B-rep is put back as it was before the call (a
+    /// [`Brep::clone_for_rollback`] taken first) and the executive drops its features.
+    ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] from a callee; dangling ids.
+    /// [`SolidError::Unported`] from a callee; dangling ids; with the fix, `SM_ERR` at a
+    /// loop edge of the base for a feature whose hole in the base stays open.
     pub fn do_defeature(&mut self, k: &mut Kernel) -> Result<()> {
+        let mut saved = if k.fixes.defeature_refuses_open_base {
+            Some(self.base.clone_for_rollback()?)
+        } else {
+            None
+        };
         for i in 0..self.features.len() {
             let Some(feature) = self.features.get_mut(i) else {
                 continue;
             };
             keep_unported(partition_feature(k, self.base, feature))?;
             keep_unported(build_patches(k, self.base, feature, &mut self.patches))?;
+            if !feature.base_rebuilt {
+                if let Some(saved) = saved.take() {
+                    let edge = open_loop_edge(feature);
+                    self.base.restore_from(saved);
+                    self.features.clear();
+                    self.patches.clear();
+                    self.marks = Marks::default();
+                    return Err(SolidError::Upstream {
+                        code: SM_ERR,
+                        operation: OP,
+                        entity: edge.map(EntityRef::Edge),
+                    });
+                }
+            }
             keep_unported(apply_patches(k, self.base, feature, &mut self.patches))?;
         }
         Ok(())
@@ -626,7 +653,7 @@ impl<'a> FeatureExecutive<'a> {
                 Ok(()) => {
                     self.features.remove(ii);
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => ii += 1,
             }
         }
@@ -685,9 +712,33 @@ pub fn defeature_and_rebuild(
 /// A status upstream ignores, but an unported callee still surfaces.
 fn keep_unported(r: Result<()>) -> Result<()> {
     match r {
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         _ => Ok(()),
     }
+}
+
+/// Not upstream (WR-656): the first base loop edge of the first loop whose base patch is
+/// not used, the place of the hole a refused feature would leave open.
+fn open_loop_edge(feature: &Feature) -> Option<EdgeId> {
+    let l = feature
+        .loops
+        .iter()
+        .find(|l| !l.use_b_patch)
+        .or_else(|| feature.loops.first())?;
+    l.base_edges.first().copied()
+}
+
+/// Whether `error` is the refusal of `fixes.defeature_refuses_open_base` (not upstream,
+/// WR-656) from [`FeatureExecutive::do_defeature`].
+pub(crate) fn is_open_base_refusal(error: &SolidError) -> bool {
+    matches!(
+        error,
+        SolidError::Upstream {
+            operation: OP,
+            code: SM_ERR,
+            entity: Some(EntityRef::Edge(_)),
+        }
+    )
 }
 
 // ---- SmFeature -----------------------------------------------------------------------
@@ -887,7 +938,7 @@ fn build_patches(
                     first.feat_patch = first.base_patch;
                 }
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // SE_MSG(SM_ERR, "Patch does not fill Feature void manifold-ly")
             Err(_) => {}
         }
@@ -1125,7 +1176,7 @@ fn apply_patches(
                 .ok_or_else(sm_err)?;
             let faces = bp1::faces(patch, None)?;
             if !faces.is_empty() {
-                keep_unported(copy_faces(k, patch, &faces, base, true).map(drop))?;
+                keep_unported(copy_faces_carrying(k, patch, &faces, base, true).map(drop))?;
             }
         }
         ignore_status(stitch_and_orient(k, base))?;
@@ -1151,7 +1202,7 @@ fn apply_patches(
                 .ok_or_else(sm_err)?;
             let faces = bp1::faces(patch, None)?;
             if !faces.is_empty() {
-                keep_unported(copy_faces(k, patch, &faces, fbrep, true).map(drop))?;
+                keep_unported(copy_faces_carrying(k, patch, &faces, fbrep, true).map(drop))?;
             }
         }
         ignore_status(stitch_and_orient(k, fbrep))?;
@@ -1394,7 +1445,7 @@ fn validate_patch(
                 let param = curve.natural_interval().mid();
                 // FindPointClass (status ignored)
                 match cc.find_point_class(k, &geometry, param, tol) {
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     _ => {}
                 }
                 // If the curve is internal to the face, then the new face is a bad result:
@@ -1457,13 +1508,13 @@ fn planar_cap_rebuild(k: &mut Kernel, patch: &mut Brep, loop_curves: &[LoopCurve
         let lp = chained.curves.get(start..end).ok_or_else(sm_err)?;
         // Create planar face
         planar_face(k, patch, lp, tol).map_err(|e| {
-            if e.is_unported() {
+            if e.is_unported_or_cancelled() {
                 e
             } else {
                 // SER_MSG(.., "Couldn't make a planar cap. Loop edges non-planar?")
                 let code = match e {
                     SolidError::Upstream { code, .. } => code,
-                    _ => crate::error::SM_ERR,
+                    _ => SM_ERR,
                 };
                 SolidError::Upstream {
                     code,
@@ -1556,7 +1607,7 @@ fn ext_surface_rebuild(
             }
 
             // Place a copy of this face into pFaceBrep
-            keep_unported(copy_faces(k, source, &[face], &mut face_brep, true).map(drop))?;
+            keep_unported(copy_faces_carrying(k, source, &[face], &mut face_brep, true).map(drop))?;
 
             // Put the face back together for subsequent testing
             let this_loop = this_loop.ok_or_else(|| SolidError::null_pointer(OP))?;
@@ -1575,7 +1626,7 @@ fn ext_surface_rebuild(
             let new_surf = surface
                 .create_extended_surface(k, ext, ContinuityType::G1)
                 .map_err(|e| {
-                    if e.is_unported() {
+                    if e.is_unported_or_cancelled() {
                         e
                     } else {
                         SolidError::null_pointer(OP)
@@ -1594,13 +1645,17 @@ fn ext_surface_rebuild(
 
             // Make the outer loop of pFace into an inner loop of pNewFace
             let mut remove_brep = new_brep(k)?;
-            keep_unported(copy_faces(k, source, &[face], &mut remove_brep, true).map(drop))?;
+            keep_unported(
+                copy_faces_carrying(k, source, &[face], &mut remove_brep, true).map(drop),
+            )?;
             face_brep = manifold_xor(k, face_brep, remove_brep)?;
         }
 
         // Copy faces from pFaceBrep to pTempPatch
         let these = bp1::faces(&face_brep, None)?;
-        keep_unported(copy_faces(k, &mut face_brep, &these, &mut temp_patch, true).map(drop))?;
+        keep_unported(
+            copy_faces_carrying(k, &mut face_brep, &these, &mut temp_patch, true).map(drop),
+        )?;
         test_merge_at_end = true;
     }
 
@@ -1664,7 +1719,7 @@ fn trim_patches(
                         continue;
                     }
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {
                     to_delete.push(pf);
                     continue;
@@ -1685,7 +1740,7 @@ fn trim_patches(
                             (Some(&uv), Some(&pt)) => (uv, pt),
                             _ => continue,
                         },
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => continue,
                     };
                 if point_in_face(k, patch, pf, tpt, tol, tuv)? {
@@ -1923,27 +1978,10 @@ fn cc_curve<'c>(
         .ok_or_else(|| SolidError::null_pointer(OP))
 }
 
-/// `SmBrep::CopyFaces(faces, dest, .., bUseMerge)`: the new faces and whether every
-/// face was copied.
-fn copy_faces(
-    k: &mut Kernel,
-    src: &mut Brep,
-    faces: &[FaceId],
-    dest: &mut Brep,
-    use_merge: bool,
-) -> Result<(Vec<FaceId>, bool)> {
-    // (arena-only notification records for both B-reps' objects, as `copy_component`)
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::new(dest);
-    state.seed(src);
-    let mut env = state.env(None);
-    let face_ref = |f: FaceId| crate::topology::loopuse::notify_ref(EntityRef::Face(f));
-    crate::topology::brep::p7::copy_faces(k, src, faces, dest, use_merge, &face_ref, &mut env)
-}
-
 /// `CopyFaces` from one B-rep into another with both B-reps' own attributes
 /// ([`crate::topology::brep::p2::CopyNotifyState`]): each attribute goes to the new
 /// objects as its behaviour says (`SM_NO_COPY`), as upstream's live on the objects.
-fn copy_faces_carrying(
+pub(crate) fn copy_faces_carrying(
     k: &mut Kernel,
     src: &mut Brep,
     faces: &[FaceId],
@@ -1955,7 +1993,7 @@ fn copy_faces_carrying(
     // attributes: SM_NO_COPY gives each new object its source's, as upstream)
     let mut state = CopyNotifyState::with_attributes_of(src, dest)?;
     let face_ref = |f: FaceId| crate::topology::loopuse::notify_ref(EntityRef::Face(f));
-    let r = crate::topology::brep::p7::copy_faces_from(
+    let r = crate::topology::brep::p7::copy_faces_between_stores(
         k,
         src,
         faces,
@@ -2020,7 +2058,7 @@ fn piecewise_merge(k: &mut Kernel, a: Brep, b: Brep, tol: f64) -> Result<(Brep, 
     let stat = match merged {
         Ok(id) if id == PrimitiveModel::MAIN => Ok(()),
         Ok(_) => Err(sm_err()),
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(e) => Err(e),
     };
     let mut other = model.take_brep(other_id)?;
@@ -2051,7 +2089,7 @@ fn manifold_xor(k: &mut Kernel, a: Brep, b: Brep) -> Result<Brep> {
     let result = match r {
         Ok(Some(b)) => b,
         Ok(None) => primary.take().ok_or_else(|| SolidError::null_pointer(OP))?,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => primary.take().ok_or_else(|| SolidError::null_pointer(OP))?,
     };
     let mut result = result;
@@ -2131,6 +2169,36 @@ mod tests {
     /// `PartitionFeature`'s `CopyFaces` notifies `SM_NO_COPY` on each copied face and edge
     /// (`SmMerge::MakeFaceuse`), so copy-behaviour attributes reach the feature B-rep and
     /// temporary ones do not; the base keeps its other objects' attributes.
+    /// `ApplyPatches`' `CopyFaces` into a B-rep that already has faces: the new face gets
+    /// its source face's attributes only (here none), not those of a destination face
+    /// (upstream: `MakeFaceuse`'s surface copy carries the source surface's own
+    /// attributes; in the B-reps' stores a surface goes by its owner face's name).
+    #[test]
+    fn patch_copy_into_a_populated_brep_takes_no_destination_attributes() {
+        use crate::geom::attribute::{Attribute, Behavior};
+        let mut k = Kernel::default();
+        let mut dest = create_box(&mut k, Point3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let dest_faces = bp1::faces(&dest, None).unwrap();
+        for &f in &dest_faces {
+            dest.add_attribute(EntityRef::Face(f), Attribute::new(30001, Behavior::Copy))
+                .unwrap();
+        }
+        let mut src = create_box(&mut k, Point3::new(10.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let src_face = bp1::faces(&src, None).unwrap()[0];
+        let (made, _) =
+            copy_faces_carrying(&mut k, &mut src, &[src_face], &mut dest, true).unwrap();
+        assert!(!made.is_empty(), "the face is copied");
+        for &f in &made {
+            assert!(
+                dest.find_attribute(EntityRef::Face(f), 30001).is_none(),
+                "a new face took a destination face's attribute"
+            );
+        }
+        for &f in &dest_faces {
+            assert!(dest.find_attribute(EntityRef::Face(f), 30001).is_some());
+        }
+    }
+
     #[test]
     fn defeature_carries_attributes_as_their_behaviours_say() {
         use crate::geom::attribute::{Attribute, Behavior};

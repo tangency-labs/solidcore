@@ -73,7 +73,7 @@
 //!   [`calculate_bounding_box_base`]). The base drop's actual break-cache state is
 //!   copied back even on failure; local solves do not force a cache build. The base
 //!   drop's global solve reads the curve cache the caller keeps for this curve
-//!   ([`Curve::drop_point_in`] and `GlobalCoincidenceChecker`, as for every other kind;
+//!   (`Curve::drop_point_in` and `GlobalCoincidenceChecker`, as for every other kind;
 //!   upstream keeps it on the curve), not one built per drop on the copy; a caller
 //!   without one reads the cache kept on this object (built by its first global solve
 //!   under the same kernel state, dropped by every edit; a copy starts without it), as
@@ -104,9 +104,14 @@
 //!   zero fill never runs upstream (`for (ii = 2; ii > lNumDers; ii++)` inside
 //!   `if (lNumDers > 1)`); the port returns the two derivatives it computes.
 //! - **`SurfaceCurveMaxDistanceBetween`** forces `bDoPrecise = FALSE` before its
-//!   precise refinement upstream, so that code (`SmSurface::LocalCurveSolve` and
-//!   `SmCurve::LocalCurveSolve`) is dead and not called.
-//!   Object identity (`&crOtherCurve == this`) is [`core::ptr::eq`].
+//!   precise refinement upstream (`SmCrvOnSurf.cpp:1909`, noting those two
+//!   `CurveSolve` calls do not work properly), so that refinement block
+//!   (`SmSurface::LocalCurveSolve` and `SmCurve::LocalCurveSolve`) remains dead and not
+//!   called (`num_samples == 0` still takes the `22 + this_knots + other_knots` dense
+//!   sample pass). With `Kernel::fixes.curve_max_distance_single_sample_midpoint`,
+//!   `num_samples == 1` samples the interval midpoints (`per = 0.5`) instead of dividing
+//!   `0 / 0 = NaN` (WR-36); off, it matches upstream. Object identity
+//!   (`&crOtherCurve == this`) is [`core::ptr::eq`].
 //! - **`ReadFromDB`** always builds a new object (the "fill the curve passed in"
 //!   branch and its `IsKindOf` check have no counterpart; `lType`, `lDim` and the
 //!   context are unused upstream). An ASCII value whose extraction fails keeps the
@@ -866,7 +871,7 @@ impl CrvOnSurf {
 
         // If the surface can't handle this many derivatives (default bNonZeroTangents)
         while let Err(e) = &srf {
-            if e.is_unported() || n_eval == 0 {
+            if e.is_unported_or_cancelled() || n_eval == 0 {
                 break;
             }
             n_eval -= 1;
@@ -1091,7 +1096,7 @@ impl CrvOnSurf {
             &self.surface,
         ) {
             Ok(classes) => classes,
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(e) => {
                 let status = Err(e);
                 return Ok(KnotsWithStatus {
@@ -1478,7 +1483,7 @@ impl CrvOnSurf {
     ) -> Result<BoundingBoxes> {
         match self.get_or_create_bs_approx_as(k, APPROX_TOL_3D, None, None, derived) {
             Ok(bs) => bs.calculate_bounding_box(interval, req),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => {
                 calculate_bounding_box_base(k, &self.as_curve(derived), interval, req, expand)
             }
@@ -1590,7 +1595,7 @@ impl CrvOnSurf {
 
         let bs = match self.get_or_create_bs_approx_as(k, APPROX_TOL_3D, None, None, derived) {
             Ok(bs) => bs,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => {
                 return self.drop_point_base_preserving_breaks(
                     k,
@@ -1993,8 +1998,12 @@ impl CrvOnSurf {
     /// `interval`), sampled at `num_samples` points of this curve (`0`: 22 plus the
     /// knot counts of both curves): the largest distance along the surface normal and
     /// the largest deviation across it, with the parameters where they occur. With
-    /// `max_needed`, stops once either exceeds it. The same object over the same
-    /// interval (either direction) has no gap.
+    /// `num_samples == 1`, upstream divides `0 / 0 = NaN` (WR-36); enabling
+    /// `Kernel::fixes.curve_max_distance_single_sample_midpoint` samples the interval
+    /// midpoints (`per = 0.5`) instead (upstream's `bDoPrecise = FALSE` guard before its
+    /// disabled `LocalCurveSolve` refinement stays unchanged). With `max_needed`, stops
+    /// once either exceeds it. The same object over the same interval (either direction)
+    /// has no gap.
     ///
     /// # Errors
     ///
@@ -2068,7 +2077,11 @@ impl CrvOnSurf {
 
         // Uniformly sample this Curve from beginning to end.
         for ii in 0..num_samples {
-            let per = ii as f64 / (num_samples - 1) as f64;
+            let per = if k.fixes.curve_max_distance_single_sample_midpoint && num_samples == 1 {
+                0.5
+            } else {
+                ii as f64 / (num_samples - 1) as f64
+            };
             let mut t_guess_1 = interval.evaluate(per);
             let t_guess_2 = if orientation > 0.0 {
                 other_interval.evaluate(per)
@@ -2987,5 +3000,151 @@ mod tests {
         assert_eq!(reused.evaluate_point(0.4).unwrap(), point);
         assert_eq!(curve.bs_approx_max_gap_3d(), gap);
         assert_eq!(curve.breaks(), &breaks);
+    }
+
+    #[test]
+    fn wr36_surface_curve_max_distance_single_sample_default_vs_midpoint() {
+        use crate::curve::hermite_curve::HermiteCurve;
+        use crate::geom::vector2d::Vec2;
+        use crate::surface::plane::Plane;
+
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.curve_max_distance_single_sample_midpoint = true;
+
+        let domain = Extent2d::from_bounds(-10.0, -10.0, 10.0, 10.0);
+        let plane = Surface::from(Plane::new(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(1.0, 1.0),
+            &domain,
+        ));
+        // `C(t) = (t, 0, 0)` on `z = 0` plane (`normal = +Z`) over `[0, 1]`.
+        let cos = CrvOnSurf::from_uv_line(
+            &off,
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            plane,
+            Some(domain),
+            0,
+        )
+        .unwrap();
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+
+        // `other(t) = (t, t(1 - t), 2t(1 - t))`: at `t = 0.5`, `other(0.5) = (0.5, 0.25, 0.5)`
+        // and `other'(0.5) = (1, 0, 0)`, so `(0.5, 0, 0)` drops orthogonally to `t = 0.5`
+        // with normal distance `0.5` and lateral deviation `0.25`.
+        let other = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 2.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, -1.0, -2.0),
+            3,
+        ));
+
+        // Default (`false`): `0 / 0 = NaN` fails the initial evaluation and falls back to
+        // the `ii == 0` near-start sample `t_guess_1 = 0.001` instead of the midpoint.
+        let g_off = cos
+            .surface_curve_max_distance_between(&off, &ivl, &other, 0.0, 1.0, 1, 1.0e-5, None)
+            .unwrap();
+        assert!((g_off.curve_t_dist - 0.001).abs() < 1.0e-12, "{g_off:?}");
+        assert!((g_off.curve_t_dev - 0.001).abs() < 1.0e-12, "{g_off:?}");
+        assert!(g_off.max_dist < 0.01 && g_off.max_dev < 0.01, "{g_off:?}");
+
+        // Opt-in (`true`): `per = 0.5` samples the midpoint for both orientations.
+        for (start, end) in [(0.0, 1.0), (1.0, 0.0)] {
+            let g_on = cos
+                .surface_curve_max_distance_between(&on, &ivl, &other, start, end, 1, 1.0e-5, None)
+                .unwrap();
+            assert!((g_on.max_dist - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.max_dev - 0.25).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.curve_t_dist - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.other_t_dist - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.curve_t_dev - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.other_t_dev - 0.5).abs() < 1.0e-12, "{g_on:?}");
+        }
+
+        // Sub-interval `[0.0, 0.5]` against a constant-offset curve `(t, 0.75, 2.0)`:
+        // midpoint is `0.25`, with normal distance `2.0` and lateral deviation `0.75`.
+        let shifted = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.75, 2.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 0.75, 2.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            3,
+        ));
+        let sub = Extent1d::from_min_max(0.0, 0.5);
+        let sub_on = cos
+            .surface_curve_max_distance_between(&on, &sub, &shifted, 0.0, 0.5, 1, 1.0e-5, None)
+            .unwrap();
+        assert!((sub_on.max_dist - 2.0).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.max_dev - 0.75).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.curve_t_dist - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.other_t_dist - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.curve_t_dev - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.other_t_dev - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+    }
+
+    #[test]
+    fn wr36_surface_curve_max_distance_other_sample_counts_unchanged() {
+        use crate::curve::hermite_curve::HermiteCurve;
+        use crate::geom::vector2d::Vec2;
+        use crate::surface::plane::Plane;
+
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.curve_max_distance_single_sample_midpoint = true;
+
+        let domain = Extent2d::from_bounds(-10.0, -10.0, 10.0, 10.0);
+        let plane = Surface::from(Plane::new(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(1.0, 1.0),
+            &domain,
+        ));
+        let cos = CrvOnSurf::from_uv_line(
+            &off,
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            plane,
+            Some(domain),
+            0,
+        )
+        .unwrap();
+        let other = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 2.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, -1.0, -2.0),
+            3,
+        ));
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+
+        for samples in [0, 2, 5, 11] {
+            let a = cos
+                .surface_curve_max_distance_between(
+                    &off, &ivl, &other, 0.0, 1.0, samples, 1.0e-5, None,
+                )
+                .unwrap();
+            let b = cos
+                .surface_curve_max_distance_between(
+                    &on, &ivl, &other, 0.0, 1.0, samples, 1.0e-5, None,
+                )
+                .unwrap();
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "samples {samples}");
+        }
+
+        // Same curve object over matching interval returns zero gap immediately.
+        let wrapped = Curve::from(cos);
+        let CurveKind::CrvOnSurf(inner) = wrapped.kind() else {
+            panic!("expected CrvOnSurf");
+        };
+        let same_on = inner
+            .surface_curve_max_distance_between(&on, &ivl, &wrapped, 0.0, 1.0, 1, 1.0e-5, None)
+            .unwrap();
+        assert_eq!(same_on.max_dist, 0.0);
+        assert_eq!(same_on.max_dev, 0.0);
     }
 }

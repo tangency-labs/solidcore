@@ -73,6 +73,8 @@
 //!   `make_coons_patch_tangent_to_sides` (`sm_MakeCoonsPatchTangentToSides` and its
 //!   helpers `sm_CoonsSideNormal`, `sm_CoonsSideAngle`, `sm_RefineToSpans` and
 //!   `sm_ProjectCoonsSideRows`, all private). Its refinement is bounded (8 to 64 spans).
+//!   `sm_CoonsSideAngle` makes the patch normal unit by its own length, not `Unitize`
+//!   (tangency-labs/smlib@701da4b, same option).
 
 use crate::curve::curve::p1::{SpanAccuracy, MAX_APPROX_SPANS};
 use crate::curve::curve::p2::Curve as SmCurve;
@@ -83,7 +85,7 @@ use crate::curve::curve::p3::PointSolveOptions;
 use crate::curve::curve::p4::is_degenerate_base;
 use crate::curve::hermite_curve::HermiteCurve;
 use crate::curve::tangent_field::{CurveEnd as TangentFieldEnd, TangentDirType, TangentField};
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignore_or_pass_on, ignored, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::{Extent2d, SS_UMAX, SS_UMIN, SS_VMIN};
 use crate::geom::extent3d::Extent3d;
@@ -431,8 +433,12 @@ fn approximate_tangent_field(
         let degenerate = BSplineCurve::create_degenerate_curve(curve.dim(), pnt)?;
         let mut c = SmCurve::from(degenerate);
         let ivl = Extent1d::from_min_max(first, last);
-        // (status ignored)
-        ignored(c.edit_parameterization(k, &ivl))?;
+        // (status ignored; passed on with the opt-in fix, as SmCurve::ApproximateCurve
+        // in tangency-labs/smlib 8311f8e)
+        ignore_or_pass_on(
+            c.edit_parameterization(k, &ivl),
+            k.fixes.query_statuses_pass_on,
+        )?;
         let CurveKind::BSpline(bs) = c.into_kind() else {
             return Err(SolidError::invalid_input(
                 OP_APPROX_FIELD,
@@ -548,9 +554,17 @@ fn approximate_tangent_field(
     }
 
     // create pBSC curve from control polygon
-    let bsc = flush_crv(approx_tol_3d, &mut ctrl_poly, &mut knots, create_analytics)?.ok_or(
-        SolidError::invalid_input(OP_APPROX_FIELD, "no approximating curve built"),
-    )?;
+    let bsc = flush_crv(
+        approx_tol_3d,
+        &mut ctrl_poly,
+        &mut knots,
+        create_analytics,
+        k.fixes.query_statuses_pass_on,
+    )?
+    .ok_or(SolidError::invalid_input(
+        OP_APPROX_FIELD,
+        "no approximating curve built",
+    ))?;
 
     // pBSCurve->Copy(crContext, rpNewBSplineCurve)
     Ok(bsc.copy())
@@ -1253,13 +1267,17 @@ impl BSplineSurface {
             };
             match create_skin_srf_boundary_continuity(&mut curves, &mut sk) {
                 Ok(s) => s,
-                Err(e @ SolidError::Unported { .. }) => return Err(e),
+                Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                    return Err(e)
+                }
                 Err(_) => {
                     // If not successful try without knots.
                     sk.kns = None;
                     match create_skin_srf_boundary_continuity(&mut curves, &mut sk) {
                         Ok(s) => s,
-                        Err(e @ SolidError::Unported { .. }) => return Err(e),
+                        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                            return Err(e)
+                        }
                         Err(_) => {
                             // It failed with derivative fields try it without them
                             if has_dir_array {
@@ -2150,12 +2168,17 @@ fn coons_side_angle(
                 side(uv.x < su.max()),
                 side(uv.y < sv.max()),
             )?;
-            let normal = du.cross(dv);
+            let mut normal = du.cross(dv);
             let scale = du.length() * dv.length();
-            if scale < EFF_ZERO_SQ || normal.length() <= EFF_ZERO_SQRT * scale {
+            // No normal where the derivatives are (near) parallel, measured against their
+            // own size; where there is one it is made unit by its own length (the fork's
+            // tangency-labs/smlib@701da4b): `unitize`'s absolute floor, 1e-12, refused the
+            // normal of a station near a collapsing side of a patch 0.01 across.
+            let normal_length = normal.length();
+            if scale < EFF_ZERO_SQ || normal_length <= EFF_ZERO_SQRT * scale {
                 continue;
             }
-            let normal = normal.unitize()?;
+            normal /= normal_length;
             let side_normal = coons_side_normal(k, uv_curve, surface, along, s)?;
             let cos = normal.dot(side_normal).abs();
             let angle = acos(if cos < 1.0 { cos } else { 1.0 });

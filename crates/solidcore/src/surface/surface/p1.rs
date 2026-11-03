@@ -131,7 +131,7 @@ use crate::curve::curve::p7::PropertyAnalysisOptions;
 use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::iso_curve::IsoCurve;
 use crate::curve::line::Line;
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{checked_or_ignored, ignore_status, ignored, passed_on, Result, SolidError};
 use crate::geom::a_object::{CacheId, ObjectCacheType};
 use crate::geom::assert_array::labels::FACE_TYPE;
 use crate::geom::extent1d::Extent1d;
@@ -1348,6 +1348,8 @@ impl Surface {
             (SurfaceKind::OffsetSurface(s), _) => s.approx_eq(k, other),
             // SmBSplineSurface::operator==: SmSurface::operator== first
             (SurfaceKind::BSpline(a), SurfaceKind::BSpline(b)) => Ok(a.approx_eq(b)),
+            // the fork's SmBallPatch::operator== (f8e6709): the net's, then the sphere
+            (SurfaceKind::BallPatch(a), SurfaceKind::BallPatch(b)) => Ok(a.approx_eq(b)),
             // SmPlane::operator==: SmBSplineSurface::operator== first
             (SurfaceKind::Plane(a), SurfaceKind::Plane(b)) => Ok(a.approx_eq(b)),
             (SurfaceKind::Cone(a), SurfaceKind::Cone(b)) => Ok(a.approx_eq(b)),
@@ -1493,6 +1495,8 @@ impl Surface {
                 .map(<[Vec3]>::to_vec)
                 .collect()),
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1612,6 +1616,8 @@ impl Surface {
             SurfaceKind::SurfOfExtrusion(s) => s.evaluate_step_into(k, uv, hu, hv, d),
             // pass the call along (the base default, `Evaluate`)
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1663,6 +1669,8 @@ impl Surface {
                 ignored(self.evaluate_step(k, uv, highest_u_deriv, highest_v_deriv, flags))
             }
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1695,6 +1703,8 @@ impl Surface {
             SurfaceKind::SurfOfRevolution(s) => s.evaluate_step_point_at(k, uv),
             SurfaceKind::SurfOfExtrusion(s) => s.evaluate_step_point(k, uv),
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1720,6 +1730,17 @@ impl Surface {
         self.check_evaluation_copy_depth(0)?;
         match self.kind() {
             SurfaceKind::BSpline(s) => s.evaluate_simple(
+                uv,
+                highest_u_deriv,
+                highest_v_deriv,
+                flags.u_side == Side::Left,
+                flags.v_side == Side::Left,
+                flags.only_upper_half,
+            ),
+            SurfaceKind::ProceduralBlend(s) => {
+                s.evaluate_simple(k, uv, highest_u_deriv, highest_v_deriv, flags)
+            }
+            SurfaceKind::BallPatch(s) => s.net().evaluate_simple(
                 uv,
                 highest_u_deriv,
                 highest_v_deriv,
@@ -1794,6 +1815,7 @@ impl Surface {
     ) -> Result<()> {
         let base = match self.kind() {
             SurfaceKind::BSpline(s) => Some(s),
+            SurfaceKind::BallPatch(s) => Some(s.net()),
             // inherited from SmBSplineSurface, which reads m_pNurb: upstream's analytic
             // surfaces always hold one (the port makes it on demand, kind_with_nurb)
             SurfaceKind::Cone(_)
@@ -1801,7 +1823,10 @@ impl Surface {
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_) => Some(self.analytic_base_with_nurb(k)?),
+            // (a procedural blend: its own EvaluateSimple, the definition's or, in a
+            // net scope, the net's)
             SurfaceKind::Plane(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::OffsetSurface(_)
             | SurfaceKind::SrfInVolume(_)
@@ -1840,8 +1865,12 @@ impl Surface {
         // checked; it always lies in the domain)
         let _domain = self.natural_uv_domain_with_nurb(k)?;
 
-        // surface eval (status ignored)
-        let derivs = match self.evaluate(k, uv, 1, 1, upper_flags(false)) {
+        // surface eval (status ignored; passed on with the opt-in fix, WR-663,
+        // tangency-labs/smlib 21dcf69)
+        let derivs = match passed_on(
+            self.evaluate(k, uv, 1, 1, upper_flags(false)),
+            k.fixes.query_statuses_pass_on,
+        )? {
             Ok(m) => first_block(&m),
             Err(e @ SolidError::Unported { .. }) => return Err(e),
             Err(_) => [[Vec3::ZERO; 2]; 2],
@@ -1990,9 +2019,15 @@ impl Surface {
 
         // For each dimension
         {
-            let knots = self
-                .knots_with_nurb(k, SurfParamType::U, None)
-                .map_or_else(|_| Vec::new(), |k| k.0);
+            // with the opt-in fix no domain can be shown continuous without the knots:
+            // an uninitialised domain (WR-663, tangency-labs/smlib 1612a7d)
+            let knots = match self.knots_with_nurb(k, SurfParamType::U, None) {
+                Ok(kn) => kn.0,
+                Err(e) if k.fixes.query_statuses_pass_on && !e.is_unported() => {
+                    return Ok(Extent2d::new());
+                }
+                Err(_) => Vec::new(),
+            };
             let u_conts = cache.u_continuities();
             let n = u_conts.len();
             for (i, &cont) in u_conts.iter().enumerate() {
@@ -2027,9 +2062,13 @@ impl Surface {
         }
 
         {
-            let knots = self
-                .knots_with_nurb(k, SurfParamType::V, None)
-                .map_or_else(|_| Vec::new(), |k| k.0);
+            let knots = match self.knots_with_nurb(k, SurfParamType::V, None) {
+                Ok(kn) => kn.0,
+                Err(e) if k.fixes.query_statuses_pass_on && !e.is_unported() => {
+                    return Ok(Extent2d::new());
+                }
+                Err(_) => Vec::new(),
+            };
             let v_conts = cache.v_continuities();
             let n = v_conts.len();
             for (j, &cont) in v_conts.iter().enumerate() {
@@ -2165,6 +2204,8 @@ impl Surface {
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_) => {
@@ -2189,6 +2230,17 @@ impl Surface {
                 let r = match self.kind() {
                     SurfaceKind::BSpline(s) => s.calculate_bounding_box(k, uv_domain, &req)?,
                     SurfaceKind::Plane(p) => plane_bounding_box(k, p, uv_domain, &req)?,
+                    // SmProceduralBlend::CalculateBoundingBox: the net's boxes grown by the
+                    // bound, so they hold the definition's points; the analytic polar box
+                    // takes the blend's own (virtual) EvaluateNormal
+                    SurfaceKind::ProceduralBlend(pb) => {
+                        pb.calculate_bounding_box(k, uv_domain, &req, self)?
+                    }
+                    // (the fork's SmBallPatch inherits SmBSplineSurface's, run for the patch)
+                    SurfaceKind::BallPatch(bp) => {
+                        bp.net()
+                            .calculate_bounding_box_of(k, uv_domain, &req, Some(self))?
+                    }
                     // (SmBSplineSurface::CalculateBoundingBox reads the NURB through
                     // GetOrCreateGwNurbPointer, which makes a missing one)
                     _ => self.analytic_base_with_nurb(k)?.calculate_bounding_box_of(
@@ -2276,6 +2328,8 @@ impl Surface {
                 nesting_depth(depth, "surface::surface::p1::step_uv_domain_with_nurb")?,
             )?,
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_) => self.natural_uv_domain_with_nurb_at(k, depth)?,
@@ -2505,6 +2559,53 @@ impl Surface {
         signed_offset_distance: f64,
         approx_tol_3d: f64,
     ) -> Result<Option<Self>> {
+        // a blend by its definition (#2487): the round of the moved radius on the offset
+        // supports, built from its definition S, never an offset of its net
+        if let Some(blend) = self.procedural_blend() {
+            use crate::surface::procedural_blend::offset::{
+                exact_offset, procedural_offset, BlendOffset,
+            };
+            use crate::surface::procedural_blend::BlendRef;
+            let made = match blend {
+                BlendRef::Procedural(p) => {
+                    procedural_offset(k, self, p, signed_offset_distance, approx_tol_3d)?
+                }
+                // a chamfer between planes (#2486), the chord: its offset is the chamfer of
+                // other sizes on the offset faces, which no definition is built for yet, so
+                // the plane offsets as its net does, exactly, and keeps no definition
+                BlendRef::Exact { round, .. }
+                    if round.class()
+                        == crate::surface::procedural_blend::exact::ExactClass::Chord =>
+                {
+                    None
+                }
+                BlendRef::Exact { round, .. } => {
+                    let mut kind_only = self.clone();
+                    kind_only.set_exact_round(None);
+                    let offset = kind_only.create_offset_surface(
+                        k,
+                        signed_offset_distance,
+                        approx_tol_3d,
+                    )?;
+                    Some(exact_offset(
+                        k,
+                        self,
+                        round,
+                        offset,
+                        signed_offset_distance,
+                        approx_tol_3d,
+                    )?)
+                }
+                // a blend corner's face (#2488): no offset is built from a corner's
+                // definition, so the face offsets as its net does, keeping none
+                BlendRef::Corner { .. } => None,
+            };
+            match made {
+                Some(BlendOffset::Round(s)) => return Ok(Some(*s)),
+                Some(BlendOffset::Collapsed) => return Ok(None),
+                None => {}
+            }
+        }
         match self.kind_with_nurb(k)? {
             SurfaceKind::Plane(p) => Ok(Some(Self::from(
                 p.create_offset_surface(k, signed_offset_distance)?,
@@ -2539,8 +2640,14 @@ impl Surface {
             SurfaceKind::Torus(s) => Ok(s
                 .create_offset_surface(k, signed_offset_distance, approx_tol_3d)?
                 .map(Self::from)),
+            // the fork's SmBallPatch::CreateOffsetSurface (f8e6709): exact, the net scaled
+            // about the sphere's centre
+            SurfaceKind::BallPatch(s) => Ok(Some(Self::from(
+                s.create_offset_surface(k, signed_offset_distance)?,
+            ))),
             // (SmSurfOfExtrusion's override is commented out upstream)
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
@@ -2566,10 +2673,26 @@ impl Surface {
         signed_offset_distance: f64,
         tol: f64,
     ) -> Result<bool> {
+        // a round of the ball's circle (#2487): its radius moved to zero or past it
+        if let Some(crate::surface::procedural_blend::BlendRef::Procedural(p)) =
+            self.procedural_blend()
+        {
+            if let Some(offset) = crate::surface::procedural_blend::offset::procedural_collapses(
+                k,
+                self,
+                p,
+                signed_offset_distance,
+                tol,
+            )? {
+                return Ok(offset);
+            }
+        }
         Ok(match self.kind_with_nurb(k)? {
             SurfaceKind::Cone(s) => s.offset_collapses(k, signed_offset_distance, tol),
             SurfaceKind::Sphere(s) => s.offset_collapses(signed_offset_distance, tol),
             SurfaceKind::Torus(s) => s.offset_collapses(signed_offset_distance, tol),
+            // the fork's SmBallPatch::OffsetCollapses (f8e6709)
+            SurfaceKind::BallPatch(s) => s.offset_collapses(k, signed_offset_distance, tol),
             SurfaceKind::SurfOfRevolution(s) if k.fixes.revolution_round_offset_collapses => {
                 self.revolution_offset_collapses(k, s, signed_offset_distance, tol)?
             }
@@ -2704,7 +2827,8 @@ impl Surface {
 
         // Check to make sure internal surface continuities are better then C0 (the
         // check only signals upstream)
-        let _ = (cache.surface_continuity(uv_domain)? as i32) <= (ContinuityType::C0 as i32);
+        let _ = (cache.surface_continuity_with_kernel(k, uv_domain)? as i32)
+            <= (ContinuityType::C0 as i32);
 
         let mut silhouette =
             SurfaceSilhouette::new(k, self, uv_domain, perspective, eye_point_or_view_vector)?;
@@ -2761,12 +2885,21 @@ impl Surface {
                     let mut new_bsc = curve.clone();
                     let mut trim1 = Extent1d::from_min_max(param, ivl.max());
                     let mut trim2 = Extent1d::from_min_max(ivl.min(), param);
+                    // with the opt-in fix a split that cannot be trimmed fails (WR-663,
+                    // tangency-labs/smlib 21dcf69; the pieces are dropped with the error)
+                    let pass = k.fixes.query_statuses_pass_on;
                     // may snap sIvl by tol to existing knots
-                    ignore_status(new_bsc.trim(k, &mut trim2, TrimMode::Notify))?;
+                    ignore_status(passed_on(
+                        new_bsc.trim(k, &mut trim2, TrimMode::Notify),
+                        pass,
+                    )?)?;
 
                     new_curves.push(new_bsc);
                     // may snap sIvl by tol to existing knots
-                    ignore_status(curve.trim(k, &mut trim1, TrimMode::Notify))?;
+                    ignore_status(passed_on(
+                        curve.trim(k, &mut trim1, TrimMode::Notify),
+                        pass,
+                    )?)?;
 
                     let uv_curve = curves_uv.get_mut(ii).ok_or(SolidError::null_pointer(OP))?;
                     if !matches!(uv_curve.kind(), CurveKind::BSpline(_)) {
@@ -2774,10 +2907,16 @@ impl Surface {
                     }
                     let mut new_uv_bsc = uv_curve.clone();
                     // may snap sIvl by tol to existing knots
-                    ignore_status(new_uv_bsc.trim(k, &mut trim2, TrimMode::Notify))?;
+                    ignore_status(passed_on(
+                        new_uv_bsc.trim(k, &mut trim2, TrimMode::Notify),
+                        pass,
+                    )?)?;
                     new_uv_curves.push(new_uv_bsc);
                     // may snap sIvl by tol to existing knots
-                    ignore_status(uv_curve.trim(k, &mut trim1, TrimMode::Notify))?;
+                    ignore_status(passed_on(
+                        uv_curve.trim(k, &mut trim1, TrimMode::Notify),
+                        pass,
+                    )?)?;
                     ivl = trim1;
                 }
             }
@@ -2833,12 +2972,29 @@ impl Surface {
                 uv_max.y = uv_domain.max().y;
             }
 
-            // surface evaluations on either side of the possible seam (statuses ignored)
-            if let Some(d) = self.evaluate_ignoring_status(k, uv_min, 1, 1, upper_flags(true))? {
+            // surface evaluations on either side of the possible seam (statuses ignored;
+            // with the opt-in fix a surface that cannot be evaluated is not shown
+            // periodic, WR-663, tangency-labs/smlib 21dcf69)
+            if k.fixes.query_statuses_pass_on {
+                let Some(d) = ignored(self.evaluate(k, uv_min, 1, 1, upper_flags(true)))? else {
+                    return Ok(false);
+                };
                 p_min = first_block(&d);
-            }
-            if let Some(d) = self.evaluate_ignoring_status(k, uv_max, 1, 1, upper_flags(true))? {
+                let Some(d) = ignored(self.evaluate(k, uv_max, 1, 1, upper_flags(true)))? else {
+                    return Ok(false);
+                };
                 p_max = first_block(&d);
+            } else {
+                if let Some(d) =
+                    self.evaluate_ignoring_status(k, uv_min, 1, 1, upper_flags(true))?
+                {
+                    p_min = first_block(&d);
+                }
+                if let Some(d) =
+                    self.evaluate_ignoring_status(k, uv_max, 1, 1, upper_flags(true))?
+                {
+                    p_max = first_block(&d);
+                }
             }
 
             let scaled_zero = p_max[0][0].scaled_zero();
@@ -2883,6 +3039,16 @@ impl Surface {
         let natural = self.natural_uv_domain_with_nurb(k)?;
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s.is_degenerate_point(k, tol_3d, uv_domain),
+            SurfaceKind::BallPatch(s) => s.net().is_degenerate_point(k, tol_3d, uv_domain),
+            // SmBSplineSurface's: the net's test over the natural domain, the base body
+            // (its virtual evaluations reach the definition) over another
+            SurfaceKind::ProceduralBlend(pb) => {
+                if uv_domain.is_some_and(|d| !d.are_equal(&natural, EFF_ZERO)) {
+                    base_is_degenerate_point(k, self, tol_3d, uv_domain)
+                } else {
+                    pb.net().is_degenerate_point(k, tol_3d, uv_domain)
+                }
+            }
             // inherited from SmBSplineSurface
             SurfaceKind::Cone(s) => {
                 if uv_domain.is_some_and(|d| !d.are_equal(&natural, EFF_ZERO)) {
@@ -2925,6 +3091,10 @@ impl Surface {
             SurfaceKind::BSpline(s) => {
                 s.is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
             }
+            SurfaceKind::BallPatch(s) => {
+                s.net()
+                    .is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
+            }
             // inherited from SmBSplineSurface
             SurfaceKind::SurfOfRevolution(s) => {
                 s.base()
@@ -2950,7 +3120,10 @@ impl Surface {
                 p.base_for_query()
                     .is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
             }
-            SurfaceKind::Cone(_)
+            // (SmBSplineSurface::IsDegenerateCurve is the base body: a blend's virtual
+            // evaluations reach its definition)
+            SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::Cone(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2967,8 +3140,16 @@ impl Surface {
     ///
     /// Those of the evaluation.
     pub fn is_flat_corner(&self, k: &Kernel, uv: Point2, angle_tol_deg: f64) -> Result<bool> {
-        // Surface Eval
-        let d = first_block(&self.evaluate(k, uv, 1, 1, upper_flags(false))?);
+        // Surface Eval (with the opt-in fix a point that cannot be evaluated is not a
+        // flat corner, WR-663, tangency-labs/smlib 21dcf69)
+        let Some(d) = checked_or_ignored(
+            self.evaluate(k, uv, 1, 1, upper_flags(false)),
+            !k.fixes.query_statuses_pass_on,
+        )?
+        else {
+            return Ok(false);
+        };
+        let d = first_block(&d);
 
         // 1st Derivatives
         let du = d[1][0];
@@ -3148,7 +3329,7 @@ pub(crate) fn plane_bounding_box(
         .calculate_bounding_box(k, uv_domain, &base_req)?;
     if req.polar {
         let mut pb = PolarBox::new();
-        pb.add_vector(plane.evaluate_normal(), None);
+        pb.add_vector_with_kernel(k, plane.evaluate_normal(), None);
         r.polar = Some(pb);
     }
     Ok(r)
@@ -3221,19 +3402,27 @@ pub fn base_is_degenerate_point(
     let mut uv3 = Point2::new(uv1.x, uv0.y);
     let uv_size2 = uv_domain.max_dimension() * uv_domain.max_dimension();
 
-    let eval = |uv: Point2| -> Result<[[Vec3; 2]; 2]> {
-        Ok(first_block(&surface.evaluate(
-            k,
-            uv,
-            1,
-            1,
-            upper_flags(false),
-        )?))
+    // with the opt-in fix a surface that cannot be evaluated is not shown degenerate
+    // (WR-663, tangency-labs/smlib 21dcf69): `None`, and the test is `false`
+    let checked = !k.fixes.query_statuses_pass_on;
+    let eval = |uv: Point2| -> Result<Option<[[Vec3; 2]; 2]>> {
+        Ok(
+            checked_or_ignored(surface.evaluate(k, uv, 1, 1, upper_flags(false)), checked)?
+                .map(|m| first_block(&m)),
+        )
     };
-    let pv0 = eval(uv0)?;
-    let pv1 = eval(uv1)?;
-    let pv2 = eval(uv2)?;
-    let pv3 = eval(uv3)?;
+    let Some(pv0) = eval(uv0)? else {
+        return Ok(false);
+    };
+    let Some(pv1) = eval(uv1)? else {
+        return Ok(false);
+    };
+    let Some(pv2) = eval(uv2)? else {
+        return Ok(false);
+    };
+    let Some(pv3) = eval(uv3)? else {
+        return Ok(false);
+    };
 
     // select a tolerance - scale it to sP1 location
     let scaled_zero =
@@ -3260,10 +3449,18 @@ pub fn base_is_degenerate_point(
         uv1 = uv_domain.evaluate(0.5, 0.666);
         uv2 = uv_domain.evaluate(0.333, 0.5);
         uv3 = uv_domain.evaluate(0.666, 0.5);
-        let pv0 = eval(uv0)?;
-        let pv1 = eval(uv1)?;
-        let pv2 = eval(uv2)?;
-        let pv3 = eval(uv3)?;
+        let Some(pv0) = eval(uv0)? else {
+            return Ok(false);
+        };
+        let Some(pv1) = eval(uv1)? else {
+            return Ok(false);
+        };
+        let Some(pv2) = eval(uv2)? else {
+            return Ok(false);
+        };
+        let Some(pv3) = eval(uv3)? else {
+            return Ok(false);
+        };
 
         // when all those points are also degenerate
         if pt.distance_squared(pv0[0][0]) < tol2
@@ -3276,7 +3473,9 @@ pub fn base_is_degenerate_point(
             && zero_derivs(&pv3)
         {
             // and the center point is degenerate
-            let pc = eval(uv_domain.evaluate(0.5, 0.5))?;
+            let Some(pc) = eval(uv_domain.evaluate(0.5, 0.5))? else {
+                return Ok(false);
+            };
             if pt.distance_squared(pc[0][0]) < tol2 && zero_derivs(&pc) {
                 // take a guess and consider this degenerate
                 return Ok(true);
@@ -3352,22 +3551,31 @@ pub fn base_is_degenerate_curve(
     // center point
     let center = uv_domain.evaluate(0.5, 0.5);
 
-    let eval = |uv: Point2| -> Result<[[Vec3; 2]; 2]> {
-        Ok(first_block(&surface.evaluate(
-            k,
-            uv,
-            1,
-            1,
-            upper_flags(false),
-        )?))
+    // with the opt-in fix a surface that cannot be evaluated is not shown degenerate
+    // (WR-663, tangency-labs/smlib 21dcf69): `None`, and the test is `false`
+    let checked = !k.fixes.query_statuses_pass_on;
+    let eval = |uv: Point2| -> Result<Option<[[Vec3; 2]; 2]>> {
+        Ok(
+            checked_or_ignored(surface.evaluate(k, uv, 1, 1, upper_flags(false)), checked)?
+                .map(|m| first_block(&m)),
+        )
     };
-    let eval4 = |uvs: &[Point2; 4]| -> Result<[[[Vec3; 2]; 2]; 4]> {
-        Ok([eval(uvs[0])?, eval(uvs[1])?, eval(uvs[2])?, eval(uvs[3])?])
+    let eval4 = |uvs: &[Point2; 4]| -> Result<Option<[[[Vec3; 2]; 2]; 4]>> {
+        let mut out = [[[Vec3::UNDEF; 2]; 2]; 4];
+        for (slot, uv) in out.iter_mut().zip(uvs) {
+            let Some(d) = eval(*uv)? else {
+                return Ok(None);
+            };
+            *slot = d;
+        }
+        Ok(Some(out))
     };
     let flat = |d: &[[Vec3; 2]; 2]| d[1][0].is_parallel_to(d[0][1], angle_tol_deg);
 
     // Evaluate 1st derivatives at corner points
-    let d0 = eval4(&corners)?;
+    let Some(d0) = eval4(&corners)? else {
+        return Ok(false);
+    };
     let mut d1: Option<[[[Vec3; 2]; 2]; 4]> = None;
     let mut d2: Option<[[[Vec3; 2]; 2]; 4]> = None;
     let mut d3: Option<[[Vec3; 2]; 2]> = None;
@@ -3375,15 +3583,21 @@ pub fn base_is_degenerate_curve(
     // when the corner points are all dependentTangentPoints
     if d0.iter().all(flat) {
         // Evaluate 1st derivatives at sample points
-        let s = eval4(&samples)?;
+        let Some(s) = eval4(&samples)? else {
+            return Ok(false);
+        };
         d1 = Some(s);
         if s.iter().all(flat) {
             // Evaluate 1st derivatives at diagonal points
-            let g = eval4(&diagonals)?;
+            let Some(g) = eval4(&diagonals)? else {
+                return Ok(false);
+            };
             d2 = Some(g);
             if g.iter().all(flat) {
                 // Evaluate 1st derivatives at center point
-                let c = eval(center)?;
+                let Some(c) = eval(center)? else {
+                    return Ok(false);
+                };
                 d3 = Some(c);
                 if flat(&c) {
                     // the surface has degenerated into a curve
@@ -3407,19 +3621,28 @@ pub fn base_is_degenerate_curve(
         if d0.iter().all(zero) {
             // check sample points
             if d1.is_none() {
-                d1 = Some(eval4(&samples)?);
+                let Some(s) = eval4(&samples)? else {
+                    return Ok(false);
+                };
+                d1 = Some(s);
             }
             let s = d1.unwrap_or_default();
             if s.iter().all(zero) {
                 // check diagonal points
                 if d2.is_none() {
-                    d2 = Some(eval4(&diagonals)?);
+                    let Some(g) = eval4(&diagonals)? else {
+                        return Ok(false);
+                    };
+                    d2 = Some(g);
                 }
                 let g = d2.unwrap_or_default();
                 if g.iter().all(zero) {
                     // check center point
                     if d3.is_none() {
-                        d3 = Some(eval(center)?);
+                        let Some(c) = eval(center)? else {
+                            return Ok(false);
+                        };
+                        d3 = Some(c);
                     }
                     let c = d3.unwrap_or_default();
                     if zero(&c) {
@@ -3595,6 +3818,8 @@ pub fn crossed_seam_or_pole(
         SurfaceKind::Plane(_) => return Ok(false),
         // (SM_CAST_PTR(SmBSplineSurface): the B-spline and the kinds derived from it)
         SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::Cone(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)
@@ -3852,11 +4077,15 @@ impl AreaIntegrand<'_> {
     ///
     /// # Errors
     ///
-    /// Those of the surface evaluator; scalar numerical failures yield zero upstream.
+    /// [`SolidError::Unported`] from the surface evaluator, plus numerical and
+    /// surface-evaluator failures when
+    /// [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] is enabled
+    /// (WR-94; off by default, where scalar failures yield zero as upstream does).
     pub fn evaluate(&self, k: &Kernel, t: f64) -> Result<f64> {
         // set up the strip integral of [deltaX, IntervalY]
         let eval = IsoCurveLengthIntegrand::new(self.surface, t);
-        crate::mass::integrator::integrate(
+        crate::mass::integrator::integrate_with_kernel(
+            k,
             self.uv_domain.min().y,
             self.uv_domain.max().y,
             crate::mass::integrator::IntegrationAlgorithm::Romberg,
@@ -3930,10 +4159,16 @@ impl<'s> FindSingularParamWithGivenTangentDir<'s> {
             .surface
             .evaluate(k, uv_point, 3, 3, upper_flags(true))?;
 
-        // compute Unitized derivitaves of w (using w' and w") (status ignored)
-        let [unit_t, unit_tt] = at(&m, w.0, w.1)
-            .unitized_derivative2(at(&m, ws.0, ws.1), at(&m, wss.0, wss.1))
-            .unwrap_or_else(|d| d);
+        // compute Unitized derivitaves of w (using w' and w") (status ignored; its
+        // SM_ERR is passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+        let derivs =
+            at(&m, w.0, w.1).unitized_derivative2(at(&m, ws.0, ws.1), at(&m, wss.0, wss.1));
+        if derivs.is_err() && k.fixes.query_statuses_pass_on {
+            return Err(SolidError::sm_err(
+                "surface::surface::p1::FindSingularParamWithGivenTangentDir::evaluate",
+            ));
+        }
+        let [unit_t, unit_tt] = derivs.unwrap_or_else(|d| d);
 
         // compute F(s) and F'(s)
         Ok((unit_t.dot(self.dir), unit_tt.dot(self.dir), false))
@@ -3999,7 +4234,7 @@ impl<'t, 's, O: SolutionObject> CsiGlobalSolver<'t, 's, O> {
     ) -> Self {
         Self {
             kernel: k,
-            base: GlobalSolver::with_trees(curve_tree, surface_tree, 3),
+            base: GlobalSolver::with_trees_and_kernel(k, curve_tree, surface_tree, 3),
             curve: None,
             surface_cache: None,
             face_queries: None,
@@ -4091,7 +4326,7 @@ impl<'t, 's, O: SolutionObject> CsGlobalSolver<'t, 's, O> {
         uv_domain: Extent2d,
     ) -> Self {
         Self {
-            base: GlobalSolver::with_trees(curve_tree, surface_tree, 3),
+            base: GlobalSolver::with_trees_and_kernel(k, curve_tree, surface_tree, 3),
             surface,
             interval,
             uv_domain,
@@ -4156,7 +4391,7 @@ impl<'t, 's, O: SolutionObject> LsiGlobalSolver<'t, 's, O> {
     ) -> Self {
         Self {
             kernel: k,
-            base: GlobalSolver::with_tree(surface_tree, 2),
+            base: GlobalSolver::with_tree_and_kernel(k, surface_tree, 2),
             surface,
             uv_domain,
             line_point,
@@ -4184,7 +4419,7 @@ impl<'t, 's, O: SolutionObject> SpGlobalSolver<'t, 's, O> {
     ) -> Self {
         Self {
             kernel: k,
-            base: GlobalSolver::with_trees(point_tree, surface_tree, 2),
+            base: GlobalSolver::with_trees_and_kernel(k, point_tree, surface_tree, 2),
             surface,
             uv_domain,
             surface_cache: None,
@@ -4205,7 +4440,7 @@ impl<'t, 's, O: SolutionObject> SsGlobalSolver<'t, 's, O> {
         kernel: &'s Kernel,
     ) -> Self {
         Self {
-            base: GlobalSolver::with_trees(surface_tree1, surface_tree2, 4),
+            base: GlobalSolver::with_trees_and_kernel(kernel, surface_tree1, surface_tree2, 4),
             surface1: surfaces[0],
             surface2: surfaces[1],
             uv_domain1,
@@ -4559,6 +4794,60 @@ fn nesting_depth(depth: usize, op: &'static str) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn issue_2009_kernels() -> (Kernel, Kernel) {
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        (off, on)
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_surface_is_not_shown_degenerate_or_a_flat_corner() {
+        // tangency-labs/smlib 21dcf69 (IsDegeneratePoint, IsDegenerateCurve,
+        // IsFlatCorner): a surface that cannot be evaluated is not shown degenerate or
+        // flat. Without the fix the port returns the evaluation's error (upstream reads
+        // the unset derivatives).
+        let s = Surface::from(BSplineSurface::default());
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let uv = Point2::new(0.0, 0.0);
+        let (off, on) = issue_2009_kernels();
+        assert!(s.evaluate_point(&off, uv).is_err());
+        assert!(base_is_degenerate_point(&off, &s, 1e-6, Some(&dom)).is_err());
+        assert!(!base_is_degenerate_point(&on, &s, 1e-6, Some(&dom)).unwrap());
+        assert!(base_is_degenerate_curve(&off, &s, 1.0, Some(&dom), 0.0).is_err());
+        assert!(!base_is_degenerate_curve(&on, &s, 1.0, Some(&dom), 0.0).unwrap());
+        assert!(s.is_flat_corner(&off, uv, 1.0).is_err());
+        assert!(!s.is_flat_corner(&on, uv, 1.0).unwrap());
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_surface_is_not_shown_periodic() {
+        // tangency-labs/smlib 21dcf69 (IsPeriodic): a surface that cannot be evaluated
+        // is not shown periodic.
+        let s = Surface::from(BSplineSurface::default());
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let (off, on) = issue_2009_kernels();
+        // upstream compares the unset samples, which agree
+        assert!(s.is_periodic(&off, &dom, SurfParamType::U).unwrap());
+        assert!(!s.is_periodic(&on, &dom, SurfParamType::U).unwrap());
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_param_direction_is_passed_on() {
+        // tangency-labs/smlib 21dcf69 (ComputeParamDirection: SER on the evaluation).
+        // Coverage only: without the fix the decomposition of the cleared derivatives
+        // fails too.
+        let s = Surface::from(BSplineSurface::default());
+        let uv = Point2::new(0.5, 0.5);
+        let (off, on) = issue_2009_kernels();
+        assert!(s
+            .compute_param_direction(&off, uv, Vec3::new(1.0, 0.0, 0.0))
+            .is_err());
+        assert!(s
+            .compute_param_direction(&on, uv, Vec3::new(1.0, 0.0, 0.0))
+            .is_err());
+    }
 
     /// A bilinear patch over `[0, 1]^2` spanning `(0,0,0)..(2,1,0)` with a twist.
     fn bilinear() -> Surface {

@@ -333,11 +333,17 @@ SmBrep* build_source(int kind,const char* path,const double* p) {
     if (SmApiCreateBox(SmVector3d(p[0],p[1],p[2]),p[3],p[4],p[5],a) != SM_SUCCESS || !a) {
         delete a; return nullptr;
     }
-    if (SmApiCreateBox(SmVector3d(p[6],p[7],p[8]),p[9],p[10],p[11],b) != SM_SUCCESS || !b) {
+    if (kind == 5) {
+        // #1485: the box (p0..p5) joined with the cylinder (base centre p6..p8, radius
+        // p9, height p10), SmApiBooleanUnion(box, cylinder)
+        if (SmApiCreateCylinder(SmVector3d(p[6],p[7],p[8]),p[9],p[10],b) != SM_SUCCESS || !b) {
+            delete a; delete b; return nullptr;
+        }
+    } else if (SmApiCreateBox(SmVector3d(p[6],p[7],p[8]),p[9],p[10],p[11],b) != SM_SUCCESS || !b) {
         delete a; delete b; return nullptr;
     }
     SmBrep* res=nullptr;
-    const auto stat=kind == 3 ? SmApiBooleanUnion(a,b,res) : SmApiBooleanDifference(a,b,res);
+    const auto stat=kind == 4 ? SmApiBooleanDifference(a,b,res) : SmApiBooleanUnion(a,b,res);
     if (stat != SM_SUCCESS || !res) {
         // Both operands remain allocated on failure.
         if (res && res != a && res != b) delete res;
@@ -349,7 +355,8 @@ SmBrep* build_source(int kind,const char* path,const double* p) {
 }
 }
 
-// Wire: source kind (1 file, 2 cylinder, 3 box union, 4 box difference), 12 source
+// Wire: source kind (1 file, 2 cylinder, 3 box union, 4 box difference, 5 box and
+// cylinder union), 12 source
 // parameters (unused ones 0), then the fillet wire of `fillet_and_record`. `path` is
 // the .smb file of kind 1 (null otherwise).
 namespace fillet_real_solid {
@@ -359,11 +366,12 @@ int32_t real_source(const char* path, const double* input, int64_t n, double* ou
     if (!input || n < head+5) return SC_ERR_ARG;
     for (int64_t i=0; i<n; ++i) if (!std::isfinite(input[i])) return SC_ERR_ARG;
     const double kind=input[0];
-    if (kind != 1 && kind != 2 && kind != 3 && kind != 4) return SC_ERR_ARG;
+    if (kind != 1 && kind != 2 && kind != 3 && kind != 4 && kind != 5) return SC_ERR_ARG;
     if ((kind == 1) != (path != nullptr)) return SC_ERR_ARG;
     const double* p=input+1;
     if (kind == 2 && (p[3] <= SM_EFF_ZERO || p[4] <= SM_EFF_ZERO)) return SC_ERR_ARG;
-    if (kind >= 3) for (int i : {3,4,5,9,10,11}) if (p[i] <= SM_EFF_ZERO) return SC_ERR_ARG;
+    if (kind == 3 || kind == 4) for (int i : {3,4,5,9,10,11}) if (p[i] <= SM_EFF_ZERO) return SC_ERR_ARG;
+    if (kind == 5) for (int i : {3,4,5,9,10}) if (p[i] <= SM_EFF_ZERO) return SC_ERR_ARG;
     SC_TRY
     // Upstream crashes on some file-source fillets (UB-209: extrusion1002 every edge;
     // UB-261: sphere_diff_3cylinders edge 30). The Rust wrapper runs every case in a
@@ -772,7 +780,10 @@ std::pair<std::vector<double>,std::vector<double>> rail_metadata(SmFilletExecuti
 #include "blend_fillet_executive_p3_original_merge.inc"
 #include "blend_fillet_executive_p3_insertion.inc"
 
-SC_EXPORT int32_t sc_blend_fillet_executive_p3_real_prefix(
+// The checkpoints on `path`'s body (an ASCII .smb read by SmBrep::ReadFromFile, as
+// `build_source` kind 1) instead of the box when `path` is not null; the box dimensions
+// on the wire are then unused (but still validated).
+static int32_t real_prefix_body(const char* path,
     const double* input,int64_t n,int32_t checkpoint,double* out,int64_t cap,int64_t* out_len) {
     if(checkpoint<1 || checkpoint>19 || !input || n<9) return SC_ERR_ARG;
     for(int64_t i=0;i<n;++i) if(!std::isfinite(input[i])) return SC_ERR_ARG;
@@ -782,7 +793,8 @@ SC_EXPORT int32_t sc_blend_fillet_executive_p3_real_prefix(
     if(input[7]<1 || std::floor(input[7])!=input[7] || input[7]!=double(n-8))return SC_ERR_ARG;
     SC_TRY
     SmBrep* raw=nullptr;
-    if(SmApiCreateBox(SmVector3d(0,0,0),input[0],input[1],input[2],raw)!=SM_SUCCESS || !raw)return SC_ERR_ARG;
+    if(path){raw=fillet_real_solid::build_source(1,path,nullptr);if(!raw)return SC_ERR_ARG;}
+    else if(SmApiCreateBox(SmVector3d(0,0,0),input[0],input[1],input[2],raw)!=SM_SUCCESS || !raw)return SC_ERR_ARG;
     std::unique_ptr<SmBrep> body(raw);
     SmTArray<SmVertex*> vertices;body->GetVertices(vertices);
     SmTArray<SmEdge*> edges,selected;body->GetEdges(edges);
@@ -1079,6 +1091,17 @@ SC_EXPORT int32_t sc_blend_fillet_executive_p3_real_prefix(
     if(checkpoint==13){fillet_real_solid::section(values,shrink_before.first);fillet_real_solid::section(values,shrink_before.second);fillet_real_solid::section(values,shrink_after.first);fillet_real_solid::section(values,shrink_after.second);}
     return sc_copy_out(values.data(),int64_t(values.size()),out,cap,out_len);
     SC_CATCH
+}
+
+SC_EXPORT int32_t sc_blend_fillet_executive_p3_real_prefix(
+    const double* input,int64_t n,int32_t checkpoint,double* out,int64_t cap,int64_t* out_len) {
+    return real_prefix_body(nullptr,input,n,checkpoint,out,cap,out_len);
+}
+
+SC_EXPORT int32_t sc_blend_fillet_executive_p3_real_prefix_file(const char* path,
+    const double* input,int64_t n,int32_t checkpoint,double* out,int64_t cap,int64_t* out_len) {
+    if(!path) return SC_ERR_ARG;
+    return real_prefix_body(path,input,n,checkpoint,out,cap,out_len);
 }
 
 // SmApiFilletPreview on a source body. Wire: source kind (0 = SmApiCreateBox at the origin

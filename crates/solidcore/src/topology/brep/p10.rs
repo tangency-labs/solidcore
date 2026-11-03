@@ -70,11 +70,11 @@
 //!   (upstream dereferences it) is [`SolidError::InvalidInput`].
 //! - **UV trim curves.** `m_pUVTrimCurve = SM_CAST_PTR(SmBSplineCurve, pNewUV)`: a copy
 //!   that is not a B-spline curve is made and owned but not stored.
-//! - **`SubdivideFaceAtDiscontinuities`.** The V pass of the iso-line loop takes the U
-//!   knot count upstream (`SmBrep.cpp:18483`, WR-589): with more V knots than U knots
-//!   it leaves the extra V knots uncut, as upstream; with more U knots than V knots
-//!   the port returns [`SolidError::InvalidInput`] (such inputs are not compared).
-//!   `Kernel::fixes.subdivide_face_counts_v_knots` counts the V knots. A failed
+//! - **`SubdivideFaceAtDiscontinuities`.** The V pass of the iso-line loop counts the V
+//!   knots, where upstream takes the U knot count (`SmBrep.cpp:18483`, WR-589: upstream
+//!   leaves V knots past the U count uncut, cuts none in V when there are no U knots,
+//!   and reads past its V knots when there are more U knots). Not upstream: a fixed
+//!   defect, on the default path, since no upstream caller reaches the function. A failed
 //!   `CreateLineOnSurf` (its status is ignored upstream) is
 //!   [`SolidError::InvalidInput`] (not compared). The null-segment clean-up loop
 //!   revisits an edge whose trim changed its knot count, as upstream, and stops with
@@ -211,14 +211,14 @@ fn index(i: u64, len: usize, what: &'static str) -> Result<usize> {
     usize::try_from(i)
         .ok()
         .filter(|&i| i < len)
-        .ok_or(SolidError::invalid_input(OP_MAKE, what))
+        .ok_or_else(|| SolidError::invalid_input(OP_MAKE, what))
 }
 
 fn at<T: Copy>(v: &[Option<T>], i: usize, what: &'static str) -> Result<T> {
     v.get(i)
         .copied()
         .flatten()
-        .ok_or(SolidError::invalid_input(OP_MAKE, what))
+        .ok_or_else(|| SolidError::invalid_input(OP_MAKE, what))
 }
 
 /// `sm_AddAttributes` (unit `topology.brep_p1`): adds the attributes listed by index
@@ -1672,7 +1672,7 @@ fn set_primary_edgeuses(b: &mut Brep, data: &BrepData, built: &Built) -> Result<
 
         // This takes care of next/last pointers.
         match edge::reset_primary_edgeuse(b, e, prim) {
-            Err(err) if err.is_unported() => return Err(err),
+            Err(err) if err.is_unported_or_cancelled() => return Err(err),
             Err(
                 err @ (SolidError::InvalidInput { .. }
                 | SolidError::PortInvariant { .. }
@@ -2406,12 +2406,18 @@ pub fn remove_all_topology_notified(
 
     for e in brep_wire_edges(b)? {
         // status ignored upstream
-        ignored(delete_edge(k, b, env, e))?;
+        ignored(crate::error::passed_on(
+            delete_edge(k, b, env, e),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
 
     for v in brep_shell_vertices(b)? {
         // status ignored upstream
-        ignored(delete_vertex(k, b, env, v))?;
+        ignored(crate::error::passed_on(
+            delete_vertex(k, b, env, v),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     Ok(())
 }
@@ -2510,8 +2516,7 @@ const OP_SUBDIVIDE: &str = "topology::brep::p10::subdivide_face_at_discontinuiti
 /// # Errors
 ///
 /// [`SolidError::InvalidInput`] for a face without surface or an edge without curve
-/// (upstream dereferences them), for more U knots than V knots (WR-589,
-/// without `Kernel::fixes.subdivide_face_counts_v_knots`), a failed iso line and a
+/// (upstream dereferences them), a failed iso line and a
 /// clean-up past [`MAX_NULL_SEGMENT_REVISITS`]; `SM_ERR` for a refused edge split;
 /// those of the knot search, the curve edits, [`p9::make_vertex_split_edge`] and
 /// [`merge_curves_on_surface`].
@@ -2608,45 +2613,31 @@ fn subdivide_face_body(
         }
     }
 
-    // for U and V directions - build the iso lines to split the face along
-    let counts_v = k.fixes.subdivide_face_counts_v_knots;
+    // for U and V directions - build the iso lines to split the face along (the V pass
+    // over the V knots: WR-589, upstream counts the U knots there)
     let mut curves_3d: Vec<Curve> = Vec::new();
-    for ii in 0..2 {
-        let array_size = if ii == 0 || !counts_v {
-            u_knots.len()
-        } else {
-            v_knots.len()
+    let iso_lines = u_knots
+        .iter()
+        .map(|&u| {
+            (
+                Point2::new(u, domain.min().y),
+                Point2::new(u, domain.max().y),
+            )
+        })
+        .chain(v_knots.iter().map(|&v| {
+            (
+                Point2::new(domain.min().x, v),
+                Point2::new(domain.max().x, v),
+            )
+        }));
+    for (start, end) in iso_lines {
+        // create IsoLineCrvOnSurf (status ignored upstream; a failure is not compared)
+        let line = match surface_of_face(b, face)?.create_line_on_surf(k, start, end) {
+            Ok(line) => line,
+            Err(e) if e.is_unported() => return Err(e),
+            Err(_) => return Err(SolidError::invalid_input(OP_SUBDIVIDE, "no iso line")),
         };
-
-        // for every KnotSplit - build and accumulate curves to split Face
-        for jj in 0..array_size {
-            // UV start/stop Iso line points
-            let (start, end) = if ii == 0 {
-                let u = u_knots.get(jj).copied().unwrap_or(0.0);
-                (
-                    Point2::new(u, domain.min().y),
-                    Point2::new(u, domain.max().y),
-                )
-            } else {
-                // (WR-589: the V pass runs to the U count)
-                let v = v_knots.get(jj).copied().ok_or(SolidError::invalid_input(
-                    OP_SUBDIVIDE,
-                    "the V pass runs out of V knots (WR-589)",
-                ))?;
-                (
-                    Point2::new(domain.min().x, v),
-                    Point2::new(domain.max().x, v),
-                )
-            };
-
-            // create IsoLineCrvOnSurf (status ignored upstream; a failure is not compared)
-            let line = match surface_of_face(b, face)?.create_line_on_surf(k, start, end) {
-                Ok(line) => line,
-                Err(e) if e.is_unported() => return Err(e),
-                Err(_) => return Err(SolidError::invalid_input(OP_SUBDIVIDE, "no iso line")),
-            };
-            curves_3d.push(Curve::from(line));
-        }
+        curves_3d.push(Curve::from(line));
     }
 
     // split the face at all the split isoparam lines

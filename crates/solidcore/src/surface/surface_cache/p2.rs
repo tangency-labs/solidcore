@@ -146,7 +146,7 @@ impl PatchBoundaryBoundingPlanes {
             // Does not seem to make sense crash in a boxtest-like function:
             match self.compute_bounding_planes(k, surface) {
                 Ok(()) => {}
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Ok(out),
             }
         }
@@ -300,7 +300,7 @@ pub fn create_approximate_bezier_patch_block(
 
             // approximate the surface shape with a degree 3x3 bezier patch
             match compute_bezier_approximation(k, surface, &uv_domain, &mut bezier) {
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) | Ok(()) => {}
             }
 
@@ -348,7 +348,7 @@ pub type ToleranceTester<'a, O> =
 fn ignore<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -559,6 +559,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_) => None,
@@ -834,6 +836,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
     /// Errors from tessellation split selection and the iso curve linearity tests.
     #[allow(clippy::too_many_lines)] // one upstream routine
     pub fn subdivide_by_block(&mut self, k: &Kernel, node: NodeId) -> Result<()> {
+        // the cache is built on blends' nets (the fork's 729f893; `SmBlendNetScope`)
+        let _net = crate::surface::procedural_blend::NetScope::new(k);
         // locals
         let fields = {
             let tree = self
@@ -993,6 +997,14 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
                 // for the node's bounding box
                 let patch = match surface.kind_with_nurb(k)? {
                     SurfaceKind::BSpline(b) => b.copy_sub_patch(&node_uv),
+                    SurfaceKind::ProceduralBlend(pb) => {
+                        let b = pb.net();
+                        b.copy_sub_patch(&node_uv)
+                    }
+                    SurfaceKind::BallPatch(bp) => {
+                        let b = bp.net();
+                        b.copy_sub_patch(&node_uv)
+                    }
                     SurfaceKind::Plane(p) => p.base().copy_sub_patch(&node_uv),
                     SurfaceKind::Cone(s) => s.rev().base().copy_sub_patch(&node_uv),
                     SurfaceKind::Sphere(s) => s.base().base().copy_sub_patch(&node_uv),

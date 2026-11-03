@@ -568,7 +568,7 @@ impl<'a> InsertionGeometry<'a> {
             &mut output,
         );
         if let Err(error) = result {
-            if error.is_unported() {
+            if error.is_unported_or_cancelled() {
                 return Err(error);
             }
         }
@@ -606,7 +606,7 @@ impl<'a> InsertionGeometry<'a> {
             },
         );
         if let Err(error) = result {
-            if error.is_unported() {
+            if error.is_unported_or_cancelled() {
                 return Err(error);
             }
         }
@@ -894,21 +894,24 @@ impl ProtoGeometry<FilletObject> for InsertionGeometry<'_> {
 
 impl ProtoTopology<FilletObject> for InsertionGeometry<'_> {
     fn vertex_use_faces(&self, vertex: FilletObject) -> Result<Vec<Option<FilletObject>>> {
-        let (role, entity) = Self::topology(vertex).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(vertex).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::vertex_use_faces(self.body(role), entity)?
             .into_iter()
             .map(|value| value.map(|entity| Self::handle(role, entity)))
             .collect())
     }
     fn edge_use_faces(&self, edge: FilletObject) -> Result<Vec<Option<FilletObject>>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::edge_use_faces(self.body(role), entity)?
             .into_iter()
             .map(|value| value.map(|entity| Self::handle(role, entity)))
             .collect())
     }
     fn edge_start_vertex(&self, edge: FilletObject) -> Result<Option<FilletObject>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::edge_start_vertex(self.body(role), entity)?
             .map(|entity| Self::handle(role, entity)))
     }
@@ -917,11 +920,12 @@ impl ProtoTopology<FilletObject> for InsertionGeometry<'_> {
         edge: FilletObject,
         vertex: Option<FilletObject>,
     ) -> Result<Option<FilletObject>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         let vertex = vertex
             .map(|vertex| {
                 let (other_role, vertex) =
-                    Self::topology(vertex).ok_or(invalid("unknown vertex role"))?;
+                    Self::topology(vertex).ok_or_else(|| invalid("unknown vertex role"))?;
                 if role != other_role {
                     return Err(invalid("edge and vertex belong to different bodies"));
                 }
@@ -934,18 +938,21 @@ impl ProtoTopology<FilletObject> for InsertionGeometry<'_> {
         )
     }
     fn vertex_point(&self, vertex: FilletObject) -> Result<Point3> {
-        let (role, entity) = Self::topology(vertex).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(vertex).ok_or_else(|| invalid("unknown topology role"))?;
         ProtoTopology::vertex_point(self.body(role), entity)
     }
     fn edge_brep(&self, edge: FilletObject) -> Result<Option<ObjectKey>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         let actual_body = ProtoTopology::edge_brep(self.body(role), entity)?;
         actual_body
             .map(|_| self.body_identity(role).map(|identity| identity.key))
             .transpose()
     }
     fn edge_faces(&self, edge: FilletObject) -> Result<Vec<FilletObject>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::edge_faces(self.body(role), entity)?
             .into_iter()
             .map(|entity| Self::handle(role, entity))
@@ -1563,6 +1570,56 @@ mod tests {
             assert_ne!(identities.first(), identities.get(1));
             let vertex = output.new_vertices.first().copied().unwrap();
             assert_eq!(view.point(vertex), Some(point));
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+    }
+
+    #[test]
+    fn vertex_update_edge_intervals_delegates_to_brep_p1() {
+        let mut k = Kernel::default();
+        let mut target = box_at(&mut k, 0.0);
+        let mut intermediate = box_at(&mut k, 100.0);
+        let mut pseudo = FilletBrep::new();
+        *pseudo.brep_mut() = box_at(&mut k, 200.0);
+        let mut curves = InsertionCurves::default();
+        let mut records = crate::topology::topology::NotifyRecords::new();
+        let mut attributes = AttributeStore::default();
+
+        crate::topology::brep::p3::with_lent_context(&mut k, |k, context| -> Result<()> {
+            let mut view = InsertionGeometry::new(&mut target, &mut pseudo, &mut intermediate)?
+                .with_notifications(
+                    &mut curves,
+                    InsertionNotifications {
+                        records: &mut records,
+                        attributes: &mut attributes,
+                        context,
+                    },
+                )?;
+
+            // 1. Invalid handle returns error (not a vertex)
+            let edge = view.target.edges().ids().next().unwrap();
+            let edge_handle = FilletObject::Topology(FilletBody::Target, EntityRef::Edge(edge));
+            assert!(
+                crate::boolean::topology_intersector::p1::IntersectorBrep::vertex_update_edge_intervals(
+                    &mut view,
+                    k,
+                    edge_handle,
+                )
+                .is_err()
+            );
+
+            // 2. Valid vertex handle updates edge intervals successfully without UNPORTED error
+            let vertex = view.target.vertices().ids().next().unwrap();
+            let vertex_handle = FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(vertex));
+            let res = crate::boolean::topology_intersector::p1::IntersectorBrep::vertex_update_edge_intervals(
+                &mut view,
+                k,
+                vertex_handle,
+            );
+            assert!(res.is_ok(), "vertex_update_edge_intervals must succeed: {:?}", res.err());
+
             Ok(())
         })
         .unwrap()

@@ -46,6 +46,13 @@
 //! - **`bDegenSurfV`** tests the domain's `XLength`, as upstream (WR-100); with
 //!   `Kernel::fixes.drop_curve_v_domain_degeneracy` it tests `YLength` instead (WR-100
 //!   addendum 2026-10-31).
+//! - **Exact UV curve on a cylinder (opt-in).** With
+//!   `Kernel::fixes.cylinder_plane_section_trims_exact` (WR-680, #2109), a curve lying
+//!   on a cylinder (a plane section) gets its exact rational UV curve in its own
+//!   parameter (`surface_drop_lib::cylinder_section`) once the domain checks pass,
+//!   before the start point is dropped; the outputs and the record are those of a
+//!   successful drop of that one curve. A curve it does not apply to is traced as
+//!   upstream.
 //! - **Temporary state.** The out-of-bounds convergence upstream enables on the surface
 //!   for the call (`SmTemporaryChangeValue`) runs on an evaluation copy with the flag
 //!   set. The surface cache flags (`m_bPointTestEnabled` off, `m_bProcessBoundaryCurves`
@@ -108,14 +115,14 @@ use super::p2::{
 };
 
 /// `SM_ERR_NOT_CONVERGING` (`SmMessages.h`).
-pub const SM_ERR_NOT_CONVERGING: i32 = 1022;
+pub use crate::error::SM_ERR_NOT_CONVERGING;
 
 /// `SM_ERR_DEGENERATE_SURFACE` (`SmMessages.h`): the drop domain is degenerate.
-pub const SM_ERR_DEGENERATE_SURFACE: i32 = 1034;
+pub use crate::error::SM_ERR_DEGENERATE_SURFACE;
 
 /// `SM_ERR_BAD_FIND_DEGEN_PARAM` (`SmMessages.h`): `FindDegenParamForDirection` failed
 /// for a start point on a pole (recorded only).
-pub const SM_ERR_BAD_FIND_DEGEN_PARAM: i32 = 1036;
+pub use crate::error::SM_ERR_BAD_FIND_DEGEN_PARAM;
 
 /// Most drop points the span subdivision stack of [`Surface::drop_curve_base`] holds
 /// (upstream: unbounded).
@@ -750,6 +757,39 @@ impl Surface {
         fs.singularities = u64::from(singularities);
         fs.approx_singularities = u64::from(sings.approx_singular);
 
+        // Opt-in (#2109, WR-680): a curve lying on a cylinder (a plane section) gets its
+        // exact rational UV curve in its own parameter instead of the traced fit; one
+        // that does not check out is traced below as upstream.
+        if k.fixes.cylinder_plane_section_trims_exact {
+            if let Some(uv_curve) =
+                super::cylinder_section::exact_uv_curve(k, this, &s_uv_domain, curve, &s_interval)?
+            {
+                let (drop_to_surf, approx_dev) =
+                    uv_curve_gap(k, this, &uv_curve, curve, approx_tol_3d)?;
+                out.max_drop_to_surf = drop_to_surf;
+                out.max_approx_dev = approx_dev;
+                out.uv_curves.push(uv_curve);
+                let path = path_of(record.as_ref());
+                fs.set(
+                    &mut record,
+                    4,
+                    SM_SUCCESS,
+                    path,
+                    &FailOut {
+                        rd_max_drop: out.max_drop_to_surf,
+                        rd_max_dev: out.max_approx_dev,
+                        max_drop: out.max_drop_to_surf,
+                        solutions: None,
+                        ctrl_poly: None,
+                        knots: None,
+                        uv_curves: Some(&out.uv_curves),
+                    },
+                );
+                default_path(&mut record, CreateUvTrimCurvePathType::DropCurveOkay);
+                return Ok(out);
+            }
+        }
+
         // set sStart's Curve Start Point, 1stDeriv, and 2nd Deriv
         let pd = curve.evaluate(k, start.t, 2, true, true)?;
         for (dst, src) in start.crv_pd.iter_mut().zip(pd.iter()) {
@@ -913,7 +953,7 @@ impl Surface {
                         start.uv_pd[0] = d.uv;
                         d.converged
                     }
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => false,
                 };
 
@@ -1101,7 +1141,7 @@ impl Surface {
             if curve_cache.is_none() {
                 curve_cache = Some(match make_curve_cache::<()>(k, curve, None) {
                     Ok(c) => c,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => return Err(SolidError::null_pointer(OP)),
                 });
             }
@@ -1187,7 +1227,7 @@ impl Surface {
                     &mut end,
                 ) {
                     Ok(c) => c,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(e) => status_of(&e),
                 };
                 if ret_status == SM_SUCCESS {
@@ -1370,7 +1410,7 @@ impl Surface {
                             &mut end,
                         ) {
                             Ok(c) => c,
-                            Err(e) if e.is_unported() => return Err(e),
+                            Err(e) if e.is_unported_or_cancelled() => return Err(e),
                             Err(e) => status_of(&e),
                         };
                         if ret_status == SM_SUCCESS {

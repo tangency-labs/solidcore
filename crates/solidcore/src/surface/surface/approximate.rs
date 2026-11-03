@@ -40,6 +40,12 @@
 //!   (WR-573, the fork's tangency-labs/smlib@eae96cb) the starter's inner knots are
 //!   raised to full multiplicity before each round of patches, and an overrun is
 //!   `SM_ERR`.
+//! - **Accepted pass.** Upstream accepts a pass of patches when its last row (or
+//!   column) is within the tolerance (`bFailed` starts over with every row), and
+//!   returns success with an achieved tolerance above the requested one; the port
+//!   does the same. With `Kernel::fixes.approximate_surface_checks_every_row`
+//!   (WR-726, #2507) a pass with any row outside the tolerance is subdivided further,
+//!   and the search fails (`SM_ERR`) when the last subdivision is still outside it.
 //! - **Root surface.** `GetRootSurface` of an offset, curve bounded surface or surface
 //!   in a volume follows its base; the chain is walked in a loop bounded by
 //!   [`MAX_GEOMETRY_NESTING`] (`InvalidInput` beyond). The root of a plane, cone,
@@ -63,7 +69,7 @@
 
 use std::borrow::Cow;
 
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignore_or_pass_on, ignored_or_pass_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::vector2d::Point2;
@@ -182,7 +188,10 @@ impl Surface {
             just_copy_b_splines,
         ) {
             Ok(surface) => (surface, None),
-            Err(e) if e.is_unported() || matches!(e, SolidError::PreparationRequired { .. }) => {
+            Err(e)
+                if e.is_unported_or_cancelled()
+                    || matches!(e, SolidError::PreparationRequired { .. }) =>
+            {
                 return Err(e)
             }
             Err(e) => (None, Some(e)),
@@ -207,10 +216,13 @@ impl Surface {
 
         // init output
         *achieved_tol = -1.0;
+        // with the opt-in fix the statuses SMLib drops here are passed on
+        // (WR-663; tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
 
         // low work - when asked, just copy BSplines
         if just_copy_b_splines && self.is_kind_of(B_SPLINE_SURFACE_TYPE)? {
-            let surface = ignored(self.copy(k))?;
+            let surface = ignored_or_pass_on(self.copy(k), pass)?;
             *achieved_tol = 0.0;
             return Ok(surface);
         }
@@ -295,10 +307,10 @@ impl Surface {
 
             // elevate surface degrees to 3 (statuses ignored)
             if u_deg < 3 {
-                ignored(approx_surf.degree_elevate(SurfParamType::U, 3))?;
+                ignored_or_pass_on(approx_surf.degree_elevate(SurfParamType::U, 3), pass)?;
             }
             if v_deg < 3 {
-                ignored(approx_surf.degree_elevate(SurfParamType::V, 3))?;
+                ignored_or_pass_on(approx_surf.degree_elevate(SurfParamType::V, 3), pass)?;
             }
 
             u_deg = approx_surf.degree(SurfParamType::U);
@@ -333,10 +345,14 @@ impl Surface {
 
             // get knots of the subdivided surface (statuses ignored: without NURB the
             // arrays keep their values)
-            if let Some((knots, _mult)) = ignored(approx_surf.knots(SurfParamType::U, None))? {
+            if let Some((knots, _mult)) =
+                ignored_or_pass_on(approx_surf.knots(SurfParamType::U, None), pass)?
+            {
                 u_knots = knots;
             }
-            if let Some((knots, _mult)) = ignored(approx_surf.knots(SurfParamType::V, None))? {
+            if let Some((knots, _mult)) =
+                ignored_or_pass_on(approx_surf.knots(SurfParamType::V, None), pass)?
+            {
                 v_knots = knots;
             }
 
@@ -370,8 +386,10 @@ impl Surface {
                                 return Ok(None);
                             }
                             // (the point read is overwritten; statuses ignored)
-                            let _ =
-                                ignored(approx_surf.control_point(form, u_min + iub, v_min + ivb))?;
+                            let _ = ignored_or_pass_on(
+                                approx_surf.control_point(form, u_min + iub, v_min + ivb),
+                                pass,
+                            )?;
                             let weight = 1.0;
                             let p = cb
                                 .points
@@ -379,13 +397,16 @@ impl Surface {
                                 .and_then(|row| row.get(iub))
                                 .copied()
                                 .ok_or_else(|| SolidError::sm_err(OP))?;
-                            ignored(approx_surf.set_control_point(
-                                form,
-                                u_min + iub,
-                                v_min + ivb,
-                                p,
-                                weight,
-                            ))?;
+                            ignored_or_pass_on(
+                                approx_surf.set_control_point(
+                                    form,
+                                    u_min + iub,
+                                    v_min + ivb,
+                                    p,
+                                    weight,
+                                ),
+                                pass,
+                            )?;
                         }
                     }
                 } // end iter every V patch
@@ -398,11 +419,18 @@ impl Surface {
             let num_between: usize = 3;
             let fraction = (num_between + 1) as f64;
             let mut failed = false;
+            // `Kernel::fixes.approximate_surface_checks_every_row` (WR-726): whether any
+            // row or column of this pass has failed
+            let mut pass_failed = false;
 
-            if let Some((knots, _)) = ignored(approx_surf.knots(SurfParamType::U, None))? {
+            if let Some((knots, _)) =
+                ignored_or_pass_on(approx_surf.knots(SurfParamType::U, None), pass)?
+            {
                 u_knots = knots;
             }
-            if let Some((knots, _)) = ignored(approx_surf.knots(SurfParamType::V, None))? {
+            if let Some((knots, _)) =
+                ignored_or_pass_on(approx_surf.knots(SurfParamType::V, None), pass)?
+            {
                 v_knots = knots;
             }
 
@@ -427,7 +455,7 @@ impl Surface {
                     continue;
                 };
                 // (knots ascend: the status is ignored, as upstream)
-                let _ = ivl_outer.set_min_max(o0, o1);
+                ignore_or_pass_on(ivl_outer.set_min_max(o0, o1), pass)?;
 
                 // for every 'outer' dir sample point
                 for jj in 1..=num_between {
@@ -438,7 +466,7 @@ impl Surface {
                         let &[i0, i1] = inner_span else {
                             continue;
                         };
-                        let _ = ivl_inner.set_min_max(i0, i1);
+                        ignore_or_pass_on(ivl_inner.set_min_max(i0, i1), pass)?;
 
                         // for every 'inner' dir sample point
                         for kk in 1..=num_between {
@@ -487,14 +515,24 @@ impl Surface {
                     }
                 } // end iter every 'outer' patch sample point
 
+                pass_failed |= failed;
                 // ... continue on to the next 'outer' dir row/column of patches
             } // end iter every 'outer' dir patch
 
-            // when the approx surface is good enough (upstream tests the flag of the
-            // last row or column only)
-            if !failed {
+            // when the approx surface is good enough: upstream tests the flag of the
+            // last row or column only; `Kernel::fixes.approximate_surface_checks_every_row`
+            // (WR-726) tests every row and column of the pass
+            let rejected = if k.fixes.approximate_surface_checks_every_row {
+                pass_failed
+            } else {
+                failed
+            };
+            if !rejected {
                 // Remove excess knots: the result does not have to be piecewise Bezier.
-                ignored(approx_surf.remove_knots(approx_tol_3d, true, true, None, None))?;
+                ignored_or_pass_on(
+                    approx_surf.remove_knots(approx_tol_3d, true, true, None, None),
+                    pass,
+                )?;
 
                 // all done
                 return Ok(Some(Surface::from(approx_surf)));
@@ -633,12 +671,20 @@ impl Surface {
                 SurfaceKind::SrfInVolume(s) => s.surface(),
                 SurfaceKind::Step(_) => return Ok(None),
                 SurfaceKind::BSpline(s) => return Ok(Some(Cow::Borrowed(s))),
+                SurfaceKind::ProceduralBlend(pb) => {
+                    let s = pb.net();
+                    return Ok(Some(Cow::Borrowed(s)));
+                }
+                SurfaceKind::BallPatch(bp) => {
+                    let s = bp.net();
+                    return Ok(Some(Cow::Borrowed(s)));
+                }
                 SurfaceKind::Plane(s) => return Ok(Some(s.base_for_query())),
                 SurfaceKind::SurfOfExtrusion(_) => {
                     // a failed make leaves the surface without NURB (status ignored)
                     return match cur.extrusion_base_with_nurb(k) {
                         Ok(base) => Ok(Some(base)),
-                        Err(e) if e.is_unported() => Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => Err(e),
                         Err(_) => match cur.kind() {
                             SurfaceKind::SurfOfExtrusion(s) => Ok(Some(Cow::Borrowed(s.base()))),
                             _ => Ok(None),
@@ -961,6 +1007,56 @@ mod tests {
                 p.distance(q)
             );
         }
+    }
+
+    #[test]
+    fn wr726_every_row_checked_keeps_the_fit_within_the_tolerance() {
+        // #2507: the pass above is accepted at 1.62e-3 for 1e-3 because only its last
+        // row is within `tol`; with every row checked it is subdivided further
+        let mut k = kernel();
+        k.fixes.approximate_surface_bezier_starter = true;
+        k.fixes.approximate_surface_checks_every_row = true;
+        let off = offset_wave();
+        let tol = 1e-3;
+        let r = off.approximate_surface(&k, tol, 3, false).unwrap();
+        let s = r.surface.unwrap();
+        // pinned (the kernel is deterministic): a finer pass than the 1.62e-3 one
+        let want = 0.000_918_397_590_365_747_8;
+        assert!(
+            (r.achieved_tol - want).abs() <= 1e-12 * want,
+            "{}",
+            r.achieved_tol
+        );
+        assert!(r.achieved_tol <= tol);
+        let SurfaceKind::BSpline(b) = s.kind() else {
+            panic!("not a B-spline");
+        };
+        assert_eq!(b.number_control_points(SurfParamType::U), 13);
+        assert_eq!(b.number_control_points(SurfParamType::V), 4);
+        let dom = off.natural_uv_domain_with_nurb(&k).unwrap();
+        for (fu, fv) in [(0.1, 0.2), (0.5, 0.5), (0.83, 0.9)] {
+            let uv = dom.evaluate(fu, fv);
+            let p = s.evaluate_point(&k, uv).unwrap();
+            let q = off.evaluate_point(&k, uv).unwrap();
+            assert!(p.distance(q) <= 2.0 * tol, "{fu} {fv}: {}", p.distance(q));
+        }
+    }
+
+    #[test]
+    fn wr726_every_row_checked_refuses_when_the_last_subdivision_misses() {
+        // subdivision level 0 (one pass in each direction) leaves the fit outside
+        // `tol`: a failure the caller sees, with the achieved tolerance of the last
+        // pass, above `tol`
+        let mut k = kernel();
+        k.fixes.approximate_surface_bezier_starter = true;
+        k.fixes.approximate_surface_checks_every_row = true;
+        let tol = 1e-3;
+        let r = offset_wave()
+            .approximate_surface_ignoring_status(&k, tol, 0, false)
+            .unwrap();
+        assert!(r.surface.is_none());
+        assert!(r.failure.is_some());
+        assert!(r.achieved_tol > tol, "{}", r.achieved_tol);
     }
 
     #[test]

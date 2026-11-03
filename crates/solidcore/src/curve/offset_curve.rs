@@ -95,8 +95,8 @@ const OP_BASE: &str = "curve::offset_curve::OffsetCurve";
 /// Derivatives [`OffsetCurve::evaluate`] computes (`clMaxDerivs`).
 const MAX_DERIVS: usize = 3;
 
-/// `UNSURE` (`SmTypes.h`), the initial `SmBoolean` members of the empty constructor.
-const UNSURE: i32 = 2;
+// `UNSURE` (`SmTypes.h`), the initial `SmBoolean` members of the empty constructor.
+use crate::error::SM_UNSURE as UNSURE;
 
 /// An implicit offset of a base curve (`SmOffsetCurve`):
 ///
@@ -257,7 +257,7 @@ impl OffsetCurve {
     ///
     /// # Errors
     ///
-    /// Those of [`Curve::clone_for_evaluation`] on a borrowed base curve (geometry
+    /// Those of `Curve::clone_for_evaluation` on a borrowed base curve (geometry
     /// nested too deeply).
     pub fn copy(&self) -> Result<Self> {
         let base = match &self.base {
@@ -541,7 +541,11 @@ impl OffsetCurve {
                     // derivative (status ignored upstream)
                     let vals = match self.evaluate(k, t, 2, from_left, true) {
                         Ok(v) => v,
-                        Err(e @ SolidError::Unported { .. }) => return Err(e),
+                        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                            return Err(e)
+                        }
+                        // (fork 4803d6d passes this status on: `SER`)
+                        Err(e) if k.fixes.brep_edit_statuses_pass_on => return Err(e),
                         Err(_) => vec![Vec3::UNDEF; 3],
                     };
 
@@ -773,8 +777,11 @@ impl OffsetCurve {
         c.base = Some(Box::new(base));
         c.normal = normal;
         c.distance = distance;
-        // (status ignored upstream)
-        let _ = c.interval.set_min_max(ivl_min, ivl_max);
+        // (status ignored upstream; fork 4803d6d passes it on: `SER`)
+        let set = c.interval.set_min_max(ivl_min, ivl_max);
+        if k.fixes.brep_edit_statuses_pass_on {
+            set?;
+        }
         c.reversed = reversed;
         c.owns_curve = 1;
         c.base_linked = true;

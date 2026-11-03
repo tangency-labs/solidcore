@@ -27,7 +27,7 @@
 //! goes on with half-imprinted B-reps.
 //! `BooleanLists` copies its surface operands with the base copy constructor, which slices
 //! every derived surface to a geometry-less `SmSurface` (WR-196). The `Surface` enum has no
-//! geometry-less kind, so that copy is its own type here ([`BaseSlicedSurface`]) with the
+//! geometry-less kind, so that copy is its own type here (`BaseSlicedSurface`) with the
 //! base virtual defaults the list path reaches on it: `GetNaturalUVDomain` is the zero
 //! extent and `CreateFaceFromSurface` fails at the base `Evaluate` / `EvaluatePoint` with
 //! `SM_ERR`, so a surface list fails as upstream's does and the planar 2D path is never
@@ -424,6 +424,7 @@ pub fn boolean_trees<D: BooleanDriver>(
                 -6 => BooleanOperation::Slice,
                 _ => return Err(SolidError::sm_err(OP)),
             };
+            k.check_cancelled(OP)?;
             let result = driver
                 .manifold_boolean(
                     k,
@@ -437,7 +438,7 @@ pub fn boolean_trees<D: BooleanDriver>(
                 .map_err(|e| {
                     // undefined behaviour the port detects (InvalidInput) keeps its
                     // error, as Unported does
-                    if e.is_unported()
+                    if e.is_unported_or_cancelled()
                         || matches!(
                             e,
                             SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }
@@ -756,7 +757,7 @@ fn source_ref(e: EntityRef) -> crate::geom::object::ObjectRef {
 /// no context), as the arena entry's component copies do. (not upstream) The store holds
 /// the source's own attributes under [`source_ref`], so the copy's `SM_NO_COPY`
 /// notifications give the copy's objects theirs; the copy keeps them.
-fn copy_brep(
+pub(crate) fn copy_brep(
     k: &mut Kernel,
     source: &Brep,
     copy_map: Option<&mut CopyBrepMap<EntityRef>>,
@@ -787,7 +788,7 @@ fn copy_brep(
 
 /// `SmBrep::MergeBrep(source, pOptCopyBrepMap, pOptReverseMap, bAddAnalytics)`
 /// (`topology::brep::p3::merge_brep`), notifying as [`copy_brep`].
-fn combine_brep(
+pub(crate) fn combine_brep(
     k: &mut Kernel,
     target: &mut Brep,
     source: &Brep,
@@ -996,7 +997,10 @@ fn list_operand(k: &mut Kernel, breps: &[Brep], surfaces: &[Surface]) -> Result<
         let mut result = copy_brep(k, first, None, None, true, true)?;
         for source in rest {
             // MergeBrep's ordinary status is ignored upstream.
-            ignored(combine_brep(k, &mut result, source, None, None, true))?;
+            ignored(crate::error::passed_on(
+                combine_brep(k, &mut result, source, None, None, true),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         (result, false)
     } else {
@@ -1076,6 +1080,10 @@ pub(crate) fn copy_component(
             edge_source_key: &|e: EdgeId| source_ref(EntityRef::Edge(e)),
             edge_destination_key: &|e: EdgeId| notify_ref(EntityRef::Edge(e)),
             face_source_key: &|f: FaceId| source_ref(EntityRef::Face(f)),
+            // (`result`'s lists, a surface's included, are under `source_ref` here, so
+            // the surface copy's read under a surface owner's own name could only find a
+            // list of the component's: none of the result surface's own)
+            surface_attributes: false,
             face_destination_key: face_ref,
         };
         ignored(bp7::copy_faces_with_merge(
@@ -1266,17 +1274,16 @@ pub fn boolean_lists_with_notifications(
                             // reference attribute) and the result keeps its own.
                             copy_component(k, &mut result, &connected, &mut component, &face_ref)?;
                         }
-                        ignored(stitch_and_orient(
-                            k,
-                            &mut component,
-                            -0.1,
-                            false,
-                            None,
-                            None,
-                        ))?;
+                        ignored(crate::error::passed_on(
+                            stitch_and_orient(k, &mut component, -0.1, false, None, None),
+                            k.fixes.brep_edit_statuses_pass_on,
+                        )?)?;
                         output.breps.push(component);
                         result.set_editing_enabled(true);
-                        ignored(remove_faces(k, &mut result, &connected))?;
+                        ignored(crate::error::passed_on(
+                            remove_faces(k, &mut result, &connected),
+                            k.fixes.brep_edit_statuses_pass_on,
+                        )?)?;
                         let next = bp::faces(&result, None)?;
                         if next.len() >= faces.len() {
                             return Err(SolidError::invalid_input(
