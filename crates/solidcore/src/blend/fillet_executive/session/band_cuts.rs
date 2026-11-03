@@ -577,22 +577,19 @@ fn section_breaks_through(
     let mut pieces = Pieces {
         section: &section,
         at: &at,
-        in_material: vec![None; at.len() - 1],
+        classes: vec![None; at.len() - 1],
         zone,
     };
     for (j, pair) in meets.windows(2).enumerate() {
         let [m0, m1] = pair else {
             continue;
         };
-        if !(m0.judged && m1.judged)
-            || !(m0.inside || m1.inside)
-            || (m0.reached && m1.reached)
-        {
+        if !(m0.judged && m1.judged) || !(m0.inside || m1.inside) || (m0.reached && m1.reached) {
             continue;
         }
         let piece = j + 1;
-        if pieces.in_material(k, body, piece)? != Some(false) {
-            continue; // in the material, or one point met on two faces
+        if pieces.class(k, body, piece)? != Piece::Void {
+            continue;
         }
         // the wall: the material beside the piece runs to a rail
         if pieces.material_to_rail(k, body, (0..piece).rev())?
@@ -611,29 +608,34 @@ struct Pieces<'a> {
     section: &'a Curve,
     /// The pieces' bounds, in the section's parameter.
     at: &'a [f64],
-    /// Whether each piece lies in the material, once classified; `None` inside for a piece
-    /// of no length (one point, met on two faces).
-    in_material: Vec<Option<Option<bool>>>,
+    /// Each piece's class, once classified.
+    classes: Vec<Option<Piece>>,
     /// The body's zone tolerance.
     zone: f64,
 }
 
 impl Pieces<'_> {
-    /// Whether piece `i` lies in the part's material; `None` for a piece of no length.
-    fn in_material(&mut self, k: &Kernel, body: &mut Brep, i: usize) -> Result<Option<bool>> {
-        if let Some(Some(known)) = self.in_material.get(i) {
+    /// The class of piece `i`.
+    fn class(&mut self, k: &Kernel, body: &mut Brep, i: usize) -> Result<Piece> {
+        if let Some(Some(known)) = self.classes.get(i) {
             return Ok(*known);
         }
         let (Some(&t0), Some(&t1)) = (self.at.get(i), self.at.get(i + 1)) else {
             return Err(SolidError::null_pointer(OP));
         };
-        let class = if t1 - t0 > 0.0 {
-            let middle = self.section.evaluate_point(k, 0.5 * (t0 + t1))?;
-            Some(point_in_material(k, body, middle, self.zone)?)
+        let class = if !(t1 - t0 > 0.0) {
+            Piece::Point
+        } else if point_in_material(
+            k,
+            body,
+            self.section.evaluate_point(k, 0.5 * (t0 + t1))?,
+            self.zone,
+        )? {
+            Piece::Material
         } else {
-            None
+            Piece::Void
         };
-        if let Some(slot) = self.in_material.get_mut(i) {
+        if let Some(slot) = self.classes.get_mut(i) {
             *slot = Some(class);
         }
         Ok(class)
@@ -650,12 +652,23 @@ impl Pieces<'_> {
         run: impl Iterator<Item = usize>,
     ) -> Result<bool> {
         for i in run {
-            if self.in_material(k, body, i)? == Some(false) {
+            if self.class(k, body, i)? == Piece::Void {
                 return Ok(false);
             }
         }
         Ok(true)
     }
+}
+
+/// What a piece of a section between two meets is (`section_breaks_through`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Piece {
+    /// In the part's material.
+    Material,
+    /// Outside it.
+    Void,
+    /// Of no length: one point, met on two faces.
+    Point,
 }
 
 /// Where a section meets the boundary of a face (`section_breaks_through`).
