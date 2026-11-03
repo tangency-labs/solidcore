@@ -650,14 +650,21 @@ impl FilletSession<'_> {
         mut error_out: Option<&mut ErrorInfo<FilletObject>>,
     ) -> Result<()> {
         self.sync_self_intersection_handler();
-        // solidcore-native (WR-697 addendum; the fork refuses this only in its capi,
-        // dc757a6): a setback set on a made corner (SetSetBackDist) that is not the Setback
-        // would be dropped silently, so it is refused, as `create_corners` refuses one asked
-        // with SetSetBackFill (the same predicate)
+        // solidcore-native (WR-697 addendum; the fork refuses this only in its capi): a
+        // setback asked at a made corner that would drop it silently is refused: one set on
+        // it (SetSetBackDist) where it is neither the Setback nor an N x N corner, or one
+        // asked with SetSetBackFill at an N x N corner that is given no setback (the other
+        // corners that drop a fill `create_corners` refuses on the request alone)
         if k.fixes.fillet_blend_corner
             && self.objects.corners.iter().any(|corner| {
-                corner.set_back_dist() > 0.0
-                    && crate::blend::blend_corner::setback::asked_setback_not_built(corner)
+                let asked_fill = corner.vertex.is_some_and(|v| {
+                    crate::blend::blend_corner::setback::set_back_fill_of(
+                        &self.objects.set_back_fills,
+                        v,
+                    )
+                    .is_some()
+                });
+                crate::blend::blend_corner::setback::asked_setback_not_built(corner, asked_fill)
             })
         {
             self.note_refusal(Refusal {

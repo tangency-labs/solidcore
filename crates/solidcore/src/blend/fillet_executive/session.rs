@@ -2271,18 +2271,19 @@ impl<'target> FilletSession<'target> {
                         Ok(_) => {}
                     }
                 }
-                // solidcore-native (WR-697 addendum; the fork refuses this only in its capi,
-                // dc757a6): a corner asked to be set back (SetSetBackFill) that is not the
-                // Setback would drop the setback silently, so it is refused, decided from the
-                // request and the classification alone (the second door, SetSetBackDist on
-                // the made corner, is refused by `do_filleting` on the same predicate)
+                // solidcore-native (WR-697 addendum; the fork refuses this only in its capi): a
+                // corner asked to be set back (SetSetBackFill) that builds no setback at all
+                // (neither the Setback nor an N x N corner) would drop it silently, so it is
+                // refused, decided from the request and the classification alone. An N x N
+                // corner builds a setback set on it after (SetSetBackDist): whether it is
+                // set is decided by `do_filleting` (`asked_setback_not_built`).
                 if k.fixes.fillet_blend_corner
                     && crate::blend::blend_corner::setback::set_back_fill_of(
                         set_back_fills,
                         vertex,
                     )
                     .is_some()
-                    && crate::blend::blend_corner::setback::asked_setback_not_built(&corner)
+                    && !crate::blend::blend_corner::setback::builds_setback(&corner)
                 {
                     let location = crate::topology::vertex::point(target, vertex).ok();
                     return Ok(CornerCreation::Refused {
@@ -2664,7 +2665,9 @@ impl<'target> FilletSession<'target> {
     /// Left `open`, a G1 corner is the Setback's hole (its spring curves, no fill, ef57570);
     /// only a G2 corner (eased, or curvature-continuous sections) stays the fill's patches
     /// the caller removes. A corner asked for here that is not the Setback is refused
-    /// (`CornerUnsupported`). Without the flag it changes nothing.
+    /// (`CornerUnsupported`), except an N x N corner given the setback with
+    /// [`Self::set_corner_setback`], which builds it on its own setback path. Without the
+    /// flag it changes nothing.
     pub fn set_set_back_fill(&mut self, vertex: VertexId, setback: f64, ease: f64, open: bool) {
         self.objects
             .set_back_fills
@@ -2763,8 +2766,9 @@ impl<'target> FilletSession<'target> {
     }
 
     /// `SmFilletCorner::SetSetBackDist` on one live corner. With
-    /// `Kernel::fixes.fillet_blend_corner`, a setback (`distance > 0`) set on a corner that is
-    /// not the blend corner's Setback is refused by [`Self::do_filleting`]
+    /// `Kernel::fixes.fillet_blend_corner`, a setback (`distance > 0`) set on a corner that
+    /// builds none (neither the blend corner's Setback nor an N x N corner,
+    /// `blend_corner::setback::builds_setback`) is refused by [`Self::do_filleting`]
     /// (`CornerUnsupported`) rather than built without it.
     ///
     /// # Errors

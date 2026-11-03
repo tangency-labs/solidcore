@@ -70,7 +70,7 @@ use crate::blend::blend_setback::{
     fill_hole_probe, Edge, Face, FaceKind, Fill, FillStats, Probe, Round,
 };
 use crate::blend::fillet_corner::p1::{face_by_two_edgeuses, test_g1_continuity};
-use crate::blend::fillet_corner::p3::{CornerPatchEnv, FilletCorner};
+use crate::blend::fillet_corner::p3::{CornerPatchEnv, FilletCorner, FilletCornerKind};
 use crate::blend::fillet_corner::topology::new_corner_vertex;
 use crate::blend::fillet_exact::{BlendQuadric, QuadricKind};
 use crate::blend::fillet_geom::p1::{
@@ -185,21 +185,48 @@ pub struct SetBackFill {
     pub open: bool,
 }
 
+/// Whether `corner` builds a setback it is given with `SetSetBackDist`: the blend corner's
+/// Setback (its setbacks, [`SetbackCorner::setbacks`]), or an N x N corner of one convexity
+/// that no blend corner took (`SmFilletConvexNxNCorner`'s setback corner, to which
+/// `SmFilletConcaveNxNCorner` hands its own). The fork's dc757a6 deletes the N x N setback
+/// paths; solidcore keeps them (WR-697 addendum `setback-asked-not-built-refused`), as the
+/// Setback does not build every corner they do (three equal rounds at a box corner, which a
+/// set-back vertex keeps from the Ball; a corner beside a curved face; a concave notch).
+#[must_use]
+pub fn builds_setback(corner: &FilletCorner) -> bool {
+    match corner.blend {
+        Some(blend) => blend.is_setback(),
+        None => matches!(
+            corner.kind,
+            FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN
+        ),
+    }
+}
+
 /// Not the fork's (solidcore-native, WR-697 addendum `setback-asked-not-built-refused`; the
-/// fork refuses this only in its capi, dc757a6): whether a setback asked for at `corner`
-/// (`SetSetBackFill` before the corners are made, or `SetSetBackDist` on the corner after)
-/// would be dropped, because the corner is not the blend corner's Setback, the only corner
-/// that builds a setback with `Kernel::fixes.fillet_blend_corner` (the N x N corners' setback
-/// paths are deleted, dc757a6). The session refuses such a request
+/// fork refuses this only in its capi): whether a setback asked for at `corner` would be
+/// dropped. `asked_fill` is whether one was asked with `SetSetBackFill` before the corners
+/// were made, which only the Setback reads; `SetSetBackDist` on the made corner is its
+/// [`FilletCorner::set_back_dist`]. The Setback builds either; an N x N corner
+/// ([`builds_setback`]) builds the one set on it, so a fill asked there is dropped only when
+/// no setback is set on the corner too; any other corner drops both. With
+/// `Kernel::fixes.fillet_blend_corner` the session refuses such a request
 /// ([`SETBACK_NOT_BUILT`], `CornerUnsupported`) instead of building the corner without it.
 #[must_use]
-pub fn asked_setback_not_built(corner: &FilletCorner) -> bool {
-    !corner.blend.is_some_and(BlendCorner::is_setback)
+pub fn asked_setback_not_built(corner: &FilletCorner, asked_fill: bool) -> bool {
+    let set = corner.set_back_dist > 0.0;
+    if corner.blend.is_some_and(BlendCorner::is_setback) {
+        false
+    } else if builds_setback(corner) {
+        asked_fill && !set
+    } else {
+        asked_fill || set
+    }
 }
 
 /// The refusal's comment for [`asked_setback_not_built`].
 pub const SETBACK_NOT_BUILT: &str =
-    "Fillet Error: a setback is asked for at a corner that is not the blend corner's Setback, so it would not be built";
+    "Fillet Error: a setback is asked for at a corner that builds none (neither the blend corner's Setback nor an N x N corner given the setback), so it would not be built";
 
 /// `SmFilletExecutive::GetSetBackFill`: the first fill asked at `vertex`.
 #[must_use]
