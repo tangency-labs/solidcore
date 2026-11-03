@@ -79,7 +79,8 @@ pub struct TessPlan {
     /// Each face's share, in the body's face order.
     pub faces: Vec<FacePlan>,
     /// B-rep edges as polylines (the shared edge nodes), in the body's edge order; empty for an
-    /// edge that could not be sampled (every face it bounds is refused, see [`crate::PlanStats`]).
+    /// edge that could not be sampled (every face it bounds is refused, or, bounding none, it is
+    /// named in [`crate::PlanStats::unsampled_edges`]).
     pub edges: Vec<Vec<Vec3>>,
     /// Per edge: the faces it bounds.
     pub edge_faces: Vec<Vec<u32>>,

@@ -32,7 +32,7 @@ mod vec;
 pub use mesh::Mesh;
 pub use par::guarded;
 pub use plan::{FacePlan, TessPlan};
-pub use planner::{MAX_ANGLE_BOUNDARY, PlanStats, RefusedFace, plan};
+pub use planner::{MAX_ANGLE_BOUNDARY, PlanStats, RefusedEdge, RefusedFace, plan};
 pub use tolerance::{DISPLAY_ANGLE, MeshTolerance};
 
 /// Why a body could not be planned. The messages are the ones the mesher has always reported.
