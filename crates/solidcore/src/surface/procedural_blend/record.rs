@@ -356,6 +356,12 @@ pub enum ExactClassRecord {
     Circle,
     /// One point: a piece of the ball.
     Point,
+    /// A conic spine.
+    Conic,
+    /// One of a pair of conics.
+    ConicPair,
+    /// A nodal quartic spine.
+    NodalQuartic,
 }
 
 /// The analytic kind of an exact net, a label beside its NURBS form as a support's is
@@ -376,6 +382,8 @@ pub enum ExactNetKindRecord {
     Revolution,
     /// A ball patch: a rational patch on its sphere.
     BallPatch,
+    /// A B-spline surface, the form itself (the rational classes' exact surfaces).
+    BSpline,
 }
 
 /// An exact net: its analytic kind and its NURBS form, as stored.

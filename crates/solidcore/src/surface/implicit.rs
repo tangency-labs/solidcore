@@ -13,6 +13,7 @@ use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent2d::Extent2d;
 use crate::kernel::Kernel;
 use crate::math::{Vec2, Vec3, PI};
+use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::math::NOW;
 use crate::nurbs::srf_tool::p1::decompose_to_bez;
@@ -236,17 +237,39 @@ pub fn lies_on(form: &BSplineSurface, a: &Implicit) -> Result<bool> {
 
 const OP_EXACT: &str = "surface::implicit::check_exact_net";
 
+/// A quadric `x.A.x + 2 b.x + c = 0` as `(A, b, c)`.
+pub type QuadricEquation = ([[f64; 3]; 3], [f64; 3], f64);
+
+/// The surface an exact class lies on (#2485), derived from its supports: an analytic
+/// surface by its implicit equation (the line, circle and point classes), or the canal
+/// surface of a rational spine (the conic, conic-pair and nodal-quartic classes): the
+/// points at the ball's radius from the spine, the spine on both faces' offsets.
+#[derive(Debug, Clone)]
+pub enum ClassSurface {
+    /// An analytic surface.
+    Implicit(Implicit),
+    /// A canal surface of a rational spine.
+    Canal {
+        /// The spine, the round's centre line, on the net's own u.
+        spine: BSplineCurve,
+        /// The faces' offsets by the ball's radius, which the spine lies on.
+        offsets: [QuadricEquation; 2],
+        /// The ball's radius.
+        radius: f64,
+    },
+}
+
 /// What an exact net is checked against (#2485): the class its definition names, the
-/// class its supports give when classified again, and the analytic surface that class
-/// lies on, derived from the supports alone (`None`: none could be).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// class its supports give when classified again, and the surface that class lies on,
+/// derived from the supports alone (`None`: none could be).
+#[derive(Debug, Clone)]
 pub struct ExactNetCheck {
     /// The class the definition names.
     pub class: &'static str,
     /// The class of the supports classified again (`None`: no class kept as a definition).
     pub reclassified: Option<&'static str>,
-    /// The class's surface by its implicit equation.
-    pub surface: Option<Implicit>,
+    /// The class's surface.
+    pub surface: Option<ClassSurface>,
 }
 
 /// Whether a net is its definition (#2485), the counterpart for a blend of an exact class
@@ -268,10 +291,10 @@ pub fn check_exact_net(k: &Kernel, net: &Surface, check: &ExactNetCheck) -> Resu
             "the supports classified again are not of the class the definition names",
         ));
     }
-    let Some(surface) = check.surface else {
+    let Some(surface) = &check.surface else {
         return Err(SolidError::invalid_input(
             OP_EXACT,
-            "the supports give the class no analytic surface",
+            "the supports give the class no surface",
         ));
     };
     let Some(form) = crate::blend::fillet_section::station::as_b_spline(k, net)? else {
@@ -280,13 +303,182 @@ pub fn check_exact_net(k: &Kernel, net: &Surface, check: &ExactNetCheck) -> Resu
             "the net has no NURBS form to check",
         ));
     };
-    if !lies_on(&form, &surface)? {
+    let on = match surface {
+        ClassSurface::Implicit(a) => lies_on(&form, a)?,
+        ClassSurface::Canal {
+            spine,
+            offsets,
+            radius,
+        } => {
+            if !spine_on_offsets(spine, offsets)? {
+                return Err(SolidError::invalid_input(
+                    OP_EXACT,
+                    "the spine is off the faces' offsets",
+                ));
+            }
+            lies_on_canal(&form, spine, *radius)?
+        }
+    };
+    if !on {
         return Err(SolidError::invalid_input(
             OP_EXACT,
             "the net is off the surface of its class",
         ));
     }
     Ok(())
+}
+
+/// A Bezier segment of a rational curve, Bernstein polynomials of degree `(p, 0)`: the
+/// homogeneous `(Y - O V)` components and the weight `V`.
+type CurveSegment = ([BPoly; 3], BPoly);
+
+/// A rational curve's Bezier segments ([`CurveSegment`]), `O` the curve's first point.
+fn curve_segments(curve: &BSplineCurve) -> Result<(Vec<CurveSegment>, Vec3)> {
+    let nurb = curve
+        .nurb
+        .as_ref()
+        .ok_or_else(|| SolidError::sm_err(OP_EXACT))?;
+    let w_of = |w: f64| if w == NOW { 1.0 } else { w };
+    let origin = nurb
+        .cpts()
+        .first()
+        .map(|c| Vec3::new(c.x, c.y, c.z) * (1.0 / w_of(c.w)))
+        .ok_or_else(|| SolidError::sm_err(OP_EXACT))?;
+    let mut out = Vec::new();
+    for seg in nurb.decompose_bez()? {
+        let p = seg.degree();
+        let mut y = [Vec::new(), Vec::new(), Vec::new()];
+        let mut v = Vec::new();
+        for c in seg.cpts() {
+            let wi = w_of(c.w);
+            let yw = Vec3::new(c.x, c.y, c.z) - origin * wi;
+            y[0].push(yw.x);
+            y[1].push(yw.y);
+            y[2].push(yw.z);
+            v.push(wi);
+        }
+        let poly = |c: Vec<f64>| BPoly { p, q: 0, c };
+        let [y0, y1, y2] = y;
+        out.push(([poly(y0), poly(y1), poly(y2)], poly(v)));
+    }
+    Ok((out, origin))
+}
+
+/// Whether the rational curve `spine` lies on both quadrics `offsets`: on every Bezier
+/// segment, every Bernstein coefficient of `Y.A.Y + 2 (b + A O).Y V + q(O) V^2` (the
+/// quadric about the spine's first point `O`, homogeneous `(Y, V)`) is within the
+/// rounding of computing it, `gamma_K` times the size of its terms, as [`lies_on`].
+///
+/// # Errors
+///
+/// `SM_ERR` without NURB data; those of the Bezier decomposition.
+fn spine_on_offsets(spine: &BSplineCurve, offsets: &[QuadricEquation; 2]) -> Result<bool> {
+    let (segs, o) = curve_segments(spine)?;
+    let oa = [o.x, o.y, o.z];
+    let dot3 = |x: &[f64; 3], y: &[f64; 3]| x.iter().zip(y).map(|(p, q)| p * q).sum::<f64>();
+    for &(a, b, c) in offsets {
+        // the quadric about O: A, b' = b + A O, c' = O.A.O + 2 b.O + c
+        let ao = a.map(|row| dot3(&row, &oa));
+        let b1 = [b[0] + ao[0], b[1] + ao[1], b[2] + ao[2]];
+        let c1 = c + dot3(&oa, &ao) + 2.0 * dot3(&b, &oa);
+        let amax = a.iter().flatten().fold(0.0_f64, |m, x| m.max(x.abs()));
+        let bmax = b1.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
+        for (y, v) in &segs {
+            let p = v.p;
+            let vv = v.mul(v);
+            let mut f = vv.combine(c1, &vv, 0.0);
+            for (yi, (bi, arow)) in y.iter().zip(b1.iter().zip(a.iter())) {
+                f = f.combine(1.0, &yi.mul(v), 2.0 * bi);
+                for (yj, aij) in y.iter().zip(arow) {
+                    f = f.combine(1.0, &yi.mul(yj), *aij);
+                }
+            }
+            let ys = y.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max);
+            let vs = v.max_abs();
+            let scale = amax * ys * ys + 2.0 * bmax * ys * vs + c1.abs() * vs * vs + ys * vs;
+            let tol = gamma(8 * (p + 1) + 16) * scale;
+            if !f.c.iter().all(|x| x.abs() <= tol) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `form` lies on the canal surface of `spine` of radius `radius`: on the net's
+/// Bezier patches over the spine's segments (the net's u is the spine's), every Bernstein
+/// coefficient of `|X V - W Y|^2 - r^2 W^2 V^2` (homogeneous `(X, W)` of the net and
+/// `(Y, V)` of the spine, both about the spine's first point) is within the rounding of
+/// computing it, `gamma_K` times the size of its terms, as [`lies_on`]. A net whose u
+/// spans are not the spine's is not on it.
+///
+/// # Errors
+///
+/// `SM_ERR` without NURB data; those of the Bezier decompositions.
+fn lies_on_canal(form: &BSplineSurface, spine: &BSplineCurve, radius: f64) -> Result<bool> {
+    let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(OP_EXACT))?;
+    let (segs, o) = curve_segments(spine)?;
+    let patches = decompose_to_bez(nurb)?;
+    let breaks = |knots: &[f64]| {
+        let mut b: Vec<f64> = Vec::new();
+        for &x in knots {
+            if b.last() != Some(&x) {
+                b.push(x);
+            }
+        }
+        b
+    };
+    let spine_knots = spine
+        .nurb
+        .as_ref()
+        .map(|n| breaks(n.knots()))
+        .ok_or_else(|| SolidError::sm_err(OP_EXACT))?;
+    if patches.len() != segs.len() || breaks(nurb.u_knots()) != spine_knots {
+        return Ok(false);
+    }
+    for (row, (y, v)) in patches.iter().zip(&segs) {
+        for patch in row {
+            let (p, q) = patch.degrees();
+            let mut x = [Vec::new(), Vec::new(), Vec::new()];
+            let mut w = Vec::new();
+            for prow in patch.rows() {
+                for c in prow {
+                    let wi = if c.w == NOW { 1.0 } else { c.w };
+                    let xw = Vec3::new(c.x, c.y, c.z) - o * wi;
+                    x[0].push(xw.x);
+                    x[1].push(xw.y);
+                    x[2].push(xw.z);
+                    w.push(wi);
+                }
+            }
+            let poly = |c: Vec<f64>| BPoly { p, q, c };
+            let [x0, x1, x2] = x;
+            let (xs, ws) = ([poly(x0), poly(x1), poly(x2)], poly(w));
+            // the spine's rows across v: constant, degree (p', 0) times the patch's
+            let mut f: Option<BPoly> = None;
+            for (xi, yi) in xs.iter().zip(y) {
+                let d = xi.mul(v).combine(1.0, &ws.mul(yi), -1.0);
+                let d2 = d.mul(&d);
+                f = Some(match f {
+                    None => d2,
+                    Some(g) => g.combine(1.0, &d2, 1.0),
+                });
+            }
+            let wv = ws.mul(v);
+            let Some(f) = f else {
+                return Ok(false);
+            };
+            let f = f.combine(1.0, &wv.mul(&wv), -radius * radius);
+            let size = xs.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max) * v.max_abs()
+                + ws.max_abs() * y.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max)
+                + radius * ws.max_abs() * v.max_abs();
+            let tol = gamma(8 * (p + v.p + 1) * (q + 1) + 16) * size * size;
+            if !f.c.iter().all(|c| c.abs() <= tol) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 const OP_BUILD: &str = "surface::implicit::AnalyticSupport::build";

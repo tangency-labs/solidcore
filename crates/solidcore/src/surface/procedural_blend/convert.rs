@@ -420,6 +420,7 @@ pub fn exact_to_record(k: &Kernel, surface: &Surface) -> Result<ExactRoundRecord
         SurfaceKind::Torus(_) => ExactNetKindRecord::Torus,
         SurfaceKind::SurfOfRevolution(_) => ExactNetKindRecord::Revolution,
         SurfaceKind::BallPatch(_) => ExactNetKindRecord::BallPatch,
+        SurfaceKind::BSpline(_) => ExactNetKindRecord::BSpline,
         _ => {
             return Err(SolidError::Unsupported {
                 operation: OP_EXACT_TO,
@@ -436,6 +437,9 @@ pub fn exact_to_record(k: &Kernel, surface: &Surface) -> Result<ExactRoundRecord
             ExactClass::Line => ExactClassRecord::Line,
             ExactClass::Circle => ExactClassRecord::Circle,
             ExactClass::Point => ExactClassRecord::Point,
+            ExactClass::Conic => ExactClassRecord::Conic,
+            ExactClass::ConicPair => ExactClassRecord::ConicPair,
+            ExactClass::NodalQuartic => ExactClassRecord::NodalQuartic,
         },
         supports,
         radius: round.radius,
@@ -501,7 +505,7 @@ pub fn exact_from_record(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> 
         ExactNetKindRecord::Torus => analytic(SupportKind::Torus, form)?,
         ExactNetKindRecord::Revolution => AnalyticSupport::derive_revolution(k, &form)?,
         // (its sphere is the point class's ball, read from the supports below)
-        ExactNetKindRecord::BallPatch => Surface::from(form),
+        ExactNetKindRecord::BallPatch | ExactNetKindRecord::BSpline => Surface::from(form),
     };
     let i = &rec.inputs;
     let inputs = ClassInputs {
@@ -519,6 +523,9 @@ pub fn exact_from_record(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> 
         ExactClassRecord::Line => ExactClass::Line,
         ExactClassRecord::Circle => ExactClass::Circle,
         ExactClassRecord::Point => ExactClass::Point,
+        ExactClassRecord::Conic => ExactClass::Conic,
+        ExactClassRecord::ConicPair => ExactClass::ConicPair,
+        ExactClassRecord::NodalQuartic => ExactClass::NodalQuartic,
     };
     let leader = rec.leader.as_ref().map(curve_of).transpose()?;
     let (Some(s0), Some(s1)) = (supports.first(), supports.get(1)) else {

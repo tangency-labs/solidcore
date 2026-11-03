@@ -1,26 +1,30 @@
 //! A round whose net is its definition (#2485): a round of an exact class (the cylinder on
-//! a straight spine, the section turned about a common axis, a piece of the ball) keeps
-//! its exact surface as its net, and beside it the definition it was built from: the two
+//! a straight spine, the section turned about a common axis, a piece of the ball, the
+//! rational surface on a conic or nodal-quartic spine) keeps its exact surface as its net, and beside it the definition it was built from: the two
 //! supports the ball rolls on, the ball's radius, the section (the ball's circle, order 1)
 //! and its leader. The net is S, so the stored bound is 0, and it is re-certified by an
 //! identity, not a distance: the supports classified again give the same class, and the
-//! net's NURBS form lies on that class's analytic surface, derived from the supports
-//! alone, to the rounding of checking it ([`crate::surface::implicit::check_exact_net`]).
+//! net's NURBS form lies on that class's surface, derived from the supports alone, to the
+//! rounding of checking it ([`crate::surface::implicit::check_exact_net`]): an analytic
+//! surface, or for a rational spine the canal surface about the round's centre line,
+//! which lies on both supports' offsets.
 //!
-//! The round stays its analytic kind ([`crate::surface::surface::SurfaceKind`]: a cone,
-//! surface of revolution, sphere or ball patch), so every match on that kind still sees
+//! The round stays its kind ([`crate::surface::surface::SurfaceKind`]: a cone, surface of
+//! revolution, sphere, ball patch, or the rational classes' B-spline), so every match on that kind still sees
 //! it; its definition rides on the surface ([`crate::surface::surface::Surface::procedural_blend`]
 //! is the one way to it, for every blend face). The definition is a set's, not a
 //! parametrization's: the net reparametrized, reversed, swapped, trimmed, split or
 //! extended is still on S, so those edits carry it unchanged; a motion moves it with the
-//! net ([`ExactRound::transform`]).
+//! net ([`ExactRound::transform`]). A rational class's proof pairs the net's u spans with
+//! its centre line's, so a net of such a class cut or reparametrised along u is refused
+//! when re-certified, not taken.
 //!
 //! Not upstream. Deviations: none (no upstream counterpart). No recursion: the supports
 //! are kept as surfaces without definitions of their own (a support that is an exact
 //! round, as a corner ball's rounds are, keeps its definition on its own face), so they
 //! are walked one level.
 
-use crate::blend::fillet_exact::{class_implicit, classify_supports, BlendSpine, ClassInputs};
+use crate::blend::fillet_exact::{class_surface, classify_supports, BlendSpine, ClassInputs};
 use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::tol::are_same;
@@ -42,6 +46,12 @@ pub enum ExactClass {
     Circle,
     /// One point: a piece of the ball.
     Point,
+    /// A plane section of a cylinder or cone: the canal surface on the conic.
+    Conic,
+    /// One of two plane conics of two cylinders or cones: the canal surface on it.
+    ConicPair,
+    /// A quartic with a node where the offsets touch: the canal surface on it.
+    NodalQuartic,
 }
 
 impl ExactClass {
@@ -52,7 +62,10 @@ impl ExactClass {
             BlendSpine::Line => Some(Self::Line),
             BlendSpine::Circle => Some(Self::Circle),
             BlendSpine::Point => Some(Self::Point),
-            _ => None,
+            BlendSpine::Conic => Some(Self::Conic),
+            BlendSpine::ConicPair => Some(Self::ConicPair),
+            BlendSpine::NodalQuartic => Some(Self::NodalQuartic),
+            BlendSpine::Traced => None,
         }
     }
 
@@ -63,6 +76,9 @@ impl ExactClass {
             Self::Line => "line",
             Self::Circle => "circle",
             Self::Point => "point",
+            Self::Conic => "conic",
+            Self::ConicPair => "conic pair",
+            Self::NodalQuartic => "nodal quartic",
         }
     }
 }
@@ -183,7 +199,7 @@ impl ExactRound {
             &ExactNetCheck {
                 class: self.class.name(),
                 reclassified: ExactClass::of_spine(blend.spine).map(ExactClass::name),
-                surface: class_implicit(&blend),
+                surface: class_surface(&blend, self.leader.as_ref()),
             },
         )?;
         Ok(0.0)
