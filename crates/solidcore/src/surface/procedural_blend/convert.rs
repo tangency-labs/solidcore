@@ -11,11 +11,13 @@
 //! Deviations: none (no upstream counterpart). Recursion: nested supports are walked at
 //! most [`BLEND_MAX_DEPTH`] deep, with an explicit depth refused past it.
 
+use super::chamfer::{ChamferDefinition, ChamferSize};
 use super::exact::{ExactClass, ExactRound};
 use super::record::{
-    BlendDefinitionRecord, ClassInputsRecord, ExactClassRecord, ExactNetKindRecord, ExactNetRecord,
-    ExactRoundRecord, LeaderMapRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
-    ProceduralBlendRecord, RadiusRecord, SupportKindRecord, SupportRecord,
+    BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord, ClassInputsRecord, ExactClassRecord,
+    ExactNetKindRecord, ExactNetRecord, ExactRoundRecord, LeaderMapRecord, NurbsCurveRecord,
+    NurbsSurfaceRecord, ParameterMapRecord, ProceduralBlendRecord, RadiusRecord, SupportKindRecord,
+    SupportRecord,
 };
 use super::{BlendDefinitionInput, BlendRef, ProceduralBlend, BLEND_MAX_DEPTH};
 use crate::blend::fillet_exact::{classify_supports, BlendSpine, ClassInputs};
@@ -83,6 +85,7 @@ fn to_record_at(k: &Kernel, pb: &ProceduralBlend, depth: u32) -> Result<Procedur
                 b: d.map_b,
                 swapped: d.swapped,
             },
+            chamfer: d.chamfer.map(chamfer_record),
         },
         net: surface_record(pb.net())?,
     })
@@ -270,6 +273,7 @@ fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result
         RadiusRecord::Constant { offsets } => (None, *offsets),
         RadiusRecord::Law(law) => (Some(curve_of(law)?), [0.0, 0.0]),
     };
+    let chamfer = d.chamfer.as_ref().map(chamfer_of).transpose()?;
     let leader = curve_of(&d.leader)?;
     let [seed0, seed1] = &d.seeds;
     let seeds = [curve_of(seed0)?, curve_of(seed1)?];
@@ -293,6 +297,7 @@ fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result
         leader: &leader,
         seeds: [&seeds[0], &seeds[1]],
         bound: d.bound,
+        chamfer,
     };
     let mut pb = ProceduralBlend::create(k, &net, &input, |n, w| {
         GnSectionFsg::is_valid(n as usize, w)
@@ -437,6 +442,7 @@ pub fn exact_to_record(k: &Kernel, surface: &Surface) -> Result<ExactRoundRecord
             ExactClass::Line => ExactClassRecord::Line,
             ExactClass::Circle => ExactClassRecord::Circle,
             ExactClass::Point => ExactClassRecord::Point,
+            ExactClass::Chord => ExactClassRecord::Chord,
             ExactClass::Conic => ExactClassRecord::Conic,
             ExactClass::ConicPair => ExactClassRecord::ConicPair,
             ExactClass::NodalQuartic => ExactClassRecord::NodalQuartic,
@@ -453,6 +459,7 @@ pub fn exact_to_record(k: &Kernel, surface: &Surface) -> Result<ExactRoundRecord
             ball_on_collapsed: i.ball_on_collapsed,
             radii_can_change: i.radii_can_change,
         },
+        chamfer: round.chamfer.map(chamfer_record),
         leader_map: LeaderMapRecord {
             a: round.map.a,
             b: round.map.b,
@@ -528,6 +535,7 @@ pub fn exact_from_record(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> 
         ExactClassRecord::Line => ExactClass::Line,
         ExactClassRecord::Circle => ExactClass::Circle,
         ExactClassRecord::Point => ExactClass::Point,
+        ExactClassRecord::Chord => ExactClass::Chord,
         ExactClassRecord::Conic => ExactClass::Conic,
         ExactClassRecord::ConicPair => ExactClass::ConicPair,
         ExactClassRecord::NodalQuartic => ExactClass::NodalQuartic,
@@ -550,7 +558,12 @@ pub fn exact_from_record(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> 
         };
         net = Surface::from(BallPatch::create(form, blend.point, blend.radius)?);
     }
-    let mut round = ExactRound::create(k, class, [s0, s1], rec.radius, leader.as_ref(), inputs)?;
+    let mut round = match (class, &rec.chamfer) {
+        (ExactClass::Chord, Some(c)) => {
+            ExactRound::chord(k, [s0, s1], chamfer_of(c)?, leader.as_ref(), inputs)?
+        }
+        _ => ExactRound::create(k, class, [s0, s1], rec.radius, leader.as_ref(), inputs)?,
+    };
     round.map = LeaderMap {
         a: rec.leader_map.a,
         b: rec.leader_map.b,
@@ -573,4 +586,32 @@ pub fn exact_rebuild(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> {
         blend.recertify(k)?;
     }
     Ok(net)
+}
+
+/// A chamfer's sizes as their record (#2486).
+fn chamfer_record(c: ChamferDefinition) -> ChamferRecord {
+    ChamferRecord {
+        size: match c.size {
+            ChamferSize::Distances(x) => ChamferSizeRecord::Distances(x),
+            ChamferSize::DistanceAngle { distance, angle } => {
+                ChamferSizeRecord::DistanceAngle { distance, angle }
+            }
+            ChamferSize::Chord(l) => ChamferSizeRecord::Chord(l),
+        },
+        wedge: c.wedge,
+    }
+}
+
+/// The chamfer's sizes a record holds, checked ([`ChamferDefinition::new`]).
+fn chamfer_of(c: &ChamferRecord) -> Result<ChamferDefinition> {
+    ChamferDefinition::new(
+        match c.size {
+            ChamferSizeRecord::Distances(x) => ChamferSize::Distances(x),
+            ChamferSizeRecord::DistanceAngle { distance, angle } => {
+                ChamferSize::DistanceAngle { distance, angle }
+            }
+            ChamferSizeRecord::Chord(l) => ChamferSize::Chord(l),
+        },
+        c.wedge,
+    )
 }

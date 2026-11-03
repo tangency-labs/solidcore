@@ -20,12 +20,18 @@
 //! proof pairs the net's spans with its centre line's through a map ([`LeaderMap`]) that
 //! the net's reversals, reparametrisations and swaps carry; a piece or a trim keeps it.
 //!
+//! A chamfer between planes (#2486) is the same: the chord between the feet of a line spine
+//! is the plane through them ([`ExactClass::Chord`]), kept as a `Plane` with the chamfer's
+//! sizes beside it, its section the chord (order 0).
+//!
 //! Not upstream. Deviations: none (no upstream counterpart). No recursion: the supports
 //! are kept as surfaces without definitions of their own (a support that is an exact
 //! round, as a corner ball's rounds are, keeps its definition on its own face), so they
 //! are walked one level.
 
-use crate::blend::fillet_exact::{class_surface, classify_supports, BlendSpine, ClassInputs};
+use crate::blend::fillet_exact::{
+    chord_implicit, class_surface, classify_supports, BlendSpine, ClassInputs, QuadricKind,
+};
 use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::tol::are_same;
@@ -33,7 +39,8 @@ use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::EFF_ZERO;
 use crate::nurbs::b_spline_curve::BSplineCurve;
-use crate::surface::implicit::{check_exact_net, ExactNetCheck, LeaderMap};
+use crate::surface::implicit::{check_exact_net, ClassSurface, ExactNetCheck, LeaderMap};
+use crate::surface::procedural_blend::chamfer::ChamferDefinition;
 use crate::surface::surface::Surface;
 
 const OP_TRANSFORM: &str = "surface::procedural_blend::exact::ExactRound::transform";
@@ -47,6 +54,9 @@ pub enum ExactClass {
     Circle,
     /// One point: a piece of the ball.
     Point,
+    /// A chamfer between planes (#2486): the chord between the feet of the line its
+    /// offsets meet in, the plane through them.
+    Chord,
     /// A plane section of a cylinder or cone: the canal surface on the conic.
     Conic,
     /// One of two plane conics of two cylinders or cones: the canal surface on it.
@@ -77,6 +87,7 @@ impl ExactClass {
             Self::Line => "line",
             Self::Circle => "circle",
             Self::Point => "point",
+            Self::Chord => "chord",
             Self::Conic => "conic",
             Self::ConicPair => "conic pair",
             Self::NodalQuartic => "nodal quartic",
@@ -92,10 +103,12 @@ pub struct ExactRound {
     pub(crate) class: ExactClass,
     /// The supports S1, S2 the ball rolls on (the faces the class was read off).
     pub(crate) supports: [Box<Surface>; 2],
-    /// The ball's radius.
+    /// The ball's radius (0 for the chord, whose offsets are its inputs').
     pub(crate) radius: f64,
-    /// The section's order: 1, the ball's circle.
+    /// The section's order: 1, the ball's circle; 0, the chord.
     pub(crate) order: u32,
+    /// A chamfer's sizes (the chord, #2486).
+    pub(crate) chamfer: Option<ChamferDefinition>,
     /// The leader (the centre line), where the class's construction makes one.
     pub(crate) leader: Option<BSplineCurve>,
     /// What the class was read with beside the supports.
@@ -138,10 +151,55 @@ impl ExactRound {
             supports: [support(a)?, support(b)?],
             radius,
             order: 1,
+            chamfer: None,
             leader: leader.cloned(),
             inputs,
             map: LeaderMap::default(),
         })
+    }
+
+    /// A chamfer between planes (#2486): the chord, of the sizes `chamfer`, on copies of
+    /// `supports`, its offsets the inputs' (their sizes `chamfer` gives).
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` where the sizes do not give the inputs' offsets; those of copying a
+    /// support.
+    pub fn chord(
+        k: &Kernel,
+        supports: [&Surface; 2],
+        chamfer: ChamferDefinition,
+        leader: Option<&BSplineCurve>,
+        inputs: ClassInputs,
+    ) -> Result<Self> {
+        if !chamfer.holds(inputs.offsets.map(f64::abs)) {
+            return Err(SolidError::invalid_input(
+                "surface::procedural_blend::exact::ExactRound::chord",
+                "the chamfer's sizes do not give its offsets",
+            ));
+        }
+        let support = |s: &Surface| -> Result<Box<Surface>> {
+            let mut c = s.copy(k)?;
+            c.set_exact_round(None);
+            Ok(Box::new(c))
+        };
+        let [a, b] = supports;
+        Ok(Self {
+            class: ExactClass::Chord,
+            supports: [support(a)?, support(b)?],
+            radius: 0.0,
+            order: 0,
+            chamfer: Some(chamfer),
+            leader: leader.cloned(),
+            inputs,
+            map: LeaderMap::default(),
+        })
+    }
+
+    /// A chamfer's sizes (the chord).
+    #[must_use]
+    pub const fn chamfer(&self) -> Option<&ChamferDefinition> {
+        self.chamfer.as_ref()
     }
 
     /// The class.
@@ -162,7 +220,7 @@ impl ExactRound {
         self.radius
     }
 
-    /// The section's order (1: the ball's circle).
+    /// The section's order (1: the ball's circle; 0: the chord).
     #[must_use]
     pub const fn order(&self) -> u32 {
         self.order
@@ -215,13 +273,30 @@ impl ExactRound {
     pub fn recertify(&self, k: &Kernel, net: &Surface) -> Result<f64> {
         let [a, b] = &self.supports;
         let blend = classify_supports(k, [a, b], &self.inputs)?;
+        // the chord (#2486): a line spine between planes, of sizes that give its offsets
+        let (reclassified, surface) = if self.class == ExactClass::Chord {
+            let planes = blend.faces.iter().all(|f| f.kind == QuadricKind::Plane);
+            let sized = self
+                .chamfer
+                .is_some_and(|c| c.holds(self.inputs.offsets.map(f64::abs)));
+            let chord = blend.spine == BlendSpine::Line && planes && sized;
+            (
+                chord.then_some(ExactClass::Chord.name()),
+                chord_implicit(&blend).map(ClassSurface::Implicit),
+            )
+        } else {
+            (
+                ExactClass::of_spine(blend.spine).map(ExactClass::name),
+                class_surface(&blend, self.leader.as_ref(), &self.map),
+            )
+        };
         check_exact_net(
             k,
             net,
             &ExactNetCheck {
                 class: self.class.name(),
-                reclassified: ExactClass::of_spine(blend.spine).map(ExactClass::name),
-                surface: class_surface(&blend, self.leader.as_ref(), &self.map),
+                reclassified,
+                surface,
             },
         )?;
         Ok(0.0)
@@ -266,6 +341,7 @@ impl ExactRound {
         }
         self.inputs.tol *= factor;
         self.radius *= factor;
+        self.chamfer = self.chamfer.map(|c| c.scaled(factor));
         Ok(())
     }
 }

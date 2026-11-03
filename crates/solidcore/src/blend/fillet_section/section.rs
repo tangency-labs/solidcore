@@ -36,6 +36,7 @@ use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData
 use crate::nurbs::b_spline_surface::p1::CanonicalSurfaceData;
 use crate::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm};
 use crate::nurbs::knots::Side;
+use crate::surface::procedural_blend::chamfer::ChamferDefinition;
 use crate::surface::procedural_blend::{count_area_root, BlendDefinitionInput, ProceduralBlend};
 use crate::surface::surface::{Surface, SurfaceKind};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -559,12 +560,13 @@ impl StationSystem<'_> {
     }
 }
 
-/// The order-n section's control points across: `3 n + 2`, or 3 for the ball's circle.
+/// The order-n section's control points across: `3 n + 2`, 3 for the ball's circle, 2 for
+/// the chord (#2486).
 pub(crate) const fn section_width(n: usize) -> usize {
-    if n >= 2 {
-        3 * n + 2
-    } else {
-        3
+    match n {
+        0 => 2,
+        1 => 3,
+        _ => 3 * n + 2,
     }
 }
 
@@ -788,6 +790,19 @@ impl NetForm {
                     }
                 }
             }
+        } else if self.n == 0 {
+            // the chord (#2486): its rows are the feet, weights 1
+            for j in 0..ld {
+                let hp = hermite(&ra.v, &ra.d, &rb.v, &rb.d, &rb.d_in, j);
+                for i in 0..4 {
+                    if let (Some(h), Some(w), Some(&p)) =
+                        (homog.get_mut(i * ld + j), wv.get_mut(i * ld + j), hp.get(i))
+                    {
+                        *h = p;
+                        *w = 1.0;
+                    }
+                }
+            }
         } else {
             // the jets' Hermite curves, then one form's rows of them
             let n = self.n;
@@ -828,6 +843,24 @@ impl GnSectionFsg {
         Self {
             order,
             thumbweight,
+            certified_bound: -1.0,
+            certified_spans: 0,
+            arcs: ArcSection {
+                approximate_arcs: true,
+                tol_percent_radius: 0.05,
+                mirror: false,
+                complement: false,
+            },
+        }
+    }
+
+    /// The chord, order 0 (a chamfer; solidcore's, #2486): the straight section between
+    /// the feet.
+    #[must_use]
+    pub const fn chord() -> Self {
+        Self {
+            order: 0,
+            thumbweight: 0.0,
             certified_bound: -1.0,
             certified_spans: 0,
             arcs: ArcSection {
@@ -939,8 +972,9 @@ impl GnSectionFsg {
             faces,
             uvs,
             true,
-            0.0,
+            [0.0, 0.0],
             false,
+            None,
             None,
         )?
         .map(|(s, _)| s)
@@ -972,8 +1006,9 @@ impl GnSectionFsg {
             faces.surfaces,
             [&mut uv1, &mut uv2],
             false,
-            0.0,
+            [0.0, 0.0],
             false,
+            None,
             None,
         )?
         .map(|(s, _)| s)
@@ -1009,8 +1044,9 @@ impl GnSectionFsg {
             faces,
             uvs,
             replace_rails,
-            radius,
+            [radius, radius],
             false,
+            None,
             None,
         )?
         .map(|(s, _)| s)
@@ -1044,13 +1080,68 @@ impl GnSectionFsg {
         radius: f64,
         law: Option<&GnLawRound<'_>>,
     ) -> Result<Option<Surface>> {
-        let built = self.build(k, center, rails, tol, faces, uvs, true, radius, true, law)?;
+        let built = self.build(
+            k,
+            center,
+            rails,
+            tol,
+            faces,
+            uvs,
+            true,
+            [radius, radius],
+            true,
+            law,
+            None,
+        )?;
         Ok(built.map(|(s, c)| {
             if let Some(c) = c {
                 *center = c;
             }
             s
         }))
+    }
+
+    /// The chord (order 0, a chamfer; solidcore's, #2486) between the feet of the point at
+    /// `offsets` off the two faces, as [`Self::build_given_ball`] builds the ball's circle:
+    /// the rails and uv curves replaced by the stations' feet, the surface the chamfer by
+    /// its definition, `chamfer` its sizes. `None` (nothing built, the rails and uv curves
+    /// unchanged) where the solver's rails are not those feet.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` for a generator that is not the chord; those of `Build`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_chord(
+        &mut self,
+        k: &Kernel,
+        center: &BSplineCurve,
+        rails: [&mut BSplineCurve; 2],
+        tol: f64,
+        faces: [&Surface; 2],
+        uvs: [&mut BSplineCurve; 2],
+        offsets: [f64; 2],
+        chamfer: ChamferDefinition,
+    ) -> Result<Option<Surface>> {
+        if self.order != 0 {
+            return Err(SolidError::invalid_input(
+                OP,
+                "a chamfer is the chord, order 0",
+            ));
+        }
+        let built = self.build(
+            k,
+            center,
+            rails,
+            tol,
+            faces,
+            uvs,
+            true,
+            offsets,
+            true,
+            None,
+            Some(chamfer),
+        )?;
+        Ok(built.map(|(s, _)| s))
     }
 
     /// `Build`: the G^n blend surface between the rails, its stations the knots of the
@@ -1071,9 +1162,10 @@ impl GnSectionFsg {
         faces: [&Surface; 2],
         uvs: [&mut BSplineCurve; 2],
         replace_rails: bool,
-        radius: f64,
+        radii: [f64; 2],
         feet_check: bool,
         law_round: Option<&GnLawRound<'_>>,
+        chamfer: Option<ChamferDefinition>,
     ) -> Result<Option<Built>> {
         // a ball whose radius varies (the ball's circle only): its law r(t) and the curve
         // whose planes square to it at t hold the ball's centre (the solver's), t the
@@ -1092,7 +1184,9 @@ impl GnSectionFsg {
         let leader: &BSplineCurve = law_round.map_or(center, |l| l.leader);
         let n = self.order;
         let exact_circle = n == 1 && self.arcs.is_exact_circle();
-        if !exact_circle && !Self::is_valid(n, self.thumbweight) {
+        // the chord (#2486): a chamfer, its sizes given
+        let chord = n == 0 && chamfer.is_some() && law_round.is_none();
+        if !chord && !exact_circle && !Self::is_valid(n, self.thumbweight) {
             return Err(SolidError::invalid_input(
                 OP,
                 "the order must be 1 (the ball's circle) or 2 to 4 with a thumbweight below 1",
@@ -1223,8 +1317,9 @@ impl GnSectionFsg {
                 .zip(side.iter_mut())
                 .zip(rl)
                 .zip(uvs.iter())
-                .zip(faces);
-            for ((((rf, sf), rail), uv), face) in rows {
+                .zip(faces)
+                .zip(radii);
+            for (((((rf, sf), rail), uv), face), radius) in rows {
                 let rho = rail.evaluate_point(s_first)?;
                 let w = uv.evaluate_point(s_first)?;
                 let nrm = unit_normal(k, face, Point2::new(w.x, w.y))?;
@@ -1551,6 +1646,7 @@ impl GnSectionFsg {
             leader,
             seeds: [seed0, seed1],
             bound: self.certified_bound + rounding,
+            chamfer,
         };
         let blend = ProceduralBlend::create(k, &surface, &input, |order, w| {
             Self::is_valid(order as usize, w)

@@ -25,6 +25,7 @@
 //! | [`NetScope`], [`NetScope::is_active`]        | `SmBlendNetScope`, `IsActive`                |
 //! | [`ProceduralBlend::recertify`], [`recertify_faces`] | not in the fork (#2388; the Ball's `SmBallPatch::IsOnSphere` is its counterpart) |
 //! | [`record`], [`convert`]                      | not in the fork (#2388: the definition as plain data) |
+//! | [`chamfer`], order 0                         | not in the fork (#2486: a chamfer, the chord, its sizes kept) |
 //! | [`BlendCounts`]                              | `SmBlendCounts` (`GetCounts`, `ResetCounts` on [`crate::kernel::Kernel`]) |
 //!
 //! Deviations:
@@ -44,6 +45,7 @@
 //!   [`BLEND_MAX_DEPTH`] deep (the fork's cap, checked at [`ProceduralBlend::create`]),
 //!   so every walk over the supports is bounded by 3.
 
+pub mod chamfer;
 pub mod convert;
 pub mod exact;
 pub mod record;
@@ -68,6 +70,7 @@ use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::database_io::{DatabaseReader, FileType, InputStream};
+use chamfer::{ChamferDefinition, ChamferSize};
 
 const OP_CREATE: &str = "surface::procedural_blend::ProceduralBlend::create";
 const OP_EVAL: &str = "surface::procedural_blend::ProceduralBlend::evaluate";
@@ -89,6 +92,14 @@ pub const BLEND_MAX_DEPTH: u32 = 3;
 
 /// `SM_GN_MAX_ORDER`: the highest section order of a definition.
 const MAX_ORDER: u32 = 4;
+
+/// Validates a section order and thumbweight for a definition: the chord (0, not the
+/// fork's, #2486), the ball's circle (1), or a G^n section (2 to 4) whose thumbweight
+/// [`GnSectionFsg::is_valid`] takes.
+#[must_use]
+pub fn order_is_valid(order: u32, thumbweight: f64) -> bool {
+    order <= 1 || GnSectionFsg::is_valid(order as usize, thumbweight)
+}
 
 /// `SmBlendCounts`: the work the definitions of a kernel's procedural blends did, machine
 /// independent (unlike timings). Diagnostics only: no result reads them.
@@ -163,7 +174,8 @@ pub struct BlendDefinition {
     pub(crate) offsets: [f64; 2],
     /// `m_pLaw`: the radius r(s) as the x of a curve over the leader's parameter, or none.
     pub(crate) law: Option<BSplineCurve>,
-    /// `m_lOrder`: the section's order n, 1 to 4.
+    /// `m_lOrder`: the section's order n, 0 to 4 (0 the chord, a chamfer: not the fork's,
+    /// #2486).
     pub(crate) order: u32,
     /// `m_dThumbweight`: n >= 2, the G^n section's thumbweight rule (0 for n = 1).
     pub(crate) thumbweight: f64,
@@ -173,6 +185,9 @@ pub struct BlendDefinition {
     pub(crate) seeds: [BSplineCurve; 2],
     /// `m_dBound`: the net's certified distance from the definition, > 0.
     pub(crate) bound: f64,
+    /// A chamfer's sizes (order 0 only; not the fork's, #2486): what its offsets were
+    /// asked as.
+    pub(crate) chamfer: Option<ChamferDefinition>,
     /// `m_adA`: `(s, t) = (a[0] + b[0] p, a[1] + b[1] q)`.
     pub(crate) map_a: [f64; 2],
     /// `m_adB`.
@@ -205,6 +220,8 @@ pub struct BlendDefinitionInput<'a> {
     pub seeds: [&'a BSplineCurve; 2],
     /// `dBound`.
     pub bound: f64,
+    /// A chamfer's sizes: present exactly for order 0, its offsets `offsets` (#2486).
+    pub chamfer: Option<ChamferDefinition>,
 }
 
 /// `SmProceduralBlend`: a blend of order n between two surfaces, by its definition, on
@@ -240,6 +257,37 @@ fn copy_curve(curve: &BSplineCurve) -> BSplineCurve {
     let mut copy = curve.copy();
     copy.set_out_of_bounds_enabled(true);
     copy
+}
+
+/// A chamfer's sizes as the database holds them (#2486): kind 0 two distances, 1 a
+/// distance and an angle, 2 a chord (its one size the first), then the wedge.
+fn chamfer_of_db(kind: i64, sizes: [f64; 3]) -> Result<ChamferDefinition> {
+    let [a, b, wedge] = sizes;
+    let size = match kind {
+        0 => ChamferSize::Distances([a, b]),
+        1 => ChamferSize::DistanceAngle {
+            distance: a,
+            angle: b,
+        },
+        2 => ChamferSize::Chord(a),
+        _ => {
+            return Err(SolidError::invalid_input(
+                OP_READ,
+                "a chamfer's sizes are two distances, a distance and an angle, or a chord",
+            ))
+        }
+    };
+    ChamferDefinition::new(size, wedge)
+}
+
+/// The database's numbers of a chamfer's sizes ([`chamfer_of_db`]'s inverse).
+#[must_use]
+pub fn chamfer_to_db(c: &ChamferDefinition) -> (i64, [f64; 3]) {
+    match c.size {
+        ChamferSize::Distances([a, b]) => (0, [a, b, c.wedge]),
+        ChamferSize::DistanceAngle { distance, angle } => (1, [distance, angle, c.wedge]),
+        ChamferSize::Chord(l) => (2, [l, 0.0, c.wedge]),
+    }
 }
 
 /// `GetDepth` of a support: 1 more than a procedural support's depth, else 0.
@@ -304,10 +352,22 @@ impl ProceduralBlend {
         thumbweight_is_valid: impl Fn(u32, f64) -> bool,
     ) -> Result<Self> {
         let order = input.order;
-        if !(1..=MAX_ORDER).contains(&order) {
+        if order > MAX_ORDER {
             return Err(SolidError::invalid_input(
                 OP_CREATE,
-                "a section's order is 1 to 4",
+                "a section's order is 0 to 4",
+            ));
+        }
+        // the chord is a chamfer: its sizes, of a constant pair of offsets (#2486)
+        let chamfer_held = match (&input.chamfer, order, input.law) {
+            (Some(c), 0, None) => c.holds(input.offsets),
+            (None, 1..=MAX_ORDER, _) => true,
+            _ => false,
+        };
+        if !chamfer_held {
+            return Err(SolidError::invalid_input(
+                OP_CREATE,
+                "a chord is a chamfer of two offsets its sizes give, and only a chord is",
             ));
         }
         if order >= 2 && (input.law.is_some() || !thumbweight_is_valid(order, input.thumbweight)) {
@@ -376,6 +436,7 @@ impl ProceduralBlend {
             leader: copy_curve(input.leader),
             seeds: [copy_curve(seed0), copy_curve(seed1)],
             bound: input.bound,
+            chamfer: input.chamfer,
             map_a: [0.0, 0.0],
             map_b: [1.0, 1.0],
             swapped: false,
@@ -424,10 +485,16 @@ impl ProceduralBlend {
         self.def.bound
     }
 
-    /// `GetOrder`: the section's order n, 1 to 4.
+    /// `GetOrder`: the section's order n, 0 (the chord, #2486) to 4.
     #[must_use]
     pub const fn order(&self) -> u32 {
         self.def.order
+    }
+
+    /// A chamfer's sizes (order 0, #2486): how its offsets were asked for.
+    #[must_use]
+    pub const fn chamfer(&self) -> Option<&ChamferDefinition> {
+        self.def.chamfer.as_ref()
     }
 
     /// `GetSupport(i)`: the surface S1 (0) or S2 (1) the ball rolls on.
@@ -538,6 +605,7 @@ impl ProceduralBlend {
             && a.order == b.order
             && a.thumbweight == b.thumbweight
             && a.bound == b.bound
+            && a.chamfer == b.chamfer
             && a.swapped == b.swapped)
     }
 
@@ -735,6 +803,41 @@ impl ProceduralBlend {
             }
             (order as u64, swapped, has_law, values)
         };
+        // a chord's sizes (order 0, not the fork's, #2486): its kind, two sizes and wedge
+        let chamfer = if order == 0 {
+            let (kind, sizes) = if ascii {
+                let st = db
+                    .in_stream_mut()
+                    .ok_or_else(|| SolidError::null_pointer(OP_READ))?;
+                let kind = st.extract_int();
+                let mut sizes = [0.0_f64; 3];
+                let mut read = true;
+                for v in &mut sizes {
+                    match st.extract_double() {
+                        Some(x) => *v = x,
+                        None => read = false,
+                    }
+                }
+                db.go_to_next_line();
+                let failed = db.in_stream().is_none_or(InputStream::fail);
+                match kind {
+                    Some(kd) if read && !failed => (i64::from(kd), sizes),
+                    // "its definition could not be read"
+                    _ => return Err(SolidError::sm_err(OP_READ)),
+                }
+            } else {
+                let kind = db.read_long()?;
+                let v = db.read_doubles(3)?;
+                let mut sizes = [0.0_f64; 3];
+                for (x, &y) in sizes.iter_mut().zip(&v) {
+                    *x = y;
+                }
+                (kind, sizes)
+            };
+            Some(chamfer_of_db(kind, sizes)?)
+        } else {
+            None
+        };
         let mut supports = Vec::new();
         for _ in 0..2 {
             if ascii {
@@ -798,6 +901,7 @@ impl ProceduralBlend {
             leader: &leader,
             seeds: [seed0, seed1],
             bound,
+            chamfer,
         };
         let mut blend = Self::create(k, &net, &input, |n, w| {
             GnSectionFsg::is_valid(n as usize, w)
@@ -1148,6 +1252,7 @@ impl ProceduralBlend {
         for r in &mut self.def.offsets {
             *r *= factor;
         }
+        self.def.chamfer = self.def.chamfer.map(|c| c.scaled(factor));
         self.renew();
         self.net.transform(rotate_n_move, scale)?;
         // (#2388) the bound is taken in the round's own frame, which moves with it: it
@@ -1289,6 +1394,7 @@ impl BlendDefinition {
             leader: self.leader.clone(),
             seeds: self.seeds.clone(),
             bound: self.bound,
+            chamfer: self.chamfer,
             map_a: self.map_a,
             map_b: self.map_b,
             swapped: self.swapped,
@@ -1358,6 +1464,7 @@ mod tests {
             leader: &leader,
             seeds: [&seed0, &seed1],
             bound,
+            chamfer: None,
         };
         ProceduralBlend::create(k, &square(0.5), &input, |_, w| w < 1.0)
     }
@@ -1374,6 +1481,59 @@ mod tests {
         assert!(blend(&k, 1, [1.0, 1.0], [f64::NAN, f64::NAN], 1e-6).is_err());
         assert!(blend(&k, 1, [1.0, 1.0], [2.0, 2.0], 0.0).is_err());
         assert!(blend(&k, 1, [1.0, 1.0], [2.0, 2.0], f64::INFINITY).is_err());
+    }
+
+    fn chord(
+        k: &Kernel,
+        order: u32,
+        offsets: [f64; 2],
+        chamfer: Option<ChamferDefinition>,
+    ) -> Result<ProceduralBlend> {
+        let s0 = Surface::from(square(0.0));
+        let s1 = Surface::from(square(1.0));
+        let (leader, seed0, seed1) = (line(), line(), line());
+        let input = BlendDefinitionInput {
+            supports: [&s0, &s1],
+            sides: [1.0, 1.0],
+            offsets,
+            law: None,
+            order,
+            thumbweight: 0.0,
+            leader: &leader,
+            seeds: [&seed0, &seed1],
+            bound: 1e-6,
+            chamfer,
+        };
+        ProceduralBlend::create(k, &square(0.5), &input, |_, w| w < 1.0)
+    }
+
+    /// The chord (#2486) is a chamfer, its sizes those of its offsets; nothing else is.
+    #[test]
+    fn a_chord_is_a_chamfer_of_its_offsets() {
+        let k = Kernel::default();
+        let right = 0.5 * crate::math::PI;
+        let c = ChamferDefinition::new(ChamferSize::Distances([1.0, 2.0]), right).ok();
+        let pb = chord(&k, 0, [2.0, 1.0], c).unwrap();
+        assert_eq!(pb.order(), 0);
+        assert_eq!(pb.chamfer(), c.as_ref());
+        // its sizes kept through a scale
+        let mut scaled = pb.clone();
+        scaled
+            .transform_at_depth(
+                &k,
+                &Axis2Placement::default(),
+                Some(Vec3::new(2.0, 2.0, 2.0)),
+                0,
+            )
+            .unwrap();
+        let sc = scaled.chamfer().copied();
+        assert_eq!(sc.map(|c| c.size), Some(ChamferSize::Distances([2.0, 4.0])));
+        assert!(sc.is_some_and(|c| c.holds(scaled.def.offsets)));
+        // a chord without sizes, sizes off its offsets, a chamfer of another order
+        assert!(chord(&k, 0, [2.0, 1.0], None).is_err());
+        assert!(chord(&k, 0, [1.0, 2.0], c).is_err());
+        assert!(chord(&k, 1, [2.0, 1.0], c).is_err());
+        assert!(chord(&k, 2, [2.0, 1.0], c).is_err());
     }
 
     #[test]
@@ -1393,6 +1553,7 @@ mod tests {
                 leader: &leader,
                 seeds: [&seed0, &seed1],
                 bound: 1e-6,
+                chamfer: None,
             };
             let made = ProceduralBlend::create(&k, &square(0.5), &input, |_, w| w < 1.0);
             if depth <= 3 {
