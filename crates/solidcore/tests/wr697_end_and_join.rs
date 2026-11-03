@@ -249,17 +249,13 @@ fn a_mixed_convexity_end_s_rail_ends_on_the_end_face_s_surface() {
     }
 }
 
-/// The same End on a plane wall sloped back (the upper block's profile (0, 10), (20, 10),
-/// (17, 20), (0, 20) swept along y): the rail ends at (20.6, 0, 8), and the round takes
-/// 20 (4 - pi) - 0.3 (20/3 - 2 pi) = 78 - 19.4 pi. The fork 5e8c9c1 prints
-/// 17532.946897573881870 (9.4e-8 off the closed form) with the same rail end and counts.
-#[test]
-fn a_mixed_convexity_end_on_a_sloped_wall_has_its_closed_form() {
+/// The step with its upper block's profile (0, 10), (20, 10), (17, 20), (0, 20) swept
+/// along y: a plane wall sloped back.
+fn sloped_wall(k: &mut Kernel) -> Brep {
     use solidcore::curve::curve::Curve;
     use solidcore::primitive::api_curves::create_line_segment;
     use solidcore::sweep::api_brep::create_linear_sweep;
-    let mut k = all_fixes(true);
-    let a = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 10.0).unwrap();
+    let a = create_box(k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 10.0).unwrap();
     let pts = [
         Point3::new(0.0, 0.0, 10.0),
         Point3::new(20.0, 0.0, 10.0),
@@ -270,8 +266,18 @@ fn a_mixed_convexity_end_on_a_sloped_wall_has_its_closed_form() {
         .map(|i| Curve::from(create_line_segment(pts[i], pts[(i + 1) % 4]).unwrap()))
         .collect();
     let refs: Vec<Option<&Curve>> = sides.iter().map(Some).collect();
-    let c = create_linear_sweep(&mut k, &refs, Vec3::Y, 30.0, true).unwrap();
-    let mut b = boolean_union(&mut k, a, c).unwrap();
+    let c = create_linear_sweep(k, &refs, Vec3::Y, 30.0, true).unwrap();
+    boolean_union(k, a, c).unwrap()
+}
+
+/// The same End on a plane wall sloped back (the upper block's profile (0, 10), (20, 10),
+/// (17, 20), (0, 20) swept along y): the rail ends at (20.6, 0, 8), and the round takes
+/// 20 (4 - pi) - 0.3 (20/3 - 2 pi) = 78 - 19.4 pi. The fork 5e8c9c1 prints
+/// 17532.946897573881870 (9.4e-8 off the closed form) with the same rail end and counts.
+#[test]
+fn a_mixed_convexity_end_on_a_sloped_wall_has_its_closed_form() {
+    let mut k = all_fixes(true);
+    let mut b = sloped_wall(&mut k);
     round(&mut k, &mut b, &[[30.0, 0.0, 10.0]], 2.0);
     let v = volume(&k, &mut b);
     let want = 17550.0 - 78.0 + 19.4 * PI;
@@ -357,4 +363,352 @@ fn a_tee_s_closed_saddle_is_a_closed_join() {
         "{}",
         out[0].0
     );
+}
+
+/// The teardrop's control points: one closed cubic B-spline from its tip (0, 0) round
+/// through (15.5, 0) and back, with knots 0, 1/3, 2/3, 1 (ends of multiplicity 4). Its two
+/// ends leave the tip along (1, -1) and (1, 1), at a right angle.
+const TEARDROP: [[f64; 2]; 6] = [
+    [0.0, 0.0],
+    [8.0, -8.0],
+    [16.0, -4.0],
+    [16.0, 4.0],
+    [8.0, 8.0],
+    [0.0, 0.0],
+];
+const TEARDROP_KNOTS: [f64; 10] = [0.0, 0.0, 0.0, 0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 1.0, 1.0, 1.0];
+
+/// The teardrop profile swept 10 up z with its caps: three faces, and each rim one closed
+/// edge meeting itself at a right angle at the tip, where the side face meets itself along
+/// its seam.
+fn teardrop_prism(k: &mut Kernel) -> Brep {
+    use solidcore::curve::curve::Curve;
+    use solidcore::nurbs::b_spline_curve::p1::{
+        BSplineCurve, BSplineCurveForm, CanonicalData, KnotType,
+    };
+    use solidcore::sweep::api_brep::create_linear_sweep;
+    let control = TEARDROP.map(|[x, y]| Vec3::new(x, y, 0.0));
+    let profile = Curve::from(
+        BSplineCurve::create_canonical(&CanonicalData {
+            dim: 3,
+            degree: 3,
+            control_points: &control,
+            form: BSplineCurveForm::default(),
+            knot_multiplicities: &[4, 1, 1, 4],
+            knots: &[0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0],
+            knot_type: KnotType::default(),
+            weights: None,
+            trim: None,
+        })
+        .unwrap(),
+    );
+    create_linear_sweep(k, &[Some(&profile)], Vec3::Z, 10.0, true).unwrap()
+}
+
+/// The teardrop's point and first derivative at `u`, by Cox-de Boor on its knots (written
+/// out here, so that the profile's area and length do not come from the kernel).
+fn teardrop_point(u: f64) -> ([f64; 2], [f64; 2]) {
+    let t = TEARDROP_KNOTS;
+    let span = (3..6).rev().find(|&i| u >= t[i]).unwrap_or(3);
+    // n[p][j]: the degree-p basis function N_{span-p+j, p} at u
+    let mut n = [[0.0; 4]; 4];
+    n[0][0] = 1.0;
+    for p in 1..=3 {
+        for j in 0..=p {
+            let i = span + j - p;
+            let mut v = 0.0;
+            if j >= 1 && t[i + p] > t[i] {
+                v += (u - t[i]) / (t[i + p] - t[i]) * n[p - 1][j - 1];
+            }
+            if j < p && t[i + p + 1] > t[i + 1] {
+                v += (t[i + p + 1] - u) / (t[i + p + 1] - t[i + 1]) * n[p - 1][j];
+            }
+            n[p][j] = v;
+        }
+    }
+    let (mut c, mut d) = ([0.0; 2], [0.0; 2]);
+    for (j, w) in n[3].iter().enumerate() {
+        let pole = TEARDROP[span + j - 3];
+        c[0] += w * pole[0];
+        c[1] += w * pole[1];
+    }
+    // C' = sum of N_{i+1, 2} 3 (P_{i+1} - P_i) / (t_{i+4} - t_{i+1})
+    for (j, w) in n[2].iter().take(3).enumerate() {
+        let i = span + j - 3;
+        let s = 3.0 / (t[i + 4] - t[i + 1]);
+        d[0] += w * s * (TEARDROP[i + 1][0] - TEARDROP[i][0]);
+        d[1] += w * s * (TEARDROP[i + 1][1] - TEARDROP[i][1]);
+    }
+    (c, d)
+}
+
+/// The teardrop's area (Green's theorem) and perimeter, by 5-point Gauss-Legendre on 192
+/// pieces (exact for the area: a cubic B-spline is a polynomial on each piece).
+fn teardrop_area_and_length() -> (f64, f64) {
+    let g = [
+        (0.0, 128.0 / 225.0),
+        (-0.538_469_310_105_683_1, 0.478_628_670_499_366_5),
+        (0.538_469_310_105_683_1, 0.478_628_670_499_366_5),
+        (-0.906_179_845_938_664, 0.236_926_885_056_189_1),
+        (0.906_179_845_938_664, 0.236_926_885_056_189_1),
+    ];
+    let pieces = 192;
+    let (mut area, mut length) = (0.0, 0.0);
+    for p in 0..pieces {
+        let a = f64::from(p) / f64::from(pieces);
+        let b = f64::from(p + 1) / f64::from(pieces);
+        for (x, w) in g {
+            let (c, d) = teardrop_point(0.5 * (a + b) + 0.5 * (b - a) * x);
+            let w = w * 0.5 * (b - a);
+            area += w * 0.5 * (c[0] * d[1] - c[1] * d[0]);
+            length += w * d[0].hypot(d[1]);
+        }
+    }
+    (area, length)
+}
+
+/// #2498: the teardrop prism's top rim, one closed convex edge meeting itself at a right
+/// angle at the tip, rounded r 0.5 and r 1 with every generic-blend flag on. The round runs
+/// round the rim and meets itself on the tip's bisecting plane, a mitre. So its horizontal
+/// section at depth t below z = 10 - r is the profile's inner parallel set at
+/// d = r - sqrt(r^2 - t^2) (the profile's least radius of curvature is 4.69, far above r),
+/// whose area is A - L d + d^2 ((pi + a) / 2 + cot(a / 2)) for a convex profile of area A
+/// and perimeter L with one corner of interior angle a (here pi / 2). Integrated over t, the
+/// round takes L r^2 (1 - pi/4) - (3 pi / 4 + 1) r^3 (5/3 - pi/2) off the prism's 10 A. The
+/// body has the prism's three faces and the round's two halves, which meet each other at
+/// the mitre and at the rim's far point. The volume lands 7.7e-7 (r 0.5) and 1.9e-7 (r 1)
+/// of itself under the closed form; a corner built other than as the mitre (a ball or a
+/// setback) moves it by some 0.3 r^3, 3.3e-5 of it at r 0.5. The top rails' runs past the
+/// tip, which cross the rim near it, were taken for a cliff overflow, and the trim at the
+/// creases then failed with "edge without primary edge use".
+#[test]
+fn a_closed_convex_rim_meeting_itself_at_an_angle_is_rounded() {
+    let (area, length) = teardrop_area_and_length();
+    let rim = [[15.5, 0.0, 10.0]];
+    for r in [0.5, 1.0] {
+        let want = 10.0 * area - length * r * r * (1.0 - PI / 4.0)
+            + (3.0 * PI / 4.0 + 1.0) * r.powi(3) * (5.0 / 3.0 - PI / 2.0);
+        let mut k = all_fixes(true);
+        let mut b = teardrop_prism(&mut k);
+        round(&mut k, &mut b, &rim, r);
+        let v = volume(&k, &mut b);
+        eprintln!(
+            "r {r}: volume {v:.15} want {want:.15} ({:.3e}), {} faces",
+            (v - want) / want,
+            faces(&b)
+        );
+        clean(&mut k, &mut b);
+        assert_eq!(faces(&b), 5);
+        assert!((v - want).abs() <= 1e-6 * want, "{v} vs {want}");
+    }
+}
+
+/// A teardrop boss 6 high on a 40 x 40 x 4 plate. The boss's profile is one closed cubic
+/// B-spline from its tip (0, 0) round through (15.5, 0) and back, swept up z, so the boss's
+/// foot is one closed edge that meets itself at a right angle at the tip, where the boss's
+/// side face meets itself along its seam.
+fn teardrop_boss(k: &mut Kernel) -> Brep {
+    use solidcore::curve::curve::Curve;
+    use solidcore::nurbs::b_spline_curve::p1::{
+        BSplineCurve, BSplineCurveForm, CanonicalData, KnotType,
+    };
+    use solidcore::sweep::api_brep::create_linear_sweep;
+    let control = TEARDROP.map(|[x, y]| Vec3::new(x, y, 0.0));
+    let profile = Curve::from(
+        BSplineCurve::create_canonical(&CanonicalData {
+            dim: 3,
+            degree: 3,
+            control_points: &control,
+            form: BSplineCurveForm::default(),
+            knot_multiplicities: &[4, 1, 1, 4],
+            knots: &[0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0],
+            knot_type: KnotType::default(),
+            weights: None,
+            trim: None,
+        })
+        .unwrap(),
+    );
+    let boss = create_linear_sweep(k, &[Some(&profile)], Vec3::Z, 6.0, true).unwrap();
+    let plate = create_box(k, Point3::new(-10.0, -20.0, -4.0), 40.0, 40.0, 4.0).unwrap();
+    boolean_union(k, plate, boss).unwrap()
+}
+
+/// The closed-edge corner where a closed edge meets itself at an angle: the teardrop boss's
+/// foot, rounded r 0.5 and r 1, is the closed Nx1 corner at the tip with and without the
+/// flag (543d25a makes only a closed edge meeting itself G1 the Join). With the flag the
+/// fork's corner there is the angle case alone (smlib#113 caa67d0, 2ac7a17). The volumes
+/// are the port's own (no closed form; the fork was not run on this body): they pin the
+/// results across that change, each body clean with the boss's round and the plate's.
+#[test]
+fn a_closed_edge_meeting_itself_at_an_angle_is_the_closed_corner() {
+    let foot = [[15.5, 0.0, 0.0]];
+    for blend in [true, false] {
+        for (r, want) in [
+            (
+                0.5,
+                if blend {
+                    7133.840112885839517
+                } else {
+                    7133.840112799233793
+                },
+            ),
+            (
+                1.0,
+                if blend {
+                    7140.722103719867846
+                } else {
+                    7140.722104405596838
+                },
+            ),
+        ] {
+            let mut k = all_fixes(blend);
+            let mut b = teardrop_boss(&mut k);
+            let cs = corners(&mut k, &mut b.clone(), &foot, r);
+            assert_eq!(cs.len(), 1);
+            assert!(cs[0].0.distance(Point3::new(0.0, 0.0, 0.0)) <= 1e-12);
+            assert_eq!(
+                (cs[0].1, cs[0].2, cs[0].3),
+                (FilletCornerKind::NByOneClosed, None, 12)
+            );
+            round(&mut k, &mut b, &foot, r);
+            let v = volume(&k, &mut b);
+            eprintln!("blend {blend} r {r}: volume {v:.15}, {} faces", faces(&b));
+            clean(&mut k, &mut b);
+            assert_eq!(faces(&b), 10);
+            assert!((v - want).abs() <= 1e-12 * want, "{v} vs {want}");
+        }
+    }
+}
+
+// ---- #2488: an End's patch keeps its definition ----
+
+use solidcore::surface::procedural_blend::convert::{corner_rebuild, corner_to_record};
+use solidcore::surface::procedural_blend::corner::CornerKind;
+use solidcore::surface::procedural_blend::record::{CornerRecord, SupportRecord};
+use solidcore::surface::procedural_blend::BlendNet;
+use solidcore::surface::surface::Surface;
+use solidcore::topology::face::p2 as face2;
+
+/// The step's front edge rounded r 2 into an End on `wall`, with or without
+/// `fillet_round_as_definition`.
+fn end_on(wall: fn(&mut Kernel) -> Brep, definition: bool) -> (Kernel, Brep) {
+    let mut k = all_fixes(true);
+    k.fixes.fillet_round_as_definition = definition;
+    let mut b = wall(&mut k);
+    round(&mut k, &mut b, &[[30.0, 0.0, 10.0]], 2.0);
+    (k, b)
+}
+
+/// The faces' surfaces whose definition is a corner's of `kind`.
+fn corner_faces(b: &Brep, kind: CornerKind) -> Vec<Surface> {
+    get_faces(b)
+        .unwrap()
+        .into_iter()
+        .filter_map(|f| face2::surface(b, f).unwrap().cloned())
+        .filter(|s| {
+            s.procedural_blend()
+                .and_then(|d| d.corner())
+                .is_some_and(|c| c.kind() == kind)
+        })
+        .collect()
+}
+
+/// Every face's surface over a 9 x 9 grid of its natural domain, as bits.
+fn face_bits(k: &Kernel, b: &Brep) -> Vec<Vec<[u64; 3]>> {
+    get_faces(b)
+        .unwrap()
+        .into_iter()
+        .filter_map(|f| face2::surface(b, f).unwrap())
+        .map(|s| {
+            let d = s.natural_uv_domain_with_nurb(k).unwrap();
+            let mut pts = Vec::new();
+            for i in 0..=8 {
+                for j in 0..=8 {
+                    let u = d.min().x + (d.max().x - d.min().x) * f64::from(i) / 8.0;
+                    let v = d.min().y + (d.max().y - d.min().y) * f64::from(j) / 8.0;
+                    let p = s
+                        .evaluate_point(k, solidcore::geom::vector2d::Point2::new(u, v))
+                        .unwrap();
+                    pts.push([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]);
+                }
+            }
+            pts
+        })
+        .collect()
+}
+
+/// `rec`'s NURBS form moved by `by` along x, y and z.
+fn moved(rec: &SupportRecord, by: f64) -> SupportRecord {
+    let mut rec = rec.clone();
+    if let SupportRecord::Nurbs { form, .. } = &mut rec {
+        let w = form.weights.clone();
+        for (i, p) in form.points.iter_mut().enumerate() {
+            let wi = w.as_ref().map_or(1.0, |w| w[i]);
+            for x in p.iter_mut() {
+                *x += by * wi;
+            }
+        }
+    }
+    rec
+}
+
+#[test]
+fn the_end_patches_are_their_definitions() {
+    for wall in [cylinder_wall as fn(&mut Kernel) -> Brep, sloped_wall] {
+        let (k, mut b) = end_on(wall, true);
+        let ends = corner_faces(&b, CornerKind::End);
+        assert_eq!(ends.len(), 1);
+        for s in &ends {
+            let d = s.procedural_blend().unwrap();
+            assert!(matches!(d.net(), BlendNet::Exact(_)));
+            assert_eq!(d.bound(), 0.0);
+            assert!(d.support(0).is_some());
+            assert_eq!(d.recertify(&k).unwrap(), 0.0);
+        }
+        // the volume and every surface bit for bit as without the definition
+        let (k0, mut b0) = end_on(wall, false);
+        assert!(corner_faces(&b0, CornerKind::End).is_empty());
+        assert_eq!(volume(&k, &mut b).to_bits(), volume(&k0, &mut b0).to_bits());
+        assert_eq!(face_bits(&k, &b), face_bits(&k0, &b0));
+    }
+}
+
+#[test]
+fn an_end_patch_round_trips_through_its_record() {
+    for wall in [cylinder_wall as fn(&mut Kernel) -> Brep, sloped_wall] {
+        let (k, b) = end_on(wall, true);
+        for s in corner_faces(&b, CornerKind::End) {
+            let rec = corner_to_record(&k, &s).unwrap();
+            let json = serde_json::to_string(&rec).unwrap();
+            let back = corner_rebuild(&k, &serde_json::from_str(&json).unwrap()).unwrap();
+            assert_eq!(
+                std::mem::discriminant(back.kind()),
+                std::mem::discriminant(s.kind())
+            );
+            assert_eq!(corner_to_record(&k, &back).unwrap(), rec);
+        }
+    }
+}
+
+#[test]
+fn an_end_patch_off_its_support_is_refused() {
+    for wall in [cylinder_wall as fn(&mut Kernel) -> Brep, sloped_wall] {
+        let (k, b) = end_on(wall, true);
+        let s = &corner_faces(&b, CornerKind::End)[0];
+        let CornerRecord::End(rec) = corner_to_record(&k, s).unwrap() else {
+            panic!("not an end's record");
+        };
+        let mut off = rec.clone();
+        off.support = moved(&rec.support, 1e-3);
+        let why = corner_rebuild(&k, &CornerRecord::End(off))
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("off its support face"), "{why}");
+        let mut off = rec;
+        off.net = moved(&off.net, 1e-3);
+        let why = corner_rebuild(&k, &CornerRecord::End(off))
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("off its support face"), "{why}");
+    }
 }
