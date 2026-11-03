@@ -295,4 +295,27 @@ mod eval_tests {
         e[1] = -2.0;
         assert!(check_args(Op::EdgeOn, &e).is_err());
     }
+
+    /// HANG-29 (nightly fuzz00201): a block value above 1e150 is refused for every op
+    /// that classifies points on the faces, before the export or the op reaches the C++
+    /// (which does not return for the tight box from 1e155 and for both classifications
+    /// from 1e153).
+    #[test]
+    fn huge_block_values_are_refused_before_the_classifying_ops() {
+        let block = [0.0, 1.0, 1e300, -3.5];
+        let box_args = [0.0, 0.0, 1.0, 0.0];
+        let p = [
+            0.0, 1.0, 2.0, 3.0, 1e-6, 0.0, 1.0, 0.5, 0.5, 1.0, 1.0, 1.0, 4.0, 1.0, 0.0,
+        ];
+        let e = [
+            0.0, -1.0, 3.0, 0., 0., 0., 1., 1., 1., 0.5, 0.0, 1.0, 0.0, 1e-6, 1.0,
+        ];
+        for (op, args) in [(Op::Box, &box_args[..]), (Op::Point3d, &p), (Op::EdgeOn, &e)] {
+            let err = eval(op, "", &block, args).err().map(|e| e.to_string());
+            assert!(
+                err.as_deref().is_some_and(|m| m.contains("HANG-29")),
+                "{op:?}: {err:?}"
+            );
+        }
+    }
 }

@@ -918,3 +918,37 @@ impl UnitDiff for Runner {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The nightly fuzz00201 input (`tests/fuzz_corpus/query.face_p1.json`): a tight face
+    /// box on a B-spline face with a control point of 1e300.
+    fn fuzz00201() -> BoxInput {
+        let corpus: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_corpus/query.face_p1.json"
+        ))
+        .expect("corpus parses");
+        let inputs = corpus["cases"][0]["inputs"].clone();
+        serde_json::from_value(inputs).expect("a box input")
+    }
+
+    /// HANG-29: the C++ tight box does not return on this face (from 1e155; the
+    /// classifications from 1e153) and the Rust port took about 18 s, so both sides refuse
+    /// the block before building the B-rep. Without the guard the Rust side returns a box
+    /// after that long run instead of the refusal.
+    #[test]
+    fn fuzz00201_huge_control_point_is_refused_on_both_sides() {
+        let input = fuzz00201();
+        assert!(input.tight);
+        for cpp in [false, true] {
+            let err = run_box(&input, cpp).err().map(|e| e.to_string());
+            assert!(
+                err.as_deref().is_some_and(|m| m.contains("HANG-29")),
+                "cpp={cpp}: {err:?}"
+            );
+            assert!(side_model(&input.brep, cpp).is_err(), "cpp={cpp}");
+        }
+    }
+}
