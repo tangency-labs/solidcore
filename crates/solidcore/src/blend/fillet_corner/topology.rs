@@ -39,6 +39,7 @@ pub mod closed_nx1;
 mod concave_4x2;
 pub mod concave_nxn;
 pub mod end_corners;
+pub mod join;
 mod mixed;
 pub mod mixed_3x2;
 mod swept_turn;
@@ -428,7 +429,7 @@ fn is_fillet_side_face(target: &Brep, filleted: EdgeuseId, face: Option<FaceId>)
     Ok(face == eu1::face(target, radial(target, filleted)?)?)
 }
 
-fn new_corner_vertex(
+pub(crate) fn new_corner_vertex(
     k: &Kernel,
     pseudo: &mut FilletBrep,
     corner: FilletCornerId,
