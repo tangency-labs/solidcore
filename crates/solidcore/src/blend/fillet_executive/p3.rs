@@ -3751,8 +3751,10 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     /// closing to a point, is refused with [`FilletErrorType::NoRoom`]
     /// ([`NoRoomReason::RailBelowResolution`]), naming the largest size whose rails the
     /// part resolves (open) and the size at which the rail closes to a point, which builds
-    /// ([`crate::blend::fillet_exact::rail_below_resolution`]). The least fit of the
-    /// refused solvers is named.
+    /// ([`crate::blend::fillet_exact::rail_below_resolution`]). A rail on the far side of
+    /// the axis is refused whatever its length ([`NoRoomReason::RailPastAxis`]), naming the
+    /// size at which it closes to a point, on the edge's side. The least fit of the refused
+    /// solvers is named.
     fn refuse_rails_below_resolution(
         &mut self,
         k: &mut Kernel,
@@ -3774,6 +3776,15 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         let g = |x: f64| c_general(x, 0, 7);
         let edge = access.creation_solver_fit(solver)?.map(|fit| fit.edge);
         self.note_fit_radius(rail.fit, edge, FitKind::Radius);
+        if rail.past_axis {
+            return self.record_no_room(
+                NoRoomReason::RailPastAxis,
+                &format!(
+                    "Fillet Error: a rail of the blend would lie on the far side of its arc's axis, its section through the axis: the blend is wider than the face it rolls on allows. A size of at most {} builds, where the rail closes to a point",
+                    g(rail.point_size)
+                ),
+            );
+        }
         self.record_no_room(
             NoRoomReason::RailBelowResolution,
             &format!(

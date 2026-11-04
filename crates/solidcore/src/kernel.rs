@@ -1622,8 +1622,11 @@ pub struct UpstreamFixes {
     /// without closing to a point is refused with `FilletErrorType::NoRoom`
     /// (`NoRoomReason::RailBelowResolution`), naming the largest size whose rails the part
     /// resolves (open; on the error, `SolidError::FilletRefused`) and the size at which the
-    /// rail closes to a point, which builds. Both in closed form: the rails' radii move
-    /// linearly with the ball's. Without it a chamfer just short of the corner rounds it
+    /// rail closes to a point, which builds; a rail on the far side of the arc's axis from
+    /// the edge (its section through the axis: a chamfer wider than the round it runs
+    /// round, which built a body of more volume than the round's own size) is refused
+    /// whatever its length (`NoRoomReason::RailPastAxis`), naming that size. Both in closed
+    /// form: the rails' radii move linearly with the ball's. Without it a chamfer just short of the corner rounds it
     /// runs round (d 4.9998 to 4.999999 on R5, the bottom face's corner arcs of radius
     /// 5 - d) builds a body of no volume or fails with a bare status 1001 (WR-739, #2546;
     /// solidcore-native; owner ruling on #2546: refused, never collapsed).

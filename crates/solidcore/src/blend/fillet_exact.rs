@@ -1706,6 +1706,9 @@ pub struct RailBelowResolution {
     pub fit: f64,
     /// The ball radius at which the rail closes to a point on the axis, which builds.
     pub point_size: f64,
+    /// The rail lies on the far side of the axis from the edge (its section runs through
+    /// the axis): refused whatever its length, `fit` is then `point_size`.
+    pub past_axis: bool,
 }
 
 /// A coaxial quadric's trace in the meridian half-plane of `axis` through the edge, as a
@@ -1774,8 +1777,12 @@ fn foot_on(line: ([f64; 2], [f64; 2]), m: [f64; 2]) -> [f64; 2] {
 /// to a point at `t0 = -R_e / g` (`g` that slope) and leaves the resolution at
 /// `r_i(t) = 2 tol R_e / C_e`. A rail at a point to rounding (`|r_i| <= EFF_ZERO (1 +
 /// R_e)`: the ball's centre on the axis, a chamfer as wide as the round it runs round)
-/// is not refused: it builds as the cone's apex. `None` for a closed edge, faces of
-/// other kinds or placements, and rails longer than the resolution.
+/// is not refused: it builds as the cone's apex. A rail on the far side of the axis from
+/// the edge (`r_i < 0`: the ball's section runs through the axis, a chamfer wider than the
+/// round it runs round) is no blend of the edge whatever its length: it is reported
+/// `past_axis`, with `t0` as its fit, the largest size on the edge's side, which builds.
+/// `None` for a closed edge, faces of other kinds or placements, and rails on the edge's
+/// side longer than the resolution.
 ///
 /// # Errors
 ///
@@ -1885,20 +1892,27 @@ pub fn rail_below_resolution(
     for face in [face_a, face_b] {
         let r = foot_on(face, centre)[0];
         let chord = edge_chord * r.abs() / edge_radius;
-        if r.abs() <= point_zero || chord > resolution {
+        let past_axis = r < 0.0;
+        if r.abs() <= point_zero || (!past_axis && chord > resolution) {
             continue;
         }
         let slope = (r - edge_radius) / d;
         if slope.abs() <= EFF_ZERO {
             continue;
         }
-        let least = resolution * edge_radius / edge_chord;
-        let fit = (least.copysign(r) - edge_radius) / slope;
+        let point_size = -edge_radius / slope;
+        // on the edge's side: where the rail's ends come to the resolution, short of t0
+        let fit = if past_axis {
+            point_size
+        } else {
+            (resolution * edge_radius / edge_chord - edge_radius) / slope
+        };
         let rail = RailBelowResolution {
             chord,
             resolution,
             fit: fit.max(0.0),
-            point_size: -edge_radius / slope,
+            point_size,
+            past_axis,
         };
         if worst.is_none_or(|w| rail.fit < w.fit) {
             worst = Some(rail);
