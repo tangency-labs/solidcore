@@ -27,9 +27,8 @@
 //! | [`FilletBrep::update_geom_split_face`]            | `SmFilletGeom::UpdateSplitFace`                  |
 //!
 //! Deviations:
-//! - **Tangent ends (opt-in, WR-600's flag).** With
-//!   `fixes.fillet_nx1_tangent_side_edge_same_convexity` (the fork's
-//!   tangency-labs/smlib@856b54e), `CalcFilletIntSideFace` builds the end rib of a
+//! - **Tangent ends (WR-600, the fork's tangency-labs/smlib@856b54e).**
+//!   `CalcFilletIntSideFace` builds the end rib of a
 //!   fillet with a tangent end vertex from that end outward
 //!   ([`super::tangent_end_rib`]) instead of intersecting the surfaces, and
 //!   `CalcEdgeOnExtendedEdge` takes the cap edge on a tangent seam as the seam's own curve
@@ -142,8 +141,7 @@ const OP_INT_FILLET: &str = "blend::fillet_geom::p5::FilletBrep::calc_fillet_int
 const OP_CROSS: &str = "blend::fillet_geom::p5::FilletBrep::calc_cross_section";
 const OP_SIDE: &str = "blend::fillet_geom::p5::FilletBrep::calc_fillet_int_side_face";
 
-/// Not the fork's (#2406; `fixes.fillet_blend_corner` with
-/// `fixes.fillet_round_as_definition`): where the plane `end` holds a section of the round
+/// Not the fork's (#2406; with `fixes.fillet_round_as_definition`): where the plane `end` holds a section of the round
 /// `fillet` by its definition (a [`SurfaceKind::ProceduralBlend`]) that runs from one of
 /// `ends` (the rib's start, then its end) to the other, the end rib is that section: the
 /// definition's rational quadratic arc of the ball's circle (`EvaluateDefinition`, order 1)
@@ -1038,13 +1036,6 @@ impl FilletBrep {
                             at_start_of_geom2 = fs2.vertex(target.brep(), 0)? == filleted_vertex;
                             check_connectivity = true;
                         }
-                        // never blending with `fillet_blend_corner`: its G1 case is the
-                        // Join's (WR-697; smlib#113 2ac7a17)
-                        FilletCornerType::NByOneClosed
-                            if !k.fixes.fillet_blend_corner && the_corner.is_blending_corner() =>
-                        {
-                            check_connectivity = true;
-                        }
                         _ => {}
                     }
 
@@ -1114,13 +1105,9 @@ impl FilletBrep {
         let closed_blending = match corner {
             Some(c) => {
                 let c = corners.corner(c)?;
-                // the fork's `|| IsClosedJoin()` (543d25a), and with the flag the closed Join
-                // alone (smlib#113 2ac7a17; WR-697)
-                ((c.corner_type() == FilletCornerType::NByOneClosed
-                    && !k.fixes.fillet_blend_corner)
-                    || c.is_closed_join())
-                    && g1 == g2
-                    && c.is_blending_corner()
+                // the fork's closed Join (543d25a, smlib#113 2ac7a17; WR-697): a closed edge
+                // meeting itself G1, where upstream's closed Nx1 corner blends
+                c.is_closed_join() && g1 == g2 && c.is_blending_corner()
             }
             None => false,
         };
@@ -1172,12 +1159,8 @@ impl FilletBrep {
         let closed = match corner {
             Some(c) => {
                 let c = corners.corner(c)?;
-                // the fork's `|| IsClosedJoin()` (543d25a), and with the flag the closed Join
-                // alone (smlib#113 2ac7a17; WR-697)
-                ((c.corner_type() == FilletCornerType::NByOneClosed
-                    && !k.fixes.fillet_blend_corner)
-                    || c.is_closed_join())
-                    && g1 == g2
+                // the fork's closed Join (543d25a, smlib#113 2ac7a17; WR-697)
+                c.is_closed_join() && g1 == g2
             }
             None => false,
         };
@@ -1417,16 +1400,14 @@ impl FilletBrep {
             // do Surface/surface xSect
             let ang_tol = fs1.ang_tol_rad;
             let mut dir = end_pnt - start_pnt;
-            // With `tangent_seam_ends` (WR-600's flag or the blend corner; the
-            // fork's tangency-labs/smlib@856b54e): at a tangent end
+            // WR-600 (the fork's tangency-labs/smlib@856b54e, the blend corner's End): at a
+            // tangent end
             // (`make_nx1_corner_topology`) the fillet surface and the end face touch where
             // the rail crosses the seam, and the end rib is built from that end outward
             // (`tangent_end_rib`), never intersected into it.
             let start_tangent = self.fillet_vertex(start_fv)?.is_tangent_end();
             let end_tangent = self.fillet_vertex(end_fv)?.is_tangent_end();
-            let intersection = if crate::blend::fillet_corner::topology::tangent_seam_ends(k)
-                && (start_tangent || end_tangent)
-            {
+            let intersection = if start_tangent || end_tangent {
                 if start_tangent && end_tangent {
                     // an end rib between two tangent ends
                     return Err(SolidError::sm_err(OP_SIDE));
@@ -1484,9 +1465,7 @@ impl FilletBrep {
                 // Not the fork's (#2406): an End's plane that holds a section of a round
                 // by its definition through both rail ends cuts the round in that section
                 Some(surface)
-                    if k.fixes.fillet_blend_corner
-                        && k.fixes.fillet_round_as_definition
-                        && the_corner.end_cap.is_some() =>
+                    if k.fixes.fillet_round_as_definition && the_corner.end_cap.is_some() =>
                 {
                     definition_section_in_plane(
                         k,
@@ -1647,30 +1626,28 @@ impl FilletBrep {
             return Err(SolidError::sm_err(OP_EXT_EDGE));
         }
         let the_corner = corners.corner(corner)?;
-        // With `tangent_seam_ends` (WR-600's flag or the blend corner; the
-        // fork's tangency-labs/smlib@856b54e): a tangent seam T, the edge whose faces meet
+        // WR-600 (the fork's tangency-labs/smlib@856b54e, the blend corner's End): a
+        // tangent seam T, the edge whose faces meet
         // tangentially, where a tangent end's rail crosses it
         // (`make_nx1_corner_topology`). The cap edge from that end to the corner's vertex
         // is a piece of T, on the edge or on its continuation past the vertex: the edge's
         // own curve, continued as itself. Its faces' surfaces touch along T, so it is
         // never their intersection.
-        if crate::blend::fillet_corner::topology::tangent_seam_ends(k) {
-            if let (Some(&seam_eu), Some(vertex)) = (
-                edge::edgeuses(target, orig_edge, None, None)?.first(),
-                the_corner.vertex,
-            ) {
-                // `EvaluateBinormal` may build a missing UV trim (a cached member upstream);
-                // the check runs on a scratch copy so the target stays as it is.
-                let mut scratch = target.clone();
-                if crate::blend::fillet_corner::topology::check_tangential_edgeuse_at_vertex(
-                    k,
-                    &mut scratch,
-                    seam_eu,
-                    vertex,
-                    crate::math::rad_to_deg(the_corner.tangency_tol_radians),
-                )? {
-                    return self.calc_edge_on_tangent_seam(k, e, the_corner, target, orig_edge);
-                }
+        if let (Some(&seam_eu), Some(vertex)) = (
+            edge::edgeuses(target, orig_edge, None, None)?.first(),
+            the_corner.vertex,
+        ) {
+            // `EvaluateBinormal` may build a missing UV trim (a cached member upstream);
+            // the check runs on a scratch copy so the target stays as it is.
+            let mut scratch = target.clone();
+            if crate::blend::fillet_corner::topology::check_tangential_edgeuse_at_vertex(
+                k,
+                &mut scratch,
+                seam_eu,
+                vertex,
+                crate::math::rad_to_deg(the_corner.tangency_tol_radians),
+            )? {
+                return self.calc_edge_on_tangent_seam(k, e, the_corner, target, orig_edge);
             }
         }
         // Past a tangent side edge (`make_nx1_corner_topology`), the extended edge
@@ -1743,8 +1720,8 @@ impl FilletBrep {
         Ok(())
     }
 
-    /// `SmFilletEdge::CalcEdgeOnTangentSeam` (the fork's tangency-labs/smlib@856b54e, under
-    /// WR-600's `fillet_nx1_tangent_side_edge_same_convexity`): the curve of an
+    /// `SmFilletEdge::CalcEdgeOnTangentSeam` (the fork's tangency-labs/smlib@856b54e,
+    /// WR-600): the curve of an
     /// `SM_FE_ON_EXTEND_EDGE` fillet edge `e` on a tangent seam T, the cap edge from a
     /// tangent end (where a rail crosses T) to the corner's vertex. It is T's own curve
     /// (`orig_edge`'s) between the edge's two vertices, continued as itself

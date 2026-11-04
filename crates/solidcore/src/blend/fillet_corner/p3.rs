@@ -704,9 +704,9 @@ pub struct FilletCorner {
     /// by [`Self::is_mitre`].
     pub mitre: bool,
     /// The fork's blend corner (`SmBlendCorner`, smlib#79 step 4b; WR-697): its event and
-    /// turn where the corner is one (`Kernel::fixes.fillet_blend_corner`), `None` for the
-    /// pinned corners. A blend corner is built by the Nx2 port (see
-    /// [`crate::blend::blend_corner`]).
+    /// turn where the corner is one, `None` for the pinned corners that remain (the closed
+    /// Nx1 corner's angle case, the 3x2 mixed-convexity, 4x3 and N x N corners). A blend
+    /// corner is built by the Nx2 port (see [`crate::blend::blend_corner`]).
     pub blend: Option<crate::blend::blend_corner::BlendCorner>,
     /// The fork's Swept turn's own members (`m_pSideEU`, `m_pTurnSurface` and its loop;
     /// WR-697): set by its topology on a blend corner that is a Swept turn.
@@ -1334,7 +1334,7 @@ impl FilletCorner {
             1 => {
                 let eu0 = start_eu;
                 let e = edge_of(b, eu0)?;
-                if edge::is_closed(b, e)? && k.fixes.fillet_blend_corner {
+                if edge::is_closed(b, e)? {
                     // The fork's (WR-697, smlib#79 step 4d, 543d25a): a closed edge meeting
                     // itself G1 is the blend corner's Join (its shared section)
                     match total_eus {
@@ -1353,21 +1353,7 @@ impl FilletCorner {
                         }
                         _ => None, // MSG: Corner Case Not Implemented
                     }
-                } else if edge::is_closed(b, e)? {
-                    // Corner with one 'closed' edge filleted
-                    match total_eus {
-                        // Need to be G1-closed
-                        1 => {
-                            if test_g1_continuity(k, b, vertex, e, e, tan_tol_deg)? {
-                                Some(make(FilletCornerKind::OneByOne))
-                            } else {
-                                None // MSG: Corner Case Not Implemented
-                            }
-                        }
-                        2 | 3 => Some(make(FilletCornerKind::NByOneClosed)),
-                        _ => None, // MSG: Corner Case Not Implemented
-                    }
-                } else if k.fixes.fillet_blend_corner {
+                } else {
                     // The fork's (WR-697, 53c47b8): one blend ending at the vertex is the
                     // blend corner's End, its kind chosen here; the three kinds are the
                     // degenerate, open and Nx1 corners' constructions, moved unchanged
@@ -1408,13 +1394,6 @@ impl FilletCorner {
                             BlendEnd::OnEndFace,
                         ))
                     }
-                } else if check_nx1_degeneracy(k, b, vertex, eu0)? {
-                    // Degeneracy-check needs to be checked first
-                    Some(make(FilletCornerKind::Degenerate))
-                } else if is_open_end_corner {
-                    Some(make(FilletCornerKind::Open))
-                } else {
-                    Some(make(FilletCornerKind::NByOne))
                 }
             }
             2 => {
@@ -1458,18 +1437,14 @@ impl FilletCorner {
                             let e0 = edge_of(b, eu0)?;
                             let e1 = edge_of(b, eu1_)?;
                             if test_g1_continuity(k, b, vertex, e0, e1, tan_tol_deg)? {
-                                if k.fixes.fillet_blend_corner {
-                                    // The fork's (WR-697, 68e039c): two edges continuing
-                                    // each other alone at the vertex are the blend
-                                    // corner's Join (its shared section)
-                                    Some(blend_corner(
-                                        FilletCornerKind::NByTwo,
-                                        BlendCornerEvent::Join,
-                                        BlendEnd::OnEndFace,
-                                    ))
-                                } else {
-                                    Some(make(FilletCornerKind::TwoByTwo))
-                                }
+                                // The fork's (WR-697, 68e039c): two edges continuing each
+                                // other alone at the vertex are the blend corner's Join
+                                // (its shared section)
+                                Some(blend_corner(
+                                    FilletCornerKind::NByTwo,
+                                    BlendCornerEvent::Join,
+                                    BlendEnd::OnEndFace,
+                                ))
                             } else {
                                 None // MSG: Corner Case Not Implemented
                             }
@@ -1484,23 +1459,19 @@ impl FilletCorner {
                                 // seam are the blend corner's Mixed
                                 // (SmBlendCorner::ClassifyMixed); a failed classification
                                 // builds no corner.
-                                let mixed = if k.fixes.fillet_blend_corner {
-                                    let lookup = |eu: EdgeuseId| solver_of(eu).ok();
-                                    match crate::blend::blend_corner::mixed::classify_mixed(
-                                        k,
-                                        b,
-                                        vertex,
-                                        solver_eus,
-                                        &all_eus,
-                                        &lookup,
-                                        tan_tol_deg,
-                                    ) {
-                                        Ok(found) => Some(found),
-                                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
-                                        Err(_) => None,
-                                    }
-                                } else {
-                                    Some(false)
+                                let lookup = |eu: EdgeuseId| solver_of(eu).ok();
+                                let mixed = match crate::blend::blend_corner::mixed::classify_mixed(
+                                    k,
+                                    b,
+                                    vertex,
+                                    solver_eus,
+                                    &all_eus,
+                                    &lookup,
+                                    tan_tol_deg,
+                                ) {
+                                    Ok(found) => Some(found),
+                                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                                    Err(_) => None,
                                 };
                                 if mixed == Some(true) {
                                     let mut c = make(FilletCornerKind::NByTwo);
@@ -1536,7 +1507,7 @@ impl FilletCorner {
                                     });
                                 }
                                 Some(make(FilletCornerKind::ThreeByTwoMixed))
-                            } else if k.fixes.fillet_blend_corner {
+                            } else {
                                 // The fork's (WR-697, smlib#79 step 4b, 74e9beb): two blends of
                                 // one convexity among three or four edges are the blend
                                 // corner's (SmBlendCorner::Classify: a Turn or a Join), built
@@ -1552,9 +1523,6 @@ impl FilletCorner {
                                 let mut c = make(FilletCornerKind::NByTwo);
                                 c.blend = Some(blend);
                                 Some(c)
-                            } else {
-                                // else continue with case 4
-                                Some(make(FilletCornerKind::NByTwo))
                             }
                         }
                         _ => None, // MSG: Corner Case Not Implemented
@@ -2689,13 +2657,12 @@ impl FilletCorner {
 
     // ---- AdjustTangentCorner ---------------------------------------------------------
 
-    /// `AdjustTangentCorner` (virtual): the Nx2 and the closed Nx1 overrides; every other
-    /// kind does nothing.
+    /// `AdjustTangentCorner` (virtual): the Nx2 override; every other kind does nothing
+    /// (the closed Nx1 corner has none since the fork's smlib#113 caa67d0).
     ///
     /// # Errors
     ///
-    /// Those of [`FilletCorner::adjust_tangent_corner_nx2`] and
-    /// [`FilletCorner::adjust_tangent_corner_nx1_closed`].
+    /// Those of [`FilletCorner::adjust_tangent_corner_nx2`].
     pub fn adjust_tangent_corner(&mut self, env: &mut CornerEnv<'_>) -> Result<()> {
         let CornerEnv {
             k,
@@ -2718,11 +2685,9 @@ impl FilletCorner {
             corner: *corner,
             ops: &mut ops,
         };
-        self.adjust_tangent_corner_with(
-            &mut env,
-            |corner, env| corner.adjust_tangent_corner_nx2(env),
-            |corner, env| corner.adjust_tangent_corner_nx1_closed(env),
-        )
+        self.adjust_tangent_corner_with(&mut env, |corner, env| {
+            corner.adjust_tangent_corner_nx2(env)
+        })
     }
 
     /// Dispatch tangent adjustment against the caller's actual derived context.
@@ -2734,7 +2699,6 @@ impl FilletCorner {
         &mut self,
         context: &mut C,
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
-        nx1_closed: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
         // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Ball, a Setback, a Mixed
         // corner, a Join, an End or a Swept turn (WR-697; 543d25a, 53c47b8; the Mitre turn's is
@@ -2761,7 +2725,6 @@ impl FilletCorner {
         }
         match self.kind {
             FilletCornerKind::NByTwo => nx2(self, context),
-            FilletCornerKind::NByOneClosed => nx1_closed(self, context),
             _ => Ok(()),
         }
     }
@@ -4209,14 +4172,10 @@ mod tests {
             let mut c = FilletCorner::new(FilletCornerKind::NByTwo, None, None, None, 1e-3, 0.1);
             c.blend = blend;
             let mut nx2 = false;
-            c.adjust_tangent_corner_with(
-                &mut nx2,
-                |_, nx2| {
-                    *nx2 = true;
-                    Ok(())
-                },
-                |_, _| Ok(()),
-            )
+            c.adjust_tangent_corner_with(&mut nx2, |_, nx2| {
+                *nx2 = true;
+                Ok(())
+            })
             .unwrap();
             nx2
         };

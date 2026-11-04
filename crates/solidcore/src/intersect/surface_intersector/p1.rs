@@ -1216,7 +1216,7 @@ impl<'s> SurfaceIntersector<'s> {
         })
     }
 
-    /// Not upstream (WR-697 addendum, with `fixes.fillet_blend_corner`): whether the span
+    /// Not upstream (WR-697 addendum): whether the span
     /// from `a` to `b` passes the tests [`Self::test_span_accuracy`] makes of a traced
     /// span, without touching either point: the tangent turn within `this_ang_tol_rad`,
     /// and at the same five interior parameters the 3D Hermite span and the two UV
