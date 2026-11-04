@@ -377,6 +377,19 @@ class FetchReportsTest(unittest.TestCase):
         self.assertIn("run\tdownload\t101", log)
         self.assertIn("run\tdownload\t202", log)
 
+    def test_candidate_retry_after_successful_rollback(self):
+        self.write_files(self.dest, {"old.json": "old"})
+        self.stage("101", {"z-fail.json": "first"})
+        self.stage("202", {"second.json": "second"})
+
+        result = self.run_script(FAKE_GH_RUNS="101,202",
+                                 FAKE_MV_FAIL_SUBSTRING="z-fail.json")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("previous reports restored", result.stderr)
+        self.assertEqual((self.dest / "second.json").read_text(), "second")
+        self.assertIn("run\tdownload\t202", (self.root / "gh.log").read_text())
+
     def test_candidate_retry_after_an_empty_artifact(self):
         self.write_files(self.dest, {"old.json": "old"})
         self.stage("101")
