@@ -382,6 +382,18 @@ for variant in root upstream out combined; do
   fi
 done
 
+# Static paths containing shell syntax must remain data, not shell code.
+rig=$(make_rig 'quote'"'"'" dollar$ backtick` semicolon;')
+out=$rig/'out-{}-"-$-`-;'
+export RUN_EXPECT_OUT=$out
+status=$(run_digest "$rig" "$rig/run.log" --jobs 2 --out "$out" --unit unit.one --unit unit.two)
+unset RUN_EXPECT_OUT
+if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 4 compared' "$rig/run.log"; then
+  ok 'shell metacharacters in static paths stay literal data'
+else
+  no 'shell metacharacters in static paths stay literal data' "exit $status: $(tail -n 1 "$rig/run.log")"
+fi
+
 # --- 11. empty selection must not launch a unit helper ----------------------
 rig=$(make_rig empty)
 cat >"$rig/fakebin/xargs" <<'SH'
