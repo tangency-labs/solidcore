@@ -103,6 +103,13 @@ pub struct PlanStats {
     /// split: their chords may lie off them by more than the tolerance (no refinement follows an
     /// edge's sampling), each named with the bound and how far its chords lie off.
     pub edges_capped: Vec<CappedEdge>,
+    /// Poles of higher order (no normal at the point) whose limit normal the kernel refused
+    /// for one of their triangles (a pole of order four or more, or another refusal): each is
+    /// meshed on the planner's layout, its normal the area-weighted mean of the face's
+    /// triangles' normals there, a display normal only, named here with the kernel's reason.
+    /// The other poles of higher order get the exact limit normal per triangle
+    /// ([`crate::PoleRule`]).
+    pub averaged_poles: Vec<crate::AveragedPole>,
 }
 
 /// An edge a bound of its sampling stopped (see [`PlanStats::edges_capped`]).
@@ -593,7 +600,11 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
                 },
                 ..fp
             };
-            Ok((fp, stats))
+            // Its poles of higher order and their normals, on the oriented triangles.
+            let (poles, averaged) = crate::pole::plan_poles(fi, eval, &fp, fb.reach);
+            let mut stats = stats;
+            stats.averaged_poles = averaged;
+            Ok((FacePlan { poles, ..fp }, stats))
         },
     );
     let mut plan = TessPlan::default();
@@ -660,6 +671,7 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         stats.delaunay += s.delaunay;
         stats.lenient.extend(s.lenient);
         stats.over_tolerance.extend(s.over_tolerance);
+        stats.averaged_poles.extend(s.averaged_poles);
     }
     if let Some(e) = first_error
         && stats.unmeshed.len() == faces.len()
@@ -2319,6 +2331,7 @@ fn plan_face(
         normals: Vec::new(),
         flip: false,
         triangles,
+        poles: Vec::new(),
     })
 }
 

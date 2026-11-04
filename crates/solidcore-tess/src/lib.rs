@@ -23,6 +23,7 @@ mod mesh;
 mod par;
 mod plan;
 mod planner;
+mod pole;
 pub mod preview;
 mod ring;
 pub mod simplify;
@@ -36,6 +37,7 @@ pub use planner::{
     Cap, CappedEdge, EdgeCap, MAX_ANGLE_BOUNDARY, OverTolerance, PlanStats, RefusedEdge,
     RefusedFace, plan,
 };
+pub use pole::{AveragedPole, PoleNode, PoleRule};
 pub use tolerance::{DISPLAY_ANGLE, MeshTolerance};
 
 /// Why a body could not be planned. The messages are the ones the mesher has always reported.
