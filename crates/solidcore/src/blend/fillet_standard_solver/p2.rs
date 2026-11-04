@@ -2764,6 +2764,11 @@ impl CircularCrossSectionFsg {
 
 const OP_PIECEWISE: &str = "blend::fillet_standard_solver::p2::piecewise_surface";
 
+/// The most bisection steps a variable round's definition takes to find where its law falls
+/// to the tolerance in the span of stations where it stops being positive (64: past the
+/// span's rounding, where the bisection stops on its own).
+const CROSSING_STEPS: usize = 64;
+
 /// What the fork's circle generator reads off its solver for the round by its definition
 /// (`SmGnSectionFSG::CircleSurface`, cc08236): a constant-radius solver's radii
 /// (`static_cast<SmConstantRadiusFS *>(&rFilletSolver)->GetFilletRadius(0)`, `(1)`;
@@ -2952,11 +2957,14 @@ impl CircularCrossSectionFsg {
     /// not exact (approximated, mirrored or the larger arc), the solver is neither a
     /// constant-radius one with one radius above the tolerance nor (0d43b4c, b8e3594) an
     /// edge's variable-radius one whose law is a B-spline or linear one, its base curve a
-    /// B-spline curve and its law above the tolerance over the solver's stations, the
-    /// circles sweep a cylinder or revolve a torus (which stay those exact surfaces), the
-    /// rails meet at an end (the section fades to a point there, which the definition does
-    /// not take yet), or the solver's rails are not the ball's feet on the two faces
-    /// everywhere (a rail held on a face's boundary while the ball rolls on its edge).
+    /// B-spline curve and its law above the tolerance over the solver's stations (one piece
+    /// of a law-cornered round, not the fork's, #430: over its stations on the edge, the
+    /// piece then taking the stations on past the edge's ends while the law stays so and
+    /// running on into the span where it stops, so as to reach past the end faces' cuts),
+    /// the circles sweep a cylinder or revolve a torus (which
+    /// stay those exact surfaces), the rails meet at an end (the section fades to a point
+    /// there, which the definition does not take yet), or the solver's rails are not the
+    /// ball's feet on the two faces everywhere (a rail held on a face's boundary while the ball rolls on its edge).
     /// `None`: the round is built as before.
     ///
     /// # Errors
@@ -3035,7 +3043,8 @@ impl CircularCrossSectionFsg {
         // the ball's radius: the constant radius solver's, the same for both faces; or the
         // variable radius solver's law over the edge's curve (law_in_parameter, 0d43b4c)
         let mut radius = 0.0;
-        let mut law_curves: Option<(BSplineCurve, BSplineCurve)> = None;
+        let mut law_curves: Option<(BSplineCurve, BSplineCurve, Vec<TsectPnt>, Option<Extent1d>)> =
+            None;
         match (solver_type, ball.radii, ball.law.as_ref()) {
             (FilletSolverType::ConstRadius, Some([r0, r1]), _) => {
                 let above_tol = r0 > approx_tol_3d;
@@ -3058,11 +3067,13 @@ impl CircularCrossSectionFsg {
                 let Some(mut law) = law_in_parameter(lb)? else {
                     return Ok(None);
                 };
+                // (the law's own parameters, the edge's, before any piece's cut)
+                let own = law.natural_interval();
                 // (one piece of a law-cornered round: the law cut at the piece's corners, so
                 // carried on past them with the piece's own end spans, as past the law's own
                 // ends, which the stations run beyond)
                 if let Some(span) = lb.span {
-                    let whole = law.natural_interval();
+                    let whole = own;
                     let mut cut = Extent1d::from_min_max(
                         span.min().max(whole.min()),
                         span.max().min(whole.max()),
@@ -3081,25 +3092,118 @@ impl CircularCrossSectionFsg {
                 }
                 // the solver's stations run past the edge's ends, the law continued there:
                 // a ball of the law's radius exists over them only where it stays positive
-                // (an enclosure of the law over their range)
-                let mut t0 = BIG_DOUBLE;
-                let mut t1 = -BIG_DOUBLE;
-                for p in points {
-                    let t = p.user_doubles.first().copied().unwrap_or(f64::NAN);
-                    t0 = if t0 < t { t0 } else { t }; // smos_Min
-                    t1 = if t1 > t { t1 } else { t }; // smos_Max
-                }
+                // (an enclosure of the law). A whole round, the fork's, asks it over all of
+                // them. One piece of a law-cornered round (not the fork's, #430) asks it over
+                // each span between two stations: the piece is the stations on the law's own
+                // parameters, the edge's, over which it must stay positive, and the stations
+                // on from them until it does not, the end faces cutting the rest away. Into
+                // the span where it stops, the piece runs on halfway to where the law falls
+                // to the tolerance: past its last station, which is at or past its ends there
+                // (the corners' rail ends are stations, where a ball touches), so that the end
+                // face's cut is inside it, as it is inside the solver's rails, and clear of
+                // where the ball fades to a point
                 let law_n = NurbsCurve::of(&law)?;
-                let has_range = t1 > t0;
-                let positive = has_range
-                    && curve_derivs_over(&law_n, Ivl::new(t0, t1), 0, None)
-                        .ok()
-                        .and_then(|r| r.first().map(|r0| r0.x.lo > approx_tol_3d))
-                        .unwrap_or(false);
-                if !positive {
-                    return Ok(None);
+                let t_of = |p: &TsectPnt| p.user_doubles.first().copied().unwrap_or(f64::NAN);
+                let mut by_t: Vec<&TsectPnt> = points.iter().collect();
+                by_t.sort_by(|a, b| t_of(a).total_cmp(&t_of(b)));
+                // the law above the tolerance over t from `t0` to `t1` (t0 <= t1)
+                let stays = |t0: f64, t1: f64| {
+                    t0 <= t1
+                        && curve_derivs_over(&law_n, Ivl::new(t0, t1), 0, None)
+                            .ok()
+                            .and_then(|r| r.first().map(|r0| r0.x.lo > approx_tol_3d))
+                            .unwrap_or(false)
+                };
+                if lb.span.is_none() {
+                    // a whole round, the fork's (0d43b4c): its law above the tolerance over
+                    // all the solver's stations
+                    let (Some(&a), Some(&b)) = (by_t.first(), by_t.last()) else {
+                        return Ok(None);
+                    };
+                    let (t0, t1) = (t_of(a), t_of(b));
+                    let whole = t1 > t0 && stays(t0, t1);
+                    if !whole {
+                        return Ok(None);
+                    }
+                    law_curves = Some((leader, law, points.to_vec(), None));
+                } else {
+                    let positive = |a: &TsectPnt, b: &TsectPnt| stays(t_of(a), t_of(b));
+                    let on_edge = |p: &&TsectPnt| own.contains_value(t_of(p), 0.0);
+                    let (Some(first), Some(last)) = (
+                        by_t.iter().position(on_edge),
+                        by_t.iter().rposition(on_edge),
+                    ) else {
+                        return Ok(None);
+                    };
+                    let span_positive = |i: usize| match (by_t.get(i), by_t.get(i + 1)) {
+                        (Some(a), Some(b)) => positive(a, b),
+                        _ => false,
+                    };
+                    if (first..last).any(|i| !span_positive(i)) {
+                        return Ok(None);
+                    }
+                    let mut lo = first;
+                    while lo > 0 && span_positive(lo - 1) {
+                        lo -= 1;
+                    }
+                    let mut hi = last;
+                    while span_positive(hi) {
+                        hi += 1;
+                    }
+                    let (Some(&a), Some(&b)) = (by_t.get(lo), by_t.get(hi)) else {
+                        return Ok(None);
+                    };
+                    // the round's end t into the span from `from` to `beyond`, over which the law
+                    // is not positive: halfway from `from` to the law's crossing of the tolerance
+                    // there (by bisection); `None` where the law does not fall to it at `beyond`
+                    // or does not stay above it up to that end
+                    let run_on = |from: &TsectPnt, beyond: Option<&&TsectPnt>| {
+                        let t = t_of(from);
+                        let Some(beyond) = beyond else {
+                            return Some(t);
+                        };
+                        let (mut inside, mut outside) = (t, t_of(beyond));
+                        if stays(outside, outside) {
+                            return None;
+                        }
+                        for _ in 0..CROSSING_STEPS {
+                            let mid = 0.5 * (inside + outside);
+                            if mid == inside || mid == outside {
+                                break;
+                            }
+                            if stays(mid, mid) {
+                                inside = mid;
+                            } else {
+                                outside = mid;
+                            }
+                        }
+                        let end = 0.5 * (t + inside);
+                        stays(t.min(end), t.max(end)).then_some(end)
+                    };
+                    let before = lo.checked_sub(1).and_then(|i| by_t.get(i));
+                    let after = by_t.get(hi + 1);
+                    let (Some(start), Some(end)) = (run_on(a, before), run_on(b, after)) else {
+                        return Ok(None);
+                    };
+                    let range = Extent1d::from_min_max(start, end);
+                    if range.length() <= 0.0 {
+                        return Ok(None);
+                    }
+                    // (the stations beyond a run-on end seed the round's end station there)
+                    let first_kept = match before {
+                        Some(_) if range.min() < t_of(a) => lo - 1,
+                        _ => lo,
+                    };
+                    let last_kept = match after {
+                        Some(_) if range.max() > t_of(b) => hi + 1,
+                        _ => hi,
+                    };
+                    let kept = by_t
+                        .get(first_kept..=last_kept)
+                        .map(|run| run.iter().map(|&p| p.clone()).collect())
+                        .unwrap_or_default();
+                    law_curves = Some((leader, law, kept, Some(range)));
                 }
-                law_curves = Some((leader, law));
             }
             _ => return Ok(None),
         }
@@ -3118,11 +3222,14 @@ impl CircularCrossSectionFsg {
             return Ok(None);
         }
         let mut gn = GnSectionFsg::circle(arcs);
-        let law_round = law_curves.as_ref().map(|(leader, law)| GnLawRound {
-            leader,
-            law,
-            points,
-        });
+        let law_round = law_curves
+            .as_ref()
+            .map(|(leader, law, kept, range)| GnLawRound {
+                leader,
+                law,
+                points: kept,
+                range: *range,
+            });
         gn.build_given_ball(
             k,
             center_line,

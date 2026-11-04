@@ -177,6 +177,7 @@ fn build(k: &Kernel) -> Round {
         leader: &lead,
         law: &law,
         points: &pts,
+        range: None,
     };
     let s = g
         .build_given_ball(

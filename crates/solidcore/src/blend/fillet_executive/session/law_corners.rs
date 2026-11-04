@@ -293,7 +293,8 @@ impl FilletSession<'_> {
     /// no piece's or a piece with two faces, and for lamina edges left by the stitch;
     /// [`SolidError::null_pointer`] (the fork's `NER`) for a piece without a face, a corner
     /// whose faces share no edge or have no edge between its rail points, or a peak whose
-    /// pieces have no crossing between them; those of the steps.
+    /// pieces have no crossing between them; those of the steps. After the unstitch, an
+    /// error leaves the round's faces unstitched, as the fork's does.
     fn build_law_corners(
         &mut self,
         k: &mut Kernel,
