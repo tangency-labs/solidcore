@@ -230,6 +230,14 @@ mod tests {
     }
 
     #[test]
+    fn nonfinite_boundary_is_refused() {
+        let mut saved = point();
+        saved.metadata.boundaries = Some(vec![vec![[f64::NAN, 0.0, 0.0]]]);
+        assert!(check(&saved).is_err());
+        assert!(encode(&saved).is_err());
+    }
+
+    #[test]
     fn a_file_is_its_record_number_for_number() {
         let saved = point();
         let bytes = encode(&saved).unwrap();
