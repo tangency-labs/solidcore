@@ -806,7 +806,7 @@ mod tests {
             assert!(rust.rejected.is_none(), "{name}: {:?}", rust.rejected);
             let d = crate::compare::compare(&cpp, &rust, &[]);
             // a known mismatch disagrees with the reference by record (#2502)
-            if !crate::known::listed("mass.integrator", name) {
+            if !crate::known::listed("mass.integrator", name).unwrap() {
                 assert!(d.pass(), "{name}: {:?}", d.mismatches);
             }
             assert!(

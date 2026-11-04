@@ -1264,7 +1264,7 @@ mod tests {
             assert_eq!(cpp.values.get("rec").and_then(|v| v.first()), Some(&0.0));
             let diff = crate::compare::compare(&cpp, &rust, &[]);
             // a known mismatch disagrees with the reference by record (#2502)
-            if !crate::known::listed(Runner.id(), &case.name) {
+            if !crate::known::listed(Runner.id(), &case.name).unwrap() {
                 assert!(diff.pass(), "{}: {diff:?}", case.name);
                 assert!(diff.values_compared > 15, "{}: {diff:?}", case.name);
                 assert!(diff.nonzero_compared > 0, "{}: {diff:?}", case.name);

@@ -765,7 +765,7 @@ mod tests {
                 assert!(native.len() > 256);
             }
             // a known mismatch disagrees with the reference by record (#2502)
-            if !crate::known::listed("primitive.primitive_creation_p3", name) {
+            if !crate::known::listed("primitive.primitive_creation_p3", name).unwrap() {
                 assert_eq!(rust, native, "{name}: native geometry differs");
             }
         }

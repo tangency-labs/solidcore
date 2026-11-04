@@ -1272,7 +1272,7 @@ mod tests {
             }
             // a known mismatch disagrees with the reference by record (#2502): only the
             // Rust side's expectation is checked
-            let known = crate::known::listed("boolean.merge_p3", name.as_str().unwrap());
+            let known = crate::known::listed("boolean.merge_p3", name.as_str().unwrap()).unwrap();
             if expected == 0 {
                 assert_eq!(rust.ints["status"], [0], "{name}: {:?}", rust.error);
                 assert!(!rust.values["record"].is_empty(), "{name}");

@@ -25,3 +25,8 @@ unit = "topology.brep_local_operation"
 check = "ratchet"
 case = "nurb_fillet_face5_same"
 reason = "ND-493 C++ clock-seeded rand() (srand(time(NULL)) in GetPointsInFace via IsInnerShell in the merge stitch): intermittent on main CI at c47d6d3b5 and 7ca6ce7a9; Rust deterministic; parked"
+
+[[waiver]]
+unit = "topology.brep_local_operation"
+check = "value-share"
+reason = "#2502: against the SMLib fork v1.1.0-alpha.1 every compared case of this unit is a known mismatch (163 of 165, the other 2 parked under ND-493), so no case passes and none compares a value; the fork's stitch and vertex changes are listed in plan/findings/general--2502-fork-pin-topology-known-mismatches.md. Remove once the fork's changes are ported and the cases pass again"
