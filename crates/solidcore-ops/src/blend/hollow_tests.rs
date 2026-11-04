@@ -165,7 +165,7 @@ fn an_inside_round_holds_the_wall_an_outer_round_runs_over() {
     let inside = edge_at(&wall, [0.0, 30.0, 40.0]);
     close(
         round(&wall, &[top, inside], &[7.0]).unwrap(),
-        39509.938_040_025_9,
+        39_509.938_040_025_9,
     );
     assert!(round(&wall, &[top, inside], &[13.8, 7.0]).is_ok());
 }
