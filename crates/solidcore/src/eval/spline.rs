@@ -394,6 +394,22 @@ impl EvalSurface {
         Ok((p, n))
     }
 
+    /// The unit normal at `(u, v)` approached along the parameter direction `dir`, oriented as
+    /// the surface. Whether `(u, v)` is a pole is the one classifier's ([`super::collapse`],
+    /// exactly): off a pole it is the normal ([`EvalSurface::eval`]); at one it is the first
+    /// coefficient of the expansion of `S_u × S_v` along `dir` that does not vanish
+    /// ([`super::pole::normal_along`]), exactly, and [`EvalError::Degenerate`] at a pole of order
+    /// above three.
+    pub fn normal_along(&self, u: f64, v: f64, dir: [f64; 2]) -> Result<Vec3, EvalError> {
+        if super::collapse::collapse(self, [u, v], 0.0)? == super::collapse::Collapse::Neither {
+            return Ok(self.eval(u, v)?.1);
+        }
+        let d = self
+            .partials(u, v)
+            .ok_or_else(|| EvalError::Unevaluable(format!("the surface at ({u}, {v})")))?;
+        Ok(self.oriented(super::pole::normal_along(&d, dir)?))
+    }
+
     /// The active parameter interval along `d` (0: u, 1: v) of a spline, or of a revolution's
     /// profile; `None` where the parameter is unbounded (a plane, a revolution's angle).
     #[must_use]

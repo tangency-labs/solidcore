@@ -20,6 +20,7 @@ pub mod curve;
 pub mod form;
 pub mod geometry;
 pub mod normal_section;
+pub mod pole;
 pub mod spline;
 pub mod surface;
 pub mod uv;
