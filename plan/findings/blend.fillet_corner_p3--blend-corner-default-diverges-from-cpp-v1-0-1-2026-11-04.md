@@ -1,7 +1,7 @@
-# blend.fillet_corner_p3: with the blend corner the default, 13 units disagree with C++ v1.0.1 on 402 cases (2026-11-04)
+# blend.fillet_corner_p3: with the blend corner the default, 13 units disagree with C++ v1.0.1 on 384 cases (2026-11-04)
 
 - **Units:** `blend.fillet_corner_p2` (2 cases), `blend.fillet_corner_p3` (95),
-  `blend.fillet_executive_p3` (176), `blend.fillet_geom_p4` (23), `intersect.api_intersectors`
+  `blend.fillet_executive_p3` (158), `blend.fillet_geom_p4` (23), `intersect.api_intersectors`
   (1), `intersect.surface_intersector_p2` (40), `primitive.api_trim_ops` (9), `surface.torus`
   (12), `topology.api_files` (2), `topology.api_projection` (5), `topology.brep_cutting` (19),
   `topology.brep_local_operation` (6), `topology.brep_planar_section` (12).
@@ -28,6 +28,11 @@ addendum lists them) moves each case was read off for these:
 - `intersect.surface_intersector_p2`: its flag site is `FlushCurve`'s short last span, merged
   into the span before only when the merged span keeps the trace's accuracy (the record
   lengths differ).
+
+- `blend.fillet_executive_p3`'s runner compares a refusal that names the size that builds
+  (`SolidError::FilletRefused`) as its status 1001, as it compares `SolidError::Upstream`;
+  it took it for a harness error before. 18 such refusals are the C++'s 1001 too and pass;
+  4 (`stubs4-delete-edge-bottle-*`) are refusals where the C++ builds.
 
 The others (`blend.fillet_executive_p3`'s end-to-end fillets, `blend.fillet_geom_p4`, and the
 topology and primitive units, whose cuts, sections and projections intersect surfaces) reach
