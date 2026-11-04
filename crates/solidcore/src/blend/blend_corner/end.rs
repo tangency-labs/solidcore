@@ -245,9 +245,13 @@ pub fn end_at_smooth_vertex(
 /// which leaves its face with little curvature and turns as it goes), and E' turns away only
 /// where its own third order does: E's says how E turns into itself, away from V, not past it.
 ///
+/// Where an edge's curve cannot give its binormal or its third derivative at V (a tangent
+/// field, a short evaluation), the run-on is undecided and the cap stays, as in the other
+/// undecided cases (tangency-labs/solidcore#2679).
+///
 /// # Errors
 /// `SM_ERR_NULL_POINTER` for an edge use without face, radial or edge, or an edge without
-/// curve; those of the binormal and the curve evaluations.
+/// curve; those of the topology lookups.
 fn run_on_leaves_the_part(
     k: &Kernel,
     target: &mut Brep,
@@ -288,10 +292,11 @@ fn run_on_leaves_the_part(
     };
     let options = BinormalOptions::default();
     let t_fil = param_at(target, fil_edge)?;
-    let Ok(d) = evaluate_binormal(k, target, eu_a, t_fil, true, &options)?
-        .binormal
-        .unitize()
-    else {
+    // no binormal (the edge's curve gives no tangent there): undecided, the cap stays
+    let Ok(on_a) = evaluate_binormal(k, target, eu_a, t_fil, true, &options) else {
+        return Ok(false);
+    };
+    let Ok(d) = on_a.binormal.unitize() else {
         return Ok(false);
     };
     // past V, along the continuing edge
@@ -300,9 +305,18 @@ fn run_on_leaves_the_part(
     let heights = |target: &Brep, e: EdgeId| -> Result<Option<(f64, f64)>> {
         let start = at_start(target, e)?;
         let c = edge::curve(target, e)?.ok_or_else(nul)?;
-        let ds = c.evaluate(k, param_at(target, e)?, 3, !start, true)?;
-        let der = |i: usize| ds.get(i).copied().ok_or_else(nul);
-        let (mut d1, d2, mut d3) = (der(1)?, der(2)?, der(3)?);
+        // A curve that gives no third derivative there (a tangent field, whose values are
+        // cross tangents rather than points and which differentiates once; a composite,
+        // which evaluates only through its segments; a kind that returns fewer
+        // derivatives) leaves the run-on undecided, and the cap stays
+        // (tangency-labs/solidcore#2679).
+        let Ok(ds) = c.evaluate(k, param_at(target, e)?, 3, !start, true) else {
+            return Ok(None);
+        };
+        let (Some(&d1), Some(&d2), Some(&d3)) = (ds.get(1), ds.get(2), ds.get(3)) else {
+            return Ok(None);
+        };
+        let (mut d1, mut d3) = (d1, d3);
         if d1.dot(along) < 0.0 {
             d1 = -d1;
             d3 = -d3;
