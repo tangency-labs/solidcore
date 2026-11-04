@@ -1,10 +1,11 @@
 //! Why an offset, shell, thicken or local operation is refused, in solidcore's terms.
 //!
 //! Upstream: none. These describe the refusals of the offset subsystem
-//! (`crate::offset`), each standing for the status the C++ (or the SMLib fork the
-//! refusal comes from) returns, which [`OffsetFailure::status`] gives.
+//! (`crate::offset`). Each also records, for difftest only, the status the C++ (or the
+//! SMLib fork the refusal comes from) reports for it (crate-private
+//! `comparison_status`, read through [`crate::SolidError::sm_status`]).
 //!
-//! | Rust                                   | Status it stands for                      |
+//! | Rust                                   | Status difftest compares                  |
 //! |----------------------------------------|-------------------------------------------|
 //! | [`OffsetFailure::Folds`]               | `SM_ERR` (WR-718, solidcore-native)       |
 //! | [`OffsetFailure::WallsTouch`]          | `SM_ERR_OFFSET_WALLS_TOUCH` (fork a759622) |
@@ -112,9 +113,8 @@ impl OffsetFailure {
         }
     }
 
-    /// The upstream status the refusal stands for.
-    #[must_use]
-    pub const fn status(&self) -> i32 {
+    /// The status the C++ reports for the refusal (difftest's comparison detail).
+    pub(crate) const fn comparison_status(&self) -> i32 {
         match self {
             Self::Folds { .. } => SM_ERR,
             Self::WallsTouch { .. } => SM_ERR_OFFSET_WALLS_TOUCH,

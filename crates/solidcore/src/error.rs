@@ -38,9 +38,9 @@
 //!
 //! # Errors in solidcore's own terms (#2615)
 //!
-//! [`SolidError::Failed`] is the error a converted subsystem returns. Its [`Failure`]
-//! says what failed in solidcore's terms and never shows an upstream status number,
-//! type or symbol:
+//! solidcore has no upstream: its errors are its own. [`SolidError::Failed`] is the
+//! error a converted subsystem returns. Its [`Failure`] says what failed in solidcore's
+//! terms and never shows a C++ status number, type or symbol:
 //!
 //! - `operation`: the solidcore path of the failing stage
 //!   (`"offset::offset_executive::crossing_loops::resolve_crossing_loops"`);
@@ -49,19 +49,27 @@
 //!   enum in a submodule of this module ([`offset::OffsetFailure`]), so the taxonomy
 //!   stays in one place;
 //! - `entity`: the entity the failure is about, in the caller's B-rep where there is one;
-//! - `status`: the upstream `SmStatus` the failure stands for. difftest compares it with
-//!   the C++ through [`SolidError::sm_status`]; it is never part of the message;
 //! - `cause`: the error of the stage this failure comes from. Where a caller turns a
-//!   stage's failure into a generic one (upstream `SER(SM_ERR)` after a failed call),
-//!   the stage's error is kept here, so the caller still sees it (#2511).
+//!   stage's failure into a generic one, the stage's error is kept here, so the caller
+//!   still sees it (#2511).
 //!
-//! [`SolidError::kind`] gives every error a stable solidcore [`ErrorKind`] (a number
-//! and a name) that callers can match on instead of message text. Errors that stand
-//! for an upstream status still have [`SolidError::sm_status`] `Some`, and port-side
-//! failures `None` (#1452).
+//! [`SolidError::kind`] gives every error a stable solidcore [`ErrorKind`] (a number and
+//! a name) that callers match on instead of message text.
 //!
-//! The other variants are the pre-#2615 shape. Subsystems move to
-//! [`SolidError::Failed`] one at a time; until then their messages are unchanged.
+//! **Comparison with the pinned C++.** difftest compares each failure with the status
+//! the pinned C++ reports for the same input. A failure records that status privately,
+//! where it is made (the status depends on the call path, not only on the reason), and
+//! [`SolidError::sm_status`] is the one hook that reads it: difftest, the FFI side and
+//! callers porting the C API over it (#1452: `Some` for a failure the C++ reports with a
+//! status, `None` for a port-side error) use it. It is not a public field and never
+//! part of a message.
+//!
+//! **Retiring "upstream".** The goal is no [`SolidError::Upstream`] (nor `Nlib`,
+//! `FilletRefused`) variant and no "upstream status" text in the public API. They are
+//! the pre-#2615 shape: subsystems move their sites to [`SolidError::Failed`] one PR at
+//! a time (offset first), and the variants go when their last site does. Then
+//! `sm_status` and the status numbers here move behind a comparison-only module (or to
+//! difftest and the FFI), since nothing but the comparison needs them.
 
 pub mod offset;
 
@@ -543,10 +551,14 @@ fn fmt_entity(entity: Option<EntityRef>) -> String {
 
 /// A failure in solidcore's own terms, carried by [`SolidError::Failed`].
 ///
-/// Build one with [`Failure::new`] and its `at`, `status` and `caused_by` methods, then
-/// make it a [`SolidError`] with [`Failure::into_error`]. Its message is `"{operation}: {reason}"`, followed by
-/// `"; caused by {cause}"` when it keeps the error of the stage it comes from. The
-/// status is not part of the message.
+/// Build one with [`Failure::new`] and its `at` and `caused_by` methods, then make it a
+/// [`SolidError`] with [`Failure::into_error`]. Its message is
+/// `"{operation}: {reason}"`, followed by `"; caused by {cause}"` when it keeps the error
+/// of the stage it comes from.
+///
+/// It also records, privately, the status the pinned C++ reports for the same failure,
+/// so that difftest can compare the two ([`SolidError::sm_status`], the comparison
+/// hook). That number is not part of the failure's public fields or its message.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Failure {
@@ -558,9 +570,11 @@ pub struct Failure {
     pub entity: Option<EntityRef>,
     /// What failed.
     pub reason: Reason,
-    /// The upstream `SmStatus` this failure stands for, which difftest compares with the
-    /// C++ (through [`SolidError::sm_status`]). Never shown in the message.
-    pub status: i32,
+    /// The status the pinned C++ reports for this failure: a comparison detail, read
+    /// only through [`SolidError::sm_status`]. It is recorded where the failure is made
+    /// because it depends on the call path, not only on the reason (a refusal the C++
+    /// passes on keeps its own status; after a generic collapse it is `SM_ERR`).
+    pub(crate) status: i32,
     /// The error of the stage this failure comes from, kept where a caller reports a
     /// stage's failure as its own, generic one (#2511).
     pub cause: Option<SolidError>,
@@ -575,7 +589,7 @@ impl Failure {
         Self {
             operation,
             entity: reason.entity(),
-            status: reason.status(),
+            status: reason.comparison_status(),
             reason,
             cause: None,
         }
@@ -588,11 +602,10 @@ impl Failure {
         self
     }
 
-    /// The same failure standing for upstream status `status`.
+    /// The failure's stable [`ErrorKind`].
     #[must_use]
-    pub fn status(mut self, status: i32) -> Self {
-        self.status = status;
-        self
+    pub fn kind(&self) -> ErrorKind {
+        self.reason.kind_given(self.status)
     }
 
     /// The same failure, keeping `cause`, the error of the stage it comes from.
@@ -647,19 +660,18 @@ impl Reason {
         }
     }
 
-    /// The upstream `SmStatus` the reason stands for by default.
-    #[must_use]
-    pub fn status(&self) -> i32 {
+    /// The status the C++ reports for the reason unless the failure says otherwise (a
+    /// comparison detail).
+    pub(crate) fn comparison_status(&self) -> i32 {
         match self {
             Self::Failed(_) => SM_ERR,
-            Self::Offset(o) => o.status(),
+            Self::Offset(o) => o.comparison_status(),
         }
     }
 
-    /// The reason's stable [`ErrorKind`]; `status` is the failure's status, which gives
-    /// the kind of a [`Reason::Failed`].
-    #[must_use]
-    pub fn kind(&self, status: i32) -> ErrorKind {
+    /// The reason's stable [`ErrorKind`]; `status` (the failure's comparison status)
+    /// gives the kind of a [`Reason::Failed`].
+    pub(crate) fn kind_given(&self, status: i32) -> ErrorKind {
         match self {
             Self::Failed(_) => ErrorKind::of_status(status),
             Self::Offset(o) => o.kind(),
@@ -767,10 +779,10 @@ impl ErrorKind {
         }
     }
 
-    /// The kind of an error that carries only an upstream status: the status's kind
-    /// where solidcore has one for it, [`ErrorKind::Failed`] otherwise.
-    #[must_use]
-    pub const fn of_status(status: i32) -> Self {
+    /// The kind of an error that carries only a C++ status ([`SolidError::Upstream`],
+    /// until it is retired): the status's kind where solidcore has one for it,
+    /// [`ErrorKind::Failed`] otherwise.
+    pub(crate) const fn of_status(status: i32) -> Self {
         match status {
             SM_ERR_INVALID_INPUT => Self::InvalidInput,
             SM_ERR_NULL_POINTER => Self::Missing,
@@ -838,7 +850,11 @@ impl SolidError {
         Self::PortInvariant { operation, reason }
     }
 
-    /// The upstream `SmStatus` this error stands for, when it stands for one exactly:
+    /// The comparison hook: the status the pinned C++ reports for this failure, when it
+    /// reports one exactly (difftest, the FFI side, and callers porting the C API, #1452).
+    /// Not part of any message; see the module docs on retiring it from the public API.
+    ///
+    /// By variant:
     ///
     /// - [`SolidError::Upstream`]: its `code`.
     /// - [`SolidError::Failed`]: its failure's `status`.
@@ -917,7 +933,7 @@ impl SolidError {
 
     /// The stable solidcore [`ErrorKind`] of this error. A [`SolidError::Failed`] has its
     /// reason's kind; an error that carries only an upstream status has that status's
-    /// kind ([`ErrorKind::of_status`]).
+    /// kind (1007 is `invalid_input`, 1006 `missing`, 1022 `not_converged`, ...).
     #[must_use]
     pub fn kind(&self) -> ErrorKind {
         match self {
@@ -936,7 +952,7 @@ impl SolidError {
             Self::PreparationRequired { .. } => ErrorKind::PreparationRequired,
             Self::Cancelled { .. } => ErrorKind::Cancelled,
             Self::FilletRefused { .. } => ErrorKind::FilletTooLarge,
-            Self::Failed(f) => f.reason.kind(f.status),
+            Self::Failed(f) => f.kind(),
             Self::Unported { .. } => ErrorKind::Unported,
         }
     }
@@ -1223,10 +1239,10 @@ mod tests {
             )
         );
         // a described failure about an entity names it
-        let at = Failure::new("op", Reason::Failed("the section has no points"))
-            .at(EntityRef::Edge(EdgeId::from_index(12)))
-            .status(SM_ERR_NOT_CONVERGING)
-            .into_error();
+        let mut at = Failure::new("op", Reason::Failed("the section has no points"))
+            .at(EntityRef::Edge(EdgeId::from_index(12)));
+        at.status = SM_ERR_NOT_CONVERGING;
+        let at = at.into_error();
         assert_eq!(at.to_string(), "op: the section has no points (edge 12)");
         assert_eq!(at.kind(), ErrorKind::NotConverged);
         assert_eq!(at.sm_status(), Some(SM_ERR_NOT_CONVERGING));
@@ -1358,7 +1374,7 @@ mod tests {
             distance: -11.0,
             largest: 10.0,
         };
-        assert_eq!(folds.status(), SM_ERR);
+        assert_eq!(folds.comparison_status(), SM_ERR);
         assert_eq!(folds.kind(), ErrorKind::OffsetFolds);
         assert_eq!(folds.entity(), Some(EntityRef::Face(face)));
         assert_eq!(
@@ -1370,7 +1386,7 @@ mod tests {
             face: None,
             crossing: LoopCrossing::ThreeAtOnePoint,
         };
-        assert_eq!(cross.status(), SM_ERR_BAD_INTERSECTIONS);
+        assert_eq!(cross.comparison_status(), SM_ERR_BAD_INTERSECTIONS);
         assert_eq!(cross.entity(), None);
         assert_eq!(cross.on_face(face).entity(), Some(EntityRef::Face(face)));
         assert_eq!(
