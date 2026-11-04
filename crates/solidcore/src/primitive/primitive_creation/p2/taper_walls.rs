@@ -25,6 +25,12 @@
 //! | `iso_pcurve` (private)        | `sm_DraftIsoPcurve`                   |
 //! | `seam_curve` (private)        | `sm_DraftSeamCurve`                   |
 //! | `draft_cone` (private)        | `sm_DraftCone`                        |
+//! | `on_cone` (private)           | none (#2497)                          |
+//! | `profile_plane` (private)     | none (#2497)                          |
+//! | `lean_offsets` (private)      | none (#2497)                          |
+//! | `seam_angles` (private)       | none (#2497)                          |
+//! | `cone_face_angles` (private)  | none (#2497, WR-722)                  |
+//! | `half_quadratic_roots` (private) | the quadratic of `sm_DraftSeamPcurve` |
 //! | `has_corner`                  | `sm_DraftHasCorner`                   |
 //! | `draft_input` (private)       | `sm_DraftInput`                       |
 //! | `lines_and_arcs`              | `sm_DraftLinesAndArcs`                |
@@ -38,7 +44,12 @@
 //! crossing at half height. On a plane wall its pcurve is its affine image; on a cone
 //! wall a rational quartic in each of the cone's spans it crosses. An arc's wall whose
 //! height runs along its axis is its exact cone (tangency-labs/smlib 3ae7bfa), any other
-//! wall the surface ruled between its ends. Every seam and pcurve is checked. With the tangent rule a
+//! wall the surface ruled between its ends. A draft whose height leans off the profile's
+//! plane (a normal near Z that `CreateTaperExtrude` snapped to Z) takes its sections in
+//! planes parallel to the profile's, each line offset by its offset's part in the plane
+//! (#2497; the fork reads the plane's normal as the height's, and refuses the draft). With
+//! `keep_exact_pcurves` (WR-722) an arc's wall on its cone covers just its face, so the
+//! B-rep's shrink keeps its exact pcurves. Every seam and pcurve is checked. With the tangent rule a
 //! corner that opens a gap continues an arc's end along its tangent line (a flat
 //! piece with no edge on the profile); a line's wall continues as itself.
 //!
@@ -401,6 +412,58 @@ fn quartic(a: [f64; 3], b: [f64; 3]) -> [f64; 5] {
     c
 }
 
+/// The real roots of `qa s^2 + 2 qb s + qc`, `qa` taken for zero within `EFF_ZERO * scale`
+/// (the linear root then), in the stable form.
+fn half_quadratic_roots(qa: f64, qb: f64, qc: f64, scale: f64) -> Vec<f64> {
+    let mut r = Vec::with_capacity(2);
+    if qa.abs() <= EFF_ZERO * scale {
+        if qb != 0.0 {
+            r.push(-qc / (2.0 * qb));
+        }
+    } else {
+        let disc = qb * qb - qa * qc;
+        if disc >= 0.0 {
+            let q = -(qb + if qb >= 0.0 { disc.sqrt() } else { -disc.sqrt() });
+            if q != 0.0 {
+                r.push(qc / q);
+            }
+            r.push(q / qa);
+        }
+    }
+    r
+}
+
+/// The least and greatest angle about the arc wall `w`'s axis, unwrapped near `near`, of
+/// the seam's points in the profile's plane (each less its height): at the seam's ends,
+/// or where its angle turns. The point less its height and the centre is `Q(s) / W(s)`,
+/// `Q` a quadratic (the height fraction is affine in space) and `W > 0`, so the angle
+/// turns where `Q x Q'` about the axis vanishes, `(b x a) s^2 + 2 (c x a) s + c x b` for
+/// `Q = a s^2 + b s + c`: a quadratic's roots (#2497).
+fn seam_angles(w: &Wall, seam: &Seam, n: Vec3, h: Vec3, near: f64) -> (f64, f64) {
+    let height = h.dot(n);
+    let in_plane = |q: Point3| q - (seam.f0 + (q - seam.p).dot(n) / height) * h;
+    let [q0, q1, q2] = [(seam.p, 1.0), (seam.s, seam.weight), (seam.x, 1.0)].map(|(c, wk)| {
+        let r = in_plane(c) - w.center;
+        (wk * r.dot(w.x), wk * r.dot(w.y))
+    });
+    let a = (q0.0 - 2.0 * q1.0 + q2.0, q0.1 - 2.0 * q1.1 + q2.1);
+    let b = (2.0 * (q1.0 - q0.0), 2.0 * (q1.1 - q0.1));
+    let cross = |u: (f64, f64), v: (f64, f64)| u.0 * v.1 - u.1 * v.0;
+    let (qa, qb, qc) = (cross(b, a), cross(q0, a), cross(q0, b));
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    let turns = half_quadratic_roots(qa, qb, qc, qa.abs() + qb.abs() + qc.abs());
+    for t in [0.0, 1.0]
+        .into_iter()
+        .chain(turns.into_iter().filter(|t| *t > 0.0 && *t < 1.0))
+    {
+        let ang = angle(w, in_plane(seam_point(seam, t)), near);
+        lo = min2(lo, ang);
+        hi = max2(hi, ang);
+    }
+    (lo, hi)
+}
+
 /// The seam's pcurve on wall `w`, whose surface parameters are
 /// `(u0 + f (u1 - u0), v0 + (t - t0) * v_scale)` for the wall's fraction `f` and curve
 /// parameter `t` (`sm_DraftSeamPcurve`). On an arc's wall the seam is cut where it
@@ -487,21 +550,7 @@ fn seam_pcurve(
             let qa = c[0] - 2.0 * c[1] + c[2];
             let qb = c[1] - c[0];
             let qc = c[0];
-            let mut r = Vec::with_capacity(2);
-            if qa.abs() <= EFF_ZERO * (c[0].abs() + c[1].abs() + c[2].abs()) {
-                if qb != 0.0 {
-                    r.push(-qc / (2.0 * qb));
-                }
-            } else {
-                let disc = qb * qb - qa * qc;
-                if disc >= 0.0 {
-                    let q = -(qb + if qb >= 0.0 { disc.sqrt() } else { -disc.sqrt() });
-                    if q != 0.0 {
-                        r.push(qc / q);
-                    }
-                    r.push(q / qa);
-                }
-            }
+            let r = half_quadratic_roots(qa, qb, qc, c[0].abs() + c[1].abs() + c[2].abs());
             for t in r {
                 if !(t > EFF_ZERO && t < 1.0 - EFF_ZERO) {
                     continue;
@@ -659,10 +708,10 @@ fn seam_curve(seam: &Seam) -> Result<BSplineCurve> {
 /// wall, or when the height is not along the axis (an oblique wall is no cone of
 /// revolution about it).
 fn draft_cone(k: &Kernel, w: &Wall, h: Vec3) -> Result<Option<Cone>> {
-    let along = h.dot(w.axis);
-    if !w.arc || (h - along * w.axis).length() > EFF_ZERO * (1.0 + along.abs()) {
+    if !on_cone(w, h) {
         return Ok(None);
     }
+    let along = h.dot(w.axis);
     let r0 = w.radius;
     let r1 = w.radius - w.shrink;
     // the profile's end (f = 0) at the base when the height runs along the axis, else at
@@ -683,6 +732,39 @@ fn draft_cone(k: &Kernel, w: &Wall, h: Vec3) -> Result<Option<Cone>> {
         &Extent2d::from_bounds(rad_to_deg(w.lo), 0.0, rad_to_deg(w.hi), along.abs()),
     )?;
     Ok(Some(cone))
+}
+
+/// Whether `w` is an arc whose wall is its cone ([`draft_cone`]): the height `h` runs
+/// along its axis.
+fn on_cone(w: &Wall, h: Vec3) -> bool {
+    let along = h.dot(w.axis);
+    w.arc && (h - along * w.axis).length() <= EFF_ZERO * (1.0 + along.abs())
+}
+
+/// The angles an arc's wall on its cone covers with `keep_exact_pcurves` (WR-722): just
+/// its face, from the least angle of its seams to the greatest ([`seam_angles`]; the
+/// face's bottom and top arcs run between the seams' ends), so `SmBrep::ShrinkGeometry`
+/// finds the face's domain its surface's and keeps its exact pcurves. The reach padded
+/// past the seams leaves the face short of its surface, which `ShrinkGeometry` trims,
+/// removing every trim curve to project the edges again (#2497). `None` otherwise.
+fn cone_face_angles<'s>(
+    k: &Kernel,
+    w: &Wall,
+    seams: impl IntoIterator<Item = (&'s Seam, f64)>,
+    n: Vec3,
+    h: Vec3,
+) -> Option<(f64, f64)> {
+    if !k.fixes.keep_exact_pcurves || !on_cone(w, h) {
+        return None;
+    }
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for (seam, near) in seams {
+        let (a, b) = seam_angles(w, seam, n, h, near);
+        lo = min2(lo, a);
+        hi = max2(hi, b);
+    }
+    Some((lo, hi))
 }
 
 /// The tangent at `t` (`Evaluate(t, 1, TRUE, v)`), `None` when it fails.
@@ -794,7 +876,9 @@ pub(super) struct WallsInput<'a> {
     pub composite: &'a CompositeCurve,
     /// The curves it was made from (its lines and circles).
     pub inputs: &'a [Curve],
-    /// Unit normal of the profile's plane.
+    /// The unit normal the height runs along (`CreateTaperExtrude`'s): the profile's
+    /// plane's, or near it where `CreateTaperExtrude` snapped a normal near Z to Z (the
+    /// draft then leans off the plane: `profile_plane`).
     pub normal: Vec3,
     /// `+` along the normal, `-` opposite.
     pub height: f64,
@@ -885,10 +969,69 @@ fn read_walls(
     Ok(Ok(walls))
 }
 
+/// The unit normal of the profile's plane, on the side of `d`, the direction the height
+/// runs along: `d` itself when every wall lies within `tol` of the plane through the
+/// profile's first corner normal to `d` (an arc by its largest distance from it,
+/// `|(c - p) . d| + r |(x . d, y . d)|`), else the plane the walls span (an arc's axis,
+/// or the cross of the two lines' directions furthest from parallel). The two differ
+/// where `CreateTaperExtrude` snapped the computed normal of a profile on a plane tilted
+/// from XY (`|n.z| > 0.98`) to Z: the draft leans, each section in a plane parallel to
+/// the profile's, moved along `d` (#2497; the fork takes `d` for the plane's normal, so
+/// a leaning draft's seams leave their walls and it is refused).
+fn profile_plane(walls: &[Wall], d: Vec3, tol: f64) -> Result<Vec3> {
+    let first = at_ref(walls, 0)?.start;
+    let off = |q: Point3| (q - first).dot(d).abs();
+    let in_plane = walls.iter().all(|w| {
+        if w.arc {
+            off(w.center) + w.radius * w.x.dot(d).hypot(w.y.dot(d)) <= tol
+        } else {
+            off(w.start) <= tol && off(w.end) <= tol
+        }
+    });
+    if in_plane {
+        return Ok(d);
+    }
+    let m = if let Some(arc) = walls.iter().find(|w| w.arc) {
+        arc.axis
+    } else {
+        let mut best = Vec3::ZERO;
+        for (i, wa) in walls.iter().enumerate() {
+            for wb in walls.iter().skip(i + 1) {
+                let c = wa.dir.cross(wb.dir);
+                if c.length_squared() > best.length_squared() {
+                    best = c;
+                }
+            }
+        }
+        best.unitize()?
+    };
+    Ok(if m.dot(d) < 0.0 { -m } else { m })
+}
+
+/// A leaning draft's lines (the profile's plane `n` not normal to `d`): each line's
+/// offset, `side offset d x dir`, becomes its part in the profile's plane,
+/// `side offset (d . n) n x dir`, so the far end's section lies in a plane parallel to
+/// the profile's, offset as an arc's is (`shrink = side offset (d . axis)`). A line's
+/// offset lies in the plane already when it is normal to `d`.
+fn lean_offsets(walls: &mut [Wall], n: Vec3, d: Vec3) {
+    if n == d {
+        return;
+    }
+    for w in walls.iter_mut().filter(|w| !w.arc) {
+        w.offset -= w.offset.dot(n) * n;
+    }
+}
+
 /// Tangent planes: where a corner opens a gap, an arc's end continues along its
 /// tangent line, a wall of no length on the profile (a line's wall continues as
 /// itself) (the `bTangent` step of `sm_CreateCurvatureKeepingWalls`).
-fn with_tangent_planes(walls: &[Wall], n: Vec3, offset: f64, side: f64) -> Result<Vec<Wall>> {
+fn with_tangent_planes(
+    walls: &[Wall],
+    n: Vec3,
+    d: Vec3,
+    offset: f64,
+    side: f64,
+) -> Result<Vec<Wall>> {
     let count = walls.len();
     let mut out = Vec::new();
     for i in 0..count {
@@ -921,7 +1064,7 @@ fn with_tangent_planes(walls: &[Wall], n: Vec3, offset: f64, side: f64) -> Resul
                     start: b.start,
                     end: b.start,
                     dir,
-                    offset: side * offset * n.cross(dir),
+                    offset: side * offset * d.cross(dir),
                     ..Wall::default()
                 });
             }
@@ -1218,10 +1361,10 @@ fn walls_closing_at_apexes(
     target: BrepId,
     input: &WallsInput<'_>,
     mut walls: Vec<Wall>,
+    n: Vec3,
+    h: Vec3,
 ) -> Result<Walls> {
-    let n = input.normal;
     let tol = input.tol;
-    let h = input.height * n;
     let count = walls.len();
 
     // The section at every height is the walls' sections, each from where it crosses the
@@ -1552,8 +1695,12 @@ fn walls_closing_at_apexes(
         let [(lo0, hi0), (lo1, hi1)] = reach;
         let first_start = at(at_ref(&starts, i)?, 0)?.p;
         let first_end = at(at_ref(&ends, i)?, 0)?.p;
-        w.lo = lo0;
-        w.hi = hi1;
+        let chains = at_ref(&starts, i)?
+            .iter()
+            .map(|seam| (seam, ref0))
+            .chain(at_ref(&ends, i)?.iter().map(|seam| (seam, ref1)));
+        (w.lo, w.hi) =
+            cone_face_angles(a.kernel(kernel_brep)?, w, chains, n, h).unwrap_or((lo0, hi1));
         w.breaks.clear();
         // an arc's wall on its cone: the cone's own equal spans (its seams' pcurves are cut
         // where they cross from one to the next) (the fork's tangency-labs/smlib@3ae7bfa)
@@ -1763,16 +1910,20 @@ pub(super) fn curvature_keeping_walls(
         -1.0
     };
 
-    // the walls
+    // the walls, and the plane they lie in (`n` from here on; the height `h` runs along
+    // the draft's normal, `d`)
     let mut walls = match read_walls(a.kernel(kernel_brep)?, input)? {
         Ok(walls) => walls,
         Err(refusal) => return Ok(Err(refusal)),
     };
+    let d = n;
+    let n = profile_plane(&walls, d, tol)?;
     if input.tangent {
-        walls = with_tangent_planes(&walls, n, input.offset, side)?;
+        walls = with_tangent_planes(&walls, n, d, input.offset, side)?;
     }
+    lean_offsets(&mut walls, n, d);
     if a.kernel(kernel_brep)?.fixes.taper_wall_closes_at_apex {
-        return walls_closing_at_apexes(a, kernel_brep, target, input, walls);
+        return walls_closing_at_apexes(a, kernel_brep, target, input, walls, n, h);
     }
     let count = walls.len();
 
@@ -1926,8 +2077,9 @@ pub(super) fn curvature_keeping_walls(
         if !(far1 > far0 + tol / if w.arc { w.radius } else { 1.0 }) {
             return Ok(refuse(TaperCornerRefusal::WallCloses, s0.p));
         }
-        w.lo = lo0;
-        w.hi = hi1;
+        let seams_of_wall = [(&s0, ref0), (&s1, ref1)];
+        (w.lo, w.hi) =
+            cone_face_angles(a.kernel(kernel_brep)?, w, seams_of_wall, n, h).unwrap_or((lo0, hi1));
         w.breaks.clear();
         // an arc's wall on its cone: the cone's own equal spans (its seams' pcurves are cut
         // where they cross from one to the next) (the fork's tangency-labs/smlib@3ae7bfa)
