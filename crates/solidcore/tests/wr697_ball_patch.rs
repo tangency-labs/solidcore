@@ -875,3 +875,175 @@ fn a_box_rounded_all_round_shells_in_and_out_after_a_round_trip() {
     );
     assert!(got.is_err());
 }
+
+// ---- #2357: the Ball's patch keeps its definition through the record ----
+
+use solidcore::surface::procedural_blend::convert::{corner_rebuild, corner_to_record};
+use solidcore::surface::procedural_blend::corner::CornerKind;
+use solidcore::surface::procedural_blend::record::CornerRecord;
+use solidcore::surface::procedural_blend::BlendNet;
+
+/// The box corner's Ball face with `fillet_round_as_definition` on or off.
+fn ball_face_with(definition: bool) -> (Kernel, Surface) {
+    let mut k = all_fixes(true);
+    k.fixes.fillet_round_as_definition = definition;
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+    let at = [[20.0, 30.0, 20.0], [40.0, 15.0, 20.0], [40.0, 30.0, 10.0]];
+    let edges: Vec<EdgeId> = at.iter().map(|&p| pick(&k, &b, p)).collect();
+    let xs = vec![FilletSurfaceGeneratorType::Circular; edges.len()];
+    {
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_per_edge_constant_radius(&mut k, &edges, &[3.0; 3], &xs, 1, 1.0)
+            .unwrap();
+        s.do_fillet(&mut k).unwrap();
+    }
+    stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+    let mut balls: Vec<Surface> = get_faces(&b)
+        .unwrap()
+        .into_iter()
+        .map(|f| face2::surface(&b, f).unwrap().unwrap().copy(&k).unwrap())
+        .filter(|s| matches!(s.kind(), SurfaceKind::BallPatch(_)))
+        .collect();
+    assert_eq!(balls.len(), 1, "one ball patch");
+    (k, balls.remove(0))
+}
+
+/// The Ball's record, its definition the corner ball's sphere in closed form.
+fn ball_record(
+    k: &Kernel,
+    s: &Surface,
+) -> solidcore::surface::procedural_blend::record::BallCornerRecord {
+    let CornerRecord::Ball(rec) = corner_to_record(k, s).unwrap() else {
+        panic!("not a ball record");
+    };
+    rec
+}
+
+/// The Ball's face is its definition: the sphere (centre r in from each face, radius r),
+/// the patch's loop (its three sections) and its net, exact (bound 0), G1, re-certified
+/// at 0; the patch is bit for bit the one built without keeping the definition.
+#[test]
+fn the_ball_s_patch_is_its_definition() {
+    let (k, s) = ball_face_with(true);
+    let d = s
+        .procedural_blend()
+        .expect("the ball's patch keeps its definition");
+    let corner = d.corner().unwrap();
+    assert_eq!(corner.kind(), CornerKind::Ball);
+    assert!(matches!(d.net(), BlendNet::Exact(_)));
+    assert_eq!(d.bound(), 0.0);
+    assert_eq!(d.order(), 1);
+    assert_eq!(d.recertify(&k).unwrap(), 0.0);
+    let ball = corner.as_ball().unwrap();
+    assert_eq!(ball.centre(), CENTRE);
+    assert_eq!(ball.radius(), 3.0);
+    assert_eq!(ball.boundary().len(), 3);
+    // each section a quarter circle of radius 3 on the sphere: its ends and middle 3 off
+    // the centre
+    for c in ball.boundary() {
+        let ivl = c.natural_interval();
+        for t in [0.0, 0.5, 1.0] {
+            let p = c
+                .evaluate_point(ivl.min() + t * (ivl.max() - ivl.min()))
+                .unwrap();
+            assert!(((p - CENTRE).length() - 3.0).abs() <= 1e-13, "{p:?}");
+        }
+    }
+    let (_, bare) = ball_face_with(false);
+    assert!(bare.procedural_blend().is_none());
+    assert!(same_bits(patch(&s), patch(&bare)));
+}
+
+/// The record round-trips through JSON, re-certified, back to a ball patch on the same
+/// sphere, bit for bit; its record is the one it was rebuilt from.
+#[test]
+fn a_ball_s_patch_round_trips_through_its_record() {
+    let (k, s) = ball_face_with(true);
+    let rec = ball_record(&k, &s);
+    assert_eq!(rec.centre, [37.0, 27.0, 17.0]);
+    assert_eq!(rec.radius, 3.0);
+    assert_eq!(rec.boundary.len(), 3);
+    let json = serde_json::to_string(&CornerRecord::Ball(rec.clone())).unwrap();
+    let back = corner_rebuild(&k, &serde_json::from_str(&json).unwrap()).unwrap();
+    assert!(same_bits(patch(&back), patch(&s)));
+    assert_eq!(
+        corner_to_record(&k, &back).unwrap(),
+        CornerRecord::Ball(rec)
+    );
+    let d = back.procedural_blend().unwrap();
+    assert_eq!(d.corner().unwrap().kind(), CornerKind::Ball);
+    assert_eq!(d.recertify(&k).unwrap(), 0.0);
+}
+
+/// A record whose sphere, net or loop is off the others is refused on rebuild, naming
+/// what is off: a radius 1e-9 larger, a centre moved 1e-7, the net moved 1e-7, a section
+/// moved 1e-7; and hostile numbers by the structural check.
+#[test]
+fn a_ball_s_patch_off_its_sphere_is_refused() {
+    let (k, s) = ball_face_with(true);
+    let rec = ball_record(&k, &s);
+    let why = |r: solidcore::surface::procedural_blend::record::BallCornerRecord| {
+        corner_rebuild(&k, &CornerRecord::Ball(r))
+            .unwrap_err()
+            .to_string()
+    };
+    let mut off = rec.clone();
+    off.radius += 1e-9;
+    assert!(why(off).contains("sphere"));
+    let mut off = rec.clone();
+    off.centre[0] += 1e-7;
+    assert!(why(off).contains("sphere"));
+    let mut off = rec.clone();
+    let w = off.net.weights.clone().unwrap();
+    for (p, wi) in off.net.points.iter_mut().zip(&w) {
+        p[1] += 1e-7 * wi;
+    }
+    assert!(why(off).contains("sphere"));
+    let mut off = rec.clone();
+    let w = off.boundary[1].weights.clone().unwrap();
+    // (along (1, 1, 1): this section lies in the plane z = 17, which a move along z
+    // alone leaves on the sphere to second order)
+    for (p, wi) in off.boundary[1].points.iter_mut().zip(&w) {
+        for x in p.iter_mut() {
+            *x += 1e-7 * wi;
+        }
+    }
+    let msg = why(off);
+    assert!(msg.contains("loop"), "{msg}");
+    for bad in [0.0, -3.0, f64::NAN, f64::INFINITY] {
+        let mut off = rec.clone();
+        off.radius = bad;
+        assert!(
+            corner_rebuild(&k, &CornerRecord::Ball(off)).is_err(),
+            "{bad}"
+        );
+    }
+    let mut off = rec.clone();
+    off.centre[2] = f64::NAN;
+    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
+    let mut off = rec;
+    off.boundary.clear();
+    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
+}
+
+/// A moved patch (rigid, and by a uniform scale) carries its definition with it and is
+/// certified again; its sphere is the patch's own, bit for bit.
+#[test]
+fn a_moved_ball_s_patch_is_certified_again() {
+    let (k, s) = ball_face_with(true);
+    let mut place = Axis2Placement::default();
+    place.rotate_about_axis(0.3, Vec3::new(1.0, 2.0, 3.0).unitize().unwrap());
+    place.translate(Vec3::new(1e2, -2e2, 5e1));
+    for scale in [None, Some(Vec3::new(2.0, 2.0, 2.0))] {
+        let mut m = s.copy(&k).unwrap();
+        m.transform(&k, &place, scale).unwrap();
+        let d = m.procedural_blend().unwrap();
+        assert_eq!(d.recertify(&k).unwrap(), 0.0);
+        let ball = d.corner().unwrap().as_ball().unwrap();
+        let q = patch(&m);
+        assert_eq!(ball.centre(), q.centre());
+        assert_eq!(ball.radius().to_bits(), q.radius().to_bits());
+        let want = if scale.is_some() { 6.0 } else { 3.0 };
+        assert_eq!(q.radius(), want);
+    }
+}
