@@ -1923,6 +1923,25 @@ mod tests {
         assert_window(&w, [0.0, 360.0], [-20.0, 90.0]);
     }
 
+    /// A lune of the sphere r = 2 between the meridians at 0 and 90 degrees, each one
+    /// edge from pole to pole (up the one at 90, down the one at 0): every node of the
+    /// loop but the edges' middles is a pole: u = [0, 90], v = [-90, 90].
+    #[test]
+    fn a_lune_between_two_meridians_from_pole_to_pole() {
+        let k = k();
+        let east = circle(&k, Vec3::ZERO, Vec3::Y, Vec3::Z, 2.0);
+        let west = circle(&k, Vec3::ZERO, Vec3::X, Vec3::Z, 2.0);
+        let lune = vec![
+            edge(&east, -90.0, 90.0, true),
+            edge(&west, -90.0, 90.0, false),
+        ];
+        assert_window(
+            &window(&k, &sphere(&k), &[lune]),
+            [0.0, 90.0],
+            [-90.0, 90.0],
+        );
+    }
+
     fn frustum(k: &Kernel) -> Surface {
         Surface::from(
             Cone::create_canonical(k, &Axis2Placement::IDENTITY, 2.0, 1.0, 2.0, false, false)
