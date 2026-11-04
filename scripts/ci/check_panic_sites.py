@@ -5,8 +5,10 @@ The workspace denies unwrap/expect/panic/indexing. What they miss: integer `/` a
 on a zero divisor), and std calls that panic on a bad index, length or bound (`Vec::remove`,
 `insert`, `chunks`/`windows`, `f64::clamp`, `swap`, `split_at`, ...) or on capacity overflow
 (`with_capacity`). Each such call in non-test library code of the crates applications use
-(CRATES) is listed in plan/panic-sites.tsv. A new site fails this check; so does a listed
-site that is gone, so the list only shrinks.
+(CRATES) is listed in plan/panic-sites.tsv. A new site fails this check, unless a mechanical
+rule (AUTO_PROVEN: a literal `windows(2)`, `clamp(-1.0, 1.0)`, divisor) proves it cannot
+panic. A listed site that is gone is only reported: removing a site never fails a build, and
+the next `--update` drops its row.
 
 Sites come from one `cargo clippy --lib --message-format=json` run, so every receiver type
 is resolved: a `.remove(` on a `BTreeMap` (returns Option) is not a `Vec::remove`. The method
@@ -461,27 +463,20 @@ def write_list(rows):
     return "".join(lines)
 
 
-def check(current, listed, base=None):
-    """Error messages: sites missing from the list, stale rows, moved marks, new open rows."""
+def check(current, listed, base=None, read_source=lambda f: ""):
+    """Error messages: unlisted sites no mechanical rule proves, moved marks, new open rows."""
     errors = []
     cur = {key(r): r for r in current}
     lst = {key(r): r for r in listed}
     added = [cur[k] for k in sorted(cur.keys() - lst.keys())]
-    gone = [lst[k] for k in sorted(lst.keys() - cur.keys())]
     for r in added:
+        if auto_reason(r["pattern"], r["code"], read_source(r["file"])) is not None:
+            continue
         errors.append(
             f"{r['file']}: new panic-prone call `{r['code']}` ({r['pattern']}) in {r['fn']}. "
             "Return a typed SolidError instead (checked arithmetic, .get(), a length check). "
             "If it provably cannot panic, run `python3 scripts/ci/check_panic_sites.py "
             "--update` and mark its row in plan/panic-sites.tsv `proven` with the reason."
-        )
-    if gone:
-        names = ", ".join(f"{r['file']} {r['fn']} {r['pattern']} #{r['n']}" for r in gone[:5])
-        more = f" and {len(gone) - 5} more" if len(gone) > 5 else ""
-        errors.append(
-            f"{len(gone)} row(s) of plan/panic-sites.tsv no longer match a site ({names}{more}). "
-            "The list only shrinks: run `python3 scripts/ci/check_panic_sites.py --update` "
-            "and commit the shorter list."
         )
     for k in sorted(cur.keys() & lst.keys()):
         r = lst[k]
@@ -498,6 +493,20 @@ def check(current, listed, base=None):
     if base is not None:
         errors += ratchet(listed, base)
     return errors
+
+
+def stale(current, listed):
+    """A notice for rows that no longer match a site, or None."""
+    cur = {key(r) for r in current}
+    gone = [r for r in listed if key(r) not in cur]
+    if not gone:
+        return None
+    names = ", ".join(f"{r['file']} {r['fn']} {r['pattern']} #{r['n']}" for r in gone[:5])
+    more = f" and {len(gone) - 5} more" if len(gone) > 5 else ""
+    return (
+        f"{len(gone)} row(s) of plan/panic-sites.tsv no longer match a site ({names}{more}); "
+        "`python3 scripts/ci/check_panic_sites.py --update` drops them."
+    )
 
 
 def ratchet(listed, base):
@@ -596,9 +605,11 @@ def main(argv):
         print(f"wrote {LIST}: {len(rows)} sites\n{summary(rows)}")
         return 0
     base = base_list(root, args.base) if args.base else None
-    errors = check(current, listed, base)
+    errors = check(current, listed, base, read_source)
     for e in errors:
         print(f"::error file={LIST}::{e}")
+    if (notice := stale(current, listed)) is not None:
+        print(f"::notice file={LIST}::{notice}")
     print(f"{LIST}:\n{summary(listed)}")
     if base is None and args.base:
         print(f"{args.base} has no {LIST}; the open-row ratchet starts with this list")

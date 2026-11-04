@@ -109,7 +109,8 @@ anywhere (including dependencies; `deny.toml` bans copyleft crates).
   the collection as items are actually read.
 - No new panic-prone calls the lints miss (integer `/` `%`, `Vec::remove`/`insert`, `chunks`,
   `clamp`, `split_at`, `with_capacity`, ...): return a typed `SolidError` instead, or mark the
-  site `proven` with its reason in `plan/panic-sites.tsv` (`scripts/ci/check_panic_sites.py`).
+  site `proven` with its reason in `plan/panic-sites.tsv` (`scripts/ci/check_panic_sites.py`;
+  literal `windows(2)`, `clamp(-1.0, 1.0)` and divisors pass without a row).
 - Polymorphic readers that can nest (`Curve::read_from_db`, and the surface/topology
   dispatchers when ported) call `db.enter_nested(op)?` before dispatching and
   `db.leave_nested()` after, so crafted files cannot recurse without bound.

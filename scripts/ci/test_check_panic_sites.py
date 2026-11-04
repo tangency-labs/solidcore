@@ -135,10 +135,15 @@ class Ratchet(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("new panic-prone call", errors[0])
 
-    def test_gone_site_must_leave_the_list(self):
-        errors = c.check([], [row()])
-        self.assertEqual(len(errors), 1)
-        self.assertIn("--update", errors[0])
+    def test_new_mechanically_proven_site_passes(self):
+        for pattern, code in [("windows", "windows(2)"), ("f64::clamp", "clamp(-1.0, 1.0)")]:
+            self.assertEqual(c.check([row(pattern=pattern, code=code)], []), [], code)
+        self.assertEqual(len(c.check([row(pattern="swap", code="swap(0, 1)")], [])), 1)
+
+    def test_gone_site_is_reported_but_passes(self):
+        self.assertEqual(c.check([], [row()]), [])
+        self.assertIn("--update", c.stale([], [row()]))
+        self.assertIsNone(c.stale([row()], [row()]))
 
     def test_proven_mark_cannot_slide_onto_other_code(self):
         listed = [row(status="proven", code="remove(0)", reason="guarded")]
