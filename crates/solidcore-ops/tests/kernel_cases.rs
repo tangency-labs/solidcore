@@ -662,6 +662,45 @@ fn a_discarded_face_offset_preserves_the_retained_box() {
 }
 
 #[test]
+fn a_copied_edit_preserves_the_supplied_face_pick_order() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [30.0, 20.0, 10.0]).unwrap());
+    let (record, mut order) = body.to_record().unwrap();
+    let top = record
+        .faces
+        .iter()
+        .position(|f| matches!(f.surface, solidcore_record::brep::Surface::Plane { origin, .. } if origin[2] == 10.0))
+        .unwrap();
+    let top_id = order.faces[top];
+    // An imported record's index mapping need not be the body's current list order.
+    order.faces.rotate_left(1);
+    let pick = order.faces.iter().position(|&f| f == top_id).unwrap();
+    let out = call(
+        &serde_json::json!({"op": "offset_faces", "params": {
+            "faces": {"picked": [{"index": pick}]}, "distance": 2.0
+        }}),
+        &mut [Slot {
+            body: body.clone(),
+            order: Some(order),
+        }],
+    )
+    .unwrap()
+    .unwrap();
+    assert!((out.body.volume(1e-9).unwrap() - 7200.0).abs() <= 7200.0 * 1e-9);
+    let max_z = out
+        .body
+        .to_record()
+        .unwrap()
+        .0
+        .vertices
+        .iter()
+        .map(|v| v.point[2])
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!((max_z - 12.0).abs() <= 12.0 * 1e-9, "top is at {max_z}");
+    assert!((body.volume(1e-9).unwrap() - 6000.0).abs() <= 6000.0 * 1e-9);
+}
+
+#[test]
 fn a_discarded_thicken_preserves_the_retained_sheet() {
     let mut k = solidcore::Kernel::default();
     let line = solidcore::curve::line::Line::create_line_segment(
