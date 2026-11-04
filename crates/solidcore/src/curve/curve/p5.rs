@@ -126,7 +126,7 @@ use crate::geom::solution_array::{Solution, SolutionType};
 use crate::geom::tol::are_same;
 use crate::geom::vector3d::{acos, sqrt, Point3, Vec3};
 use crate::kernel::Kernel;
-use crate::math::{max2, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
+use crate::math::{max2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::p2::ArcData;
 use crate::nurbs::b_spline_curve::{BSplineCurve, GapFix};
 use crate::nurbs::b_spline_surface::SurfParamType;
@@ -1991,12 +1991,26 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
     let found_t = outcome.t;
     let pass_on = k.fixes.query_statuses_pass_on;
 
-    // A search that found nothing has no solution to report. Upstream reports the
-    // parameter the minimisations and maximisations stopped at, with `ls.curr.f` as its
-    // property value, so a search that never had a value to minimise still answers with
-    // one (#2574).
+    // A search that found nothing has no solution to report, with one exception: the
+    // minimisations and maximisations stop at the extremum they reached, and their `found`
+    // is decided by `|F| < acceptable_accuracy`, a test their objectives are not built for
+    // (a radius of curvature or a derivative length is not near zero at an extremum). For
+    // them the stop point is the solution, but only when `F` there is a value the search
+    // really has: `BIG_DOUBLE` is what the objective answers where it has no finite value
+    // (an uncurved piece), and a failed evaluation leaves no value at all. Upstream reports
+    // the stop point whatever `ls.curr.f` holds, which on a straight trim is the zero a
+    // failed evaluation left behind (#2574).
     if !outcome.found {
-        return Ok(false);
+        let stops_at_its_extremum = matches!(
+            property,
+            CurvePropertyType::MinimizeFirstDerivative
+                | CurvePropertyType::MaximizeFirstDerivative
+                | CurvePropertyType::MinimizeRadiusOfCurvature
+                | CurvePropertyType::MaximizeRadiusOfCurvature
+        );
+        if !stops_at_its_extremum || !(ls.curr.f.abs() < BIG_DOUBLE) {
+            return Ok(false);
+        }
     } // end no solution check
 
     // else a solution was found - set the outputs

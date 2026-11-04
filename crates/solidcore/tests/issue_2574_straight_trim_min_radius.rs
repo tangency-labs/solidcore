@@ -25,7 +25,9 @@
 //! minimisation that found nothing. The check compared 0 against its radius tolerance and
 //! reported the cusp. The three sites now answer the closed form, take no value from a
 //! failed evaluation, and report no solution, so the search finds no finite minimum and
-//! both checks pass.
+//! both checks pass. The last test guards the other side of that: where the search does
+//! stop at a value it evaluated, the check must still see it, so a cubic with a tight but
+//! regular bend next to a domain end is still reported.
 //! Written with Claude Code (Anthropic).
 #![allow(
     clippy::unwrap_used,
@@ -80,6 +82,15 @@ const RADIUS_TOL: f64 = 3.460628146958512e-3;
 
 /// Parameters sampled by [`straight_line`].
 const SAMPLES: usize = 40;
+
+/// The offset of the tight bend's middle control points ([`tight_bend`]).
+const BEND_H: f64 = 1e-4;
+
+/// The radius tolerance the check compares [`tight_bend`] against.
+const BEND_TOL: f64 = 1.4142135623730951e-4;
+
+/// The smallest radius of curvature of [`tight_bend`], over 20001 parameters.
+const BEND_MIN_RADIUS: f64 = 5.815568702310391e-6;
 
 /// The trim as a `dim`-dimensional cubic (`dim == 3` puts it in the plane z = 0).
 fn trim(dim: u64) -> BSplineCurve {
@@ -148,6 +159,44 @@ fn radius_report(k: &Kernel, curve: &BSplineCurve) -> (bool, Option<(u64, f64, f
     (ok, failed)
 }
 
+/// A cubic Bezier with a tight but regular bend at one end: control points (0,0),
+/// (h,0), (h,h), (1,1), reversed for `at_end`. In closed form C'(0) = (3h, 0) and
+/// C''(0) = (-6h, 6h), so the speed never vanishes and the radius of curvature at the
+/// bend's end is 27h^3 / 18h^2 = 1.5h.
+fn tight_bend(h: f64, at_end: bool) -> BSplineCurve {
+    let mut pts = [[0.0, 0.0], [h, 0.0], [h, h], [1.0, 1.0]];
+    if at_end {
+        pts.reverse();
+    }
+    let cps: Vec<CPoint> = pts
+        .iter()
+        .map(|q| CPoint::new(q[0], q[1], 0.0, 1.0))
+        .collect();
+    let knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+    BSplineCurve::from_data(3, cps.len() - 1, knots.len() - 1, 3, &cps, &knots).unwrap()
+}
+
+/// The smallest radius of curvature |C'|^3 / |C' x C''| of `curve` over 20001
+/// parameters, with the parameter it sits at, and the smallest speed.
+fn smallest_radius(curve: &BSplineCurve) -> (f64, f64, f64) {
+    let (mut best, mut at, mut slow) = (f64::MAX, f64::NAN, f64::MAX);
+    for i in 0..=20000 {
+        let t = i as f64 / 20000.0;
+        let d = curve.evaluate(t, 3, false, false).unwrap();
+        let speed = d[1].length();
+        slow = slow.min(speed);
+        let cross = d[1].cross(d[2]).length();
+        if cross > 0.0 && speed > 0.0 {
+            let r = speed * speed * speed / cross;
+            if r < best {
+                best = r;
+                at = t;
+            }
+        }
+    }
+    (best, at, slow)
+}
+
 /// **The trim is a straight line, so its radius of curvature is infinite.** Every
 /// control point shares one y, so the curve is a segment of the line y = 2 sqrt 2
 /// traversed forward at a speed that never vanishes. Its curvature is therefore zero, the
@@ -213,4 +262,51 @@ fn the_check_passes_on_the_straight_2d_trim() {
 #[test]
 fn the_check_passes_on_the_straight_3d_curve() {
     assert_eq!(radius_report(&check_kernel(), &trim(3)), (true, None));
+}
+
+/// **A real small radius next to a domain end is still reported.** The fix must not turn
+/// into a blanket "no solution": where the search does stop at a value it evaluated, that
+/// value is the minimum and the check has to see it. This cubic Bezier bends tightly at
+/// one end while its speed never vanishes, so in closed form its radius of curvature
+/// there is 1.5 h = 1.5e-4, and its smallest radius over the curve is 5.8156e-6 just
+/// inside the domain — far below the radius tolerance 1.4142e-4. Test 14 reports it with
+/// the bend at either end of the domain.
+#[test]
+fn the_check_still_reports_a_tight_bend_next_to_a_domain_end() {
+    for at_end in [false, true] {
+        let curve = tight_bend(BEND_H, at_end);
+        let bend_t = if at_end { 1.0 } else { 0.0 };
+
+        // closed form at the bend's end: a radius of 1.5 h at a speed of 3 h
+        let d = curve.evaluate(bend_t, 2, false, false).unwrap();
+        let radius = d[1].length().powi(3) / d[1].cross(d[2]).length();
+        assert!(
+            (radius - 1.5 * BEND_H).abs() <= 1e-12 * radius,
+            "radius {radius:e} at the bend, not 1.5 h"
+        );
+
+        let (min_radius, at, slow) = smallest_radius(&curve);
+        assert!(slow > 0.0, "the speed vanishes at some parameter");
+        assert!(
+            (min_radius - BEND_MIN_RADIUS).abs() <= 1e-9 * BEND_MIN_RADIUS,
+            "smallest radius {min_radius:e}"
+        );
+        assert!(min_radius < BEND_TOL, "{min_radius:e} is above the tolerance");
+        assert!(
+            (at - bend_t).abs() < 0.01,
+            "the smallest radius sits at t = {at:e}, not next to the bend"
+        );
+
+        // the check reports it, and the value it reports is that minimum
+        let (ok, failed) = radius_report(&check_kernel(), &curve);
+        assert!(!ok, "the tight bend checks clean (at_end = {at_end})");
+        let (index, value, tol) = failed.expect("a failed test");
+        assert_eq!(index, 14, "failed test {index}, not the 3D radius test");
+        assert!((tol - BEND_TOL).abs() <= 1e-15 * tol, "radius tolerance {tol:e}");
+        assert!(value < tol, "reported radius {value:e} is not below {tol:e}");
+        assert!(
+            (value - min_radius).abs() <= 1e-4 * min_radius,
+            "reported radius {value:e} is not the minimum {min_radius:e}"
+        );
+    }
 }
