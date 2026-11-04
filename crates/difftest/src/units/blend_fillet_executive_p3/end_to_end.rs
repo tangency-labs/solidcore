@@ -1843,6 +1843,27 @@ mod tests {
         assert!(output(&record).is_err());
     }
 
+    /// A refusal that names the size that builds (`SolidError::FilletRefused`) is the
+    /// executive's failure status, as `SolidError::sm_status` reads it: the C++ returns the
+    /// status alone. Compared as a status, not a harness error (#2400: the blend corner's
+    /// refusals of rounds the pinned corner built).
+    #[test]
+    fn a_refusal_naming_its_size_is_its_status() {
+        use solidcore::blend::fillet_executive::{FitKind, FitSize};
+        let refused = solidcore::SolidError::FilletRefused {
+            operation: "blend::fillet_executive::session::finish",
+            code: 1001,
+            entity: None,
+            reason: None,
+            fit: FitSize {
+                size: 0.5,
+                edge: None,
+                kind: FitKind::Radius,
+            },
+        };
+        assert_eq!(super::status(refused).expect("a status"), 1001.0);
+    }
+
     #[test]
     fn topology_and_statuses_remain_exact_integer_records() {
         let record = [0.0, 0.0, 10.0, 15.0, 7.0, 2.0, 14010.0, -1.0, 0.0, 1007.0];
