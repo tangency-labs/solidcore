@@ -146,10 +146,14 @@ def const_value(src, name):
 
 def auto_reason(pattern, code, src=""):
     """The reason a site provably cannot panic, from its text alone, or None."""
+    # `x /= n / 2`: a compound assignment's divisor is all the text after its operator, so
+    # the proof must match from the operator on, not at the last `/` (the divisor's own)
+    op = COMPOUND.match(code) if pattern in ("int-div", "int-rem") else None
+    text, find = (code[op.start(1):], re.match) if op else (code, re.search)
     for pat, rx, reason in AUTO_PROVEN:
-        if pat == pattern and re.search(rx, code):
+        if pat == pattern and find(rx, text):
             return reason
-    m = DIVISOR_CONST.search(code) if pattern in ("int-div", "int-rem") else None
+    m = find(DIVISOR_CONST, text) if pattern in ("int-div", "int-rem") else None
     if m and const_value(src, m.group(1)):
         return f"divisor is the non-zero constant {m.group(1)}"
     m = CLAMP.search(code) if pattern in ("f64::clamp", "Ord::clamp") else None
@@ -411,7 +415,8 @@ def run_clippy(root):
         cmd = ["cargo", "clippy", "--lib", "--message-format=json"]
         for crate in CRATES:
             cmd += ["-p", crate]
-        cmd += ["--"] + [arg for lint in LINTS for arg in ("-W", lint)]
+        # a renamed or misspelt lint would otherwise pass with no sites at all
+        cmd += ["--", "-D", "unknown_lints"] + [arg for lint in LINTS for arg in ("-W", lint)]
         env = dict(os.environ, CLIPPY_CONF_DIR=tmp)
         res = subprocess.run(cmd, cwd=root, env=env, stdout=subprocess.PIPE, text=True)
     if res.returncode != 0:
@@ -431,6 +436,13 @@ def parse_messages(text):
     ]
     if unknown:
         raise SystemExit("clippy did not resolve a METHODS path: " + "; ".join(unknown))
+    lints = [
+        m["message"]["message"] for m in out
+        if m.get("reason") == "compiler-message"
+        and m["message"]["message"].startswith("unknown lint")
+    ]
+    if lints:
+        raise SystemExit("clippy does not know a LINTS name: " + "; ".join(lints))
     return out
 
 

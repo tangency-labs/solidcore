@@ -107,7 +107,11 @@ class Proofs(unittest.TestCase):
         no = [("int-div", "n / m"), ("int-div", "n / 0"), ("int-div", "n / 2 / m"),
               ("windows", "windows(k)"), ("with_capacity", "Vec::with_capacity(n)"),
               ("f64::clamp", "clamp(1.0, -1.0)"), ("f64::clamp", "clamp(lo, hi)"),
-              ("Vec::insert", "insert(i, x)"), ("Vec::remove", "remove(0)")]
+              ("Vec::insert", "insert(i, x)"), ("Vec::remove", "remove(0)"),
+              # a compound assignment's divisor is everything after its operator
+              ("int-div", "x /= n / 2"), ("int-rem", "x %= y % 3"), ("int-div", "x /= a - b / 2"),
+              ("int-div", "x /= y / z.max(1)")]
+        yes += [("int-div", "x /= 2"), ("int-rem", "x %= (4 * 32)"), ("int-div", "x /= y.max(1)")]
         for pattern, code in yes:
             self.assertIsNotNone(c.auto_reason(pattern, code), code)
         for pattern, code in no:
@@ -118,6 +122,8 @@ class Proofs(unittest.TestCase):
         self.assertIsNotNone(c.auto_reason("int-div", "size / BLOCK", src))
         self.assertIsNone(c.auto_reason("int-div", "size / ZERO", src))
         self.assertIsNone(c.auto_reason("int-div", "size / BLOCK", ""))
+        self.assertIsNotNone(c.auto_reason("int-div", "size /= BLOCK", src))
+        self.assertIsNone(c.auto_reason("int-div", "size /= n - m / BLOCK", src))
 
     def test_a_parameter_named_like_the_constant_is_no_proof(self):
         src = "mod a { const BLOCK: usize = 64; }\nfn f(size: usize, BLOCK: usize) {}\n"
@@ -253,3 +259,14 @@ class Main(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Messages(unittest.TestCase):
+    def test_an_unknown_lint_is_an_error(self):
+        msg = {"reason": "compiler-message",
+               "message": {"message": "unknown lint: `clippy::integer_division_remainder_usd`",
+                           "spans": []}}
+        with self.assertRaises(SystemExit) as e:
+            c.parse_messages(json.dumps(msg))
+        self.assertIn("LINTS", str(e.exception))
+
