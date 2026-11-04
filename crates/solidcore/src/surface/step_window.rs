@@ -24,15 +24,34 @@
 //! Deviations: not a port. Recursion: halving a piece of an edge to decide its turn
 //! round a period stops at [`MAX_SPLIT_DEPTH`] levels.
 
-use crate::curve::curve::Curve;
+use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{Result, SolidError};
+use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
+use crate::geom::local_solve1d::{EvalFunction, FunctionValue, LocalSolve1d};
 use crate::kernel::Kernel;
-use crate::math::Point3;
-use crate::surface::surface::Surface;
+use crate::math::{Point2, Point3, Vec3, EFF_ZERO};
+use crate::nurbs::b_spline_surface_n_lib::EvaluateFlags;
+use crate::surface::surface::{Surface, SurfaceKind};
 
 const OP: &str = "surface::step_window::face_window";
+
+/// The STEP period of an angle, in degrees.
+const PERIOD: f64 = 360.0;
+
+/// Levels a piece of an edge is halved to decide its turn round a period (each level
+/// halves the piece's parameter range; a piece is decided once it turns by at most
+/// half a period).
+pub const MAX_SPLIT_DEPTH: usize = 12;
+
+/// Halvings a piece of an edge always gets before its turn is read off its ends: a
+/// whole turn has equal ends, its quarters do not.
+const MIN_SPLIT_DEPTH: usize = 2;
+
+/// Regula falsi steps for a stationary point without a closed form (each step keeps
+/// at most 85 % of the bracket, so 200 steps reach the parameter's rounding).
+const ROOT_STEPS: u64 = 200;
 
 /// One edge of a face's boundary loop, as the loop uses it: the edge's curve, its
 /// STEP interval on that curve and the direction the loop runs along it.
@@ -137,11 +156,1094 @@ pub fn face_window(
     margin: WindowMargin,
     tol: f64,
 ) -> Result<Extent2d> {
-    let _ = (k, surface, loops, vertices, margin, tol);
-    Err(SolidError::Unsupported {
-        operation: OP,
-        reason: "not yet",
-    })
+    if !(tol.is_finite() && tol >= 0.0) {
+        return Err(SolidError::invalid_input(
+            OP,
+            "tolerance negative or not finite",
+        ));
+    }
+    if !(margin.u.is_finite() && margin.u >= 0.0 && margin.v.is_finite() && margin.v >= 0.0) {
+        return Err(SolidError::invalid_input(
+            OP,
+            "margin negative or not finite",
+        ));
+    }
+    let map = Map::of(surface, tol);
+    if loops.is_empty() {
+        return map.whole();
+    }
+
+    let mut boxes: Vec<LoopBox> = Vec::new();
+    for edges in loops {
+        boxes.push(loop_box(k, &map, edges)?);
+    }
+
+    let mut window = [Range::empty(), Range::empty()];
+    for (d, range) in window.iter_mut().enumerate() {
+        for b in &boxes {
+            let Some(r) = b.ranges.get(d).copied().flatten() else {
+                continue;
+            };
+            *range = if map.periodic(d) && range.is_set() {
+                range.union(&r.shifted_beside(range))
+            } else {
+                range.union(&r)
+            };
+        }
+    }
+    for &p in vertices {
+        let q = map.params(k, p, true)?;
+        for (d, range) in window.iter_mut().enumerate() {
+            if let (false, Some(x)) = (map.periodic(d), q.get(d)) {
+                range.add(x);
+            }
+        }
+    }
+
+    // a full turn round a periodic direction is one period
+    let mut full = [false, false];
+    for (d, f) in full.iter_mut().enumerate() {
+        let wound = boxes.iter().any(|b| b.winding(d) != 0);
+        let span = window.get(d).map_or(0.0, Range::length);
+        *f = map.periodic(d) && (wound || span >= PERIOD);
+    }
+
+    // loops round the axis more one way than the other: the face reaches what closes
+    // the surface on their left
+    for d in 0..2 {
+        let net: i64 = boxes.iter().map(|b| b.winding(d)).sum();
+        if net == 0 {
+            continue;
+        }
+        if net.abs() > 1 {
+            return Err(SolidError::invalid_input(
+                OP,
+                "loops winding round the surface more than once",
+            ));
+        }
+        // the left of a loop running up u is above it; of one running up v, below u
+        let other = 1 - d;
+        if map.periodic(other) {
+            if let Some(f) = full.get_mut(other) {
+                *f = true;
+            }
+            continue;
+        }
+        let up = d == 0 && net > 0;
+        let bound = map.closing_bound(k, other, up)?;
+        if let Some(r) = window.get_mut(other) {
+            r.add(bound);
+        }
+    }
+
+    let max = map.max_domain(k)?;
+    let mut out = [Range::empty(), Range::empty()];
+    for (d, o) in out.iter_mut().enumerate() {
+        let r = window.get(d).copied().unwrap_or_default();
+        if !r.is_set() {
+            return Err(SolidError::invalid_input(OP, "a boundary without points"));
+        }
+        let m = if d == 0 { margin.u } else { margin.v };
+        let (mut lo, mut hi) = (r.lo, r.hi);
+        if full.get(d).copied().unwrap_or(false) {
+            hi = lo + PERIOD;
+        } else if map.periodic(d) {
+            lo -= m;
+            hi += m;
+            if hi - lo >= PERIOD {
+                hi = lo + PERIOD;
+            }
+        } else {
+            let (min, max) = map.limits(d, max.as_ref());
+            lo = lo.min((lo - m).max(min));
+            hi = hi.max((hi + m).min(max));
+        }
+        if map.periodic(d) {
+            let turns = (lo / PERIOD).floor();
+            lo -= turns * PERIOD;
+            hi -= turns * PERIOD;
+            if hi > PERIOD {
+                lo -= PERIOD;
+                hi -= PERIOD;
+            }
+        }
+        *o = Range { lo, hi };
+    }
+    let [u, v] = out;
+    Ok(Extent2d::from_bounds(u.lo, v.lo, u.hi, v.hi))
+}
+
+/// A closed range, empty while `lo > hi`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Range {
+    lo: f64,
+    hi: f64,
+}
+
+impl Default for Range {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl Range {
+    const fn empty() -> Self {
+        Self {
+            lo: f64::INFINITY,
+            hi: f64::NEG_INFINITY,
+        }
+    }
+
+    fn is_set(&self) -> bool {
+        self.lo <= self.hi
+    }
+
+    fn add(&mut self, x: f64) {
+        self.lo = self.lo.min(x);
+        self.hi = self.hi.max(x);
+    }
+
+    fn union(&self, other: &Self) -> Self {
+        Self {
+            lo: self.lo.min(other.lo),
+            hi: self.hi.max(other.hi),
+        }
+    }
+
+    fn length(&self) -> f64 {
+        if self.is_set() {
+            self.hi - self.lo
+        } else {
+            0.0
+        }
+    }
+
+    fn mid(&self) -> f64 {
+        0.5 * (self.lo + self.hi)
+    }
+
+    fn shift(&self, by: f64) -> Self {
+        Self {
+            lo: self.lo + by,
+            hi: self.hi + by,
+        }
+    }
+
+    /// This range moved by the whole periods that make the box over it and `other`
+    /// smallest: of the shift that brings its middle nearest `other`'s and the periods
+    /// either side, the first smallest.
+    fn shifted_beside(&self, other: &Self) -> Self {
+        let n = ((other.mid() - self.mid()) / PERIOD).round();
+        let mut best = self.shift(n * PERIOD);
+        let mut best_len = best.union(other).length();
+        for m in [n - 1.0, n + 1.0] {
+            let cand = self.shift(m * PERIOD);
+            let len = cand.union(other).length();
+            if len < best_len {
+                best = cand;
+                best_len = len;
+            }
+        }
+        best
+    }
+}
+
+/// A loop's ranges (unwound in the periodic directions; `None` where no point of the
+/// loop has the parameter) and how many times it goes round each periodic direction.
+struct LoopBox {
+    ranges: [Option<Range>; 2],
+    windings: [i64; 2],
+}
+
+impl LoopBox {
+    fn winding(&self, d: usize) -> i64 {
+        self.windings.get(d).copied().unwrap_or(0)
+    }
+}
+
+/// The surface's frame: origin, unit X, Y and Z (the axis of a surface of revolution).
+#[derive(Debug, Clone, Copy)]
+struct Frame {
+    o: Point3,
+    x: Vec3,
+    y: Vec3,
+    z: Vec3,
+}
+
+impl Frame {
+    fn of(p: &Axis2Placement) -> Self {
+        Self {
+            o: p.origin(),
+            x: p.x_axis(),
+            y: p.y_axis(),
+            z: p.z_axis(),
+        }
+    }
+
+    /// The angle of `w` about Z from X, in degrees.
+    fn angle(&self, w: Vec3) -> f64 {
+        w.dot(self.y).atan2(w.dot(self.x)).to_degrees()
+    }
+
+    /// `w` without its component along Z.
+    fn radial(&self, w: Vec3) -> Vec3 {
+        w - w.dot(self.z) * self.z
+    }
+}
+
+/// A surface of revolution's v.
+#[derive(Debug, Clone, Copy)]
+enum Along {
+    /// A cone's or cylinder's height along the axis; the radius is `radius + v tan`.
+    Height { radius: f64, tan: f64 },
+    /// A sphere's latitude.
+    Latitude { radius: f64 },
+    /// A torus's angle round its tube.
+    Tube { major: f64, minor: f64 },
+    /// A surface of revolution's profile parameter, by the kernel's inversion;
+    /// periodic for a conic profile.
+    Profile { periodic: bool },
+}
+
+/// How a point's STEP parameters on the surface are computed.
+enum Map<'a> {
+    /// `O + u sx X + v sy Y`.
+    Plane {
+        frame: Frame,
+        scale: Point2,
+        tol: f64,
+    },
+    /// u the angle about Z (undefined on the axis), v by `along`.
+    Revolved {
+        frame: Frame,
+        along: Along,
+        surface: &'a Surface,
+        tol: f64,
+    },
+    /// The kernel's inversion in both directions, neither periodic.
+    Inverted { surface: &'a Surface, tol: f64 },
+}
+
+impl<'a> Map<'a> {
+    fn of(surface: &'a Surface, tol: f64) -> Self {
+        let revolved = |frame, along| Map::Revolved {
+            frame,
+            along,
+            surface,
+            tol,
+        };
+        match surface.kind() {
+            SurfaceKind::Plane(s) => Map::Plane {
+                frame: Frame::of(s.position()),
+                scale: Point2::new(s.uv_scale().x, s.uv_scale().y),
+                tol,
+            },
+            SurfaceKind::Cone(s) => {
+                let c = s.canonical();
+                revolved(
+                    Frame::of(&c.origin),
+                    Along::Height {
+                        radius: c.radius,
+                        tan: c.semi_angle_deg.to_radians().tan(),
+                    },
+                )
+            }
+            SurfaceKind::Sphere(s) => revolved(
+                Frame::of(s.base().position()),
+                Along::Latitude { radius: s.radius() },
+            ),
+            SurfaceKind::Torus(s) => revolved(
+                Frame::of(s.base().position()),
+                Along::Tube {
+                    major: s.major_radius(),
+                    minor: s.minor_radius(),
+                },
+            ),
+            SurfaceKind::SurfOfRevolution(s) => revolved(
+                Frame::of(s.position()),
+                Along::Profile {
+                    periodic: matches!(s.gen_curve().map(Curve::kind), Some(CurveKind::Ellipse(_))),
+                },
+            ),
+            _ => Map::Inverted { surface, tol },
+        }
+    }
+
+    const fn surface(&self) -> Option<&'a Surface> {
+        match self {
+            Map::Plane { .. } => None,
+            Map::Revolved { surface, .. } | Map::Inverted { surface, .. } => Some(surface),
+        }
+    }
+
+    const fn periodic(&self, d: usize) -> bool {
+        match self {
+            Map::Revolved { along, .. } => {
+                d == 0
+                    || matches!(
+                        along,
+                        Along::Tube { .. } | Along::Profile { periodic: true }
+                    )
+            }
+            Map::Plane { .. } | Map::Inverted { .. } => false,
+        }
+    }
+
+    /// The window of a face without edge loops: the whole of a closed surface.
+    fn whole(&self) -> Result<Extent2d> {
+        match self {
+            Map::Revolved {
+                along: Along::Latitude { .. },
+                ..
+            } => Ok(Extent2d::from_bounds(0.0, -90.0, PERIOD, 90.0)),
+            Map::Revolved {
+                along: Along::Tube { .. },
+                ..
+            } => Ok(Extent2d::from_bounds(0.0, 0.0, PERIOD, PERIOD)),
+            _ => Err(SolidError::invalid_input(
+                OP,
+                "no edge loop on a surface that is not closed",
+            )),
+        }
+    }
+
+    fn max_domain(&self, k: &Kernel) -> Result<Option<Extent2d>> {
+        match self.surface() {
+            Some(s) => s.max_analytic_domain(k).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// How far a margin may move the ends of direction `d` (not periodic).
+    fn limits(&self, d: usize, max: Option<&Extent2d>) -> (f64, f64) {
+        match self {
+            Map::Plane { .. } => (f64::NEG_INFINITY, f64::INFINITY),
+            Map::Revolved {
+                along: Along::Latitude { .. },
+                ..
+            } => (-90.0, 90.0),
+            Map::Revolved {
+                along: Along::Height { radius, tan },
+                ..
+            } => {
+                if *tan == 0.0 {
+                    (f64::NEG_INFINITY, f64::INFINITY)
+                } else if *tan > 0.0 {
+                    // the side of the apex where the radius is positive
+                    (-radius / tan, f64::INFINITY)
+                } else {
+                    (f64::NEG_INFINITY, -radius / tan)
+                }
+            }
+            _ => match max {
+                Some(m) => {
+                    let ivl = if d == 0 {
+                        m.u_interval()
+                    } else {
+                        m.v_interval()
+                    };
+                    (ivl.min(), ivl.max())
+                }
+                None => (f64::NEG_INFINITY, f64::INFINITY),
+            },
+        }
+    }
+
+    /// The end of direction `d` (not periodic) that closes the surface on the side
+    /// `up` (towards larger values): a sphere's pole, a cone's apex, the end of a
+    /// revolution's profile on its axis.
+    fn closing_bound(&self, k: &Kernel, d: usize, up: bool) -> Result<f64> {
+        let open =
+            || SolidError::invalid_input(OP, "a face reaching a side its surface does not close");
+        if d != 1 {
+            return Err(open());
+        }
+        match self {
+            Map::Revolved {
+                along: Along::Latitude { .. },
+                ..
+            } => Ok(if up { 90.0 } else { -90.0 }),
+            Map::Revolved {
+                along: Along::Height { radius, tan },
+                ..
+            } => {
+                // the apex is above where the radius shrinks upwards
+                if *tan == 0.0 || (*tan < 0.0) != up {
+                    return Err(open());
+                }
+                Ok(-radius / tan)
+            }
+            Map::Revolved {
+                frame,
+                along: Along::Profile { .. },
+                surface,
+                tol,
+            } => {
+                let m = surface.max_analytic_domain(k)?;
+                let v = if up { m.v_max() } else { m.v_min() };
+                let p = surface.evaluate_step_point(k, Point2::new(m.u_min(), v))?;
+                if frame.radial(p - frame.o).length() <= *tol {
+                    Ok(v)
+                } else {
+                    Err(open())
+                }
+            }
+            _ => Err(open()),
+        }
+    }
+
+    /// The STEP parameters of `p` (u `None` on the axis of a surface of revolution);
+    /// with `check`, refused farther than the tolerance from an analytic surface.
+    fn params(&self, k: &Kernel, p: Point3, check: bool) -> Result<Params> {
+        let off = || SolidError::invalid_input(OP, "a boundary point off its surface");
+        match self {
+            Map::Plane { frame, scale, tol } => {
+                let w = p - frame.o;
+                if check && w.dot(frame.z).abs() > *tol {
+                    return Err(off());
+                }
+                Ok(Params {
+                    u: Some(w.dot(frame.x) / scale.x),
+                    v: w.dot(frame.y) / scale.y,
+                })
+            }
+            Map::Revolved {
+                frame,
+                along,
+                surface,
+                tol,
+            } => {
+                let w = p - frame.o;
+                let h = w.dot(frame.z);
+                let rho = frame.radial(w).length();
+                let u = (rho > *tol).then(|| frame.angle(w));
+                let (v, gap) = match *along {
+                    // the distance across the generator
+                    Along::Height { radius, tan } => {
+                        (h, (rho - (radius + h * tan)).abs() / tan.hypot(1.0))
+                    }
+                    Along::Latitude { radius } => {
+                        (h.atan2(rho).to_degrees(), (w.length() - radius).abs())
+                    }
+                    Along::Tube { major, minor } => (
+                        h.atan2(rho - major).to_degrees(),
+                        ((rho - major).hypot(h) - minor).abs(),
+                    ),
+                    Along::Profile { .. } => {
+                        let dom = surface.max_analytic_domain(k)?;
+                        let (uv, _) = surface.step_inversion(k, &dom, p, *tol, None)?;
+                        (uv.y, 0.0)
+                    }
+                };
+                if check && gap > *tol {
+                    return Err(off());
+                }
+                Ok(Params { u, v })
+            }
+            Map::Inverted { surface, tol } => {
+                let dom = surface.max_analytic_domain(k)?;
+                let (uv, _) = surface.step_inversion(k, &dom, p, *tol, None)?;
+                Ok(Params {
+                    u: Some(uv.x),
+                    v: uv.y,
+                })
+            }
+        }
+    }
+
+    /// The rates of u and v along the tangent `dp` at `p` (whose parameters are `q`),
+    /// each up to a positive factor.
+    fn rates(&self, k: &Kernel, p: Point3, dp: Vec3, q: &Params) -> Result<[f64; 2]> {
+        match self {
+            Map::Plane { frame, scale, .. } => {
+                Ok([dp.dot(frame.x) / scale.x, dp.dot(frame.y) / scale.y])
+            }
+            Map::Revolved { frame, along, .. } => {
+                let w = p - frame.o;
+                let rad = frame.radial(w);
+                let rho2 = rad.length_squared();
+                let du = w.cross(dp).dot(frame.z) / rho2;
+                let dv = match *along {
+                    Along::Height { .. } | Along::Latitude { .. } => dp.dot(frame.z),
+                    Along::Tube { major, .. } => {
+                        let rho = rho2.sqrt();
+                        let drho = rad.dot(dp) / rho;
+                        (rho - major) * dp.dot(frame.z) - w.dot(frame.z) * drho
+                    }
+                    Along::Profile { .. } => self.chain(k, dp, q)?[1],
+                };
+                Ok([du, dv])
+            }
+            Map::Inverted { .. } => self.chain(k, dp, q),
+        }
+    }
+
+    /// The rates of the kernel's STEP parameters along `dp`: the least-squares
+    /// `(Su, Sv) . r = dp` with the STEP derivatives at `q`.
+    fn chain(&self, k: &Kernel, dp: Vec3, q: &Params) -> Result<[f64; 2]> {
+        let none = || SolidError::invalid_input(OP, "no surface derivative");
+        let surface = self.surface().ok_or_else(none)?;
+        let uv = Point2::new(q.u.unwrap_or(0.0), q.v);
+        let d = surface.evaluate_step(k, uv, 1, 1, EvaluateFlags::default())?;
+        let su = d.get(1).and_then(|r| r.first()).copied().ok_or_else(none)?;
+        let sv = d.first().and_then(|r| r.get(1)).copied().ok_or_else(none)?;
+        let (a, b, c) = (su.dot(su), su.dot(sv), sv.dot(sv));
+        let (r1, r2) = (su.dot(dp), sv.dot(dp));
+        let det = a * c - b * b;
+        if det == 0.0 {
+            return Ok([0.0, 0.0]);
+        }
+        Ok([(c * r1 - b * r2) / det, (a * r2 - b * r1) / det])
+    }
+}
+
+/// A point's STEP parameters.
+#[derive(Debug, Clone, Copy)]
+struct Params {
+    u: Option<f64>,
+    v: f64,
+}
+
+impl Params {
+    fn get(&self, d: usize) -> Option<f64> {
+        if d == 0 {
+            self.u
+        } else {
+            Some(self.v)
+        }
+    }
+}
+
+/// An edge's curve in the parameter its stationary points are found in (the STEP
+/// parameter of a line or a conic, else the natural one), and where the loop enters
+/// and leaves it.
+struct EdgeCurve<'a> {
+    curve: &'a Curve,
+    from: f64,
+    to: f64,
+}
+
+impl<'a> EdgeCurve<'a> {
+    fn new(k: &Kernel, e: &BoundaryEdge<'a>) -> Result<Self> {
+        let (lo, hi) = (e.interval.min(), e.interval.max());
+        if !(lo.is_finite() && hi.is_finite() && lo <= hi) {
+            return Err(SolidError::invalid_input(
+                OP,
+                "an edge interval not finite or ending below its start",
+            ));
+        }
+        let (a, b) = if e.forward { (lo, hi) } else { (hi, lo) };
+        let (from, to) = if matches!(e.curve.kind(), CurveKind::Line(_) | CurveKind::Ellipse(_)) {
+            (a, b)
+        } else {
+            (
+                e.curve.convert_t_from_step_to_nurbs(k, a)?,
+                e.curve.convert_t_from_step_to_nurbs(k, b)?,
+            )
+        };
+        Ok(Self {
+            curve: e.curve,
+            from,
+            to,
+        })
+    }
+
+    /// The point and the tangent along the parameter at `t` (from the left when
+    /// `left`).
+    fn at(&self, k: &Kernel, t: f64, left: bool) -> Result<(Point3, Vec3)> {
+        let d = match self.curve.kind() {
+            CurveKind::Line(l) => l.evaluate_step(t, 1),
+            CurveKind::Ellipse(e) => e.evaluate_step(t, 1)?,
+            _ => self.curve.evaluate(k, t, 1, left, false)?,
+        };
+        match (d.first(), d.get(1)) {
+            (Some(&p), Some(&dp)) => Ok((p, dp)),
+            _ => Err(SolidError::invalid_input(OP, "no curve derivative")),
+        }
+    }
+
+    /// The tangent at `t` pointing into the piece towards `other`: where the piece's
+    /// points lie seen from `t`.
+    fn toward(&self, k: &Kernel, t: f64, other: f64) -> Result<Vec3> {
+        let left = other < t;
+        let (_, dp) = self.at(k, t, left)?;
+        Ok(if left { -dp } else { dp })
+    }
+
+    /// The parameters strictly between `from` and `to` where u or v is stationary (or
+    /// the curve meets the axis), in loop order.
+    fn stationary(&self, k: &Kernel, map: &Map<'_>) -> Result<Vec<f64>> {
+        let (lo, hi) = (self.from.min(self.to), self.from.max(self.to));
+        let mut ts = Vec::new();
+        for d in 0..2 {
+            match closed_form(self.curve, map, d) {
+                Some(Roots::Monotone) => {}
+                Some(Roots::Every { base, step }) => push_every(&mut ts, base, step, lo, hi),
+                Some(Roots::Turns(roots)) => {
+                    for r in roots.into_iter().flatten() {
+                        push_every(&mut ts, r, PERIOD, lo, hi);
+                    }
+                }
+                Some(Roots::Once(t)) => {
+                    if t > lo && t < hi {
+                        ts.push(t);
+                    }
+                }
+                None => ts.extend(self.numeric(k, map, d, lo, hi)?),
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        ts.dedup();
+        if self.to < self.from {
+            ts.reverse();
+        }
+        Ok(ts)
+    }
+
+    /// The sign changes of direction `d`'s rate strictly between `lo` and `hi`,
+    /// bracketed on the knot spans and solved.
+    fn numeric(&self, k: &Kernel, map: &Map<'_>, d: usize, lo: f64, hi: f64) -> Result<Vec<f64>> {
+        if lo >= hi {
+            return Ok(Vec::new());
+        }
+        // the spans in the edge's parameter: a line's one, a conic's quarter turns (its
+        // NURB's arcs), else the curve's knot spans
+        let mut breaks = vec![lo];
+        let degree = match self.curve.kind() {
+            CurveKind::Line(_) => 1,
+            CurveKind::Ellipse(_) => {
+                push_every(&mut breaks, 0.0, PERIOD / 4.0, lo, hi);
+                2
+            }
+            _ => {
+                let (knots, _) = self.curve.knots(k, Some(&Extent1d::from_min_max(lo, hi)))?;
+                breaks.extend(knots.into_iter().filter(|t| *t > lo && *t < hi));
+                self.curve.degree().unwrap_or(3)
+            }
+        };
+        breaks.push(hi);
+        let pieces = 2 * (degree.clamp(1, 32) + 1);
+        let mut samples = Vec::new();
+        for w in breaks.windows(2) {
+            if let [a, b] = w {
+                samples.extend((0..pieces).map(|i| a + (b - a) * (i as f64) / (pieces as f64)));
+            }
+        }
+        samples.push(hi);
+
+        let mut rate = Rate {
+            k,
+            map,
+            edge: self,
+            d,
+            sign: 1.0,
+        };
+        let mut roots = Vec::new();
+        let mut prev: Option<(f64, f64)> = None;
+        for t in samples {
+            let f = rate.value(t)?;
+            if let Some((pt, pf)) = prev {
+                roots.extend(rate.root((pt, pf), (t, f), lo, hi)?);
+            }
+            prev = Some((t, f));
+        }
+        Ok(roots)
+    }
+}
+
+/// Direction `d`'s rate along an edge, for [`LocalSolve1d`] (times `sign`).
+struct Rate<'a, 'b> {
+    k: &'a Kernel,
+    map: &'a Map<'b>,
+    edge: &'a EdgeCurve<'a>,
+    d: usize,
+    sign: f64,
+}
+
+impl Rate<'_, '_> {
+    fn value(&self, t: f64) -> Result<f64> {
+        let (p, dp) = self.edge.at(self.k, t, false)?;
+        let q = self.map.params(self.k, p, false)?;
+        let f = self
+            .map
+            .rates(self.k, p, dp, &q)?
+            .get(self.d)
+            .copied()
+            .unwrap_or(0.0);
+        // on the axis the angle's rate is undefined: a stationary point
+        Ok(if f.is_finite() { f } else { 0.0 })
+    }
+
+    /// The root between the samples `a` and `b` (`b` itself where its rate is zero), if
+    /// it is strictly inside `lo..hi`.
+    fn root(
+        &mut self,
+        (a, fa): (f64, f64),
+        (b, fb): (f64, f64),
+        lo: f64,
+        hi: f64,
+    ) -> Result<Option<f64>> {
+        let inside = |t: f64| (t > lo && t < hi).then_some(t);
+        if fb == 0.0 {
+            return Ok(inside(b));
+        }
+        if fa == 0.0 || (fa < 0.0) == (fb < 0.0) {
+            return Ok(None);
+        }
+        // regula falsi from the negative end
+        self.sign = if fa < 0.0 { 1.0 } else { -1.0 };
+        let (fl, fu) = (self.sign * fa, self.sign * fb);
+        let found = LocalSolve1d::new_with_kernel(self.k)
+            .solve_by_bisection(self, ROOT_STEPS, a, b, fl, fu);
+        self.sign = 1.0;
+        Ok(inside(found?.0))
+    }
+}
+
+impl EvalFunction for Rate<'_, '_> {
+    fn evaluate(&mut self, t: f64, out: &mut FunctionValue, _signal_errors: bool) -> Result<()> {
+        out.f = self.sign * self.value(t)?;
+        out.f_prime = 0.0;
+        out.found_answer = false;
+        Ok(())
+    }
+}
+
+/// A direction's stationary parameters along a curve, in closed form.
+enum Roots {
+    /// None: the parameter is monotone (or constant) along the curve.
+    Monotone,
+    /// `base + i * step` for every whole `i`.
+    Every { base: f64, step: f64 },
+    /// Up to two roots, each repeating every turn.
+    Turns([Option<f64>; 2]),
+    /// One root (where a line meets the axis).
+    Once(f64),
+}
+
+/// Pushes `base + i * step` strictly inside `lo..hi`.
+fn push_every(ts: &mut Vec<f64>, base: f64, step: f64, lo: f64, hi: f64) {
+    if !(step > 0.0 && base.is_finite()) {
+        return;
+    }
+    let first = ((lo - base) / step).floor();
+    // a conic's interval spans at most two turns: a handful of candidates
+    let count = ((hi - lo) / step).ceil().clamp(0.0, 8.0) as usize + 1;
+    for i in 0..=count {
+        let t = base + (first + i as f64) * step;
+        if t > lo && t < hi {
+            ts.push(t);
+        }
+    }
+}
+
+/// The stationary parameters of direction `d` of `map` along `curve` in closed form,
+/// or `None` where there is none.
+fn closed_form(curve: &Curve, map: &Map<'_>, d: usize) -> Option<Roots> {
+    match curve.kind() {
+        CurveKind::Line(l) => {
+            let c = l.canonical();
+            let (p, v) = (c.point, c.vector);
+            match map {
+                // linear in the parameter
+                Map::Plane { .. } => Some(Roots::Monotone),
+                Map::Revolved { frame, along, .. } => {
+                    let w = p - frame.o;
+                    // ((P - O) x V) . Z is constant along the line: zero when it lies in
+                    // a plane through the axis
+                    let through = w.cross(v).dot(frame.z).abs()
+                        <= EFF_ZERO * w.length().max(1.0) * v.length();
+                    if d == 0 {
+                        if !through {
+                            return Some(Roots::Monotone);
+                        }
+                        // in a plane through the axis its angle is constant, but where it
+                        // meets the axis
+                        let (rw, rv) = (frame.radial(w), frame.radial(v));
+                        let rv2 = rv.length_squared();
+                        if rv2 == 0.0 {
+                            return Some(Roots::Monotone);
+                        }
+                        return Some(Roots::Once(-rw.dot(rv) / rv2));
+                    }
+                    match along {
+                        // linear in the parameter
+                        Along::Height { .. } => Some(Roots::Monotone),
+                        // a line in a plane through the axis is the profile's
+                        Along::Profile { .. } if through => Some(Roots::Monotone),
+                        _ => None,
+                    }
+                }
+                Map::Inverted { .. } => None,
+            }
+        }
+        CurveKind::Ellipse(e) => {
+            let c = e.canonical();
+            let (cx, xa, ya) = (
+                c.position.origin(),
+                c.position.x_axis(),
+                c.position.y_axis(),
+            );
+            let (a, b) = (c.radius_x, c.radius_y);
+            let size = a.max(b);
+            // the extremes of (P - O) . w: -a sin t (X . w) + b cos t (Y . w) = 0
+            let linear = |w: Vec3| -> Roots {
+                let (s, t) = (a * xa.dot(w), b * ya.dot(w));
+                if s.hypot(t) <= EFF_ZERO * size {
+                    Roots::Monotone
+                } else {
+                    Roots::Every {
+                        base: t.atan2(s).to_degrees(),
+                        step: PERIOD / 2.0,
+                    }
+                }
+            };
+            match map {
+                Map::Plane { frame, .. } => Some(linear(if d == 0 { frame.x } else { frame.y })),
+                Map::Revolved { frame, along, .. } => {
+                    let w = cx - frame.o;
+                    let n = xa.cross(ya);
+                    // ((P - O) x P') . Z = al cos t + be sin t + ga (per radian)
+                    let al = b * w.cross(ya).dot(frame.z);
+                    let be = -a * w.cross(xa).dot(frame.z);
+                    let ga = a * b * n.dot(frame.z);
+                    let scale = size * (w.length() + size);
+                    let through = al.hypot(be) <= EFF_ZERO * scale && ga.abs() <= EFF_ZERO * scale;
+                    let about = frame.radial(w).length() <= EFF_ZERO * (w.length() + size)
+                        && frame.radial(n).length() <= EFF_ZERO;
+                    if d == 0 {
+                        if through {
+                            // in a plane through the axis its angle is constant, but where
+                            // it meets the axis: (P - O) . m = 0 across the plane
+                            let m = frame.z.cross(n).unitize().ok()?;
+                            return Some(sine_roots(a * xa.dot(m), b * ya.dot(m), w.dot(m)));
+                        }
+                        return Some(sine_roots(al, be, ga));
+                    }
+                    match along {
+                        Along::Height { .. } | Along::Latitude { .. } => Some(linear(frame.z)),
+                        // an iso circle, or the profile (the tube) itself
+                        Along::Tube { .. } | Along::Profile { .. } if about || through => {
+                            Some(Roots::Monotone)
+                        }
+                        _ => None,
+                    }
+                }
+                Map::Inverted { .. } => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The roots in degrees of `p cos t + q sin t + r = 0` (none where it holds for every
+/// or no `t`).
+fn sine_roots(p: f64, q: f64, r: f64) -> Roots {
+    let amp = p.hypot(q);
+    if amp == 0.0 {
+        return Roots::Monotone;
+    }
+    let c = -r / amp;
+    if c.abs() > 1.0 {
+        return Roots::Monotone;
+    }
+    let phi = q.atan2(p).to_degrees();
+    let delta = c.acos().to_degrees();
+    Roots::Turns([Some(phi + delta), (delta != 0.0).then_some(phi - delta)])
+}
+
+/// A point of a loop: the edge it is on (an index into the loop), its parameter
+/// there, and its STEP parameters.
+struct Node {
+    edge: usize,
+    t: f64,
+    params: Params,
+}
+
+/// The ranges and windings of one loop.
+fn loop_box(k: &Kernel, map: &Map<'_>, edges: &[BoundaryEdge<'_>]) -> Result<LoopBox> {
+    if edges.is_empty() {
+        return Err(SolidError::invalid_input(OP, "an empty loop"));
+    }
+    let mut curves = Vec::new();
+    let mut nodes: Vec<Node> = Vec::new();
+    for (i, e) in edges.iter().enumerate() {
+        let c = EdgeCurve::new(k, e)?;
+        let mut ts = vec![c.from];
+        ts.extend(c.stationary(k, map)?);
+        ts.push(c.to);
+        for t in ts {
+            let (p, _) = c.at(k, t, false)?;
+            nodes.push(Node {
+                edge: i,
+                t,
+                params: map.params(k, p, true)?,
+            });
+        }
+        curves.push(c);
+    }
+
+    let mut ranges = [None, None];
+    let mut windings = [0, 0];
+    for (d, (range, winding)) in ranges.iter_mut().zip(windings.iter_mut()).enumerate() {
+        let (r, turns) = if map.periodic(d) {
+            unwind(k, map, &curves, &nodes, d)?
+        } else {
+            let mut r = Range::empty();
+            for x in nodes.iter().filter_map(|n| n.params.get(d)) {
+                r.add(x);
+            }
+            (r, 0)
+        };
+        *range = r.is_set().then_some(r);
+        *winding = turns;
+    }
+    Ok(LoopBox { ranges, windings })
+}
+
+/// The values of periodic direction `d` along a loop, unwound, and how many periods
+/// the loop goes round.
+fn unwind(
+    k: &Kernel,
+    map: &Map<'_>,
+    curves: &[EdgeCurve<'_>],
+    nodes: &[Node],
+    d: usize,
+) -> Result<(Range, i64)> {
+    let n = nodes.len();
+    let Some(start) = nodes.iter().position(|x| x.params.get(d).is_some()) else {
+        return Ok((Range::empty(), 0));
+    };
+    let mut c = nodes
+        .get(start)
+        .and_then(|x| x.params.get(d))
+        .unwrap_or(0.0);
+    let origin = c;
+    let mut range = Range::empty();
+    range.add(c);
+    // the value the loop arrived at an axis point with, and whether the point is at
+    // the top of v
+    let mut pole: Option<(f64, bool)> = None;
+    for step in 0..n {
+        let (ia, ib) = ((start + step) % n, (start + step + 1) % n);
+        let (Some(a), Some(b)) = (nodes.get(ia), nodes.get(ib)) else {
+            continue;
+        };
+        // a piece along one edge (the next node on it), or the join of two edges (also
+        // the end of a loop's only edge back to its start)
+        let edge = curves
+            .get(a.edge)
+            .filter(|_| ib == ia + 1 && a.edge == b.edge && a.t != b.t);
+        match (a.params.get(d), b.params.get(d), edge) {
+            (Some(x), Some(y), Some(e)) => {
+                c += turn(k, map, e, (a.t, x), (b.t, y), d, 0)?;
+                range.add(c);
+            }
+            (Some(x), Some(y), None) => {
+                c += nearest(y - x);
+                range.add(c);
+            }
+            (Some(x), None, e) => {
+                // onto the axis, along the angle it arrives from
+                if let Some(e) = e {
+                    let arrival = limit(map, e.toward(k, b.t, a.t)?)?;
+                    c += turn(k, map, e, (a.t, x), (b.t, arrival), d, 0)?;
+                    range.add(c);
+                }
+                pole = Some((c, b.params.v > a.params.v));
+            }
+            (None, _, None) => {}
+            (None, y, Some(e)) => {
+                let departure = limit(map, e.toward(k, a.t, b.t)?)?;
+                if let Some((arrived, top)) = pole.take() {
+                    // round the axis point on the face's side, the loop's left: down the
+                    // angle at the top of v, up it at the bottom
+                    c = arrived
+                        + if top {
+                            -(arrived - departure).rem_euclid(PERIOD)
+                        } else {
+                            (departure - arrived).rem_euclid(PERIOD)
+                        };
+                    range.add(c);
+                }
+                if let Some(y) = y {
+                    c += turn(k, map, e, (a.t, departure), (b.t, y), d, 0)?;
+                    range.add(c);
+                } else {
+                    // from the axis back to it
+                    let arrival = limit(map, e.toward(k, b.t, a.t)?)?;
+                    c += turn(k, map, e, (a.t, departure), (b.t, arrival), d, 0)?;
+                    range.add(c);
+                    pole = Some((c, b.params.v > a.params.v));
+                }
+            }
+        }
+    }
+    let turns = ((c - origin) / PERIOD).round() as i64;
+    Ok((range, turns))
+}
+
+/// `x` moved by whole periods into `(-180, 180]`.
+fn nearest(x: f64) -> f64 {
+    let r = x.rem_euclid(PERIOD);
+    if r > PERIOD / 2.0 {
+        r - PERIOD
+    } else {
+        r
+    }
+}
+
+/// The angle about the axis of the direction `w` (a loop's tangent at a point on the
+/// axis, pointing into the piece).
+fn limit(map: &Map<'_>, w: Vec3) -> Result<f64> {
+    let Map::Revolved { frame, .. } = map else {
+        return Err(SolidError::invalid_input(
+            OP,
+            "an axis point on a surface without axis",
+        ));
+    };
+    let r = frame.radial(w);
+    if r.length() <= EFF_ZERO * w.length() {
+        return Err(SolidError::Unsupported {
+            operation: OP,
+            reason: "a loop through a point on the axis along the axis",
+        });
+    }
+    Ok(frame.angle(r))
+}
+
+/// How far periodic direction `d` turns along `e` from `(ta, xa)` to `(tb, xb)`, a piece
+/// on which it is monotone: the difference of the values taken round the period the
+/// way the rate at the middle runs, over the piece's quarters ([`MIN_SPLIT_DEPTH`]
+/// halvings), each halved further until it turns by at most half a period (past
+/// [`MAX_SPLIT_DEPTH`] halvings, the nearest way).
+fn turn(
+    k: &Kernel,
+    map: &Map<'_>,
+    e: &EdgeCurve<'_>,
+    (ta, xa): (f64, f64),
+    (tb, xb): (f64, f64),
+    d: usize,
+    depth: usize,
+) -> Result<f64> {
+    let tm = 0.5 * (ta + tb);
+    let (p, dp) = e.at(k, tm, false)?;
+    let q = map.params(k, p, false)?;
+    let rate = map.rates(k, p, dp, &q)?.get(d).copied().unwrap_or(0.0) * (tb - ta).signum();
+    if rate == 0.0 || !rate.is_finite() {
+        return Ok(nearest(xb - xa));
+    }
+    let s = rate.signum();
+    let along = (s * (xb - xa)).rem_euclid(PERIOD);
+    // a piece of a whole turn has equal ends: it is never taken whole
+    if along <= PERIOD / 2.0 && depth >= MIN_SPLIT_DEPTH {
+        return Ok(s * along);
+    }
+    let (Some(xm), true) = (q.get(d), depth < MAX_SPLIT_DEPTH) else {
+        return Ok(nearest(xb - xa));
+    };
+    Ok(turn(k, map, e, (ta, xa), (tm, xm), d, depth + 1)?
+        + turn(k, map, e, (tm, xm), (tb, xb), d, depth + 1)?)
 }
 
 #[cfg(test)]
@@ -153,11 +1255,8 @@ pub fn face_window(
 )]
 mod tests {
     use super::*;
-    use crate::curve::curve::CurveKind;
     use crate::curve::ellipse::Ellipse;
     use crate::curve::line::Line;
-    use crate::geom::axis2_placement::Axis2Placement;
-    use crate::math::Vec3;
     use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
     use crate::surface::cone::Cone;
     use crate::surface::plane::Plane;
@@ -658,6 +1757,76 @@ mod tests {
         let (g, gi) = as_spline(&circle(&k, Vec3::ZERO, tilt, Vec3::Y, 2.0));
         let w = window(&k, &sphere(&k), &[vec![spline(&g, gi, true)]]);
         assert_window(&w, [0.0, 360.0], [-20.0, 90.0]);
+    }
+
+    /// The closed forms of the plane, cone, cylinder, sphere and torus, and the
+    /// revolution's angle, are the kernel's STEP parameters: at points the kernel
+    /// evaluates at (u, v) they give (u, v) back.
+    #[test]
+    fn the_parameters_are_the_kernels_step_parameters() {
+        let k = k();
+        let frame = Axis2Placement::new(
+            p(1.0, 2.0, 3.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+        );
+        let mut plane = Plane::new(
+            frame.origin(),
+            frame.x_axis(),
+            frame.y_axis(),
+            Point2::new(2.0, 0.5),
+            &Extent2d::from_bounds(-10.0, -10.0, 10.0, 10.0),
+        );
+        plane.make_nurb().unwrap();
+        let revolution = SurfOfRevolution::create_canonical(
+            &k,
+            segment(p(1.0, 0.0, 0.0), p(2.0, 0.0, 1.0)),
+            Vec3::ZERO,
+            Vec3::Z,
+            false,
+        )
+        .unwrap();
+        let surfaces = [
+            Surface::from(plane),
+            Surface::from(Cone::create_canonical(&k, &frame, 2.0, 1.0, 2.0, false, false).unwrap()),
+            Surface::from(Cone::create_canonical_cylinder(&k, &frame, 1.5).unwrap()),
+            Surface::from(Sphere::create_canonical(&k, &frame, 2.0).unwrap()),
+            Surface::from(
+                Torus::create_canonical(&k, &frame, 3.0, 1.0, TorusOptions::default(), None)
+                    .unwrap(),
+            ),
+            Surface::from(revolution),
+        ];
+        for (i, s) in surfaces.iter().enumerate() {
+            let dom = s.step_uv_domain();
+            let map = Map::of(s, TOL);
+            for (fu, fv) in [(0.1, 0.2), (0.45, 0.5), (0.7, 0.9), (0.95, 0.3)] {
+                let u = dom.u_min().max(-1e3) + fu * (dom.u_max().min(1e3) - dom.u_min().max(-1e3));
+                let v = dom.v_min().max(-1e3) + fv * (dom.v_max().min(1e3) - dom.v_min().max(-1e3));
+                let q = map
+                    .params(
+                        &k,
+                        s.evaluate_step_point(&k, Point2::new(u, v)).unwrap(),
+                        true,
+                    )
+                    .unwrap();
+                let du = q.u.unwrap() - u;
+                let du = if map.periodic(0) { nearest(du) } else { du };
+                assert!(
+                    du.abs() <= 1e-12 * (1.0 + u.abs()),
+                    "surface {i}: u {u} -> {q:?}"
+                );
+                let dv = if map.periodic(1) {
+                    nearest(q.v - v)
+                } else {
+                    q.v - v
+                };
+                assert!(
+                    dv.abs() <= 1e-12 * (1.0 + v.abs()),
+                    "surface {i}: v {v} -> {q:?}"
+                );
+            }
+        }
     }
 
     #[test]
