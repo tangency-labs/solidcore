@@ -10,6 +10,7 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "fetch-reports.sh"
 REAL_MV = shutil.which("mv")
+REAL_CP = shutil.which("cp")
 PYTHON = sys.executable
 
 # A BSD-style mv: it rejects GNU's -t/--target-directory, and can simulate a
@@ -26,12 +27,26 @@ failure = os.environ.get("FAKE_MV_FAIL_SUBSTRING")
 if failure and any(failure in arg for arg in args):
     sys.stderr.write("mv: simulated publish failure\\n")
     sys.exit(1)
-if os.environ.get("FAKE_MV_FAIL_BACKUP") and any("/backup." in arg for arg in args):
+failure = os.environ.get("FAKE_RESTORE_FAIL_NAME")
+if failure and any("/backup." in arg and arg.rsplit("/", 1)[-1] == failure for arg in args):
     sys.stderr.write("mv: simulated rollback failure\\n")
     sys.exit(1)
 os.execv(__REAL_MV__, [__REAL_MV__] + args)
 """
 FAKE_MV = FAKE_MV.replace("__PYTHON__", PYTHON).replace("__REAL_MV__", repr(REAL_MV))
+
+# Only fail copies *from* the backup, not the initial backup copies into it.
+FAKE_CP = """#!__PYTHON__
+import os
+import sys
+
+args = sys.argv[1:]
+failure = os.environ.get("FAKE_RESTORE_FAIL_NAME")
+if failure and any("/backup." in arg and arg.rsplit("/", 1)[-1] == failure for arg in args):
+    sys.stderr.write("cp: simulated rollback failure\\n")
+    sys.exit(1)
+os.execv(__REAL_CP__, [__REAL_CP__] + args)
+""".replace("__PYTHON__", PYTHON).replace("__REAL_CP__", repr(REAL_CP))
 
 # A gh that only answers the calls fetch-reports.sh makes. Staged artifacts live
 # under FAKE_GH_STAGING/<run id>; every call is logged for the filter/retry tests.
@@ -105,6 +120,7 @@ class FetchReportsTest(unittest.TestCase):
 
         self._script(self.fakebin / "gh", FAKE_GH)
         self._script(self.fakebin / "mv", FAKE_MV)
+        self._script(self.fakebin / "cp", FAKE_CP)
 
         self.git("init", "--quiet")
         self.git("-c", "user.name=Fetch test", "-c", "user.email=fetch@example.invalid",
@@ -118,7 +134,7 @@ class FetchReportsTest(unittest.TestCase):
             FAKE_GH_STAGING=str(self.staging),
             FAKE_GH_LOG=str(self.root / "gh.log"),
         )
-        for name in ("FAKE_MV_FAIL_SUBSTRING", "FAKE_MV_FAIL_BACKUP"):
+        for name in ("FAKE_MV_FAIL_SUBSTRING", "FAKE_RESTORE_FAIL_NAME"):
             self.env.pop(name, None)
 
     def tearDown(self):
@@ -291,7 +307,7 @@ class FetchReportsTest(unittest.TestCase):
 
         result = self.run_script(FAKE_GH_RUNS="101",
                                  FAKE_MV_FAIL_SUBSTRING="z-new.json",
-                                 FAKE_MV_FAIL_BACKUP="1")
+                                 FAKE_RESTORE_FAIL_NAME="old.json")
 
         self.assertNotEqual(result.returncode, 0)
         match = re.search(r"kept in ([^\n]+)", result.stderr)
@@ -313,7 +329,7 @@ class FetchReportsTest(unittest.TestCase):
 
         result = self.run_script(dest=target, FAKE_GH_RUNS="101,202",
                                  FAKE_MV_FAIL_SUBSTRING="z-fail.json",
-                                 FAKE_MV_FAIL_BACKUP="1")
+                                 FAKE_RESTORE_FAIL_NAME="old.json")
 
         self.assertIn("simulated publish failure", result.stderr)
         self.assertIn("simulated rollback failure", result.stderr)
@@ -330,6 +346,44 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((target / "second.json").exists())
         self.assertFalse((target / "hist.json").exists())
         self.assertNotIn("committed in", result.stdout)
+
+    def test_later_restore_failure_keeps_complete_backup(self):
+        self.write_files(self.dest, {"hist.json": "history"})
+        self.git("add", "reports/difftest/hist.json")
+        self.git("-c", "user.name=Fetch test", "-c", "user.email=fetch@example.invalid",
+                 "commit", "--quiet", "-m", "historical reports")
+        outside = self.root / "outside"
+        outside.write_text("untouched")
+        self.stage("101", {"z-fail.json": "new", "times.tsv": "new times\n"})
+        self.stage("202", {"second.json": "second"})
+
+        for failure in ("z.json", "times.tsv"):
+            with self.subTest(failure=failure):
+                target = self.root / ("install-" + failure)
+                self.write_files(target, {"a.json": "old-a", "z.json": "old-z",
+                                          "times.tsv": "old times\n"})
+                (target / "link.json").symlink_to(outside)
+                result = self.run_script(dest=target, FAKE_GH_RUNS="101,202",
+                                         FAKE_MV_FAIL_SUBSTRING="z-fail.json",
+                                         FAKE_RESTORE_FAIL_NAME=failure)
+                self.assertIn("simulated publish failure", result.stderr)
+                self.assertIn("simulated rollback failure", result.stderr)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual((target / "a.json").read_text(), "old-a")
+                match = re.search(r"kept in ([^\n]+)", result.stderr)
+                self.assertIsNotNone(match, result.stderr)
+                backup = Path(match.group(1))
+                self.assertTrue((backup / "a.json").is_file(), "restored JSON missing from backup")
+                self.assertEqual((backup / "a.json").read_text(), "old-a")
+                self.assertEqual((backup / "z.json").read_text(), "old-z")
+                self.assertEqual((backup / "times.tsv").read_text(), "old times\n")
+                self.assertTrue((backup / "link.json").is_symlink())
+                self.assertEqual(os.readlink(backup / "link.json"), str(outside))
+                self.assertEqual(outside.read_text(), "untouched")
+                self.assertNotIn("run\tdownload\t202", (self.root / "gh.log").read_text())
+                self.assertFalse((target / "second.json").exists())
+                self.assertFalse((target / "hist.json").exists())
+                self.assertNotIn("committed in", result.stdout)
 
     def test_missing_times_keeps_the_previous_times_and_extra_files(self):
         self.write_files(self.dest, {"old.json": "old", "times.tsv": "old\n",
