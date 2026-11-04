@@ -4,4 +4,4 @@ The opt-in `iso_circle_planes_parallel_within_angle_tolerance` is removed; the f
 
 A later pair answering "parallel, not coincident" (after the 2nd iso curve saved a common line) no longer compares the saved line with the stale line of the last `Line` answer, which was the saved line itself and left `common_axis` true: it clears it. Test: `a_later_parallel_non_coincident_plane_has_no_common_axis`.
 
-Coincidence of near-parallel planes is measured over the whole circle, not at its centre: planes tilted by `tilt` drift apart by up to `rad * tilt`, so they are one plane only if the centre offset (along the current plane normal) plus `rad * tilt` is within `tol_3d`.
+Coincidence of near-parallel planes is measured over the whole circle, not at its centre: planes tilted by `tilt` drift apart by up to `rad * tilt`, so they are one plane only if, for each circle, its centre offset from the other circle's plane plus its own `radius * tilt` is within `tol_3d` (the larger circle bounds the drift, not just the current one).

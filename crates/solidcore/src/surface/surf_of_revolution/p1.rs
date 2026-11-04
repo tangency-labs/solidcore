@@ -1899,6 +1899,7 @@ pub fn test_for_iso_circles(
     let mut z_axis = Vec3::ZERO;
     let mut x_axis = Vec3::ZERO;
     let mut ref_origin = Point3::ZERO;
+    let mut ref_rad = 0.0;
     let mut this_common_line_point = Vec3::UNDEF;
     let mut this_common_line_vec = Vec3::UNDEF;
     let mut start_ang_deg1 = 0.0;
@@ -1957,6 +1958,7 @@ pub fn test_for_iso_circles(
             z_axis = this_ref_frame.z_axis();
             x_axis = this_ref_frame.x_axis();
             ref_origin = this_ref_frame.origin();
+            ref_rad = rad;
             start_ang_deg1 = start_ang_deg;
             end_ang_deg1 = end_ang_deg;
             continue;
@@ -2015,16 +2017,18 @@ pub fn test_for_iso_circles(
         if out.common_axis {
             // not upstream (WR-739): planes whose normals are within the angle tolerance are
             // parallel, so the line upstream gets from them (off the axis by rounding / angle) is
-            // rounding. Within tol_3d of each other over the whole circle (centre offset + radius * tilt) they are one plane, beyond it two,
+            // rounding. Within tol_3d of each other over both whole circles (see `circles_in_one_plane`) they are one plane, beyond it two,
             // whatever `intersect_two_planes` judges on its own coordinate-scaled tolerance; a
             // line it still finds is kept. Other planes are intersected as usual.
             let tilt = z_axis.cross(this_ref_frame.z_axis()).length();
             let near_parallel = tilt < ang_tol_rad;
-            // two planes tilted by `tilt` drift apart by up to `rad * tilt` over the circle
-            let center_plane_offset = (this_ref_frame.origin() - ref_origin)
-                .dot(this_ref_frame.z_axis())
-                .abs();
-            let planes = if near_parallel && center_plane_offset + rad * tilt <= tol_3d {
+            let planes = if near_parallel
+                && circles_in_one_plane(
+                    (ref_origin, z_axis, ref_rad),
+                    (this_ref_frame.origin(), this_ref_frame.z_axis(), rad),
+                    tilt,
+                    tol_3d,
+                ) {
                 Ok(PlanesIntersection::Parallel { coincident: true })
             } else {
                 intersect_two_planes(
@@ -2658,5 +2662,42 @@ mod tests {
         let r = test_for_iso_circles(&k, &s, SurfParamType::V, 1e-9, 1e-9).unwrap();
         assert!(r.found_circles);
         assert!(!r.common_axis);
+    }
+}
+
+/// WR-739: nearly parallel iso-circle planes (`tilt` = |n1 x n2|) are one plane when every point of
+/// each circle is within `tol_3d` of the other circle's plane: that circle's centre offset from the
+/// other plane plus its own radius * tilt. Each circle is bounded by its own radius.
+fn circles_in_one_plane(
+    (o1, n1, r1): (Point3, Vec3, f64),
+    (o2, n2, r2): (Point3, Vec3, f64),
+    tilt: f64,
+    tol_3d: f64,
+) -> bool {
+    let d = o2 - o1;
+    d.dot(n1).abs() + r2 * tilt <= tol_3d && d.dot(n2).abs() + r1 * tilt <= tol_3d
+}
+
+#[cfg(test)]
+mod circles_in_one_plane_tests {
+    use super::*;
+
+    /// Coincident centres, radii 100 and 1, tilt 1e-7, tol 1e-6: the small circle stays within
+    /// tol (1e-7) of the large one's plane, the large one reaches 1e-5 from the small one's.
+    #[test]
+    fn the_larger_circles_extent_also_counts() {
+        let o = Point3::ZERO;
+        assert!(!circles_in_one_plane(
+            (o, Vec3::Z, 100.0),
+            (o, Vec3::Z, 1.0),
+            1e-7,
+            1e-6
+        ));
+        assert!(circles_in_one_plane(
+            (o, Vec3::Z, 1.0),
+            (o, Vec3::Z, 1.0),
+            1e-7,
+            1e-6
+        ));
     }
 }
