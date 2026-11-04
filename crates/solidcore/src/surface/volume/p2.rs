@@ -632,7 +632,8 @@ impl Volume {
             _ => {}
         }
         match &self.kind {
-            VolumeKind::Transform(t) => t.evaluate_bounding_box_simple(
+            VolumeKind::Transform(t) => t.evaluate_bounding_box_simple_with_kernel(
+                k,
                 param_box,
                 param_pseudo_box,
                 proj_box,
@@ -851,7 +852,7 @@ impl Volume {
     ) -> Result<Option<Point3>> {
         match self.evaluate_point(param_point, with_compounding) {
             Ok(q) => Ok(Some(q)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => match self.kind {
                 VolumeKind::Twist(_) | VolumeKind::Unbend(_) | VolumeKind::Bend(_)
                     if with_compounding && self.next_map.is_some() =>
@@ -881,6 +882,7 @@ impl Volume {
             non_zero_tangents,
             do_zero_sampling: true,
             with_compounding,
+            ..EvalOptions::default()
         };
         // sMat[2][2][2]
         let m = self.evaluate(param_point, 1, &opts)?;
@@ -1239,7 +1241,7 @@ impl Volume {
             if let Some(sol) = solutions.get_mut(0) {
                 match self.local_point_solve_simple(proj_point, g, sol, param_domain, NoHandle) {
                     Ok(f) => success = f,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => {
                         status_ok = false;
                         success = false;
@@ -1533,7 +1535,11 @@ const fn unsupported(reason: &'static str) -> SolidError {
 pub(crate) fn ignore_read<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e @ (SolidError::Unported { .. } | SolidError::Unsupported { .. })) => Err(e),
+        Err(
+            e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
+            | SolidError::Unsupported { .. }),
+        ) => Err(e),
         Err(
             e
             @ (SolidError::InvalidInput { reason, .. } | SolidError::PortInvariant { reason, .. }),
@@ -1579,7 +1585,7 @@ fn read_map_type(db: &mut DatabaseReader) -> Result<i64> {
         Ok(h) => h
             .type_code
             .ok_or_else(|| unsupported("map type not read (uninitialised type upstream)")),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Err(unsupported(
             "map type not read (uninitialised type upstream)",
         )),

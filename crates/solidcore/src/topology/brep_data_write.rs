@@ -23,6 +23,12 @@
 //! Deviations:
 //! - **Files.** [`BrepData::write_to_file`] returns the file's bytes (no filesystem on
 //!   wasm32); only a new file (`bNewFile = TRUE`) is supported.
+//! - **ASCII doubles (opt-in).** With
+//!   [`crate::kernel::UpstreamFixes::ascii_doubles_round_trip`],
+//!   [`write_brep_to_file`] (through [`BrepData::write_to_file_with_nurbs`]) writes
+//!   an ASCII file's doubles so that they read back unchanged
+//!   ([`BrepData::write_to_file_with`]; WR-655), where upstream's `%.16f` loses digits
+//!   below 1.
 //! - **Native formats only.** `bWriteAsBSplines = TRUE` approximates every non-B-spline
 //!   curve and surface (`ApproximateCurve`, `ApproximateSurface`); it is not ported,
 //!   and the writers always write native formats (the upstream default). The kinds
@@ -521,6 +527,14 @@ fn bspline_curve_part_mut(c: &mut Curve) -> Option<&mut BSplineCurve> {
 pub fn bspline_surface_part(s: &Surface) -> Result<Option<Cow<'_, BSplineSurface>>> {
     Ok(match s.kind() {
         SurfaceKind::BSpline(b) => Some(Cow::Borrowed(b)),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            Some(Cow::Borrowed(b))
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            Some(Cow::Borrowed(b))
+        }
         SurfaceKind::Plane(p) => Some(p.base_with_nurb()?),
         SurfaceKind::Cone(c) => Some(Cow::Borrowed(c.rev().base())),
         SurfaceKind::Sphere(sp) => Some(Cow::Borrowed(sp.base().base())),
@@ -601,7 +615,9 @@ pub fn write_surface_to_db(
         } else {
             db.write_double(distance);
         }
-        let base = off.extended_base_surface().unwrap_or(off.base_surface());
+        let base = off
+            .extended_base_surface()
+            .unwrap_or_else(|| off.base_surface());
         let b = bspline_surface_part(base)?.ok_or_else(|| SolidError::null_pointer(OP_SURFACE))?;
         b.write_to_db(db, version)?;
     } else {
@@ -739,6 +755,8 @@ impl BrepData {
     /// [`Self::write_to_file`] after [`make_missing_nurb`] on every surface: upstream's
     /// `SmBSplineSurface::WriteToDB` reaches the NURB through
     /// `GetOrCreateGwNurbPointer`, so a lazy surface is written with the NURB it makes.
+    /// With `k.fixes.ascii_doubles_round_trip` an ASCII file's doubles read back
+    /// unchanged ([`Self::write_to_file_with`]).
     ///
     /// # Errors
     ///
@@ -747,7 +765,7 @@ impl BrepData {
         for s in &mut self.surfaces {
             make_missing_nurb(k, &mut s.object)?;
         }
-        self.write_to_file(file_type)
+        self.write_to_file_with(file_type, k.fixes.ascii_doubles_round_trip)
     }
 
     /// `SmBrepData::WriteToFile(name, eType, TRUE)`: the `Version` and
@@ -759,7 +777,24 @@ impl BrepData {
     ///
     /// Those of [`Self::write_to_db`].
     pub fn write_to_file(&mut self, file_type: FileType) -> Result<Vec<u8>> {
-        let mut db = DatabaseWriter::open_for_write(file_type);
+        self.write_to_file_with(file_type, false)
+    }
+
+    /// [`Self::write_to_file`], an ASCII file's doubles written so that they read back
+    /// unchanged when `round_trip_doubles` (not upstream: WR-655's opt-in,
+    /// [`crate::kernel::UpstreamFixes::ascii_doubles_round_trip`];
+    /// [`DatabaseWriter::with_round_trip_doubles`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::write_to_db`].
+    pub fn write_to_file_with(
+        &mut self,
+        file_type: FileType,
+        round_trip_doubles: bool,
+    ) -> Result<Vec<u8>> {
+        let mut db =
+            DatabaseWriter::open_for_write(file_type).with_round_trip_doubles(round_trip_doubles);
 
         // virtual preWrite for derived classes - base class does nothing
         db.begin_writing();

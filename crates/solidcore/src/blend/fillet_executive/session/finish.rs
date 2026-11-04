@@ -6,7 +6,9 @@
 //! | Rust | Upstream |
 //! |------|----------|
 //! | [`FilletSession::do_fillet`] | `SmFilletExecutive::DoFillet` |
-//! | [`FilletSession::do_filleting`] | `SmFilletExecutive::DoFilleting` |
+//! | [`FilletSession::do_filleting`] | `SmFilletExecutive::DoFilleting` (the fork's wrapper of `e418750` round `DoFilletingSteps`) |
+//! | `do_filleting_steps` (private) | the fork's `SmFilletExecutive::DoFilletingSteps` (upstream's `DoFilleting` body) |
+//! | `join_blended_vertex_fans` (private) | the fork's `SmFilletExecutive::JoinBlendedVertexFans` (`e418750`, WR-665) |
 //! | `FinishAccess` (private) | the tail after `MergeBrep` (3532-3644) on the live bodies |
 //!
 //! Deviations: the stage order, flags and the tail itself are the shared generic
@@ -32,13 +34,16 @@
 
 use super::original_trim::OriginalSurfaceDeletion;
 use super::{invalid, FilletBody, FilletObject, FilletSession, SessionObjects};
+use crate::blend::fillet_cliff_overflow::Refusal;
 use crate::blend::fillet_executive::p3::{
     ErrorInfo, FilletExecutive, FilletFinishAccess, StitchAttempt, StitchSettings,
 };
 use crate::blend::fillet_geom::p1::FilletErrorType;
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::object::NotifyOperation;
+use crate::geom::tol::approx_tol3d;
 use crate::kernel::Kernel;
+use crate::surface::procedural_blend::NetScope;
 use crate::topology::brep::{p1, p3};
 use crate::topology::{BrepId, EdgeId};
 
@@ -87,7 +92,7 @@ fn failure() -> SolidError {
 fn ignore<T>(result: Result<T>) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(error) if error.is_unported() => Err(error),
+        Err(error) if error.is_unported_or_cancelled() => Err(error),
         Err(_) => Ok(None),
     }
 }
@@ -284,7 +289,7 @@ impl FilletFinishAccess<FilletObject> for FinishAccess<'_, '_> {
                 max_vertex_gap: done.max_vertex_gap,
                 max_edge_gap: done.max_edge_gap,
             }),
-            Err(error) if error.is_unported() => Err(error),
+            Err(error) if error.is_unported_or_cancelled() => Err(error),
             Err(error) => Ok(StitchAttempt {
                 status: Some(error),
                 stitched: 0,
@@ -492,7 +497,19 @@ impl FilletSession<'_> {
     /// With `fixes.fillet_vertex_error_diagnostics`, a missing-corner note from the
     /// corner stage is kept in [`FilletSession::error_info`] across the later failure;
     /// the returned error is still the later stage's own status.
+    ///
+    /// Not upstream (#2510): the fillet is built to the target's approximation tolerance
+    /// (`SmTol::GetApproxTol3d`, its solvers' and its merge's), so a face it rolls on that
+    /// is a blend by its definition evaluates as its certified net wherever the net's
+    /// bound is within that tolerance ([`NetScope::within`]); a step that asks for more
+    /// (a station of a definition) takes S.
     pub fn do_fillet(&mut self, k: &mut Kernel) -> Result<()> {
+        let tolerance = approx_tol3d(k, 0.5 * self.objects.target.tolerance());
+        NetScope::within_mut(k, tolerance, |k| self.do_fillet_within(k))
+    }
+
+    /// The body of [`Self::do_fillet`], in its tolerance's [`NetScope`].
+    fn do_fillet_within(&mut self, k: &mut Kernel) -> Result<()> {
         if !self.executive.initialized {
             // The generic NoteError overload changes exactly these two members.
             self.executive.error.code = 1; // SM_FILERR_EXEC_UNINITIALIZED
@@ -510,6 +527,24 @@ impl FilletSession<'_> {
         if result.is_err() {
             if let Some(note) = missing_corner_note {
                 self.executive.error = note;
+            }
+        }
+        // Opt-in (`fixes.fillet_gn_section_generator`, WR-696): a refusal with a size that
+        // builds carries it on the error, its status unchanged.
+        if let Err(SolidError::Upstream {
+            operation,
+            code,
+            entity,
+        }) = result
+        {
+            if let Some(fit) = self.fit_size() {
+                return Err(SolidError::FilletRefused {
+                    operation,
+                    code,
+                    entity,
+                    reason: self.executive.error.no_room,
+                    fit,
+                });
             }
         }
         result?;
@@ -552,12 +587,87 @@ impl FilletSession<'_> {
     ///
     /// # Errors
     /// The first stage error, with all earlier mutations retained.
+    ///
+    /// With `fixes.fillet_corner_per_vertex_fan` (WR-665, the fork's
+    /// tangency-labs/smlib@e418750) the vertices the fillet parameters split by fans are
+    /// joined again afterwards where the blends left more than one at a split point,
+    /// whether the blends built or not (`JoinBlendedVertexFans`); the filleting's own
+    /// error comes first.
     pub fn do_filleting(
+        &mut self,
+        k: &mut Kernel,
+        error_out: Option<&mut ErrorInfo<FilletObject>>,
+    ) -> Result<()> {
+        let status = self.do_filleting_steps(k, error_out);
+        let joined = self.join_blended_vertex_fans();
+        let status = match status {
+            Ok(()) => joined,
+            Err(e) => Err(e),
+        };
+        let logged = self.take_blend_faces(k, status.is_ok());
+        status.and(logged)
+    }
+
+    /// `JoinBlendedVertexFans` (the fork's, tangency-labs/smlib@e418750, WR-665): the
+    /// inverse of the fan split after the blends: the target's vertices still at a split
+    /// point (within their own tolerance of it), joined into the first of them
+    /// (`SmBrep::JoinVertexFans`). Where the blends took the point away none is left.
+    fn join_blended_vertex_fans(&mut self) -> Result<()> {
+        if self.executive.fan_split_points.is_empty() {
+            return Ok(());
+        }
+        let target = &mut *self.objects.target;
+        let mut vertices: Vec<Option<_>> =
+            p1::vertices(target, None)?.into_iter().map(Some).collect();
+        let points = self.executive.fan_split_points.clone();
+        for at in points {
+            let mut first = None;
+            for slot in &mut vertices {
+                let Some(v) = *slot else {
+                    continue;
+                };
+                let record = target.vertex(v)?;
+                if record.point.distance(at) > record.tolerance {
+                    continue;
+                }
+                let Some(survivor) = first else {
+                    first = Some(v);
+                    continue;
+                };
+                crate::topology::brep::vertex_fans::join_vertex_fans(target, survivor, v)?;
+                *slot = None;
+            }
+        }
+        self.executive.fan_split_points.clear();
+        Ok(())
+    }
+
+    /// `DoFilletingSteps` (the fork's name for upstream's `DoFilleting` body): see
+    /// [`Self::do_filleting`].
+    fn do_filleting_steps(
         &mut self,
         k: &mut Kernel,
         mut error_out: Option<&mut ErrorInfo<FilletObject>>,
     ) -> Result<()> {
         self.sync_self_intersection_handler();
+        // solidcore-native (WR-697 addendum; the fork refuses this only in its capi): a
+        // setback set on a made corner (SetSetBackDist) that builds none (neither the
+        // Setback nor an N x N corner) would be dropped silently, so it is refused, as
+        // `create_corners` refuses one asked with SetSetBackFill at such a corner
+        if k.fixes.fillet_blend_corner
+            && self
+                .objects
+                .corners
+                .iter()
+                .any(crate::blend::blend_corner::setback::asked_setback_not_built)
+        {
+            self.note_refusal(Refusal {
+                code: FilletErrorType::CornerUnsupported,
+                reason: None,
+                comment: crate::blend::blend_corner::setback::SETBACK_NOT_BUILT,
+            });
+            return Err(failure());
+        }
         // WR-459: the clean-up after filleting leaves the target's own edges and faces.
         self.objects.cleanup_kept = if k.fixes.fillet_cleanup_keeps_target_faces {
             Some((
@@ -588,8 +698,68 @@ impl FilletSession<'_> {
             // The fork's SetMarkCornerPatches (60af574): mark the set-back corners'
             // patch faces, which the merge copies into the target with their marks.
             session.mark_corner_patches()?;
+            // (not upstream, #2489) with `Kernel::blend_face_log` on: mark every face made,
+            // with what made it, read back from the target after filleting
+            session.mark_blend_faces(k)?;
             let editing = session.objects.target.editing_enabled();
             session.objects.target.set_editing_enabled(true);
+            // The fork's (WR-703, `eb883ad`): a feature standing inside a round's band is kept:
+            // the round is trimmed round it in place and sewn in instead of merged.
+            // (not with an open G1 setback corner: the fork's ef57570)
+            let open_setback = session.has_open_setback();
+            if k.fixes.fillet_keep_features
+                && !session.executive.cliff_overflow
+                && !session.executive.open_ends.iter().any(|end| end.section)
+                && !open_setback
+            {
+                let kept = session.keep_features_in_bands(k);
+                if !matches!(kept, Ok(false)) {
+                    session.objects.target.set_editing_enabled(editing);
+                    if let Some(output) = error_out {
+                        output.assign(&session.executive.error);
+                    }
+                    return kept.map(drop);
+                }
+            }
+            // The fork's (WR-631, WR-638): a cliff overflow closes the fillet faces into the
+            // region the blends remove and subtracts it from the target, instead of merging
+            // the fillet faces in; the error a failed subtraction noted stands.
+            // WR-674: a round left open at its tangent-continuation ends is built the same
+            // way, by subtraction
+            // WR-695 (the fork's TrimAtCreases, smlib#79 step 6): with
+            // `fillet_overflow_trim_at_creases` a cliff overflow is trimmed at its creases in
+            // place instead; a WR-674 section end is still subtracted, unless
+            // `fillet_section_end_trim_at_creases` (WR-706) trims it too
+            // The fork's ef57570 (smlib#125, `fillet_blend_corner`): so is an open G1 setback
+            // corner's hole made (no patches: its spring curves are imprinted on its faces
+            // with the sheet's boundary)
+            let sectioned = session.executive.open_ends.iter().any(|end| end.section);
+            let trimmed = open_setback
+                || if sectioned {
+                    k.fixes.fillet_section_end_trim_at_creases
+                        && k.fixes.fillet_overflow_trim_at_creases
+                        && k.fixes.fillet_round_ends_at_tangent_continuation
+                } else {
+                    session.executive.cliff_overflow && k.fixes.fillet_overflow_trim_at_creases
+                };
+            if trimmed {
+                let result = session.trim_at_creases(k);
+                session.objects.target.set_editing_enabled(editing);
+                if let Some(output) = error_out {
+                    output.assign(&session.executive.error);
+                }
+                return result;
+            }
+            if session.executive.cliff_overflow
+                || session.executive.open_ends.iter().any(|end| end.section)
+            {
+                let result = session.subtract_removal_region(k);
+                session.objects.target.set_editing_enabled(editing);
+                if let Some(output) = error_out {
+                    output.assign(&session.executive.error);
+                }
+                return result;
+            }
             let result = session.merge_fillet(k);
             session.objects.target.set_editing_enabled(editing);
             result?;

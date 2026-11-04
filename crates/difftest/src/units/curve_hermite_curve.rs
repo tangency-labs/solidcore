@@ -54,8 +54,7 @@ pub const MIN_GENERATED: usize = 2000;
 /// Upstream `SM_SUCCESS`.
 const SM_SUCCESS: f64 = 1000.0;
 
-/// Upstream `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `curve.hermite_curve` runner.
 pub struct Runner;
@@ -337,13 +336,13 @@ fn rust_values(i: &Inputs) -> Result<solidcore::Result<Vec<f64>>, HarnessError> 
         }
         Op::Evaluate => {
             let n = usize::try_from(i.n).map_err(|_| HarnessError::new("negative n"))?;
-            // `HermiteCurve::evaluate` is infallible and sizes its output by `n`; the
+            // The
             // FFI rejects orders above its own bound, so a larger one is not a case
             if n > solidcore::curve::MAX_EVAL_DERIVS {
                 return Err(HarnessError::new("derivative order above MAX_EVAL_DERIVS"));
             }
             out.push(SM_SUCCESS);
-            for v in a.evaluate(i.t, n, i.flags & 1 != 0) {
+            for v in a.evaluate(i.t, n, i.flags & 1 != 0).map_err(|e| HarnessError::new(e.to_string()))? {
                 put_v(&mut out, v);
             }
         }

@@ -1,6 +1,7 @@
 //! Safe wrapper for unit `surface.surface_assert_valid`: the pinned virtual
 //! `SmSurface::AssertValid` on a real B-spline surface, plane, cylinder, cone, sphere,
-//! torus, surface of revolution or surface of extrusion built from plain data (block
+//! torus, surface of revolution, surface of extrusion or curve-bounded surface built
+//! from plain data (block
 //! layout in `harness/cpp/shim/surface_surface_assert_valid.cpp`).
 
 use crate::{call_with_buffer, FfiError};
@@ -190,13 +191,32 @@ fn internal_pole_indices(
 
 fn check(block: &[f64]) -> Result<(), FfiError> {
     let mut rd = Rd { v: block, at: 0 };
-    let kind = rd.int(0.0, 7.0)?;
+    let kind = rd.int(0.0, 8.0)?;
     let level = rd.int(0.0, 4.0)?;
     if level == 3 {
         return Err(bad("level"));
     }
     let make = rd.flag()?;
-    if kind == 0 {
+    if kind == 8 {
+        rd.flag()?; // report list supplied
+        rd.int(1.0, 8.0)?; // nesting is bounded in both builders
+        rd.vec()?;
+        let x = rd.vec()?;
+        let y = rd.vec()?;
+        axes(x, y)?;
+        rd.num()?;
+        rd.num()?;
+        rd.dom()?;
+        let n3d = rd.int(0.0, 8.0)?;
+        let nuv = rd.int(0.0, 8.0)?;
+        rd.flag()?;
+        for _ in 0..n3d + nuv {
+            rd.int(2.0, 3.0)?;
+            rd.flag()?;
+            rd.vec()?;
+            rd.vec()?;
+        }
+    } else if kind == 0 {
         let p = rd.int(1.0, 5.0)?;
         let q = rd.int(1.0, 5.0)?;
         let nu = rd.int(2.0, 32.0)?;
@@ -213,17 +233,26 @@ fn check(block: &[f64]) -> Result<(), FfiError> {
         points(&mut rd, nu * nv, rational)?;
     } else if kind == 7 {
         rd.vec()?;
-        let v = rd.vec()?;
+        rd.vec()?;
         let d = rd.dom()?;
         if d[0] > d[2] || d[1] > d[3] {
             return Err(bad("extrusion domain not ordered"));
         }
-        // MakeNurb of a collapsed extrusion (zero vector or domain) is not exercised:
-        // the check of its NURB is the B-spline unit's
-        if make && (len(v) <= 1e-9 || d[2] - d[0] <= 1e-9 || d[3] - d[1] <= 1e-9) {
-            return Err(bad("MakeNurb of a collapsed extrusion"));
+        let swap = rd.flag()?;
+        // The base tests with MakeNurb (`make`, level != SM_LEVEL_GIVEN) of an extrusion
+        // whose V interval is empty to 1e-9 are not run (isolated probe of main's 93
+        // rejected inputs): an empty interval, or a near-empty one with the parameters
+        // swapped, crashes or does not return in the pinned C++ (23 of the 86 collapsed
+        // extrusions); a near-empty one otherwise leaves the continuity output of
+        // CalculateContinuities unwritten, which sm_AssertTestSurface4 then reads (13). A
+        // zero vector or an empty U interval is defined and runs.
+        let dv = d[3] - d[1];
+        if make && level != 4 && (dv == 0.0 || (dv.abs() <= 1e-9 && swap)) {
+            return Err(bad("MakeNurb of an extrusion with an empty V interval"));
         }
-        rd.flag()?;
+        if make && level != 4 && dv.abs() <= 1e-9 {
+            return Err(bad("continuity output never written (upstream reads it uninitialised)"));
+        }
         let p = rd.int(1.0, 5.0)?;
         let n = rd.int(2.0, 32.0)?;
         if n <= p {
@@ -261,7 +290,9 @@ fn check(block: &[f64]) -> Result<(), FfiError> {
                 let s1 = rd.num()?;
                 let h = rd.num()?;
                 angular(s0, s1)?;
-                if h <= 1e-6 || r0.abs().max(r1.abs()) < 1e-6 || (kind == 2 && r0 <= 1e-6) {
+                // (heights and radii down to 3e-7, and a cone's zero radius, are defined:
+                // isolated probe of main's rejected inputs; zero and negative are not run)
+                if h <= 0.0 || r0.abs().max(r1.abs()) == 0.0 || (kind == 2 && r0 <= 0.0) {
                     return Err(bad("degenerate height or radius"));
                 }
                 rd.flag()?;
@@ -274,7 +305,8 @@ fn check(block: &[f64]) -> Result<(), FfiError> {
                 angular(d[0], d[2])?;
                 // (a V interval past a pole is defined: sphere tests 4 and 5 report it)
                 angular(d[1], d[3])?;
-                if r <= 1e-6 {
+                // (a radius of 8e-7 is defined: isolated probe; zero and negative are not run)
+                if r <= 0.0 {
                     return Err(bad("sphere domain or radius"));
                 }
                 rd.flag()?;

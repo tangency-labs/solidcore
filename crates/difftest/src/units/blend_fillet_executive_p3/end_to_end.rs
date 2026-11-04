@@ -437,6 +437,18 @@ impl RealSolid {
         }
         match (&self.source, self.dimensions) {
             (None, Some(_)) if !self.all_edges => Ok(()),
+            // a file's body at a checkpoint (the shim's `real_prefix_file`): selected edges
+            // and the box form's options only
+            (Some(Source::File { .. }), None)
+                if self.checkpoint != Checkpoint::Full
+                    && !self.all_edges
+                    && !self.edges.is_empty()
+                    && self.radius_end.is_none()
+                    && self.select.is_none()
+                    && self.shell.is_none() =>
+            {
+                Ok(())
+            }
             (Some(_), None)
                 if self.checkpoint == Checkpoint::Full
                     && self.all_edges == self.edges.is_empty() =>
@@ -619,6 +631,11 @@ pub(super) fn cpp(input: &RealSolid) -> Result<Output, HarnessError> {
             ffi::real_variable_source(&input.source_wire(source), source.path(), end)
         }));
     }
+    if let (Some(Source::File { path }), true) =
+        (&input.source, input.checkpoint != Checkpoint::Full)
+    {
+        return prefix::cpp_file(input, path);
+    }
     if let Some(source) = &input.source {
         let run = if input.piecewise_merge {
             ffi::piecewise_source
@@ -657,6 +674,8 @@ pub(super) fn status(error: SolidError) -> SolidResult<f64> {
     match error {
         SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => Ok(1007.0),
         SolidError::Upstream { code, .. } => Ok(f64::from(code)),
+        // a failure in solidcore's terms (#2615; a shell's): its C++ comparison status
+        e @ SolidError::Failed(_) => Ok(f64::from(e.sm_status().unwrap_or(solidcore::error::SM_ERR))),
         error => Err(error),
     }
 }

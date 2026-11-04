@@ -26,6 +26,14 @@
 //! `boolean_2d` result and a successful sweep likewise compare `areas`: the face areas in
 //! ascending order (no volume: those results are sheets or non-manifold).
 //!
+//! An `arc_lengths` call (fixtures only, the curve tolerance gap of
+//! `curve::curve_cache`'s `curve_approx_tol_3d`) runs `SmApiBoolean` and also compares
+//! `arc_lengths`: per result edge its curve's `SmCurve::Length` and the point
+//! `SmCurve::FindParameterAtArcLength` finds `fraction` of that length along it (the C++
+//! side on `pEdge->GetCurve()`, the Rust side on `topology::edge::evaluation_curve`, which
+//! carries the edge's tolerance as upstream's curve reads it through `GetEdge()`), the rows
+//! sorted since the two sides number edges differently.
+//!
 //! `with_curves` also compares each intersection edge's index in the result's edge list
 //! (`-1` when the result no longer has it). The shim matches the returned `SmEdge*`
 //! by address, the port by `EdgeId`, which is never reused: a mismatch confined to
@@ -45,7 +53,9 @@
 //! its own long attribute before `SmApiBoolean`, each side on its own operands (the C++
 //! shim with `SmLongAttribute`s, the Rust side with `Brep::add_attribute`), and also
 //! compares `attributes`: per result face (edge) its area (length) and the attributes it
-//! carries, sorted by attributes, so attribute propagation through the merge shows.
+//! carries, sorted by attributes, so attribute propagation through the merge shows. A
+//! `boolean_2d` call with `attributed` tags both operands the same way before
+//! `SmApiBoolean2d` and compares an assigned result's `attributes` likewise.
 //!
 //! A `checked` call (fixtures only) runs `SmApiBoolean`, then the capi check sequence
 //! (`SmBrep::ValidatePointers`, then `SmBrep::AssertValid`; Rust
@@ -97,6 +107,7 @@ use solidcore::error::SM_ERR;
 use solidcore::topology::brep::p1::BoundaryTessellation;
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::brep::{p1 as brep_p1, p2 as brep_p2};
+use solidcore::topology::edge;
 use solidcore::topology::edgeuse::p1 as edgeuse_p1;
 use solidcore::topology::proto_topology::p1::api_transform::{
     api_rotate, api_translate, TransformObject,
@@ -328,6 +339,14 @@ enum Inputs {
         #[serde(default = "yes")]
         post_process: bool,
     },
+    /// `SmApiBoolean`, then per result edge its curve's length and the point `fraction`
+    /// of that length along it.
+    ArcLengths {
+        a: BrepIn,
+        b: BrepIn,
+        operation: i32,
+        fraction: f64,
+    },
     /// `SmApiBooleanWithCurves`.
     WithCurves {
         a: BrepIn,
@@ -339,6 +358,11 @@ enum Inputs {
         a: BrepIn,
         b: BrepIn,
         operation: i32,
+        /// Both operands' faces and edges tagged first (operands 0 and 1, this
+        /// `SmAttributeBehaviorType`), as [`Inputs::Attributed`] tags them; an assigned
+        /// result's record adds the attributes its faces and edges carry.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attributed: Option<u8>,
     },
     /// `SmApiNonManifoldBoolean`.
     NonManifold {
@@ -596,15 +620,32 @@ fn to_call(i: &Inputs) -> Call {
             operation: *operation,
             post_process: *post_process,
         },
+        Inputs::ArcLengths {
+            a,
+            b,
+            operation,
+            fraction,
+        } => Call::ArcLengths {
+            a: spec(a),
+            b: spec(b),
+            operation: *operation,
+            fraction: *fraction,
+        },
         Inputs::WithCurves { a, b, operation } => Call::WithCurves {
             a: spec(a),
             b: spec(b),
             operation: *operation,
         },
-        Inputs::Boolean2d { a, b, operation } => Call::Boolean2d {
+        Inputs::Boolean2d {
+            a,
+            b,
+            operation,
+            attributed,
+        } => Call::Boolean2d {
             a: spec(a),
             b: spec(b),
             operation: *operation,
+            attributed: *attributed,
         },
         Inputs::NonManifold { a, b, operation } => Call::NonManifold {
             a: spec(a),
@@ -737,6 +778,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
     match ffi::run(&to_call(i)) {
         Ok(o) => match i {
             Inputs::Measured { .. } => measured_output(&o, "measures"),
+            Inputs::ArcLengths { .. } => measured_output(&o, "arc_lengths"),
             Inputs::Attributed { .. } => measured_output(&o, "attributes"),
             Inputs::AttributedList { .. } if o.first() == Some(&0.0) => {
                 let (head, rows) = ffi::split_measures(&o)
@@ -744,6 +786,14 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
                 Ok(to_output(head)?.values("attributes", rows.to_vec()))
             }
             Inputs::Checked { .. } => checked_output(&o),
+            Inputs::Boolean2d {
+                attributed: Some(_),
+                ..
+            } if o.first() == Some(&0.0) && o.get(1) == Some(&1.0) => {
+                let (head, rows) = ffi::split_measures(&o)
+                    .ok_or_else(|| harness("cpp: attributed 2D record too short"))?;
+                Ok(areas_output(head, true)?.values("attributes", rows.to_vec()))
+            }
             Inputs::Boolean2d { .. } => {
                 areas_output(&o, o.first() == Some(&0.0) && o.get(1) == Some(&1.0))
             }
@@ -1149,6 +1199,60 @@ fn check(k: &mut Kernel, b: &mut Brep, level: u8) -> Result<Vec<i64>, Stop> {
     failed_tests(&mut o, &c.pointer_reports)?;
     o.push(c.assert_valid.map_or(-1, i64::from));
     failed_tests(&mut o, &c.reports)?;
+    Ok(o)
+}
+
+/// The shim's `put_arc_lengths`: `edges`, then per edge (`GetEdges` order)
+/// `length_status length find_status x y z past`, the rows in ascending lexicographic
+/// order: the edge curve as upstream's `GetCurve()` evaluates
+/// ([`edge::evaluation_curve`]), its length over the edge interval, then the parameter
+/// `fraction` of that length from the interval's start and the point there (zeros where a
+/// step fails, `-1` and zeros for an edge without curve). An unported callee defers.
+fn arc_lengths(k: &Kernel, b: &Brep, fraction: f64) -> Result<Vec<f64>, Stop> {
+    let fail = |e: &SolidError| -> Result<f64, Stop> {
+        match Output::unported(e) {
+            Some(d) => Err(Stop::Deferred(Box::new(d))),
+            None => Ok(status(e) as f64),
+        }
+    };
+    let edges = brep_p1::edges(b, None).map_err(|e| stop("GetEdges", &e))?;
+    let mut rows = Vec::new();
+    for &e in &edges {
+        let mut row = [0.0_f64; 7];
+        let curve = edge::evaluation_curve(b, e).map_err(|err| stop("GetCurve", &err))?;
+        let Some(c) = curve else {
+            row[0] = -1.0;
+            rows.push(row);
+            continue;
+        };
+        let ivl = edge::interval(b, e).map_err(|err| stop("GetInterval", &err))?;
+        match c.length(k, &ivl, ffi::ARC_LENGTH_ACCURACY) {
+            Err(err) => row[0] = fail(&err)?,
+            Ok(length) => {
+                row[1] = length;
+                match c.find_parameter_at_arc_length(k, ivl.min(), fraction * length) {
+                    Err(err) => row[2] = fail(&err)?,
+                    Ok(found) => {
+                        row[2] = f64::from(found.status());
+                        match c.evaluate_point(k, found.end_param) {
+                            Ok(p) => {
+                                row[3] = p.x;
+                                row[4] = p.y;
+                                row[5] = p.z;
+                            }
+                            Err(err) => row[2] = fail(&err)?,
+                        }
+                        row[6] = if found.past_end { 1.0 } else { 0.0 };
+                    }
+                }
+            }
+        }
+        rows.push(row);
+    }
+    // std::sort of the shim's rows (operator<: equal rows, -0 and 0 alike, in any order)
+    rows.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    let mut o = vec![edges.len() as f64];
+    o.extend(rows.iter().flatten());
     Ok(o)
 }
 
@@ -1616,6 +1720,22 @@ fn rust_call_with(k: &mut Kernel, i: &Inputs, seen: &dyn Fn(&SolidError)) -> Res
                 Err(e) => Ok(err_output(&e)),
             }
         }
+        Inputs::ArcLengths {
+            a,
+            b,
+            operation,
+            fraction,
+        } => {
+            let (a, b) = (build(k, a)?, build(k, b)?);
+            match api::boolean(k, a, b, op(*operation)?) {
+                Ok(out) => {
+                    let rec = two_record(&out, keeps_other(*operation, false))?;
+                    let rows = arc_lengths(k, &out.result, *fraction)?;
+                    Ok(rec.values("arc_lengths", rows))
+                }
+                Err(e) => Ok(err_output(&e)),
+            }
+        }
         Inputs::WithCurves { a, b, operation } => {
             let (a, b) = (build(k, a)?, build(k, b)?);
             match api::boolean_with_curves(k, a, b, op(*operation)?) {
@@ -1713,15 +1833,32 @@ fn rust_call_with(k: &mut Kernel, i: &Inputs, seen: &dyn Fn(&SolidError)) -> Res
                 keeps_other(*operation, false),
             )
         }
-        Inputs::Boolean2d { a, b, operation } => {
+        Inputs::Boolean2d {
+            a,
+            b,
+            operation,
+            attributed,
+        } => {
             let operation = op_2d(*operation)?;
-            let (a, b) = (build(k, a)?, build(k, b)?);
+            let (mut a, mut b) = (build(k, a)?, build(k, b)?);
+            if let Some(behavior) = attributed {
+                let behavior = Behavior::from_code(i32::from(*behavior))
+                    .map_err(|e| Stop::Harness(harness(format!("behavior: {e}"))))?;
+                tag_operand(&mut a, 0, behavior)?;
+                tag_operand(&mut b, 1, behavior)?;
+            }
             match api::boolean_2d(k, a, b, operation) {
                 Ok(api::Boolean2dOutcome::Result(mut res)) => {
                     let mut o = vec![1];
                     put_brep(&mut o, &res)?;
                     let a = areas(k, &mut res)?;
-                    Ok(record(0, o).values("areas", a))
+                    let out = record(0, o).values("areas", a);
+                    if attributed.is_none() {
+                        return Ok(out);
+                    }
+                    let mut rows = Vec::new();
+                    put_attributes(k, &mut rows, &mut res)?;
+                    Ok(out.values("attributes", rows))
                 }
                 Ok(api::Boolean2dOutcome::Unassigned { brep1, brep2 }) => {
                     let mut o = vec![0];
@@ -2164,6 +2301,7 @@ fn gen_more(rng: &mut Rng) -> Inputs {
                 a,
                 b,
                 operation: rng.below(5) as i32,
+                attributed: None,
             }
         }
         9 | 10 => {

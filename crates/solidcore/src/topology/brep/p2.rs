@@ -25,6 +25,7 @@
 //! | [`local_curve_sector`]       | `SmBrep::LocalCurveSector`                |
 //! | [`ray_fire`], [`RayFireResult`] | `SmBrep::RayFire`                      |
 //! | [`replace_surface`], [`OldSurface`] | `SmBrep::ReplaceSurface`           |
+//! | [`replace_curve`]            | `SmBrep::ReplaceCurve`                    |
 //! | [`make_shell_vertex_topology`] | `SmBrep::MakeShellVertexTopology`       |
 //! | [`make_edge_vertex_topology`] | `SmBrep::MakeEdgeVertexTopology`         |
 //! | [`make_edge_topology`]       | `SmBrep::MakeEdgeTopology`                |
@@ -74,7 +75,7 @@
 //!   `CreateExtendedSurface`, where upstream never returns
 //!   (`plan/upstream-issues.md` HANG-18).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::curve::curve::p2::is_curve_class;
 use crate::curve::curve::{p8::CurveIntersectOptions, Curve, CurveKind};
@@ -91,6 +92,7 @@ use crate::geom::object::{NotifyOperation, ObjectRef};
 use crate::geom::solution_array::Solution;
 use crate::geom::tol::{zone_tol3d, ZONE_TOL_3D};
 use crate::geom::tree::NodeGeomType;
+use crate::heal::gap::{EdgeEdgeGap, VertexEdgeGap};
 use crate::intersect::curve_class::p1::{CurveClassification, IntervalPosition};
 use crate::intersect::curve_class::p6::MergeIntervalBrep;
 use crate::intersect::curve_class::p7::CoincidentMaybe;
@@ -112,7 +114,9 @@ use crate::surface::surface::{Surface, SurfaceKind};
 use crate::surface::trim_srf_cache::TrimSrfCache;
 use crate::topology::brep::p1;
 use crate::topology::brep_cache::{self, BrepCache, CacheObject, CacheSource};
-use crate::topology::edge::{self, AttributeFilter, NotifyEnv, SetCurveOptions};
+use crate::topology::edge::{
+    self, AttributeFilter, NotificationStores, NotifyEnv, NotifyState, SetCurveOptions,
+};
 use crate::topology::edgeuse::p1::{self as eu1, UvTrimCurveArg};
 use crate::topology::edgeuse::p2 as eu2;
 use crate::topology::edgeuse::p3 as eu3;
@@ -317,7 +321,7 @@ pub fn min_edge_bbox_size(k: &Kernel, b: &Brep) -> Result<(f64, Option<EdgeId>)>
                     bbox = n;
                 }
             }
-            Err(err) if err.is_unported() => return Err(err),
+            Err(err) if err.is_unported_or_cancelled() => return Err(err),
             Err(_) => {}
         }
         let diff = bbox.size();
@@ -362,10 +366,11 @@ pub fn set_tolerance(
             k,
             &mut *b,
             BoundingBoxOptions::default(),
-        ))?
-        .unwrap_or_default();
-        let mut size = bbox.size().length();
-        if size >= 1.0e15 || size <= 0.0 {
+        ))?;
+        // fork 60a8a51: a box that cannot be computed is no size, as an absurd one is not
+        let no_box = bbox.is_none() && k.fixes.brep_edit_statuses_pass_on;
+        let mut size = bbox.unwrap_or_default().size().length();
+        if no_box || size >= 1.0e15 || size <= 0.0 {
             size = 1.0;
         }
         // the SmZoneTol3d assignment takes fabs of a positive value
@@ -432,7 +437,7 @@ pub fn rebuild_uv_trim_curves(k: &Kernel, b: &mut Brep) -> Result<()> {
         // rebuild UVTrimCurve
         match eu2::rebuild_uv_trim_curve(k, b, eu) {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(e) => ret = Err(e),
         }
     }
@@ -460,13 +465,19 @@ pub fn check_and_fix_uv_trim_curves(k: &Kernel, b: &mut Brep) -> Result<()> {
 }
 
 /// `SwapUV`: claims an unlocked mark and swaps the UV parameterisation of every face
-/// (`sm_SwapFaceUV`, which skips faces already marked).
+/// (`sm_SwapFaceUV`, which skips faces already marked). Each face's and surface's
+/// edit notifications go through `env` ([`p1::swap_face_uv`]).
 ///
 /// # Errors
 ///
 /// [`SolidError::Unported`] from `sm_SwapFaceUV` (`SmFace::SwapUV`,
 /// `topology.face_p1`).
-pub fn swap_uv(k: &mut Kernel, b: &mut Brep, marks: &mut Marks) -> Result<()> {
+pub fn swap_uv(
+    k: &mut Kernel,
+    b: &mut Brep,
+    marks: &mut Marks,
+    env: &mut NotifyEnv<'_>,
+) -> Result<()> {
     let faces = brep_faces(b)?;
 
     // increment and lock an unlocked mark
@@ -478,8 +489,8 @@ pub fn swap_uv(k: &mut Kernel, b: &mut Brep, marks: &mut Marks) -> Result<()> {
     for f in faces {
         // swap the face's orientation - watch for composites (sm_SwapFaceUV is void:
         // only an unported callee stops the loop)
-        if let Err(e) = p1::swap_face_uv(k, b, marks, f, mark) {
-            if e.is_unported() {
+        if let Err(e) = p1::swap_face_uv(k, b, marks, f, mark, env) {
+            if e.is_unported_or_cancelled() {
                 res = Err(e);
                 break;
             }
@@ -762,7 +773,7 @@ impl RegionNotifyState {
 /// carries its `SmTopology` part and attributes; such a caller models neither, so the
 /// notification runs on a default record for every object of the B-rep, keyed by its
 /// arena identity (`loopuse::notify_ref`), and an attribute store that is empty, or
-/// holds the B-rep's own attributes for the edit ([`Self::with_attributes_of`]). The records are never read back: they exist so that
+/// holds the B-rep's own attributes for the edit (`Self::with_attributes_of`). The records are never read back: they exist so that
 /// `SmTopology::Notify`'s flag propagation finds both objects, as upstream it always does.
 /// The identities are unique within one B-rep only.
 #[derive(Debug, Default)]
@@ -810,6 +821,35 @@ impl ArenaNotifyState {
         }
     }
 
+    /// [`Self::with_attributes_of`] reusing the records of an earlier state
+    /// ([`Self::into_records`]): they end exactly as [`Self::new`] makes them, a default
+    /// record for every object of `b` and the B-rep and no other, but only the records
+    /// the earlier edit changed are reset and only the difference in keys is removed or
+    /// added. For a caller that makes many edits of a large B-rep in a row (the stitch's
+    /// glues), where a fresh map per edit is quadratic.
+    pub(crate) fn with_attributes_of_reusing(
+        mut records: crate::topology::topology::NotifyRecords,
+        b: &mut Brep,
+    ) -> Self {
+        use crate::topology::loopuse::notify_ref;
+        let mut keys: Vec<_> = brep_entities(b)
+            .into_iter()
+            .map(|e| notify_ref(e).key)
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        records.reset_to_keys(&keys);
+        Self {
+            records,
+            attributes: b.take_attributes(),
+        }
+    }
+
+    /// The records, for [`Self::with_attributes_of_reusing`].
+    pub(crate) fn into_records(self) -> crate::topology::topology::NotifyRecords {
+        self.records
+    }
+
     /// [`Self::new`] holding `b`'s own attributes ([`Brep::add_attribute`], keyed by the
     /// same arena identities), so the edit's notifications propagate them with SMLib's
     /// handlers, as upstream's live on the objects the edit changes. `b` holds none
@@ -819,6 +859,15 @@ impl ArenaNotifyState {
         let mut state = Self::new(b);
         state.attributes = b.take_attributes();
         state
+    }
+
+    /// A default record for every object of `b` (and the B-rep itself) under its
+    /// [`copy_source_ref`] identity, disjoint from the arena identities [`Self::seed`]
+    /// gives: for a second B-rep notified in the same state.
+    pub(crate) fn seed_tagged(&mut self, b: &Brep) {
+        for e in brep_entities(b) {
+            self.records.or_default(copy_source_ref(e).key);
+        }
     }
 
     /// Gives `b` the attributes this state's notifications left on its live objects
@@ -851,18 +900,172 @@ impl ArenaNotifyState {
     }
 }
 
+/// The tag of a copy's source identities ([`copy_source_ref`]): above the arena kinds
+/// (`kind << 32`, kinds up to 10) and below the kernel's keys.
+const COPY_SOURCE_TAG: u64 = 1 << 48;
+
+/// The identity of `e` as the source object of a copy between two B-reps
+/// ([`CopyNotifyState`]): its [`notify_ref`](crate::topology::loopuse::notify_ref) key
+/// tagged, so that it differs from every destination object's key.
+#[must_use]
+pub fn copy_source_ref(e: EntityRef) -> ObjectRef {
+    let r = crate::topology::loopuse::notify_ref(e);
+    ObjectRef {
+        type_code: r.type_code,
+        key: ObjectKey(r.key.0 | COPY_SOURCE_TAG),
+    }
+}
+
+/// The entity a [`copy_source_ref`] key names, if any.
+fn entity_of_copy_source_key(key: ObjectKey) -> Option<EntityRef> {
+    if key.0 & COPY_SOURCE_TAG == 0 {
+        return None;
+    }
+    crate::topology::loopuse::entity_of_notify_key(ObjectKey(key.0 & !COPY_SOURCE_TAG))
+}
+
+/// The notification state of a copy from one B-rep into another (`CopyFaces`), holding
+/// both B-reps' own attributes ([`Brep::add_attribute`]) so that the copy's
+/// notifications propagate them with SMLib's handlers (`SmAObject::Notify`: each
+/// attribute's `Copy` behaviour onto the new object), as upstream's live on the objects.
+/// Destination objects are keyed by
+/// [`notify_ref`](crate::topology::loopuse::notify_ref) (the [`NotifyEnv::key_of`] of
+/// [`Self::env`]), source objects by [`copy_source_ref`]. Each B-rep holds no attributes
+/// until [`Self::restore_attributes`] gives them back. (not upstream: an attribute that
+/// both B-reps' objects list afterwards, a reference behaviour's, is one object upstream;
+/// here each B-rep gets its own.)
+#[derive(Debug, Default)]
+pub struct CopyNotifyState {
+    /// Each object's default `SmTopology` record.
+    pub records: crate::topology::topology::NotifyRecords,
+    /// Both B-reps' attributes.
+    pub attributes: AttributeStore,
+}
+
+impl CopyNotifyState {
+    /// A default record for every object of `src` (source identities) and `dest`, and
+    /// both B-reps' attributes. Pass an empty `dest` for a copy constructor.
+    ///
+    /// # Errors
+    /// Those of `seed_brep_attributes` (a B-rep store that names no object).
+    pub fn with_attributes_of(src: &mut Brep, dest: &mut Brep) -> Result<Self> {
+        let mut state = Self::default();
+        // (the destination's records, and under the destination identities those of
+        // `src`'s arena ids as well, as `ArenaNotifyState::new(dest)` + `seed(src)`: the
+        // copy's new objects are notified before anything else names them)
+        let mut dest_state = ArenaNotifyState::new(dest);
+        dest_state.seed(src);
+        state.records = dest_state.records;
+        for e in brep_entities(src) {
+            state.records.or_default(copy_source_ref(e).key);
+        }
+        seed_brep_attributes(
+            &mut state.attributes,
+            dest.take_attributes(),
+            &crate::topology::loopuse::notify_ref,
+        )?;
+        seed_brep_attributes(
+            &mut state.attributes,
+            src.take_attributes(),
+            &copy_source_ref,
+        )?;
+        Ok(state)
+    }
+
+    /// The [`NotifyEnv`] over this state, keyed by the destination identities and
+    /// notifying through `context` (as [`ArenaNotifyState::env`]).
+    pub fn env<'a>(
+        &'a mut self,
+        context: Option<&'a mut crate::geom::context::Context>,
+    ) -> NotifyEnv<'a> {
+        NotifyEnv {
+            records: &mut self.records,
+            attributes: &mut self.attributes,
+            context,
+            key_of: &crate::topology::loopuse::notify_ref,
+        }
+    }
+
+    /// Gives each B-rep the attributes this state's notifications left on its live
+    /// objects (pair of [`Self::with_attributes_of`]); the lists of deleted objects are
+    /// cleared, as upstream's destructors do.
+    ///
+    /// # Errors
+    /// None in practice.
+    pub fn restore_attributes(&mut self, src: &mut Brep, dest: &mut Brep) -> Result<()> {
+        let store = core::mem::take(&mut self.attributes);
+        let mut for_src = store.clone();
+        let mut for_dest = store;
+        give_attributes(src, &mut for_src, &entity_of_copy_source_key)?;
+        give_attributes(
+            dest,
+            &mut for_dest,
+            &crate::topology::loopuse::entity_of_notify_key,
+        )?;
+        src.set_attributes(for_src);
+        dest.set_attributes(for_dest);
+        Ok(())
+    }
+}
+
+/// Every object of `b` that a notification may name (the B-rep and its arena objects).
+fn brep_entities(b: &Brep) -> Vec<EntityRef> {
+    let mut all = vec![EntityRef::Brep(BrepId::from_index(0))];
+    all.extend(b.regions().iter().map(|(x, _)| EntityRef::Region(x)));
+    all.extend(b.shells().iter().map(|(x, _)| EntityRef::Shell(x)));
+    all.extend(b.faceuses().iter().map(|(x, _)| EntityRef::Faceuse(x)));
+    all.extend(b.faces().iter().map(|(x, _)| EntityRef::Face(x)));
+    all.extend(b.loopuses().iter().map(|(x, _)| EntityRef::Loopuse(x)));
+    all.extend(b.loops().iter().map(|(x, _)| EntityRef::Loop(x)));
+    all.extend(b.edgeuses().iter().map(|(x, _)| EntityRef::Edgeuse(x)));
+    all.extend(b.edges().iter().map(|(x, _)| EntityRef::Edge(x)));
+    all.extend(b.vertexuses().iter().map(|(x, _)| EntityRef::Vertexuse(x)));
+    all.extend(b.vertices().iter().map(|(x, _)| EntityRef::Vertex(x)));
+    all
+}
+
+/// Keeps in `store` the lists of `b`'s live objects that `decode` names (renamed to their
+/// [`notify_ref`](crate::topology::loopuse::notify_ref) keys), clears the others, and
+/// drops the attributes no remaining list names.
+fn give_attributes(
+    b: &Brep,
+    store: &mut AttributeStore,
+    decode: &dyn Fn(ObjectKey) -> Option<EntityRef>,
+) -> Result<()> {
+    if !store.attributed_objects().is_empty() {
+        let listed = b.listed_entities();
+        store.retain_rekeyed(&|key| {
+            decode(key)
+                .filter(|&e| b.still_has(&listed, e))
+                .map(|e| crate::topology::loopuse::notify_ref(e).key)
+        })?;
+        store.retain_listed();
+    }
+    Ok(())
+}
+
 /// (not upstream: upstream attributes live on the objects.) Moves `source`, a B-rep's
 /// own attribute store (keyed by [`crate::topology::loopuse::notify_ref`]), into an
 /// operation's `store` under that operation's identities `key_of` of the same objects.
 ///
 /// # Errors
-/// [`SolidError::InvalidInput`] for a list whose key names no object; a store that
-/// cannot grow.
+/// [`SolidError::InvalidInput`] for a list whose key names no object, or for two lists
+/// `key_of` gives one key (see [`distinct_listed_keys`]); a store that cannot grow.
 pub(crate) fn seed_brep_attributes(
     store: &mut AttributeStore,
     source: AttributeStore,
     key_of: &dyn Fn(EntityRef) -> ObjectRef,
 ) -> Result<()> {
+    let mut named = BTreeSet::new();
+    for key in source.attributed_objects() {
+        if let Some(e) = crate::topology::loopuse::entity_of_notify_key(key) {
+            if !named.insert(key_of(e).key) {
+                return Err(shared_attribute_key(
+                    "topology::brep::p2::seed_brep_attributes",
+                ));
+            }
+        }
+    }
     store.absorb(source, &|key| {
         crate::topology::loopuse::entity_of_notify_key(key)
             .map(|e| key_of(e).key)
@@ -903,7 +1106,8 @@ pub(crate) fn restore_decoded_attributes(
 /// `store` itself is left as it is.
 ///
 /// # Errors
-/// None in practice.
+/// [`SolidError::InvalidInput`] when `key_of` gives two live objects the key of a list
+/// in `store` ([`distinct_listed_keys`]); `b` is then left as it is.
 pub(crate) fn restore_keyed_attributes(
     b: &mut Brep,
     store: &AttributeStore,
@@ -913,15 +1117,49 @@ pub(crate) fn restore_keyed_attributes(
         b.set_attributes(AttributeStore::default());
         return Ok(());
     }
-    let names: BTreeMap<ObjectKey, EntityRef> = live_entities(b)
-        .into_iter()
-        .map(|e| (key_of(e).key, e))
-        .collect();
+    let names = distinct_listed_keys(
+        b,
+        key_of,
+        &|key| !store.attributes(key).is_empty(),
+        "topology::brep::p2::restore_keyed_attributes",
+    )?;
     restore_decoded_attributes(b, store.clone(), &|key| names.get(&key).copied())
 }
 
+/// The refusal of a naming that gives two objects one attribute key.
+const fn shared_attribute_key(operation: &'static str) -> SolidError {
+    SolidError::invalid_input(operation, "the naming gives two objects one attribute key")
+}
+
+/// (not upstream: upstream's attributes live on the objects.) `b`'s live objects by
+/// their key under `key_of` (the last one named for a key no list holds), refusing a
+/// naming that gives two of them the key of an attribute list (`listed`): stores key
+/// by [`ObjectKey`] alone, so such a list would silently pass to one of them and the
+/// other would lose its own. Arena identities ([`brep_cache::arena_identity`], and so
+/// [`Brep::owner_identity`] under any scheme but [`crate::topology::NamingScheme::Notify`])
+/// are such a naming: a face, an edge and a vertex of one index share their key;
+/// [`crate::topology::loopuse::notify_ref`] is not.
+///
+/// # Errors
+/// [`SolidError::InvalidInput`] for such a key.
+pub(crate) fn distinct_listed_keys(
+    b: &Brep,
+    key_of: &dyn Fn(EntityRef) -> ObjectRef,
+    listed: &dyn Fn(ObjectKey) -> bool,
+    operation: &'static str,
+) -> Result<BTreeMap<ObjectKey, EntityRef>> {
+    let mut names = BTreeMap::new();
+    for e in live_entities(b) {
+        let key = key_of(e).key;
+        if names.insert(key, e).is_some() && listed(key) {
+            return Err(shared_attribute_key(operation));
+        }
+    }
+    Ok(names)
+}
+
 /// Every live object of `b` that can carry attributes (all but the B-rep itself).
-fn live_entities(b: &Brep) -> Vec<EntityRef> {
+pub(crate) fn live_entities(b: &Brep) -> Vec<EntityRef> {
     let mut all = Vec::new();
     all.extend(b.regions().iter().map(|(x, _)| EntityRef::Region(x)));
     all.extend(b.shells().iter().map(|(x, _)| EntityRef::Shell(x)));
@@ -986,7 +1224,7 @@ fn add_to_tree(
     .ok_or(null_deref("B-rep cache without spatial tree"))?;
     match tree.add_to_spatial_tree(bbox, object, NodeGeomType::Default) {
         Ok(()) => return Ok(()),
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => {}
     }
     let kernel = s.kernel;
@@ -997,7 +1235,7 @@ fn add_to_tree(
     };
     let cache = match rebuilt {
         Ok(c) => Some(c),
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => None,
     };
     if let Some(s) = slot.as_deref_mut() {
@@ -1130,7 +1368,7 @@ fn rm_from_spatial_tree(
             };
             let bbox = match curve.calculate_bounding_box(k, &domain, req, true) {
                 Ok(boxes) => boxes.normal.unwrap_or_else(Extent3d::new),
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => Extent3d::new(),
             };
             rm_from_tree(slot, TreeKind::Curve, &bbox, CacheObject::Curve(e))
@@ -1167,7 +1405,7 @@ fn edge_box(k: &Kernel, b: &Brep, e: EdgeId) -> Result<Extent3d> {
     };
     match qedge::calculate_bounding_box(k, b, e, req, false) {
         Ok(boxes) => Ok(boxes.normal.unwrap_or_else(Extent3d::new)),
-        Err(err) if err.is_unported() => Err(err),
+        Err(err) if err.is_unported_or_cancelled() => Err(err),
         Err(_) => Ok(Extent3d::new()),
     }
 }
@@ -1177,7 +1415,7 @@ fn edge_box(k: &Kernel, b: &Brep, e: EdgeId) -> Result<Extent3d> {
 fn face_box(k: &Kernel, b: &Brep, f: FaceId) -> Result<Extent3d> {
     match qface1::calculate_bounding_box(k, b, f, false) {
         Ok(bbox) => Ok(bbox),
-        Err(err) if err.is_unported() => Err(err),
+        Err(err) if err.is_unported_or_cancelled() => Err(err),
         Err(_) => Ok(Extent3d::new()),
     }
 }
@@ -1757,6 +1995,56 @@ pub fn replace_surface(
     Ok((kept, modified))
 }
 
+/// `ReplaceCurve(pEdge, pNewCurve)`: the B-rep's pre-edit notification,
+/// `SmEdge::Replace3DCurve` (`SetCurve(curve, TRUE)`: the curve owned by the edge and
+/// the edge's interval the curve's natural interval) and `SmEdge::RemoveUVTrimCurves`
+/// (`ClearUVCaches`: the edge's pre-edit notification, every edge use's UV trim curve
+/// deleted and its gap to the next edge use reset, every vertex use's vertex/edge gap
+/// reset). The notifications go through the kernel's context with `stores`' records
+/// and attributes.
+///
+/// # Errors
+///
+/// Those of the notifications and of `SmEdge::Replace3DCurve`;
+/// [`SolidError::InvalidInput`] for an edge use without vertex use (upstream
+/// dereferences it).
+pub fn replace_curve(
+    k: &mut Kernel,
+    b: &mut Brep,
+    e: EdgeId,
+    curve: Curve,
+    stores: &mut NotificationStores<'_>,
+) -> Result<()> {
+    NotifyState::from_kernel_stores(stores).with_kernel_env(k, |_k, env| {
+        // notify the Brep
+        let this = Some(NotifyArg::Object(brep_ref(b)));
+        notify(b, env, None, NotifyOperation::PreEdit, [this, None, None])?;
+
+        // change the edge (Replace3DCurve)
+        edge::replace_3d_curve(b, e, Some(curve), env)?;
+
+        // remove existing UVTrimCurves (ClearUVCaches)
+        let edge_ref = (env.key_of)(EntityRef::Edge(e));
+        let body = brep_ref(b);
+        edge::notify(
+            b,
+            e,
+            env,
+            NotifyOperation::PreEdit,
+            [Some(edge_ref), Some(body), None],
+        )?;
+        for eu in edge::edgeuses(b, e, None, None)? {
+            let _ = eu1::set_uv_trim_curve(b, eu, UvTrimCurveArg::Null, 0.0, true, None)?;
+            b.edgeuse_mut(eu)?.edge_ccw_edge_gap = EdgeEdgeGap::new();
+        }
+        for vu in edge::vertexuses(b, e, None)? {
+            let vu = vu.ok_or(null_deref("edge use without vertex use"))?;
+            b.vertexuse_mut(vu)?.vertex_edge_gap = VertexEdgeGap::new();
+        }
+        Ok(())
+    })
+}
+
 /// The identity `surface` is notified under through `context` ([`Surface::notify_key`];
 /// issued by `context` when it has none of its domain).
 fn surface_identity(
@@ -2130,7 +2418,7 @@ fn shell_transfer_children(k: &mut Kernel, b: &mut Brep, from: ShellId, to: Shel
 // ---- merging curves into faces ------------------------------------------------------------
 
 /// What [`merge_curves_on_surface`] needs of the caller's classification handles, on
-/// top of [`CurveOnClassifyObjects`] (which includes [`ClassGeometry`]) and
+/// top of [`CurveOnClassifyObjects`](crate::query::face::p2::CurveOnClassifyObjects) (which includes [`ClassGeometry`]) and
 /// [`MergeIntervalBrep`]: the adapter holds the B-rep the curves merge into, which
 /// upstream's `MergeIntervals` edits through the classification's topology pointers.
 pub trait MergeCurvesObjects<O: ClassObject>:
@@ -2293,7 +2581,7 @@ fn merge_curves_body<O: ClassObject + Copy>(
             // (the new faces made before a failure are kept, as upstream's list)
             let (new_faces, r) = merge_intervals(k, objects, &mut cc)?;
             if let Err(e) = r {
-                if e.is_unported() {
+                if e.is_unported_or_cancelled() {
                     return Err(e);
                 }
             }
@@ -2527,7 +2815,7 @@ pub fn mate_lamina_edge_to_surface(
         domain.expand_absolute(domain.size().length() * surface_extension_factor);
         // status ignored
         if let Err(e) = p.adjust_step_uv_domain(&domain) {
-            if e.is_unported() {
+            if e.is_unported_or_cancelled() {
                 return Err(e);
             }
         }
@@ -2676,28 +2964,37 @@ pub fn mate_lamina_edge_to_surface(
     // length curves.
     let ccw_trim = sol_ccw.start.param(0)?;
     let mut ccw_trim_ivl = ccw_ext.natural_interval();
-    let _ = if ccw_orient == OrientType::Same {
+    // (fork 60a8a51 passes both interval statuses on: `SER`)
+    let set = if ccw_orient == OrientType::Same {
         ccw_trim_ivl.set_min_max(ccw_trim, ccw_trim_ivl.max())
     } else {
         ccw_trim_ivl.set_min_max(ccw_trim_ivl.min(), ccw_trim)
     };
+    ignore_status(crate::error::passed_on(
+        set,
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     // may snap sIvl by tol to existing knots
     match ccw_ext.trim(k, &mut ccw_trim_ivl, TrimMode::Notify) {
         Ok(()) => {}
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(()),
     }
 
     let cw_trim = sol_cw.start.param(0)?;
     let mut cw_trim_ivl = cw_ext.natural_interval();
-    let _ = if cw_orient == OrientType::Same {
+    let set = if cw_orient == OrientType::Same {
         cw_trim_ivl.set_min_max(cw_trim_ivl.min(), cw_trim)
     } else {
         cw_trim_ivl.set_min_max(cw_trim, cw_trim_ivl.max())
     };
+    ignore_status(crate::error::passed_on(
+        set,
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     match cw_ext.trim(k, &mut cw_trim_ivl, TrimMode::Notify) {
         Ok(()) => {}
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(()),
     }
 
@@ -2887,7 +3184,11 @@ fn set_vertex_point(b: &mut Brep, env: &mut NotifyEnv<'_>, v: VertexId, p: Point
 /// whose NURB `GetOrCreateGwNurbPointer` makes (`MakeNurb`, the `SmLine` override; status
 /// ignored) when missing. A curve of another kind is [`SolidError::InvalidInput`].
 fn uv_trim_curve_copy(k: &Kernel, b: &mut Brep, eu: EdgeuseId) -> Result<BSplineCurve> {
-    let _ = eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+    let fetched = eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+    // (fork 60a8a51 passes this status on: `SER`)
+    if k.fixes.brep_edit_statuses_pass_on {
+        fetched.status?;
+    }
     let curve = eu1::uv_trim_curve(b, eu)?
         .0
         .ok_or(null_deref("edge use without UV trim curve"))?;
@@ -2924,7 +3225,9 @@ fn trim_uv_trim_curve(k: &Kernel, b: &mut Brep, eu: EdgeuseId, ivl: &Extent1d) -
     // may snap sIvl by tol to existing knots
     let mut trim_ivl = *ivl;
     match curve.trim(k, &mut trim_ivl, TrimMode::Notify) {
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
+        // (fork 60a8a51 passes the trim's status on: `SER`)
+        Err(e) if k.fixes.brep_edit_statuses_pass_on => Err(e),
         _ => Ok(()),
     }
 }

@@ -107,8 +107,8 @@ const OP_SQUEEZE: &str = "intersect::curve_class::p3::fix_problems_by_squeezing"
 const OP_EDGE_INTERVAL: &str =
     "intersect::curve_class::p3::CurveClassification::classify_edge_interval";
 
-/// `SM_ERR_OUTSIDE_OF_DOMAIN` (`SmMessages.h`).
-const SM_ERR_OUTSIDE_OF_DOMAIN: i32 = 1020;
+// `SM_ERR_OUTSIDE_OF_DOMAIN` (`SmMessages.h`).
+use crate::error::SM_ERR_OUTSIDE_OF_DOMAIN;
 
 /// The index `FindInterval` leaves in `rlIndex` until it finds an interval.
 pub const NO_INTERVAL: usize = 999_999;
@@ -350,7 +350,7 @@ fn cc_curve<'g, O: ClassObject, G: ClassGeometry<O>>(
 ) -> Result<&'g Curve> {
     let c = cc
         .curve()
-        .ok_or(SolidError::invalid_input(op, "no classification curve"))?;
+        .ok_or_else(|| SolidError::invalid_input(op, "no classification curve"))?;
     geometry.curve(c).ok_or_else(|| unresolved(op))
 }
 
@@ -402,10 +402,10 @@ fn point_and_unit_tangent(
     let d = curve.evaluate(k, param, 1, from_left, true)?;
     let p = *d
         .first()
-        .ok_or(SolidError::invalid_input(op, "no position"))?;
+        .ok_or_else(|| SolidError::invalid_input(op, "no position"))?;
     let t = *d
         .get(1)
-        .ok_or(SolidError::invalid_input(op, "no tangent"))?;
+        .ok_or_else(|| SolidError::invalid_input(op, "no tangent"))?;
     // the status of the in-place Unitize is ignored (a zero tangent becomes (0, 0, 1))
     Ok((p, t.unitize_or_z()))
 }
@@ -1904,7 +1904,7 @@ pub fn fix_problems_by_squeezing<O: ClassObject>(
                 start_obj_zone_tol_3d,
             ) {
                 Ok(f) => f,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => continue,
             };
 
@@ -1917,7 +1917,7 @@ pub fn fix_problems_by_squeezing<O: ClassObject>(
                 end_obj_zone_tol_3d,
             ) {
                 Ok(f) => f,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => continue,
             };
 

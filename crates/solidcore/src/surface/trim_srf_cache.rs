@@ -79,12 +79,18 @@
 //!   `PointClassify` of a cache whose surface has no face; the port returns
 //!   `SM_ERR_NULL_POINTER`. A node without surface data in this cache gives
 //!   [`SolidError::InvalidInput`].
+//! - **Statuses.** `BuildTree`'s `SER(sSurfaceDomain.Intersect(sFaceDomain, ..))` of
+//!   disjoint domains (no edge use grew the face domain) is the upstream status
+//!   `SM_ERR_INVALID_INPUT` ([`SolidError::Upstream`]), not
+//!   [`SolidError::InvalidInput`], so the cache factory falls back to the plain
+//!   surface cache as `smsurf_GetSurfaceCache` does when `CacheMakeOrValidate` fails;
+//!   a `GetTree` that builds a deferred tree returns the same status.
 //! - **Not ported here.** `GetMemoryUsed` (the base class sum) and `Dump` (debug
 //!   output).
 
 use crate::curve::curve::Curve;
 use crate::curve::curve_cache::{CurveCache, CurveCacheOptions};
-use crate::error::{Result, SolidError};
+use crate::error::{Result, SolidError, SM_ERR_INVALID_INPUT};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
@@ -209,6 +215,14 @@ pub trait CacheFace<O> {
     ///
     /// The implementor's (a face without B-rep).
     fn set_brep_editing_enabled(&mut self, enabled: bool) -> Result<()>;
+
+    /// Whether `BuildTree` implants the face's trims even while its B-rep is being
+    /// edited. Not upstream, which builds the tree untrimmed then: a B-rep point
+    /// classification answers against the face's current trims (WR-732, #2503). `false` by
+    /// default, as upstream.
+    fn implants_while_editing(&self) -> bool {
+        false
+    }
 
     /// `GetFace()->CreateUVTrimCurves(TRUE, NULL, NULL, ..)` (its gap statistics are
     /// not read).
@@ -771,7 +785,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         let editing_face = match face {
             None => None,
             Some(f) => {
-                if f.brep_editing_enabled()? {
+                if f.brep_editing_enabled()? && !f.implants_while_editing() {
                     None
                 } else {
                     Some(f)
@@ -860,7 +874,15 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
             Some(d) => d,
             None => self.base.surface().natural_uv_domain_with_nurb(k)?,
         };
-        let domain = surface_domain.intersect(&face_domain)?;
+        // SER: disjoint domains (a face domain no edge use grew) are the status
+        // SM_ERR_INVALID_INPUT, a failed build the cache factory falls back from
+        let domain = surface_domain
+            .intersect(&face_domain)
+            .map_err(|_| SolidError::Upstream {
+                operation: OP_BUILD,
+                code: SM_ERR_INVALID_INPUT,
+                entity: None,
+            })?;
         self.base.set_uv_domain(domain);
 
         // When the surface has UVTrimCurves
@@ -1278,7 +1300,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
                             Err(SolidError::null_pointer(OP_EU))
                         };
                         if let Err(e) = r {
-                            if e.is_unported() {
+                            if e.is_unported_or_cancelled() {
                                 return Err(e);
                             }
                         }
@@ -1301,7 +1323,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
                         // The native caller ignores ordinary implantation errors.
                         let embed = match poly_edge_in_domain(k, &geometry.input(pe), domain) {
                             Ok(embed) => embed,
-                            Err(e) if e.is_unported() => return Err(e),
+                            Err(e) if e.is_unported_or_cancelled() => return Err(e),
                             Err(_) => continue,
                         };
                         if embed {

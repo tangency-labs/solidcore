@@ -306,10 +306,9 @@ impl<O: ClassObject> CurveClassification<O> {
                 || obj_class == PointClassType::Edge
                 || obj_class == PointClassType::Face
             {
-                let (b, e) = geometry.topology_entity(obj).ok_or(SolidError::unported(
-                    "SmBrep::IsLiveTopologyMember",
-                    "topology.brep_p1",
-                ))?;
+                let (b, e) = geometry.topology_entity(obj).ok_or_else(|| {
+                    SolidError::unported("SmBrep::IsLiveTopologyMember", "topology.brep_p1")
+                })?;
                 if !(std::ptr::eq(b, brep) && is_live_topology_member(brep, Some(e))) {
                     return Ok(true);
                 }
@@ -977,7 +976,7 @@ pub fn refine_cci_to_surfaces_in<O: ClassObject, S: Copy>(
 /// curve and the edge's UV trim curves (through
 /// [`ClassGeometryMut::topology_entity_mut`]) are rewritten through it
 /// (`sm_ApplyPointSolution`), the solution's parameters moving with them; the last part
-/// then refines again while the gaps stay large (at most [`MAX_REFINE_RECURSION`]
+/// then refines again while the gaps stay large (at most `MAX_REFINE_RECURSION`
 /// levels, upstream's `lRecursionCount`).
 ///
 /// # Errors

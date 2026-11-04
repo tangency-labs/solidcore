@@ -14,7 +14,8 @@
 //! | [`brep_area`], [`brep_volume`], [`brep_mass_properties`] | `SmApiBrepComputeArea`, `SmApiBrepComputeVolume`, `SmApiBrepComputeMassProperties` |
 //!
 //! Deviations: arena ids replace pointers, results replace output arguments; attribute
-//! storage and object keys are supplied by the caller. Oriented trim construction,
+//! storage and object keys are supplied by the caller; the `_default` B-rep wrappers
+//! use a local empty attribute store. Oriented trim construction,
 //! B-rep enumeration, bounding boxes, and region classification remain calls into
 //! their unported units. `boundary_properties` exposes the integration after trim
 //! construction for callers already holding oriented trim curves. Nested integration
@@ -26,6 +27,8 @@
 //! where the area behaviour selects it (tangency-labs/smlib@d2d9586).
 //! With `UpstreamFixes::precise_properties_trim_base_v` (WR-563, #1556) the iso-u
 //! integrals start at the trims' lowest v, not at the face UV domain's.
+//! With `UpstreamFixes::precise_properties_span_end_from_below` (WR-670, #2091) each
+//! span-wise iso-u piece is evaluated at its end from its own knot span.
 use super::{OdeIntegrator, OdeOptions};
 use crate::curve::curve::Curve;
 use crate::geom::attribute::{ids, AttributeStore, AttributeValue, ObjectKey};
@@ -407,6 +410,8 @@ pub fn boundary_properties(
             }
             let mut status = Err(SolidError::sm_err(OP));
             for divisor in [2.0, 8.0, 64.0, 512.0, 4096.0] {
+                k.check_cancelled(OP)?;
+                let mut eval_calls = 0u64;
                 status = OdeIntegrator::default()
                     .integrate(
                         &mut span_y,
@@ -419,6 +424,10 @@ pub fn boundary_properties(
                             scale: Some(&scale),
                         },
                         |t, _, dy| {
+                            eval_calls += 1;
+                            if (eval_calls & 63) == 1 {
+                                k.check_cancelled(OP)?;
+                            }
                             // A zero U tangent leaves the caller's derivative array
                             // untouched upstream. Preserve this particular stage's
                             // values, rather than another stage's shared scratch.
@@ -446,7 +455,10 @@ pub fn boundary_properties(
                 if status.is_ok() {
                     break;
                 }
-                if status.as_ref().is_err_and(SolidError::is_unported) {
+                if status
+                    .as_ref()
+                    .is_err_and(SolidError::is_unported_or_cancelled)
+                {
                     break;
                 }
             }
@@ -564,6 +576,7 @@ pub fn brep_properties(
     let estimated = estimated * estimated / 100.0;
     let mut total = PreciseProperties::default();
     for f in faces(b)? {
+        k.check_cancelled(OP)?;
         let mut mass = attributes.mass_vector(
             EntityRef::Face(f),
             Vec3::new(behavior.density, behavior.face_thickness, 0.0),
@@ -765,6 +778,8 @@ pub fn brep_area(k: &Kernel, b: &mut Brep, accuracy: f64) -> Result<f64> {
     Ok(area)
 }
 /// `SmApiBrepComputeVolume`, computed about the bounding-box midpoint.
+///
+/// Use [`brep_volume_default`] when per-entity attributes are not needed.
 pub fn brep_volume(
     k: &Kernel,
     b: &mut Brep,
@@ -782,6 +797,52 @@ pub fn brep_volume(
         attributes,
     )?
     .volume)
+}
+
+/// [`brep_volume`] without per-entity mass attributes. Attributes on `b` are
+/// neither read nor modified; UV trim construction has the same effects as
+/// [`brep_volume`].
+///
+/// # Errors
+/// Those of [`brep_volume`].
+pub fn brep_volume_default(k: &Kernel, b: &mut Brep, accuracy: f64) -> Result<f64> {
+    let store = AttributeStore::default();
+    brep_volume(
+        k,
+        b,
+        accuracy,
+        &PropertyAttributes {
+            store: &store,
+            key_of: &|_| ObjectKey(0),
+        },
+    )
+}
+
+/// [`brep_mass_properties`] without per-entity mass attributes. Uses `density`
+/// uniformly, ignoring attributes attached to `b` and leaving them intact.
+/// Missing UV trims may be created as in [`brep_mass_properties`].
+///
+/// # Errors
+/// Those of [`brep_mass_properties`].
+pub fn brep_mass_properties_default(
+    k: &Kernel,
+    b: &mut Brep,
+    accuracy: f64,
+    density: f64,
+    origin: Point3,
+) -> Result<MassProperties> {
+    let store = AttributeStore::default();
+    brep_mass_properties(
+        k,
+        b,
+        accuracy,
+        density,
+        origin,
+        &PropertyAttributes {
+            store: &store,
+            key_of: &|_| ObjectKey(0),
+        },
+    )
 }
 /// Result of `SmApiBrepComputeMassProperties`.
 #[derive(Debug, Clone, PartialEq)]

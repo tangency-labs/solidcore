@@ -49,6 +49,9 @@
 //!   pointer.
 //! - **Unported callees** return [`SolidError::Unported`] (see the `UNPORTED`
 //!   markers): none left for `surface.surface_p3`.
+//! - [`SurfaceSilhouette::local_point_solve`] forwards `k` to
+//!   [`circle_find_silhouette_points_with_kernel`] (`WR-11`,
+//!   [`crate::kernel::UpstreamFixes::circle_silhouette_perspective_center`]).
 //! - The `SM_DEBUG_CODE` drawing blocks and `Dump` are not ported. Recursion:
 //!   `ComputePointValues` calls itself only without a previous point, which does not
 //!   recurse again (depth at most 1); the Brent loop of `LocalPointSolve` stops after
@@ -60,7 +63,7 @@ use crate::curve::curve::Curve;
 use crate::error::{ignored, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
-use crate::geom::geom_utility::p1::circle_find_silhouette_points;
+use crate::geom::geom_utility::p1::circle_find_silhouette_points_with_kernel;
 use crate::geom::global_solver::{Branch, GlobalSolver};
 use crate::geom::local_solve1d::{EvalFunction, FunctionValue, LocalSolve1d};
 use crate::geom::polar_box::PolarBox;
@@ -141,6 +144,8 @@ fn evaluate_geometric_at(k: &Kernel, surface: &Surface, uv: Point2) -> Result<Ge
         | SurfaceKind::Sphere(_)
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::Plane(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)
@@ -167,6 +172,8 @@ fn evaluate_normal_section(
         | SurfaceKind::Sphere(_)
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::Plane(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)
@@ -267,13 +274,13 @@ impl<'s> SurfaceSilhouette<'s> {
         let surface = self.surface();
         let normal = match evaluate_normal(k, surface, *uv) {
             Ok(n) => n,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Ok(true),
         };
         let vec = if self.perspective {
             let pnt = match surface.evaluate_point(k, *uv) {
                 Ok(p) => p,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Ok(true),
             };
             (pnt - self.eye).unitize_or_z()
@@ -291,13 +298,13 @@ impl<'s> SurfaceSilhouette<'s> {
         if let Some(found_uv) = found {
             let normal2 = match evaluate_normal(k, surface, found_uv) {
                 Ok(n) => n,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Ok(true),
             };
             if self.perspective {
                 let pnt = match surface.evaluate_point(k, found_uv) {
                     Ok(p) => p,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => return Ok(true),
                 };
                 let vec2 = pnt - self.eye;
@@ -473,7 +480,7 @@ impl<'s> SurfaceSilhouette<'s> {
                     let mut ls = LocalSolve1d::with_interval(ivl, false);
                     ls.set_failed_guess_no_sign_change(k.fixes.oscillating_skips_failed_guesses);
                     match ls.solve_it(&mut efo, 0.5, 1.0e-8) {
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => {}
                         Ok(outcome) => {
                             // Found an answer in the solver -- use that new parameter
@@ -567,7 +574,7 @@ impl<'s> SurfaceSilhouette<'s> {
                     }
 
                     match ls.solve_it(&mut efo, guess_t, 1.0e-8) {
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => {}
                         Ok(outcome) => {
                             if ls.found_accuracy().abs() > EFF_ZERO_SQRT {
@@ -686,7 +693,7 @@ impl<'s> SurfaceSilhouette<'s> {
         guess: Point2,
     ) -> Result<Option<Point2>> {
         const OP: &str = "intersect::surface_silhouette::SurfaceSilhouette::local_point_solve";
-        let _ = (k, curr);
+        let _ = curr;
         let surface = self.surface();
         let domain = self.base.uv_domain;
         let approx_tol = self.base.approx_tol_3d;
@@ -777,7 +784,8 @@ impl<'s> SurfaceSilhouette<'s> {
         let circle_normal = tangent_plane_dir.cross(normal);
 
         // Find the closest silhouette point on the normal circle
-        let Some((sil_point1, sil_point2)) = circle_find_silhouette_points(
+        let Some((sil_point1, sil_point2)) = circle_find_silhouette_points_with_kernel(
+            k,
             center,
             circle_normal,
             radius,
@@ -952,7 +960,7 @@ impl<'s> SurfaceSilhouette<'s> {
         }
         let (polar_box, pseudo_box) = match patch() {
             Ok(Some(b)) => b,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // NER: SM_ERR_NULL_POINTER reads as TRUE, as does any failure status
             Ok(None) | Err(_) => return Ok(true),
         };

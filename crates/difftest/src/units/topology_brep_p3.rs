@@ -95,10 +95,14 @@ enum OpIn {
         mse: f64,
         lsr: f64,
     },
-    /// The copy constructor (`api`: `SmApiBrepCopy`).
+    /// The copy constructor (`api`: `SmApiBrepCopy`). With `plain` (which implies
+    /// `api`) the Rust copy is `brep_copy`, the copy without the caller's namings or
+    /// notification environment (#2010).
     Copy {
         analytics: bool,
         api: bool,
+        #[serde(default)]
+        plain: bool,
     },
     Merge {
         analytics: bool,
@@ -146,11 +150,32 @@ enum OpIn {
     ApiCopyNull,
     /// Every face and edge tagged with its own long attribute (behaviour `behavior`, an
     /// `SmAttributeBehaviorType` value), then `SmApiBrepCopy`; also compares the
-    /// attributes of the copy's and the source's faces and edges (issue #1462).
+    /// attributes of the copy's and the source's faces and edges (issue #1462). With
+    /// `shared_naming` the Rust copy names its source by the copy's own naming
+    /// ([`key_of`], not [`source_key_of`]), the B-rep's own naming a caller reaches for
+    /// (the C++ side has no names). With `plain` the Rust copy is `brep_copy`
+    /// (#2010), without the caller's namings or notification environment.
     AttributedCopy {
         #[serde(default)]
         behavior: u8,
+        #[serde(default)]
+        shared_naming: bool,
+        #[serde(default)]
+        plain: bool,
     },
+    /// Every face and edge tagged as for `AttributedCopy`, then `MergeBrep` of the B-rep into
+    /// a second build of it; compares the second build's and the source's attributes (does
+    /// the merge carry the merged B-rep's attributes?).
+    AttributedMerge {
+        #[serde(default = "yes")]
+        analytics: bool,
+        #[serde(default)]
+        behavior: u8,
+    },
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,9 +248,22 @@ fn op_args(op: &OpIn, c: &[usize; 10]) -> Result<Option<(Op, Vec<f64>)>, Harness
         OpIn::ApiCopyNull => (Op::ApiCopyNull, vec![0.0]),
         OpIn::TurnNurbs => (Op::TurnNurbs, vec![]),
         OpIn::TurnNurbsOffset { offset } => (Op::TurnNurbsOffset, vec![*offset]),
-        OpIn::Copy { analytics, api } => (Op::Copy, vec![flag(*analytics), flag(*api)]),
+        OpIn::Copy {
+            analytics,
+            api,
+            plain,
+        } => (Op::Copy, vec![flag(*analytics), flag(*api || *plain)]),
         OpIn::Merge { analytics } => (Op::Merge, vec![flag(*analytics)]),
-        OpIn::AttributedCopy { behavior } => (Op::AttributedCopy, vec![f64::from(*behavior)]),
+        OpIn::AttributedMerge {
+            analytics,
+            behavior,
+        } => (
+            Op::AttributedMerge,
+            vec![flag(*analytics), f64::from(*behavior)],
+        ),
+        OpIn::AttributedCopy { behavior, .. } => {
+            (Op::AttributedCopy, vec![f64::from(*behavior)])
+        }
         OpIn::CopyVertices { vertices } => {
             let mut v = vec![vertices.len() as f64];
             for &s in vertices {
@@ -1165,6 +1203,59 @@ fn run_rust_op(
     if !tracked {
         return run_rust_op_in(k, b, second, op, a, None);
     }
+    let run = run_tracked(b, |b, ctx| run_rust_op_in(k, b, second, op, a, Some(ctx)))?;
+    let mut out = run.out;
+    if matches!(op, OpIn::DeleteFace { .. }) {
+        // the shim's trailer: the edges, edge uses, faces and shells destroyed (their
+        // destructors' SM_NO_DESTRUCTION)
+        out.extend(run.destroyed.iter().map(|&n| n as f64));
+    }
+    if matches!(op, OpIn::Orient { .. }) {
+        // the shim's trailer: each pre-op face's SmFace::SwapUV POST_EDIT count, the
+        // face count and where the tracker's values start (see split_orient)
+        for i in 0..run.faces_before {
+            let face = key_of(EntityRef::Face(FaceId::from_index(i as u32))).key;
+            let swaps = run
+                .lists
+                .notify_events
+                .iter()
+                .filter(|e| {
+                    e.operation == solidcore::geom::object::NotifyOperation::PostEdit
+                        && e.caller.is_some_and(|c| c.key == face)
+                })
+                .count();
+            out.push(swaps as f64);
+        }
+        out.push(run.faces_before as f64);
+        out.push(run.tracker_at as f64);
+    }
+    Ok(out)
+}
+
+/// A tracked edit's results ([`run_tracked`]): the edit's outputs followed by the
+/// tracker's values, where those start, the tracker's lists, the face count before
+/// the edit and the destructions the recorder counted (edges, edge uses, faces,
+/// shells).
+pub(crate) struct TrackedRun {
+    pub(crate) out: Vec<f64>,
+    pub(crate) tracker_at: usize,
+    pub(crate) lists: solidcore::topology::topology::TopologyChangeLists,
+    pub(crate) faces_before: usize,
+    pub(crate) destroyed: [u64; 4],
+}
+
+/// Runs `edit` of `b` as the shims' `TrackedEdit` (`harness/cpp/shim/sc_tracked.h`):
+/// under a topology change tracker on a context of its own, which issues the
+/// identities of each edge's curve and each face's surface before the edit (their
+/// owners the edge and the face, for the tracker's owner walk) and holds a recorder of
+/// the geometry the notifications name. The edit notifies through that context, its
+/// entities named by [`tracked_key_of`]; the tracker's lists and events
+/// ([`put_tracker`]) follow the edit's outputs. `b` must be an import whose arena ids
+/// are the shim's walk indices.
+pub(crate) fn run_tracked(
+    b: &mut Brep,
+    edit: impl FnOnce(&mut Brep, &mut Context) -> Result<Vec<f64>, Fail>,
+) -> Result<TrackedRun, Fail> {
     // the op's notifications go through a context of their own, which issues the
     // curves' identities: each edge's curve before the op (the shim's pre_curves)
     let mut ctx = Context::default();
@@ -1209,7 +1300,7 @@ fn run_rust_op(
     // Execute's owner walk: each pre-op curve's GetOwner() is its edge, each pre-op
     // surface's its face
     tracker.set_owner_metadata(owners.into_iter().map(|(c, e)| (c.key, Some(e))).collect());
-    let r = run_rust_op_in(k, b, second, op, a, Some(&mut ctx));
+    let r = edit(b, &mut ctx);
     // the shim's StopTracking before put_tracker: 1.0.1 records the completed edit's
     // dependencies (RecordDependencies) on the tracker's lists
     let recorded =
@@ -1247,33 +1338,21 @@ fn run_rust_op(
     };
     let tracker_at = out.len();
     put_tracker(&mut out, &lists, &mut t);
-    if matches!(op, OpIn::DeleteFace { .. }) {
-        // the shim's trailer: the edges, edge uses, faces and shells destroyed (their
-        // destructors' SM_NO_DESTRUCTION)
-        let destroyed = *edges_destroyed
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        out.extend(destroyed.iter().map(|&n| n as f64));
-    }
-    if matches!(op, OpIn::Orient { .. }) {
-        // the shim's trailer: each pre-op face's SmFace::SwapUV POST_EDIT count, the
-        // face count and where the tracker's values start (see split_orient)
-        for i in 0..pre[3] {
-            let face = key_of(EntityRef::Face(FaceId::from_index(i as u32))).key;
-            let swaps = lists
-                .notify_events
-                .iter()
-                .filter(|e| {
-                    e.operation == solidcore::geom::object::NotifyOperation::PostEdit
-                        && e.caller.is_some_and(|c| c.key == face)
-                })
-                .count();
-            out.push(swaps as f64);
-        }
-        out.push(pre[3] as f64);
-        out.push(tracker_at as f64);
-    }
-    Ok(out)
+    let destroyed = *edges_destroyed
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(TrackedRun {
+        out,
+        tracker_at,
+        lists,
+        faces_before: pre[3],
+        destroyed,
+    })
+}
+
+/// The identity a tracked edit ([`run_tracked`]) names each entity under.
+pub(crate) fn tracked_key_of(e: EntityRef) -> ObjectRef {
+    key_of(e)
 }
 
 /// An `Orient` output (either side) from its trailer: `out` before the tracker,
@@ -1406,9 +1485,15 @@ fn run_rust_op_in(
             let (s, _) = status(bp3::api_brep_copy(k, &mut env, None, &source_key_of))?;
             out.push(s);
         }
-        OpIn::Copy { analytics, api } => {
+        OpIn::Copy {
+            analytics,
+            api,
+            plain,
+        } => {
             let src: &Brep = b;
-            let r = if *api {
+            let r = if *plain {
+                bp3::brep_copy(k, src)
+            } else if *api {
                 bp3::api_brep_copy(k, &mut env, Some(src), &source_key_of)
             } else {
                 bp3::copy_brep(
@@ -1428,18 +1513,54 @@ fn run_rust_op_in(
             out.push(flag(c.editing_enabled()));
             put_counts(&mut out, &c)?;
         }
-        OpIn::AttributedCopy { behavior } => {
+        OpIn::AttributedCopy {
+            behavior,
+            shared_naming,
+            plain,
+        } => {
             let behavior = Behavior::from_code(i32::from(*behavior))
                 .map_err(|e| Fail::Harness(harness(format!("behavior: {e}"))))?;
             tag_brep(b, behavior)?;
             let src: &Brep = b;
-            let c = must(bp3::api_brep_copy(k, &mut env, Some(src), &source_key_of))?;
+            let source: &dyn Fn(EntityRef) -> ObjectRef = if *shared_naming {
+                &key_of
+            } else {
+                &source_key_of
+            };
+            let c = if *plain {
+                must(bp3::brep_copy(k, src))?
+            } else {
+                must(bp3::api_brep_copy(k, &mut env, Some(src), source))?
+            };
             out.push(0.0);
             out.push(c.tolerance());
             out.push(flag(c.editing_enabled()));
             put_counts(&mut out, &c)?;
             put_attribute_rows(&mut out, &c)?;
             put_attribute_rows(&mut out, src)?;
+        }
+        OpIn::AttributedMerge {
+            analytics,
+            behavior,
+        } => {
+            let dst = second.ok_or_else(|| Fail::Harness(harness("no second B-rep")))?;
+            let behavior = Behavior::from_code(i32::from(*behavior))
+                .map_err(|e| Fail::Harness(harness(format!("behavior: {e}"))))?;
+            tag_brep(b, behavior)?;
+            let (s, _) = status(bp3::merge_brep(
+                k,
+                &mut env,
+                dst,
+                b,
+                &source_key_of,
+                None,
+                None,
+                *analytics,
+            ))?;
+            out.push(s);
+            put_counts(&mut out, dst)?;
+            put_attribute_rows(&mut out, dst)?;
+            put_attribute_rows(&mut out, b)?;
         }
         OpIn::Merge { analytics } => {
             let dst = second.ok_or_else(|| Fail::Harness(harness("no second B-rep")))?;
@@ -1659,9 +1780,11 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     )
     .map_err(|e| ffi_err(&e))?;
     let mut second = match i.op {
-        OpIn::Merge { .. } | OpIn::CopyVertices { .. } => Some(own_brep(&mut k, i)?.map_err(
-            |_| harness("the second build of the B-rep failed where the first did not"),
-        )?.0),
+        OpIn::Merge { .. } | OpIn::AttributedMerge { .. } | OpIn::CopyVertices { .. } => {
+            Some(own_brep(&mut k, i)?.map_err(
+                |_| harness("the second build of the B-rep failed where the first did not"),
+            )?.0)
+        }
         _ => None,
     };
     match run_rust_op(&mut k, &mut b, second.as_mut(), &i.op, &args) {
@@ -1697,6 +1820,7 @@ fn gen_op(rng: &mut Rng) -> (OpIn, i64) {
             OpIn::Copy {
                 analytics: rng.chance(0.5),
                 api: rng.chance(0.5),
+                plain: false,
             },
             editing,
         ),

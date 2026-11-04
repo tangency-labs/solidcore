@@ -32,10 +32,13 @@
 //! its void flags follow the nesting): a union that seals a void left the void's shell
 //! first and failed `SmBrep::AssertValid` test 12 (the fork's fix,
 //! tangency-labs/smlib `abastran/void-shell-check`; WR-265,
-//! `plan/upstream-issues/WR-265--manifold-boolean-void-shell-first.md`).
+//! `plan/upstream-issues/WR-265--manifold-boolean-void-shell-first.md`). With
+//! `boolean_union_refuses_solid_leak` (own design, WR-619), a union whose step 6 would
+//! delete a face between the infinite region and a solid region is refused with `SM_ERR`
+//! (the face in the error) instead of returning a body whose solid merged into the outside.
 
 use super::p1::{self, MergeOptions};
-use crate::error::{Result, SolidError};
+use crate::error::{Result, SolidError, SM_ERR};
 use crate::geom::a_object::BooleanOperation;
 use crate::geom::attribute::{
     ids, Attribute, AttributeStore, Behavior, MergeRegionData, ObjectKey,
@@ -372,7 +375,7 @@ fn required<T>(value: Option<T>) -> Result<T> {
 fn ignored<T>(result: Result<T>) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(error) if error.is_unported() => Err(error),
+        Err(error) if error.is_unported_or_cancelled() => Err(error),
         Err(_) => Ok(None),
     }
 }
@@ -447,6 +450,29 @@ fn region_pair(b: &Brep, fu: FaceuseId) -> Result<(RegionId, RegionId)> {
         required(eu::faceuse_region(b, fu)?)?,
         required(eu::faceuse_region(b, required(eu::faceuse_mate(b, fu)?)?)?)?,
     ))
+}
+
+/// Not upstream (WR-619): the first of `delete` with the infinite region on one side and a
+/// solid region on the other, whose deletion would merge that solid into the outside.
+fn face_leaking_solid(b: &Brep, delete: &[FaceId]) -> Result<Option<FaceId>> {
+    let Some(infinite) = b.infinite_region() else {
+        return Ok(None);
+    };
+    for &f in delete {
+        let Some(fu) = face::faceuses(b, f)?.0 else {
+            continue;
+        };
+        let (r1, r2) = region_pair(b, fu)?;
+        let inside = match (r1 == infinite, r2 == infinite) {
+            (true, false) => r2,
+            (false, true) => r1,
+            _ => continue,
+        };
+        if void(b, inside)? == 0 {
+            return Ok(Some(f));
+        }
+    }
+    Ok(None)
 }
 
 fn void(b: &Brep, r: RegionId) -> Result<i32> {
@@ -1019,6 +1045,7 @@ fn remember_split(
     original: RegionId,
     new_face: FaceId,
     other_face: FaceId,
+    pass_on: bool,
 ) -> Result<()> {
     let (r1, r2) = region_pair(primary, required(face::upward_faceuse(primary, new_face)?)?)?;
     let (o1, o2) = region_pair(other, required(face::upward_faceuse(other, other_face)?)?)?;
@@ -1049,7 +1076,11 @@ fn remember_split(
                     .and_then(Attribute::merge_region_data_mut),
             )?;
             let first = required(data.this_region(0))?;
-            ignored(data.set_regions(0, first, this_type, other_key, other_type))?;
+            // (fork e7ebc8d passes this status on: `SER`)
+            ignored(crate::error::passed_on(
+                data.set_regions(0, first, this_type, other_key, other_type),
+                pass_on,
+            )?)?;
         } else {
             let h = attributes.insert(Attribute::merge_region(
                 key(original),
@@ -1122,6 +1153,7 @@ fn make_other_faces(
                     required(made.old_region)?,
                     new_face,
                     f,
+                    kernels.primary.fixes.brep_edit_statuses_pass_on,
                 )?;
             }
         }
@@ -1237,6 +1269,12 @@ fn is_oriented_sheet(kernels: &mut BooleanKernels<'_>, other: &Brep) -> Result<b
     crate::topology::brep::p2::is_oriented_sheet(k, other)
 }
 
+/// `m_pOther->OrientSheetSurfaces(face, same)` (`topology.brep_p9`), in the other
+/// B-rep's context. Its UV swaps notify on records and attributes local to the call,
+/// under the type code and arena index of each entity (`loopuse::notify_ref`, as the
+/// slit-loop removal below), and without a context: the boolean holds no notification
+/// state for the other B-rep, so its attributes and the context's callbacks see none
+/// of these edits (upstream's do).
 fn orient_sheet_surfaces(
     kernels: &mut BooleanKernels<'_>,
     other: &mut Brep,
@@ -1244,7 +1282,15 @@ fn orient_sheet_surfaces(
     same: bool,
 ) -> Result<()> {
     let k = kernels.other.as_deref_mut().unwrap_or(kernels.primary);
-    crate::topology::brep::p9::orient_sheet_surfaces(k, other, Some(face), same)
+    let mut records = crate::topology::topology::NotifyRecords::new();
+    let mut attributes = AttributeStore::default();
+    let mut env = edge::NotifyEnv {
+        records: &mut records,
+        attributes: &mut attributes,
+        context: None,
+        key_of: &crate::topology::loopuse::notify_ref,
+    };
+    crate::topology::brep::p9::orient_sheet_surfaces(k, other, Some(face), same, &mut env)
 }
 
 /// `new SmBrep(dSize, dRatio, pOptContextForStack)` for a component: the B-rep and its
@@ -1290,7 +1336,10 @@ fn editing_stages(
     for _ in 0..10 {
         for &f in faces.keep.iter().chain(&faces.delete) {
             if let Some(of) = intersector.face_mate(f) {
-                ignored(intersector.remove_relationship(f, of))?;
+                ignored(crate::error::passed_on(
+                    intersector.remove_relationship(f, of),
+                    kernels.primary.fixes.brep_edit_statuses_pass_on,
+                )?)?;
             }
         }
         faces.keep.clear();
@@ -1407,6 +1456,19 @@ fn editing_stages(
             }
         }
     }
+    // Not upstream unless opted in (`fixes.boolean_union_refuses_solid_leak`, WR-619): a
+    // union never deletes a face that bounds a solid against the outside.
+    if kernels.primary.fixes.boolean_union_refuses_solid_leak
+        && operation == BooleanOperation::Union
+    {
+        if let Some(f) = face_leaking_solid(primary, &faces.delete)? {
+            return Err(SolidError::Upstream {
+                operation: OP,
+                code: SM_ERR,
+                entity: Some(EntityRef::Face(f)),
+            });
+        }
+    }
     intersector.delete_faces(
         kernels,
         primary,
@@ -1424,16 +1486,22 @@ fn editing_stages(
         }
     }
     if !infinite_current || void(primary, required(primary.infinite_region())?)? == 0 {
-        ignored(find_and_set_infinite(
-            kernels,
-            primary,
-            None,
-            bp::SetRegionVoidType::InfiniteRegionSwap,
-            None,
-        ))?;
+        ignored(crate::error::passed_on(
+            find_and_set_infinite(
+                kernels,
+                primary,
+                None,
+                bp::SetRegionVoidType::InfiniteRegionSwap,
+                None,
+            ),
+            kernels.primary.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     put_outer_shells_first(kernels, primary, operation)?;
-    ignored(intersector.propagate_regions(kernels, primary, other, attributes, operation))?;
+    ignored(crate::error::passed_on(
+        intersector.propagate_regions(kernels, primary, other, attributes, operation),
+        kernels.primary.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     if options.boolean_post_process
         && matches!(
             operation,
@@ -1506,6 +1574,10 @@ fn manifold_boolean_transformed(
 ) -> Result<bool> {
     let a = required(primary.as_mut())?;
     let b = required(other.as_mut())?;
+    kernels.primary.check_cancelled(OP)?;
+    if let Some(other_kernel) = kernels.other.as_deref() {
+        other_kernel.check_cancelled(OP)?;
+    }
     let transform = p1::temporary_brep_transform(kernels.primary, kernels.other(), a, b)?.apply(
         a,
         b,
@@ -1555,13 +1627,20 @@ fn manifold_boolean_translated(
 ) -> Result<bool> {
     let a = required(primary.as_mut())?;
     let b = required(other.as_mut())?;
+    kernels.primary.check_cancelled(OP)?;
+    if let Some(other_kernel) = kernels.other.as_deref() {
+        other_kernel.check_cancelled(OP)?;
+    }
     if operation == BooleanOperation::Slice {
         if !is_sheet(kernels, b)? {
             return Err(SolidError::sm_err(OP));
         }
         if !is_oriented_sheet(kernels, b)? {
             let first = required(bp::faces(b, None)?.first().copied())?;
-            ignored(orient_sheet_surfaces(kernels, b, first, true))?;
+            ignored(crate::error::passed_on(
+                orient_sheet_surfaces(kernels, b, first, true),
+                kernels.primary.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
     }
     kernels.doing_boolean(true);
@@ -1665,14 +1744,17 @@ fn manifold_boolean_translated(
                     None,
                 )?;
                 // Native defaults: new_faces=NULL, use_merge=TRUE, merge_object=NULL.
-                ignored(intersector.copy_component_faces(
-                    kernels,
-                    source,
-                    reverse,
-                    set,
-                    &mut component,
-                    attributes,
-                ))?;
+                ignored(crate::error::passed_on(
+                    intersector.copy_component_faces(
+                        kernels,
+                        source,
+                        reverse,
+                        set,
+                        &mut component,
+                        attributes,
+                    ),
+                    kernels.primary.fixes.brep_edit_statuses_pass_on,
+                )?)?;
                 components.push(component);
             }
         }
@@ -1737,7 +1819,10 @@ fn finish_boolean(
         *other = None;
     }
     if let Some(a) = primary.as_mut() {
-        ignored(delete_caches(a))?;
+        ignored(crate::error::passed_on(
+            delete_caches(a),
+            kernels.primary.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     kernels.doing_boolean(false);
     Ok(operation != BooleanOperation::ExtractSeparate)
@@ -1749,35 +1834,39 @@ mod tests {
 
     #[test]
     fn paired_mark_contexts_survive_a_failing_action() {
-        let mut first = Kernel::default();
-        let mut second = Kernel::default();
-        first.context.set_doing_boolean(true);
-        let mut kernels = BooleanKernels {
-            primary: &mut first,
-            other: Some(&mut second),
-        };
-        let mut lock = kernels
-            .mark_action(|contexts| MarkLock::new_pair(contexts, 0, 1))
-            .unwrap();
-        let marks = (lock.mark_type1(), lock.mark_type2());
-        let before = (
-            kernels.primary.context.current_mark(marks.0),
-            kernels.other().context.current_mark(marks.1),
-        );
-        let result: Result<()> = kernels.mark_action(|contexts| {
-            lock.new_mark(contexts)?;
-            Err(SolidError::sm_err("test"))
-        });
-        assert!(result.is_err());
-        assert!(kernels.primary.context.doing_boolean());
-        assert!(!kernels.other().context.doing_boolean());
-        assert_ne!(kernels.primary.context.current_mark(marks.0), before.0);
-        assert_ne!(kernels.other().context.current_mark(marks.1), before.1);
-        kernels
-            .mark_action(|contexts| lock.release(contexts))
-            .unwrap();
-        assert!(!kernels.primary.context.is_mark_locked(marks.0));
-        assert!(!kernels.other().context.is_mark_locked(marks.1));
+        for opt_in in [false, true] {
+            let mut first = Kernel::default();
+            let mut second = Kernel::default();
+            first.fixes.mark_lock_pair_advances_and_locks_second_context = opt_in;
+            first.context.set_doing_boolean(true);
+            let mut kernels = BooleanKernels {
+                primary: &mut first,
+                other: Some(&mut second),
+            };
+            let fixes = kernels.primary.fixes;
+            let mut lock = kernels
+                .mark_action(|contexts| MarkLock::new_pair_with_fixes(contexts, 0, 1, &fixes))
+                .unwrap();
+            let marks = (lock.mark_type1(), lock.mark_type2());
+            let before = (
+                kernels.primary.context.current_mark(marks.0),
+                kernels.other().context.current_mark(marks.1),
+            );
+            let result: Result<()> = kernels.mark_action(|contexts| {
+                lock.new_mark(contexts)?;
+                Err(SolidError::sm_err("test"))
+            });
+            assert!(result.is_err());
+            assert!(kernels.primary.context.doing_boolean());
+            assert!(!kernels.other().context.doing_boolean());
+            assert_ne!(kernels.primary.context.current_mark(marks.0), before.0);
+            assert_ne!(kernels.other().context.current_mark(marks.1), before.1);
+            kernels
+                .mark_action(|contexts| lock.release(contexts))
+                .unwrap();
+            assert!(!kernels.primary.context.is_mark_locked(marks.0));
+            assert!(!kernels.other().context.is_mark_locked(marks.1));
+        }
     }
 
     #[test]

@@ -427,7 +427,7 @@ fn set_surface_owner(
             type_code: surface.type_code(),
             key,
         };
-        let data2 = owner.and(face_listed.then(|| brep_p2::brep_ref(brep)));
+        let data2 = owner.and_then(|_| face_listed.then(|| brep_p2::brep_ref(brep)));
         crate::geom::a_object::notify(
             env.attributes,
             Some(&mut k.context),
@@ -665,7 +665,7 @@ fn build_face(
     out: &mut FaceTopologyAttempt,
 ) -> Result<()> {
     // Check for region default.
-    let region = options.region.or(brep.infinite_region());
+    let region = options.region.or_else(|| brep.infinite_region());
 
     // Check input
     let region = required(region)?;
@@ -1311,7 +1311,10 @@ fn assign_uv_curves(
             // set pUVCurve->ParameterRange = assoc Edgeuse->Edge->ParamRange
             let edge = deref(brep.edgeuse(e)?.edge)?;
             let interval = crate::topology::edge::interval(brep, edge)?;
-            ignore_status(curve.edit_parameterization(&interval))?;
+            ignore_status(crate::error::passed_on(
+                curve.edit_parameterization(&interval),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
 
             ignore_status(
                 crate::topology::edgeuse::p2::check_and_set_uv_trim_curve(
@@ -1685,6 +1688,7 @@ fn native<T>(r: Result<T>) -> Result<Option<T>> {
         Ok(value) => Ok(Some(value)),
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }
             | SolidError::NotFound { .. }),
@@ -2285,6 +2289,7 @@ fn ignore_status(r: Result<()>) -> Result<()> {
     match r {
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }
             | SolidError::NotFound { .. }),

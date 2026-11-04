@@ -57,7 +57,8 @@
 //! trim curves, which offset queries may make lazily and the native block omits.
 //! Static/member shell lists currently support source faces only; nullable and
 //! foreign lists are exercised through the API's origin-qualified interface.
-//! Positive B-rep tolerances avoid the unported automatic `SetTolerance` path;
+//! Nonpositive B-rep tolerances follow the shim's `SmZoneTol3d` conversion and
+//! automatic `SetTolerance` path;
 //! member approximation tolerance still covers zero, negative and -1 sentinel.
 //! All numeric keys have ZERO absolute floor; signed-zero inputs are retained.
 //! A fixture case whose native vertex positions follow heap addresses (upstream
@@ -524,11 +525,6 @@ fn validate(input: &Inputs) -> HResult<()> {
         cfg.member_distance,
         cfg.member_approx_tol,
     ])?;
-    if input.tolerance <= 0.0 {
-        return Err(bad(
-            "automatic B-rep tolerance is outside this Rust fixture projection",
-        ));
-    }
     if cfg.member_operation > 4 || (input.operation.member() && cfg.member_distance < 0.0) {
         return Err(bad("invalid native member constructor parameters"));
     }
@@ -671,6 +667,8 @@ fn operation<T>(result: solidcore::Result<T>) -> RResult<(i32, Option<T>)> {
     match result {
         Ok(value) => Ok((ffi::NATIVE_SUCCESS, Some(value))),
         Err(SolidError::Upstream { code, .. }) => Ok((code, None)),
+        // a failure in solidcore's terms (#2615): its C++ comparison status
+        Err(e @ SolidError::Failed(_)) => Ok((e.sm_status().unwrap_or(solidcore::error::SM_ERR), None)),
         Err(error) => Err(RunError::Kernel(error)),
     }
 }
@@ -793,6 +791,18 @@ fn primitive_finite(origin: [f64; 3], radius: f64) -> HResult<()> {
     Ok(())
 }
 
+fn set_fixture_tolerance(kernel: &Kernel, brep: &mut Brep, tolerance: f64) -> HResult<()> {
+    if tolerance <= 0.0 {
+        // The shim converts double to SmZoneTol3d (fabs) before SetTolerance;
+        // zero computes a tolerance from the B-rep's bounds at this point.
+        solidcore::topology::brep::p2::set_tolerance(kernel, brep, tolerance.abs(), false, true)
+            .map_err(setup)?;
+    } else {
+        brep.set_tolerance(tolerance);
+    }
+    Ok(())
+}
+
 fn build(kernel: &mut Kernel, fixture: &Fixture, tolerance: f64, namespace: u64) -> HResult<Brep> {
     if let Fixture::File { path } = fixture {
         // The Rust reader alone (`SmBrep::ReadFromFile` into `new SmBrep(ctx)`, as the
@@ -816,18 +826,18 @@ fn build(kernel: &mut Kernel, fixture: &Fixture, tolerance: f64, namespace: u64)
             height,
         )
         .map_err(setup)?;
-        brep.set_tolerance(tolerance);
+        set_fixture_tolerance(kernel, &mut brep, tolerance)?;
         return Ok(brep);
     }
     if let Fixture::Sphere { origin, radius } = *fixture {
         let mut brep =
             solidcore::primitive::api_primitives::create_sphere(kernel, v3(origin), radius)
                 .map_err(setup)?;
-        brep.set_tolerance(tolerance);
+        set_fixture_tolerance(kernel, &mut brep, tolerance)?;
         return Ok(brep);
     }
     let mut brep = Brep::new();
-    brep.set_tolerance(tolerance);
+    set_fixture_tolerance(kernel, &mut brep, tolerance)?;
     // SmBrep.cpp:532–537: the constructor explicitly creates a void infinite region.
     let region = brep
         .add_region_record(Region {
@@ -988,7 +998,7 @@ fn build_box(
     let [dx, dy, dz] = size;
     let mut brep = solidcore::primitive::api_primitives::create_box(kernel, v3(origin), dx, dy, dz)
         .map_err(setup)?;
-    brep.set_tolerance(tolerance);
+    set_fixture_tolerance(kernel, &mut brep, tolerance)?;
     Ok(brep)
 }
 
@@ -2195,6 +2205,17 @@ fn rust_output(input: &Inputs) -> RResult<Output> {
     Ok(output)
 }
 
+/// The calls the C++ crash trap runs in a fresh child: an API shell of a file sheet
+/// with merged results, where `SmOffsetExecutive::PiecewiseMerge` reaches UB-241
+/// (`SmProtoTopologyManager::GlueCoincidentBrepVertices` keeps gluing a vertex it has
+/// deleted; `AddressSanitizer`: SEGV in `sm_RmFromSpatialTree` via `SmBrep::GlueVertices`). Only a
+/// call that actually crashes there is rejected; the others compare as usual.
+fn crash_trapped(input: &Inputs) -> bool {
+    input.operation == Operation::ApiShell
+        && input.config.merge_results
+        && matches!(input.source, Some(Fixture::File { .. }))
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "offset.offset_executive_p2"
@@ -2203,8 +2224,21 @@ impl UnitDiff for Runner {
         let input: Inputs = case.parse()?;
         // FFI argument errors are NEVER constructor rejections or native statuses.
         let Some(query) = input.volume_query else {
-            let outcome = ffi::eval(&input.native())
-                .map_err(|error| bad(format!("native p2 adapter: {error}")))?;
+            let outcome = if crash_trapped(&input) {
+                match ffi::eval_in_child(&input.native()) {
+                    Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => {
+                        return Ok(Output::rejected(
+                            "UB-241: SmApiShellBrepFull crashed in the crash trap's fresh \
+                             child process (GlueCoincidentBrepVertices glues a vertex it \
+                             has deleted; SIGSEGV in sm_RmFromSpatialTree)",
+                        ));
+                    }
+                    other => other,
+                }
+            } else {
+                ffi::eval(&input.native())
+            }
+            .map_err(|error| bad(format!("native p2 adapter: {error}")))?;
             return native_outcome(&input, outcome);
         };
         let (outcome, volumes) = ffi::eval_measured(&input.native(), query.native())
@@ -2432,6 +2466,43 @@ mod tests {
             name: "unit-test".into(),
             source: CaseSource::Inline,
             inputs: serde_json::to_value(input).unwrap(),
+        }
+    }
+
+    #[test]
+    fn nonpositive_brep_tolerances_match_native_setup() {
+        for fixture in [
+            Fixture::Empty,
+            wire([0.0; 3], 2.0),
+            sheet([0.0; 3], 2.0, 0),
+            Fixture::Box {
+                origin: [0.0; 3],
+                size: [3.0, 4.0, 12.0],
+            },
+            Fixture::Sphere {
+                origin: [0.0; 3],
+                radius: 2.0,
+            },
+            Fixture::Cylinder {
+                origin: [0.0; 3],
+                radius: 2.0,
+                height: 3.0,
+            },
+        ] {
+            for tolerance in [0.0, -0.0, -1.0, -1e300] {
+                let mut input = input(Operation::Solid);
+                input.source = Some(fixture.clone());
+                input.tolerance = tolerance;
+                input.config.member_distance = 0.0;
+                let case = case(&input);
+                let native = Runner.run_cpp(&case).unwrap();
+                let rust = Runner.run_rust(&case).unwrap();
+                assert!(rust.deferred.is_none());
+                assert!(
+                    crate::compare::compare(&native, &rust, Runner.abs_floors()).pass(),
+                    "{fixture:?}, tolerance={tolerance}: native={native:?}, rust={rust:?}"
+                );
+            }
         }
     }
     fn empty_block(tolerance: f64) -> ffi::BrepSnapshot {
@@ -3089,7 +3160,30 @@ mod tests {
                 }
                 compared += 1;
             } else if case.name.ends_with("_selected") {
-                // The tiny box is an empty B-rep: no face 0 to select.
+                // The smallest box the native constructor builds here has a face 0 to
+                // select: compared.
+                let rust = Runner.run_rust(&case).unwrap();
+                for output in [&cpp, &rust] {
+                    assert!(output.rejected.is_none() && output.error.is_none());
+                }
+                let comparison = crate::compare::compare(&cpp, &rust, Runner.abs_floors());
+                assert!(comparison.pass(), "{}: {comparison:?}", case.name);
+                compared += 1;
+                // The tiny box the case held before is an empty B-rep: no face 0 to
+                // select, a native fixture rejection.
+                let mut tiny = case.clone();
+                let side = if case.name.contains("foreign") {
+                    "foreign"
+                } else {
+                    "source"
+                };
+                let size = if case.name.contains("translated") {
+                    1e-3
+                } else {
+                    1e-6
+                };
+                tiny.inputs[side]["size"] = serde_json::json!([size, size, size]);
+                let cpp = Runner.run_cpp(&tiny).unwrap();
                 assert_eq!(
                     cpp.rejected.as_deref(),
                     Some("native fixture constructor status_1001")
@@ -3109,7 +3203,7 @@ mod tests {
                 compared += 1;
             }
         }
-        assert_eq!((rejected, compared), (4, 6));
+        assert_eq!((rejected, compared), (4, 10));
     }
 
     fn assert_native_constructor_control(case: &Case, cpp: &Output, counts: [i64; 5]) {

@@ -51,6 +51,11 @@
 //! - **Unported callees.** `SmSurface::LocalPointSolve` (`surface.surface_p5`) for
 //!   every surface and `SmSurfaceEval::Normal` (`surface.surface_p4`, through `p1`) return
 //!   [`SolidError::Unported`].
+//! - **Guesses on a blend's net (#2510).** `Solve`'s rough guess and its refinement only
+//!   start the local solve, which meets the solve's tolerance on the surface itself: they
+//!   evaluate a procedural blend as its certified net
+//!   ([`crate::surface::procedural_blend::NetScope::new`]), the local solve as the
+//!   scope around the solve asks.
 //! - The stepper's `IsLocalMin` / `IsLocalMax` are not used upstream and are not
 //!   ported. Debug-only drawing and `SM_ASSERT`s are omitted.
 
@@ -66,6 +71,7 @@ use crate::geom::vector3d::Point3;
 use crate::kernel::Kernel;
 use crate::math::{min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ, EFF_ZERO_SQRT};
 use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
+use crate::surface::procedural_blend::NetScope;
 use crate::surface::surface::p2::SurfaceEval;
 use crate::surface::surface::{Surface, SurfaceKind};
 
@@ -131,7 +137,7 @@ impl SurfPtGlobalSolver<'_> {
                 suspicious = g.suspicious;
                 true
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => false,
         };
 
@@ -299,7 +305,7 @@ impl SurfPtGlobalSolver<'_> {
                 }
                 suspicious
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // (the control net could not be read: only the rational warning is set)
             Err(_) => bspl.is_rational(),
         };
@@ -373,7 +379,7 @@ impl SurfPtGlobalSolver<'_> {
                 uv_guess_poly = g;
                 true
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => false,
         };
 
@@ -439,7 +445,7 @@ impl SurfPtGlobalSolver<'_> {
         if let Some((tri_uv, tri_u, tri_v)) = triangle {
             let on_surface = |guess: Point2| match self.calc_func_val(k, guess) {
                 Ok(v) => Ok(Some(v)),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Ok(None),
             };
             if let (Some(tri), Some(cpt)) = (on_surface(tri_uv)?, on_surface(uv)?) {
@@ -466,7 +472,7 @@ impl SurfPtGlobalSolver<'_> {
     fn leg_or_none(&self, idx_u: usize, idx_v: usize) -> Result<Option<Point2>> {
         match self.refine_guess_polygon_leg(idx_u, idx_v) {
             Ok(g) => Ok(Some(g)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(None),
         }
     }
@@ -631,7 +637,7 @@ impl SurfPtGlobalSolver<'_> {
     fn seams_status_ignored(&mut self, k: &Kernel, uv: Point2) -> Result<Point2> {
         match self.check_guess_for_seams(k, uv) {
             Ok(u) => Ok(u),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(uv),
         }
     }
@@ -1017,9 +1023,10 @@ impl SurfPtGlobalSolver<'_> {
         sol.num_variables = 2;
         let mut found_answer = false;
 
-        let rough = match self.find_rough_guess(k) {
+        // (a guess: a procedural blend's net answers it, #2510)
+        let rough = match NetScope::with_net(k, || self.find_rough_guess(k)) {
             Ok(r) => r,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::sm_err(OP_SOLVE)),
         };
         let (best_idx_u, best_idx_v) = (rough.best_idx_u, rough.best_idx_v);
@@ -1041,8 +1048,8 @@ impl SurfPtGlobalSolver<'_> {
 
             // Refine the guess (status ignored, as upstream).
             let mut uv_guess = rough.uv;
-            if let Err(e) = self.refine_guess(k, &mut uv_guess) {
-                if e.is_unported() {
+            if let Err(e) = NetScope::with_net(k, || self.refine_guess(k, &mut uv_guess)) {
+                if e.is_unported_or_cancelled() {
                     return Err(e);
                 }
             }
@@ -1071,7 +1078,7 @@ impl SurfPtGlobalSolver<'_> {
                     sol = s;
                     stat_ok = true;
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => stat_ok = false,
             }
 
@@ -1123,7 +1130,7 @@ impl SurfPtGlobalSolver<'_> {
                         // guess did not move and the first local solve failed.
                         stat_ok = true;
                     }
-                    Err(error) if error.is_unported() => return Err(error),
+                    Err(error) if error.is_unported_or_cancelled() => return Err(error),
                     Err(_) => stat_ok = false,
                 }
 
@@ -1147,7 +1154,7 @@ impl SurfPtGlobalSolver<'_> {
                                     .set_uv(Point2::new(sol.start.param(0)?, sol.start.param(1)?));
                             }
                         }
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => stat_ok = false,
                     }
                 }
@@ -1221,6 +1228,14 @@ fn set_first_object<O: SolutionObject>(sol: &mut Solution<O>, surface_obj: Optio
 pub(crate) fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Surface>> {
     let enabled = match surface.kind() {
         SurfaceKind::BSpline(b) => b.is_out_of_bounds_enabled(),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            b.is_out_of_bounds_enabled()
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            b.is_out_of_bounds_enabled()
+        }
         SurfaceKind::Plane(p) => p.base().is_out_of_bounds_enabled(),
         SurfaceKind::Cone(s) => s.rev().base().is_out_of_bounds_enabled(),
         SurfaceKind::Sphere(s) => s.base().base().is_out_of_bounds_enabled(),
@@ -1240,6 +1255,14 @@ pub(crate) fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Sur
     let mut copy = surface.clone_for_evaluation()?;
     match copy.kind_mut() {
         SurfaceKind::BSpline(b) => *b.out_of_bounds_enabled_mut() = true,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
         SurfaceKind::Plane(p) => *p.out_of_bounds_enabled_mut() = true,
         SurfaceKind::Cone(s) => *s.rev.base_mut().out_of_bounds_enabled_mut() = true,
         SurfaceKind::Sphere(s) => *s.base.base_mut().out_of_bounds_enabled_mut() = true,
@@ -1291,6 +1314,14 @@ pub(crate) fn with_out_of_bounds_enabled_in_place<R>(
 fn out_of_bounds_base(surface: &Surface) -> Option<&BSplineSurface> {
     match surface.kind() {
         SurfaceKind::BSpline(b) => Some(b),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            Some(b)
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            Some(b)
+        }
         SurfaceKind::Plane(p) => Some(p.base()),
         SurfaceKind::Cone(s) => Some(s.rev().base()),
         SurfaceKind::Sphere(s) => Some(s.base().base()),
@@ -1308,7 +1339,7 @@ fn out_of_bounds_base(surface: &Surface) -> Option<&BSplineSurface> {
 fn eval_point(k: &Kernel, surface: &Surface, uv: Point2, prev: Point3) -> Result<Point3> {
     match surface.evaluate_point(k, uv) {
         Ok(p) => Ok(p),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(prev),
     }
 }
@@ -1632,7 +1663,7 @@ impl SurfPtSolveStepper<'_> {
                     self.set_uv(inverted.uv);
                     return Ok(TerminationReason::FoundAnswerConverged); // end iteration.
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {}
             }
         }

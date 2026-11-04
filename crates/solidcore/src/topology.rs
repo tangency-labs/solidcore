@@ -695,7 +695,7 @@ pub enum NamingScheme {
     /// owner when none is recorded.
     Caller,
     /// The arena identities the crate's imported B-reps use
-    /// ([`brep_cache::arena_identity`](crate::topology::brep_cache::arena_identity):
+    /// ([`brep_cache::arena_identity`]:
     /// the entity's type code and arena index).
     Arena,
 }
@@ -819,6 +819,13 @@ pub struct Brep {
     attributes: AttributeStore,
 }
 
+/// A B-rep as it was ([`Brep::snapshot`]), to put back with [`Brep::restore`] in its
+/// place: never edited, queried or notified itself. Crate-private, as the pair is: outside
+/// the crate an edit is rolled back by [`Brep::with_rollback`], which can only put it back
+/// where it was taken.
+#[derive(Debug)]
+pub(crate) struct Snapshot(Brep);
+
 /// A copy of the arenas whose curves and surfaces have **no owner**.
 ///
 /// # Warning
@@ -838,9 +845,20 @@ pub struct Brep {
 ///   trees), the fillet merge (`fillet_edges` of a clone fails, #1144) and transforms of a
 ///   body's geometry.
 ///
+/// What a clone shares with this B-rep: its arena ids, its [`Brep::key`], its naming
+/// scheme and recorded owner keys (not its notification serial: a clone gets its own
+/// when first notified). It owns copies of the
+/// topology, the geometry values and the attributes ([`Brep::add_attribute`]). It is
+/// safe for reading the topology and the geometry values (counts, points, parameters,
+/// attributes) and as a value to restore, not for queries, edits or operations.
+///
 /// Use instead:
-/// - [`brep::p3::api_brep_copy`] (`SmApiBrepCopy`) for an independent body that is
-///   queried or edited later (undo, history, preview): the copy owns its geometry;
+/// - [`brep::p3::brep_copy`] (`SmApiBrepCopy`) for an independent body that is
+///   queried or edited later (undo, history, preview, an operand of every operation):
+///   the copy owns its geometry, under the B-rep's own naming, without namings or a
+///   notification environment of the caller's;
+/// - [`brep::p3::api_brep_copy`] for the same copy notified through the caller's
+///   [`NotifyEnv`](crate::topology::edge::NotifyEnv) under the caller's namings;
 /// - [`Brep::clone_standing_for_self`] for a private read-only stand-in for this B-rep
 ///   (its geometry keeps this B-rep's owners), not an independent body.
 ///
@@ -1079,6 +1097,12 @@ impl Brep {
     /// geometry by it and [`check_brep`](crate::topology::brep::validation::check_brep)
     /// checks owners against it, so the two always agree (upstream's identity exists
     /// from the moment the entity does).
+    ///
+    /// It is a geometry-owner identity, unique only as a whole
+    /// [`ObjectRef`](crate::geom::object::ObjectRef) (type code and key): outside
+    /// [`NamingScheme::Notify`] a face, an edge and a vertex of one index share their key.
+    /// Never use it as an attribute or notification key (a `key_of` or `source_key`),
+    /// whose stores key by the key alone; use [`loopuse::notify_ref`].
     #[must_use]
     pub fn owner_identity(&self, entity: EntityRef) -> crate::geom::object::ObjectRef {
         owner_identity_of(self.naming, self.geometry_owner_key(entity), entity)
@@ -1201,33 +1225,107 @@ impl Brep {
         Ok(copy)
     }
 
-    /// A copy of this B-rep to put back with [`Brep::restore_from`] if an operation
-    /// on it is refused (not upstream: an operation's rollback). The edge and edge use
-    /// arenas are shared copy-on-write, so their curves keep their owners, and the face
-    /// surfaces keep theirs; the surfaces start with empty cache slots (a cache the
-    /// operation builds on the edited faces is not one of the copy's), and the copy's
-    /// objects, being copies, carry no notification identities.
-    #[must_use]
-    pub fn clone_for_rollback(&self) -> Self {
-        let mut copy = self.copy(true);
+    /// This B-rep as it is now, to put back with [`Brep::restore`] if an operation on it
+    /// is refused (not upstream: an operation's rollback). Put back, the B-rep is the
+    /// value it was, field for field:
+    /// - its topology, in the same arenas and lists, ids and order;
+    /// - its tolerance, editing and size state, deleted surfaces;
+    /// - its naming ([`Brep::naming`]), its key ([`Brep::key`]), its locked bounding box,
+    ///   the owner keys recorded when its geometry was bound;
+    /// - every attribute in its store, whatever its behaviour (temporary ones too), with
+    ///   the same handles and lists, so the provenance an application keeps there;
+    /// - its notification serial and progress tag, and the notification identity of each
+    ///   top-level curve and surface (a face's surface, an edge's curve, an edge use's UV
+    ///   trim curve, a deleted surface): the snapshot holds them for the B-rep while it is
+    ///   not live, and is only ever put back in its place or dropped. A nested curve's or surface's identity (an offset
+    ///   surface's base, notified by `swap_uv_with_notifications`) is not kept: put back,
+    ///   it is issued a fresh key at its next notification;
+    /// - its geometry exactly (the curves' and surfaces' kinds, owners, the face
+    ///   tolerances cached on them, exact rounds and made NURBs).
+    ///
+    /// Only caches start again: the surfaces' cache slots are empty, a cache an operation
+    /// builds on the edited faces not being the snapshot's.
+    ///
+    /// The snapshot shares no arena with this B-rep, so the operation that follows edits
+    /// this B-rep's own objects exactly as it would without it. (Sharing the edge arenas
+    /// copy-on-write, as [`Brep::clone_sharing_surface_caches`] does, would make the
+    /// operation's first edge edit copy them for this B-rep with the copy constructor,
+    /// which resets every curve's owner: a result the check then fails with Test #61,
+    /// Bad Edge, `ValidateGeometry`.)
+    ///
+    /// # Errors
+    ///
+    /// `Unsupported` while a face's surface owner is cleared (inside a running
+    /// `CreateUVTrimCurves`, a state no snapshot puts back); those of the geometry copies
+    /// (geometry nested deeper than `MAX_GEOMETRY_NESTING`). Nothing is changed.
+    pub(crate) fn snapshot(&self) -> Result<Snapshot> {
+        if !self.surface_owner_cleared.is_empty() {
+            return Err(SolidError::Unsupported {
+                operation: "topology::Brep::snapshot",
+                reason: "a snapshot of a B-rep whose surface owner is cleared",
+            });
+        }
+        let mut saved = self.copy(false);
         for (id, face) in self.faces.iter() {
-            if let (Some(original), Ok(face_copy)) = (face.surface.as_ref(), copy.face_mut(id)) {
-                if let Some(surface) = face_copy.surface.as_mut() {
-                    face::p2::RescueSurfaceOwner::new(original).restore(surface);
-                }
+            if let Some(surface) = face.surface.as_ref() {
+                saved.face_mut(id)?.surface = Some(surface.snapshot_copy()?);
             }
         }
-        copy
+        for (id, edge) in self.edges.iter() {
+            if let Some(curve) = edge.curve.as_ref() {
+                saved.edge_mut(id)?.curve = Some(curve.snapshot_copy()?);
+            }
+        }
+        for (id, edgeuse) in self.edgeuses.iter() {
+            if let Some(curve) = edgeuse.uv_trim_curve.as_ref() {
+                saved.edgeuse_mut(id)?.uv_trim_curve = Some(curve.snapshot_copy()?);
+            }
+        }
+        saved.deleted_surfaces = self
+            .deleted_surfaces
+            .iter()
+            .map(Surface::snapshot_copy)
+            .collect::<Result<_>>()?;
+        saved.notify_identity = self.notify_identity.duplicate_for_snapshot();
+        saved.progress_tag = self.progress_tag.duplicate_for_snapshot();
+        Ok(Snapshot(saved))
     }
 
-    /// Puts back the contents of `saved`, a [`Brep::clone_for_rollback`] of this
-    /// B-rep taken earlier, keeping this value's own identity (its notification
-    /// identity and progress tag, which a copy does not carry), so the B-rep is again
-    /// the one it was when `saved` was taken (not upstream: an operation's rollback).
-    pub fn restore_from(&mut self, mut saved: Self) {
-        std::mem::swap(&mut saved.notify_identity, &mut self.notify_identity);
-        std::mem::swap(&mut saved.progress_tag, &mut self.progress_tag);
-        *self = saved;
+    /// Puts back `saved`, a [`Brep::snapshot`] of the B-rep in this place taken earlier:
+    /// the B-rep is again the value it was when `saved` was taken (not upstream: an
+    /// operation's rollback). What the operation made in between is dropped.
+    pub(crate) fn restore(&mut self, saved: Snapshot) {
+        *self = saved.0;
+    }
+
+    /// Runs `edit` on this B-rep and keeps what it did only when `keep` says so of its
+    /// result: otherwise, and when `edit` panics, the B-rep is put back exactly as it came
+    /// in ([`Brep::snapshot`]: what is kept, and that only caches start again), and the
+    /// panic then goes on (not upstream: an operation's rollback). The snapshot is taken
+    /// and put back in this one place, so no other B-rep can receive its identities.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Brep::snapshot`], before `edit` runs and with nothing changed; `edit`'s.
+    pub fn with_rollback<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Brep) -> Result<T>,
+        keep: impl FnOnce(&Result<T>) -> bool,
+    ) -> Result<T> {
+        use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+        let saved = self.snapshot()?;
+        match catch_unwind(AssertUnwindSafe(|| edit(&mut *self))) {
+            Ok(r) => {
+                if !keep(&r) {
+                    self.restore(saved);
+                }
+                r
+            }
+            Err(p) => {
+                self.restore(saved);
+                resume_unwind(p)
+            }
+        }
     }
 
     /// Ends the innermost [`Brep::begin_surface_owner_cleared`] scope of face `f`.
@@ -2157,5 +2255,108 @@ mod tests {
         ));
         assert!(b.add_loop(f, Vec::new()).is_err());
         assert!(b.loops().is_empty());
+    }
+
+    /// A snapshot put back gives the B-rep as it was, every part an operation may change:
+    /// the naming, the key, the locked box, the attributes (a temporary one too) and their
+    /// lists, the notification identities of the B-rep and of its geometry, the owners
+    /// and the geometry. Each part is changed by the edit first.
+    #[test]
+    fn a_snapshot_put_back_is_the_brep_as_it_was() {
+        use crate::geom::attribute::{Attribute, Behavior};
+        use crate::kernel::{Kernel, KernelOptions};
+        let mut k = Kernel::new(&KernelOptions::default());
+        let mut b = crate::primitive::api_primitives::create_box(&mut k, Vec3::ZERO, 1.0, 2.0, 3.0)
+            .unwrap();
+        b.set_naming(NamingScheme::Caller);
+        b.set_key(ObjectKey(77));
+        crate::query::brep::lock_bounding_box(&k, &mut b, false).unwrap();
+        let f0 = b.face_list()[0];
+        b.add_attribute(
+            EntityRef::Face(f0),
+            Attribute::long(10_041, 1, Behavior::Copy),
+        )
+        .unwrap();
+        b.add_attribute(
+            EntityRef::Face(f0),
+            Attribute::long(10_077, 2, Behavior::Temp),
+        )
+        .unwrap();
+        let surface_key = k
+            .context
+            .geometry_key(
+                b.face_mut(f0)
+                    .unwrap()
+                    .surface
+                    .as_mut()
+                    .unwrap()
+                    .notify_identity_slot(),
+            )
+            .unwrap();
+        let e0 = b.edge_list()[0];
+        let curve_key = k
+            .context
+            .geometry_key(
+                b.edge_mut(e0)
+                    .unwrap()
+                    .curve
+                    .as_mut()
+                    .unwrap()
+                    .notify_identity_slot(),
+            )
+            .unwrap();
+        let progress = b.progress_tag.get();
+        let surface_owner = b.face(f0).unwrap().surface.as_ref().unwrap().owner();
+        assert!(surface_owner.is_some());
+        let summary = |b: &Brep| {
+            format!(
+                "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                b.naming(),
+                b.key(),
+                b.locked_bounding_box(),
+                b.attributes,
+                b.faces,
+                b.edges
+                    .iter()
+                    .map(|(_, e)| format!("{e:?}"))
+                    .collect::<Vec<_>>(),
+                b.vertices,
+                b.geometry_owner_keys,
+            )
+        };
+        let before = summary(&b);
+        let saved = b.snapshot().unwrap();
+        // the edit: every part changed
+        b.set_naming(NamingScheme::Notify);
+        b.set_key(ObjectKey(78));
+        b.set_locked_bounding_box(None);
+        let temp = b.entity_attributes(EntityRef::Face(f0)).last().unwrap().0;
+        assert!(b.remove_attribute(EntityRef::Face(f0), temp).unwrap());
+        b.face_mut(f0).unwrap().surface = None;
+        b.edge_mut(e0).unwrap().curve = None;
+        let v0 = b.vertex_list()[0];
+        b.vertex_mut(v0).unwrap().tolerance = 0.5;
+        assert_ne!(summary(&b), before);
+        b.restore(saved);
+        assert_eq!(summary(&b), before);
+        let surface = b.face(f0).unwrap().surface.as_ref().unwrap();
+        assert_eq!(surface.notify_key(), Some(surface_key));
+        assert_eq!(surface.owner(), surface_owner);
+        let curve = b.edge(e0).unwrap().curve.as_ref().unwrap();
+        assert_eq!(curve.notify_key(), Some(curve_key));
+        assert!(Arc::ptr_eq(&b.progress_tag.get(), &progress));
+        // the context still names them by the same keys
+        let again = k
+            .context
+            .geometry_key(
+                b.face_mut(f0)
+                    .unwrap()
+                    .surface
+                    .as_mut()
+                    .unwrap()
+                    .notify_identity_slot(),
+            )
+            .unwrap();
+        assert_eq!(again, surface_key);
     }
 }
