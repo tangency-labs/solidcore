@@ -26,6 +26,11 @@
 //! rational splines of degree (2, 2), v the quarter arc's rational parameter, θ = [`angle`]`(v)`
 //! (θ' > 0, so the orders and signs above hold with `S_v = θ' S_θ`). The patches share the curve
 //! `L (u³, 0, u)`.
+//!
+//! [`closed_cone`] is the cone of 3. on one spline closed along v (the whole turn, four quarter
+//! arcs, v in [0, 1]), cut into two half faces along the meridians at v = 1/4 and 3/4: face 0
+//! runs from v = 3/4 across the interval's end to 1/4 (its rim in two edges meeting there),
+//! face 1 over [1/4, 3/4]. θ = [`closed_angle`].
 
 use solidcore_record::brep::{
     Brep, Curve, Curve2, Edge, EdgeUseRef, Face, Loop, OrientedEdge, OrientedFace, Region, Shell,
@@ -339,6 +344,111 @@ fn patches(n: usize) -> Brep {
     body(
         [patch(n, 0.0), patch(n, -1.0)],
         [[[0.0, 1.0], [0.0, 1.0]]; 2],
+        loops,
+        edges,
+        vertices,
+    )
+}
+
+/// The angle about z of the closed whole-turn arc of [`closed_cone`] at its parameter `v` (any
+/// real: one turn per unit), each quarter `[i/4, (i + 1)/4]` a rational quarter arc from `iπ/2`.
+pub fn closed_angle(v: f64) -> f64 {
+    let turns = v.floor();
+    let w = 4.0 * (v - turns);
+    let i = w.floor().min(3.0);
+    angle(0, w - i) + i * HALF_PI + turns * std::f64::consts::TAU
+}
+
+/// The 45° cone of [`Kind::Cone`] on one spline closed along v (module doc), in two half faces,
+/// the first across the interval's end.
+pub fn closed_cone() -> Brep {
+    let ctrl = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [L, 0.0, L]];
+    // The whole turn's control points (unit radius) and weights, from θ = 0.
+    let circle: [[f64; 3]; 9] = [
+        [1.0, 0.0, 1.0],
+        [1.0, 1.0, MID],
+        [0.0, 1.0, 1.0],
+        [-1.0, 1.0, MID],
+        [-1.0, 0.0, 1.0],
+        [-1.0, -1.0, MID],
+        [0.0, -1.0, 1.0],
+        [1.0, -1.0, MID],
+        [1.0, 0.0, 1.0],
+    ];
+    let surface = Surface::RationalSpline {
+        u_knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        v_knots: vec![
+            0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
+        ],
+        homogeneous: ctrl
+            .iter()
+            .map(|p| {
+                circle
+                    .iter()
+                    .map(|a| [a[2] * p[0] * a[0], a[2] * p[0] * a[1], a[2] * p[2], a[2]])
+                    .collect()
+            })
+            .collect(),
+    };
+    let meridian3 = |a: [f64; 3]| Curve::Spline {
+        knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        points: ctrl
+            .iter()
+            .map(|p| [p[0] * a[0], p[0] * a[1], p[2]])
+            .collect(),
+    };
+    // The rim from the circle's control point `from` (a corner, at θ = from · π/4) over
+    // `quarters` quarter turns.
+    let rim = |from: usize, quarters: usize| Curve::RationalSpline {
+        knots: [
+            vec![0.0; 3],
+            (1..quarters)
+                .flat_map(|k| [k as f64 / quarters as f64; 2])
+                .collect(),
+            vec![1.0; 3],
+        ]
+        .concat(),
+        homogeneous: (0..=2 * quarters)
+            .map(|k| circle[(from + k) % 8])
+            .map(|a| [a[2] * L * a[0], a[2] * L * a[1], a[2] * L, a[2]])
+            .collect(),
+    };
+    // The apex, then the rim at θ = 3π/2, 0 (the interval's end) and π/2.
+    let vertices = vec![
+        vertex([0.0, 0.0, 0.0]),
+        vertex([0.0, -L, L]),
+        vertex([L, 0.0, L]),
+        vertex([0.0, L, L]),
+    ];
+    // Canonical order: the meridian at 3π/2, the rim to the interval's end and on from its
+    // start, the meridian at π/2, the rim from π/2 to 3π/2.
+    let edges = vec![
+        edge(meridian3(circle[6]), [0.0, 1.0], [0, 1]),
+        edge(rim(6, 1), [0.0, 1.0], [1, 2]),
+        edge(rim(0, 1), [0.0, 1.0], [2, 3]),
+        edge(meridian3(circle[2]), [0.0, 1.0], [0, 3]),
+        edge(rim(2, 2), [0.0, 1.0], [3, 1]),
+    ];
+    let meridian = |v: f64| line2([0.0, 1.0], [0.0, v], [1.0, v]);
+    let rim2 = |a: f64, b: f64| line2([0.0, 1.0], [1.0, a], [1.0, b]);
+    // Face 0's loop crosses the interval's end between its two rim edges: its pcurves run to
+    // v = 1 and on from v = 0, the same points of the closed surface.
+    let loops = [
+        vec![
+            (0, true, meridian(0.75)),
+            (1, true, rim2(0.75, 1.0)),
+            (2, true, rim2(0.0, 0.25)),
+            (3, false, meridian(0.25)),
+        ],
+        vec![
+            (3, true, meridian(0.25)),
+            (4, true, rim2(0.25, 0.75)),
+            (0, false, meridian(0.75)),
+        ],
+    ];
+    body(
+        [surface.clone(), surface],
+        [[[0.0, 1.0], [0.0, 1.0]], [[0.0, 1.0], [0.25, 0.75]]],
         loops,
         edges,
         vertices,
