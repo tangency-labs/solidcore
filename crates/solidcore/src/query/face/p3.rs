@@ -3220,6 +3220,31 @@ mod tests {
     }
 
     #[test]
+    fn wr167_default_mask_membership() {
+        let k = Kernel::default();
+        let pts = [
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+            Point3::new(3.0, 0.0, 0.0),
+            Point3::new(4.0, 0.0, 0.0),
+        ];
+        for mask in 0u64..16 {
+            for (i, &p) in pts.iter().enumerate() {
+                assert_eq!(find_element_in_masked_array(&pts, p, mask, k.fixes.masked_array_uses_bit_shift), mask & (1 << i) != 0, "mask={mask:#x}, i={i}");
+            }
+            assert!(!find_element_in_masked_array(&pts, Point3::new(9.0, 0.0, 0.0), mask, k.fixes.masked_array_uses_bit_shift));
+        }
+        let duplicates = [pts[0], pts[1], pts[0], pts[3]];
+        assert!(find_element_in_masked_array(&duplicates, pts[0], 4, k.fixes.masked_array_uses_bit_shift));
+        assert!(!find_element_in_masked_array(&duplicates, pts[0], 2, k.fixes.masked_array_uses_bit_shift));
+        let mut long = vec![pts[0]; 70];
+        for i in [63, 64, 69] { long[i] = Point3::new(i as f64, 0.0, 0.0); }
+        assert!(find_element_in_masked_array(&long, long[63], 1u64 << 63, k.fixes.masked_array_uses_bit_shift));
+        assert!(!find_element_in_masked_array(&long, long[63], !(1u64 << 63), k.fixes.masked_array_uses_bit_shift));
+        for i in [64, 69] { assert!(!find_element_in_masked_array(&long, long[i], u64::MAX, k.fixes.masked_array_uses_bit_shift)); }
+    }
+
+    #[test]
     fn masked_array_keeps_upstream_comparison() {
         let pts = [
             Point3::new(0.0, 0.0, 0.0),
