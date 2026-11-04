@@ -56,9 +56,10 @@ fn solidcraft_fixes() -> Kernel {
         }
     }
     assert!(f.fillet_blend_corner);
-    let mut k = Kernel::default();
-    k.fixes = f;
-    k
+    Kernel {
+        fixes: f,
+        ..Kernel::default()
+    }
 }
 
 fn pick(k: &Kernel, b: &Brep, at: [f64; 3]) -> EdgeId {
@@ -351,6 +352,9 @@ fn ladder_019_concave_corner_g2_patch_is_marked() {
     );
 }
 
+/// `(faces, edges, vertices)` of a body, and whether it is a closed solid.
+type Sheet = ((usize, usize, usize), bool);
+
 /// SolidCraft's G2 corners asked as the blend corner's open Setback instead: each set-back
 /// vertex marked, `set_set_back_fill(vertex, setback, ease, open = true)` before the corners
 /// are made, the patches marked. The corner is the Setback; the fill's patches (6 faces)
@@ -368,7 +372,7 @@ fn open_fill(
     setback: f64,
     generator: FilletSurfaceGeneratorType,
     ease: f64,
-) -> (usize, Option<((usize, usize, usize), bool)>) {
+) -> (usize, Option<Sheet>) {
     use solidcore::blend::blend_corner::BlendCornerEvent;
     use solidcore::blend::fillet_section::section::GN_THUMBWEIGHT_EQUAL_AREA;
     let edges: Vec<EdgeId> = at.iter().map(|&p| pick(k, b, p)).collect();
