@@ -35,6 +35,7 @@
 #![deny(clippy::disallowed_methods)]
 
 pub mod brep;
+mod sweep;
 
 use solidcore::eval as k;
 use solidcore::prism::profile as kp;
@@ -270,6 +271,7 @@ pub fn surface(s: &Surface) -> Result<k::Surface, Invalid> {
 }
 fn surface_inner(s: &Surface) -> k::Surface {
     match s {
+        Surface::ProceduralSweep(s) => k::Surface::ProceduralSweep(Box::new(sweep::sweep(s))),
         Surface::Plane {
             origin,
             u_axis,
@@ -364,6 +366,9 @@ pub fn record_surface(s: k::Surface) -> Result<Surface, Invalid> {
 }
 fn record_surface_inner(s: k::Surface) -> Surface {
     match s {
+        k::Surface::ProceduralSweep(s) => {
+            Surface::ProceduralSweep(Box::new(sweep::record_sweep(*s)))
+        }
         k::Surface::Plane {
             origin,
             u_axis,

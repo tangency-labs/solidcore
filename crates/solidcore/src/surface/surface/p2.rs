@@ -2090,6 +2090,22 @@ impl Surface {
         flags: EvaluateFlags,
     ) -> Result<Vec<Vec<Vec3>>> {
         self.check_evaluation_copy_depth(0)?;
+        if let Some(sweep) = self
+            .procedural_sweep()
+            .filter(|s| s.definition().screw().is_some())
+        {
+            if sweep.definition().net_answers(k) {
+                return sweep
+                    .net()
+                    .evaluate(uv, highest_u_deriv, highest_v_deriv, flags);
+            }
+            return sweep.definition().screw_derivatives_with_flags(
+                uv,
+                highest_u_deriv,
+                highest_v_deriv,
+                flags,
+            );
+        }
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s.evaluate(uv, highest_u_deriv, highest_v_deriv, flags),
             SurfaceKind::BallPatch(s) => {
@@ -2169,6 +2185,22 @@ impl Surface {
         highest_v_deriv: usize,
         flags: EvaluateFlags,
     ) -> Result<Option<Vec<Vec<Vec3>>>> {
+        if let Some(sweep) = self
+            .procedural_sweep()
+            .filter(|s| s.definition().screw().is_some())
+        {
+            if sweep.definition().net_answers(k) {
+                return sweep.net().evaluate_ignoring_status(
+                    uv,
+                    highest_u_deriv,
+                    highest_v_deriv,
+                    flags,
+                );
+            }
+            return self
+                .evaluate(k, uv, highest_u_deriv, highest_v_deriv, flags)
+                .map(Some);
+        }
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => {
                 s.evaluate_ignoring_status(uv, highest_u_deriv, highest_v_deriv, flags)
@@ -2243,6 +2275,12 @@ impl Surface {
     /// Those of the kind's override (the base default is `SM_ERR`).
     pub fn evaluate_point(&self, k: &Kernel, uv: Point2) -> Result<Point3> {
         self.check_evaluation_copy_depth(0)?;
+        if let Some(sweep) = self
+            .procedural_sweep()
+            .filter(|s| s.definition().screw().is_some())
+        {
+            return sweep.evaluate_point(k, uv);
+        }
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s.evaluate_point(uv),
             SurfaceKind::ProceduralBlend(s) => s.evaluate_point(k, uv),
@@ -4329,6 +4367,17 @@ impl Surface {
         context: Option<SurfaceIntersectContext<'_, O>>,
         out: &mut SurfaceIntersection,
     ) -> Result<()> {
+        if let Some(intersection) = crate::offset::procedural_screw::intersect(
+            k,
+            self,
+            uv_domain,
+            other,
+            other_uv_domain,
+            approx_tol_3d.unwrap_or(k.tolerances.approx_tol_3d),
+        )? {
+            *out = intersection;
+            return Ok(());
+        }
         match self.kind_with_nurb(k)? {
             SurfaceKind::Plane(p) => crate::surface::plane::p2::global_surface_intersect_into(
                 k,

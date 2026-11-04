@@ -8,6 +8,8 @@
 use super::spline::{basis_check, nl_curve2};
 use crate::nurbs::knots::Side;
 
+pub mod sweep;
+
 /// Right-handed orthonormal frame; z = `x_axis × y_axis` (STEP `AXIS2_PLACEMENT_3D`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
@@ -80,6 +82,8 @@ pub enum Curve {
 /// normals are ∂S/∂u × ∂S/∂v.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Surface {
+    /// A procedural sweep's definition and certified fitted net.
+    ProceduralSweep(Box<sweep::ProceduralSweepRecord>),
     /// `origin + u * u_axis + v * v_axis` (STEP `PLANE`).
     Plane {
         /// The origin.

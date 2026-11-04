@@ -57,6 +57,12 @@
 // The range tests are NaN-safe negations (`!(x > y)`), as `sweep::screw`'s.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+mod derivatives;
+mod offset;
+mod offset_profile;
+mod record;
+pub mod screw_offset;
+
 use std::f64::consts::TAU;
 
 use crate::blend::fillet_section::interval::{round_up, Ivl};
@@ -324,6 +330,7 @@ pub enum Motion {
 #[derive(Debug, Clone)]
 pub struct ProceduralSweep {
     profile: BSplineCurve,
+    offset: Option<offset_profile::OffsetProfile>,
     motion: Motion,
     stations: Vec<f64>,
     half: f64,
@@ -493,8 +500,15 @@ impl ProceduralSweep {
         }
         let mut profile = profile.copy();
         profile.set_out_of_bounds_enabled(false);
+        // Joined walls retain their original arc spans, which can have different
+        // widths. The largest bounds every span; turn_at uses each local width.
+        let half = stations.windows(2).fold(half, |largest, pair| match pair {
+            [a, b] => largest.max(0.5 * (b - a)),
+            _ => largest,
+        });
         let mut sweep = Self {
             profile,
+            offset: None,
             motion: Motion::Screw(motion),
             stations: stations.to_vec(),
             half,
@@ -586,6 +600,10 @@ impl ProceduralSweep {
     /// (clamped to the stations), and `d theta / dt`.
     #[must_use]
     pub fn turn_at(&self, t: f64) -> (f64, f64) {
+        self.turn_at_side(t, false)
+    }
+
+    fn turn_at_side(&self, t: f64, ending_span: bool) -> (f64, f64) {
         if !matches!(self.motion, Motion::Screw(_)) {
             return (t, 1.0);
         }
@@ -596,7 +614,7 @@ impl ProceduralSweep {
         let spans = self.stations.len().saturating_sub(1);
         let i = self
             .stations
-            .partition_point(|&x| x <= t)
+            .partition_point(|&x| if ending_span { x < t } else { x <= t })
             .saturating_sub(1)
             .min(spans.saturating_sub(1));
         let (Some(&t0), Some(&t1)) = (self.stations.get(i), self.stations.get(i + 1)) else {
@@ -604,9 +622,10 @@ impl ProceduralSweep {
         };
         let width = t1 - t0;
         let s = 2.0 * (t - t0) / width - 1.0;
-        let x = self.tau * s;
+        let tau = (0.25 * width).tan();
+        let x = tau * s;
         let theta = 0.5 * (t0 + t1) + 2.0 * x.atan();
-        let rate = 2.0 * self.tau / (1.0 + x * x) * (2.0 / width);
+        let rate = 2.0 * tau / (1.0 + x * x) * (2.0 / width);
         (theta, rate)
     }
 
@@ -616,13 +635,17 @@ impl ProceduralSweep {
     ///
     /// # Errors
     ///
-    /// `InvalidInput` for an order above 1; those of evaluating the profile.
+    /// `InvalidInput` for a screw order above four or a path order above one;
+    /// those of evaluating the retained profile or exact offset section.
     pub fn evaluate_definition(
         &self,
         uv: Point2,
         highest_u_deriv: usize,
         highest_v_deriv: usize,
     ) -> Result<Vec<Vec<Vec3>>> {
+        if self.screw().is_some() && (highest_u_deriv > 1 || highest_v_deriv > 1) {
+            return self.screw_derivatives(uv, highest_u_deriv, highest_v_deriv);
+        }
         if highest_u_deriv > 1 || highest_v_deriv > 1 {
             return Err(SolidError::invalid_input(
                 OP_EVAL,
@@ -645,11 +668,17 @@ impl ProceduralSweep {
         wt: Point2,
         first: bool,
     ) -> Result<(Vec3, Vec3, Vec3, Vec3)> {
-        let p = self
-            .profile
-            .evaluate(wt.x, usize::from(first), false, false)?;
-        let point = p.first().copied().unwrap_or(Vec3::ZERO);
-        let tangent = p.get(1).copied().unwrap_or(Vec3::ZERO);
+        let domain = self.profile.natural_interval();
+        let w = wt.x.clamp(domain.min(), domain.max());
+        let (point, tangent) = if let Some(offset) = &self.offset {
+            offset.evaluate(m, w)?
+        } else {
+            let p = self.profile.evaluate(w, usize::from(first), false, false)?;
+            (
+                p.first().copied().unwrap_or(Vec3::ZERO),
+                p.get(1).copied().unwrap_or(Vec3::ZERO),
+            )
+        };
         let (theta, rate) = self.turn_at(wt.y);
         let (first_t, last_t) = (
             self.stations.first().copied().unwrap_or(0.0),
@@ -756,7 +785,8 @@ impl ProceduralSweep {
             Ivl::from(0.0)
         };
         let exact = (lift * lift + offset * offset).sqrt().hi;
-        let bound = round_up(exact + self.floor()?);
+        let section = self.offset.as_ref().map_or(0.0, |offset| offset.bound);
+        let bound = (Ivl::from(exact) + Ivl::from(section) + Ivl::from(self.floor()?)).hi;
         if bound.is_finite() && bound > 0.0 {
             Ok(bound)
         } else {
@@ -905,6 +935,11 @@ impl ProceduralSweep {
         let m = match &mut self.motion {
             Motion::Screw(m) => {
                 self.profile.transform(rotate_n_move, scale)?;
+                if let Some(offset) = &mut self.offset {
+                    offset.source.transform(rotate_n_move, scale)?;
+                    offset.distance *= factor;
+                    offset.bound *= factor;
+                }
                 m
             }
             Motion::Path(p) => {
@@ -1001,6 +1036,7 @@ impl ProceduralSweep {
         let stations = motion.nodes().iter().map(|n| n.0).collect();
         Ok(Self {
             profile,
+            offset: None,
             motion: Motion::Path(motion),
             stations,
             half: 0.0,
@@ -1053,8 +1089,9 @@ impl<'a> SweepRef<'a> {
         self.sweep.evaluate_definition_point(uv)
     }
 
-    /// The partials at `uv` to the first order in each parameter, the net's or the
-    /// definition's as [`SweepRef::evaluate_point`] chooses.
+    /// The partials at `uv`, the net's or the definition's as
+    /// [`SweepRef::evaluate_point`] chooses. Exact screw partials support order
+    /// four in each parameter; exact path partials support order one.
     ///
     /// # Errors
     ///

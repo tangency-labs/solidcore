@@ -19,6 +19,9 @@ pub(crate) fn eval_surface(surface: &brep::Surface) -> Result<EvalSurface> {
     let surface_value = kernel::surface(surface).map_err(|e| TessError::Invalid(e.to_string()))?;
     match SurfaceEval::new(&surface_value) {
         Ok(SurfaceEval::Eval(e, _)) => Ok(e),
+        // Tessellation is display-only: a procedural face keeps its exact definition in
+        // the record while this layer draws its certified fitted net.
+        Ok(SurfaceEval::ProceduralSweep(s)) => Ok(s.approximation().clone()),
         // The record requires the form ([`brep::Brep::validate`]): a label the kernel's
         // evaluator keeps in its closed form (a cylinder, cone, sphere or torus) stands here
         // without it.

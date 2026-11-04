@@ -480,6 +480,7 @@ fn analytic(b: &brep::Brep, face: usize) -> bool {
         !matches!(
             f.surface,
             brep::Surface::Spline { .. }
+                | brep::Surface::ProceduralSweep(_)
                 | brep::Surface::RationalSpline { .. }
                 | brep::Surface::PlacedRevolution { .. }
         )

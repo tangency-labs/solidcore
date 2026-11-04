@@ -82,6 +82,10 @@ pub fn from_parameters(
     let deg = |r: [f64; 2]| [r[0].to_degrees(), r[1].to_degrees()];
     let p3 = |a: [f64; 3]| Point3::new(a[0], a[1], a[2]);
     let (surface, implicit) = match record {
+        Record::ProceduralSweep(record) => {
+            let surface = crate::surface::procedural_sweep::ProceduralSweep::from_record(record)?;
+            return Ok((surface, given(u, v)));
+        }
         Record::Plane {
             origin,
             u_axis,

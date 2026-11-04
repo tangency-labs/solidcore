@@ -308,6 +308,122 @@ fn every_surface_kind_becomes_the_kernel_kind_and_comes_back() {
     }
 }
 
+/// Saving retains both the exact offset source and the distinct fitted profile, together
+/// with the face's parameter map and certified bound; conversion copies their raw fields.
+#[test]
+fn procedural_screw_records_preserve_source_fit_and_parameter_map() {
+    use solidcore_record::brep::sweep as r;
+
+    let source = r::NurbsCurveRecord {
+        dim: 3,
+        points_3d: true,
+        degree: 1,
+        knots: vec![2.0, 2.0, 5.0, 5.0],
+        points: vec![[2.0, -0.0, 0.25], [3.0, 0.0, 0.5]],
+        weights: None,
+    };
+    let fitted = r::NurbsCurveRecord {
+        knots: vec![1.0, 1.0, 3.0, 6.0, 6.0],
+        points: vec![[2.1, 0.0, 0.2], [2.4, 0.0, 0.3], [3.1, 0.0, 0.6]],
+        weights: Some(vec![0.75, 0.875, 1.0]),
+        ..source.clone()
+    };
+    let saved = Surface::ProceduralSweep(Box::new(r::ProceduralSweepRecord {
+        definition: r::SweepDefinitionRecord::Screw {
+            profile: fitted.clone(),
+            motion: r::ScrewMotionRecord {
+                origin: [1.25, -2.5, 3.75],
+                axis: [0.0, 0.0, 1.0],
+                pitch: -1.5,
+                law: Some(r::RadialLawRecord {
+                    direction: [1.0, 0.0, 0.0],
+                    angles: vec![-1.0, 0.5, 2.0],
+                    offsets: vec![0.1, 0.2, 0.15],
+                }),
+            },
+            offset: Some(r::ScrewOffsetRecord {
+                source: source.clone(),
+                signed_distance: -0.125,
+                approximation_bound: 0.000_25,
+            }),
+        },
+        net: r::NurbsSurfaceRecord {
+            u_degree: 1,
+            v_degree: 1,
+            u_count: 2,
+            v_count: 2,
+            u_knots: vec![1.0, 1.0, 6.0, 6.0],
+            v_knots: vec![-1.0, -1.0, 2.0, 2.0],
+            points: vec![
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.5],
+                [3.0, 1.0, 0.0],
+                [4.0, 1.0, 0.5],
+            ],
+            weights: Some(vec![0.5, 0.75, 1.0, 1.25]),
+        },
+        stations: vec![-1.0, 0.5, 2.0],
+        half: 0.1875,
+        bound: 0.000_75,
+        map_a: [7.0, -0.25],
+        map_b: [-2.0, 0.5],
+        swapped: true,
+    }));
+    solidcore_record::brep::check_surface(&saved, &mut solidcore_record::brep::Budget::input())
+        .unwrap();
+    let json = serde_json::to_string(&saved).unwrap();
+    let loaded: Surface = serde_json::from_str(&json).unwrap();
+    let k::Surface::ProceduralSweep(kernel) = surface(&loaded).unwrap() else {
+        panic!("a procedural sweep")
+    };
+    let k::geometry::sweep::SweepDefinitionRecord::Screw {
+        profile,
+        motion,
+        offset,
+    } = &kernel.definition;
+    assert_eq!(profile.knots, fitted.knots);
+    assert_eq!(profile.points, fitted.points);
+    assert_eq!(profile.weights, fitted.weights);
+    assert_eq!(motion.origin, [1.25, -2.5, 3.75]);
+    assert_eq!(motion.axis, [0.0, 0.0, 1.0]);
+    assert_eq!(motion.pitch, -1.5);
+    assert_eq!(motion.law.as_ref().unwrap().offsets, [0.1, 0.2, 0.15]);
+    let offset = offset.as_ref().unwrap();
+    assert_eq!(offset.source.knots, source.knots);
+    assert_eq!(offset.source.weights, None);
+    assert_eq!(offset.source.points[0][1].to_bits(), (-0.0_f64).to_bits());
+    assert_eq!(offset.signed_distance, -0.125);
+    assert_eq!(offset.approximation_bound, 0.000_25);
+    assert_eq!(
+        (kernel.map_a, kernel.map_b, kernel.swapped),
+        ([7.0, -0.25], [-2.0, 0.5], true)
+    );
+    assert_eq!((kernel.half, kernel.bound), (0.1875, 0.000_75));
+    assert_eq!(
+        kernel.net.weights.as_deref(),
+        Some([0.5, 0.75, 1.0, 1.25].as_slice())
+    );
+    let back = record_surface(k::Surface::ProceduralSweep(kernel)).unwrap();
+    assert_eq!(serde_json::to_string(&back).unwrap(), json);
+
+    // These records are data only: malformed metadata crosses unchanged for the kernel,
+    // while the portable-record structural check refuses it before body reconstruction.
+    let Surface::ProceduralSweep(mut malformed) = back else {
+        panic!("a procedural sweep")
+    };
+    malformed.map_b[0] = 0.0;
+    let malformed = Surface::ProceduralSweep(malformed);
+    assert!(solidcore_record::brep::check_surface(
+        &malformed,
+        &mut solidcore_record::brep::Budget::input()
+    )
+    .is_err());
+    assert_eq!(
+        record_surface(surface(&malformed).unwrap()).unwrap(),
+        malformed
+    );
+}
+
 #[test]
 fn pcurves_frames_and_planes_become_the_kernel_kinds_and_come_back() {
     let (kn, pts, hom) = (
@@ -731,5 +847,4 @@ fn geometry_depth_is_bounded() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-
 }

@@ -1308,3 +1308,66 @@ fn an_imported_pole_row_is_a_pole_within_the_extents_reach() {
         "at no reach the row is no pole: {at_rounding:?}"
     );
 }
+
+#[test]
+fn a_saved_screw_keeps_exact_evaluation_projection_and_its_display_net() {
+    use crate::nurbs::b_spline_curve::BSplineCurve;
+    use crate::surface::procedural_sweep::{ProceduralSweep, ScrewMotion};
+    let profile =
+        BSplineCurve::create_line_segment(Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 1.0))
+            .unwrap();
+    let motion = ScrewMotion::new(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 1.5, None).unwrap();
+    let stations = [0.0, 0.3, 0.6];
+    let net = crate::sweep::screw::screw_net(&profile, &motion, &stations).unwrap();
+    let definition = ProceduralSweep::create(&profile, motion, &stations, 0.15).unwrap();
+    let record = definition.to_record(&net).unwrap();
+    let evaluator = SurfaceEval::new(&Surface::ProceduralSweep(Box::new(record.clone()))).unwrap();
+    let uv = [0.37, 0.11];
+    let exact = definition
+        .evaluate_definition_point(crate::math::Point2::new(uv[0], uv[1]))
+        .unwrap();
+    assert!(close(evaluator.point(uv).unwrap(), exact, 1e-13));
+    let SurfaceEval::ProceduralSweep(saved) = &evaluator else {
+        panic!("a procedural sweep")
+    };
+    let approximate = saved.approximation().derivs(uv[0], uv[1]).unwrap().0;
+    assert!((approximate - exact).length() > 1e-9);
+    let projected = evaluator.project(exact, None, 1e-10).unwrap();
+    assert!((projected[0] - uv[0]).abs() < 1e-8 && (projected[1] - uv[1]).abs() < 1e-8);
+    let second = evaluator.second(uv[0], uv[1]).unwrap();
+    let expected = definition
+        .evaluate_definition(crate::math::Point2::new(uv[0], uv[1]), 2, 2)
+        .unwrap();
+    assert_eq!(second, (expected[2][0], expected[1][1], expected[0][2]));
+    let mut restored = ProceduralSweep::from_record(&record).unwrap();
+    let domain = net.natural_uv_domain();
+    let kernel = crate::Kernel::default();
+    let written = crate::surface::face_surface::record_face(&kernel, &restored, &domain).unwrap();
+    assert!(matches!(&written.surface, Surface::ProceduralSweep(_)));
+    assert!(written.nurbs.is_none());
+    let (rebuilt, _) =
+        crate::surface::from_parameters::from_parameters(&kernel, &written.surface, written.domain)
+            .unwrap();
+    assert!(rebuilt.procedural_sweep().is_some());
+    assert!(close(
+        rebuilt
+            .procedural_sweep()
+            .unwrap()
+            .definition()
+            .evaluate_definition_point(crate::math::Point2::new(uv[0], uv[1]))
+            .unwrap(),
+        exact,
+        1e-13
+    ));
+    // Reversing a saved face must preserve the exact definition map as well as its net.
+    restored
+        .reverse(&kernel, crate::nurbs::b_spline_surface::SurfParamType::U)
+        .unwrap();
+    let reversed = crate::surface::face_surface::record_face(&kernel, &restored, &domain).unwrap();
+    let eval = SurfaceEval::new(&reversed.surface).unwrap();
+    assert!(close(
+        eval.point([1.0 - uv[0], uv[1]]).unwrap(),
+        exact,
+        1e-13
+    ));
+}
