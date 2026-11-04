@@ -49,6 +49,11 @@ FONT_CANDIDATES = [
 
 
 def font(size, bold=False):
+    """Load the first installed font matching the requested style and size.
+
+    Try families in candidate order without substituting regular for bold or
+    vice versa. If no matching font file exists, use Pillow's default font.
+    """
     for regular_path, bold_path in FONT_CANDIDATES:
         path = bold_path if bold else regular_path
         if pathlib.Path(path).exists():

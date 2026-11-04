@@ -34,6 +34,7 @@ class FontSelectionTests(unittest.TestCase):
             spec.loader.exec_module(self.generator)
 
     def select(self, available, size, bold=False):
+        """Select a font while treating only the supplied paths as installed."""
         available_paths = {Path(candidate) for candidate in available}
         with patch.object(Path, "exists", lambda path: path in available_paths):
             return self.generator.font(size, bold=bold)
