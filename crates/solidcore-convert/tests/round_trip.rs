@@ -294,16 +294,16 @@ fn every_curve_kind_becomes_the_kernel_kind_and_comes_back() {
         },
     ));
     for (r, want) in all {
-        assert_eq!(curve(&r), want);
-        assert_eq!(record_curve(curve(&r)), r);
+        assert_eq!(curve(&r).unwrap(), want);
+        assert_eq!(record_curve(curve(&r).unwrap()).unwrap(), r);
     }
 }
 
 #[test]
 fn every_surface_kind_becomes_the_kernel_kind_and_comes_back() {
     for (r, want) in surfaces() {
-        assert_eq!(surface(&r), want);
-        assert_eq!(record_surface(surface(&r)), r);
+        assert_eq!(surface(&r).unwrap(), want);
+        assert_eq!(record_surface(surface(&r).unwrap()).unwrap(), r);
     }
 }
 
@@ -421,9 +421,8 @@ fn vectors_keep_every_bit() {
     );
 }
 
-/// Every record kind has its kernel kind, so the conversion never refuses: a malformed record
-/// (knots that do not match its points, a NaN) is carried over as it is, and the kernel's
-/// evaluator is what refuses it.
+/// Within the depth bound, malformed geometry (knots that do not match its points, a NaN) is
+/// carried over as it is, and the kernel's evaluator is what refuses it.
 #[test]
 fn a_malformed_record_is_carried_over_for_the_kernel_to_refuse() {
     let bad_spline = Surface::Spline {
@@ -431,14 +430,17 @@ fn a_malformed_record_is_carried_over_for_the_kernel_to_refuse() {
         v_knots: vec![0.0, 0.0, 1.0, 1.0],
         points: vec![vec![[0.0; 3]; 2]; 2],
     };
-    assert_eq!(record_surface(surface(&bad_spline)), bad_spline);
-    assert!(SurfaceEval::new(&surface(&bad_spline)).is_err());
+    assert_eq!(
+        record_surface(surface(&bad_spline).unwrap()).unwrap(),
+        bad_spline
+    );
+    assert!(SurfaceEval::new(&surface(&bad_spline).unwrap()).is_err());
     let bad_curve = Curve::Spline {
         knots: vec![0.0, 1.0],
         points: vec![[0.0; 3]; 3],
     };
-    assert_eq!(record_curve(curve(&bad_curve)), bad_curve);
-    assert!(CurveEval::new(&curve(&bad_curve)).is_err());
+    assert_eq!(record_curve(curve(&bad_curve).unwrap()).unwrap(), bad_curve);
+    assert!(CurveEval::new(&curve(&bad_curve).unwrap()).is_err());
     let nan = Surface::Sphere {
         frame: Frame {
             origin: [f64::NAN, 0.0, 0.0],
@@ -446,7 +448,7 @@ fn a_malformed_record_is_carried_over_for_the_kernel_to_refuse() {
         },
         radius: 1.0,
     };
-    let Surface::Sphere { frame: g, .. } = record_surface(surface(&nan)) else {
+    let Surface::Sphere { frame: g, .. } = record_surface(surface(&nan).unwrap()).unwrap() else {
         panic!("a sphere")
     };
     assert!(g.origin[0].is_nan());
@@ -460,21 +462,32 @@ macro_rules! depth_fixtures {
             use super::$types::{Curve, Surface};
 
             fn line() -> Curve {
-                Curve::Line { start: [0.0; 3], end: [1.0; 3] }
+                Curve::Line {
+                    start: [0.0; 3],
+                    end: [1.0; 3],
+                }
             }
             fn plane() -> Surface {
-                Surface::Plane { origin: [0.0; 3], u_axis: [1.0, 0.0, 0.0], v_axis: [0.0, 1.0, 0.0] }
+                Surface::Plane {
+                    origin: [0.0; 3],
+                    u_axis: [1.0, 0.0, 0.0],
+                    v_axis: [0.0, 1.0, 0.0],
+                }
             }
             fn intersection(leader: Curve, first: Surface) -> Curve {
                 Curve::SurfaceIntersection {
                     surfaces: [Box::new(first), Box::new(plane())],
-                    leader: Box::new(leader), tolerance: 1e-6,
+                    leader: Box::new(leader),
+                    tolerance: 1e-6,
                 }
             }
             fn revolution(profile: Curve) -> Surface {
                 Surface::PlacedRevolution {
-                    profile: Box::new(profile), origin: [0.0; 3], axis: [0.0, 0.0, 1.0],
-                    matrix: super::M, forward: true,
+                    profile: Box::new(profile),
+                    origin: [0.0; 3],
+                    axis: [0.0, 0.0, 1.0],
+                    matrix: super::M,
+                    forward: true,
                 }
             }
             // Exactly `depth` edges from root to deepest leaf. Profile chains alternate
@@ -482,28 +495,45 @@ macro_rules! depth_fixtures {
             pub fn curve(depth: usize, profiles: bool) -> Curve {
                 if !profiles {
                     let mut c = line();
-                    for _ in 0..depth { c = intersection(c, plane()); }
+                    for _ in 0..depth {
+                        c = intersection(c, plane());
+                    }
                     return c;
                 }
                 if depth % 2 == 0 {
                     let mut c = line();
-                    for _ in 0..depth / 2 { c = intersection(line(), revolution(c)); }
+                    for _ in 0..depth / 2 {
+                        c = intersection(line(), revolution(c));
+                    }
                     c
                 } else {
                     let mut s = plane();
-                    for _ in 0..depth / 2 { s = revolution(intersection(line(), s)); }
+                    for _ in 0..depth / 2 {
+                        s = revolution(intersection(line(), s));
+                    }
                     intersection(line(), s)
                 }
             }
             pub fn surface(depth: usize, profiles: bool) -> Surface {
-                if depth == 0 { plane() } else { revolution(curve(depth - 1, profiles)) }
+                if depth == 0 {
+                    plane()
+                } else {
+                    revolution(curve(depth - 1, profiles))
+                }
             }
-            enum Node { Curve(Curve), Surface(Surface) }
+            enum Node {
+                Curve(Curve),
+                Surface(Surface),
+            }
             fn dismantle(root: Node) {
                 let mut pending = vec![root];
                 while let Some(node) = pending.pop() {
                     match node {
-                        Node::Curve(Curve::SurfaceIntersection { surfaces: [a, b], leader, .. }) => {
+                        Node::Curve(Curve::SurfaceIntersection {
+                            surfaces: [a, b],
+                            leader,
+                            ..
+                        }) => {
                             pending.push(Node::Curve(*leader));
                             pending.push(Node::Surface(*a));
                             pending.push(Node::Surface(*b));
@@ -515,8 +545,12 @@ macro_rules! depth_fixtures {
                     }
                 }
             }
-            pub fn drop_curve(c: Curve) { dismantle(Node::Curve(c)); }
-            pub fn drop_surface(s: Surface) { dismantle(Node::Surface(s)); }
+            pub fn drop_curve(c: Curve) {
+                dismantle(Node::Curve(c));
+            }
+            pub fn drop_surface(s: Surface) {
+                dismantle(Node::Surface(s));
+            }
         }
     };
 }
@@ -525,36 +559,46 @@ use solidcore_record::brep as r;
 depth_fixtures!(record_depth, r);
 depth_fixtures!(kernel_depth, k);
 
-// Temporary old-API witness: at depth 17 an infallible conversion returns a value,
-// so the assertion fails. After the API becomes fallible, assert its error instead.
-fn depth_case(case: &str, depth: usize) {
+fn depth_case(case: &str, depth: usize) -> Result<(), &'static str> {
     let profiles = case.ends_with("profile");
     match case {
         "curve-to-kernel-leader" | "curve-to-kernel-profile" => {
             let input = record_depth::curve(depth, profiles);
             let output = curve(&input);
             record_depth::drop_curve(input);
-            kernel_depth::drop_curve(output);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                kernel_depth::drop_curve(output);
+            }
         }
         "surface-to-kernel-leader" | "surface-to-kernel-profile" => {
             let input = record_depth::surface(depth, profiles);
             let output = surface(&input);
             record_depth::drop_surface(input);
-            kernel_depth::drop_surface(output);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                kernel_depth::drop_surface(output);
+            }
         }
         "curve-to-record-leader" | "curve-to-record-profile" => {
             let input = kernel_depth::curve(depth, profiles);
             let output = record_curve(input);
-            record_depth::drop_curve(output);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                record_depth::drop_curve(output);
+            }
         }
         "surface-to-record-leader" | "surface-to-record-profile" => {
             let input = kernel_depth::surface(depth, profiles);
             let output = record_surface(input);
-            record_depth::drop_surface(output);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                record_depth::drop_surface(output);
+            }
         }
-        _ => panic!("unknown case {case}"),
+        _ => return Err("unknown depth case"),
     }
-    assert!(depth <= 16, "conversion returned a value beyond the depth limit");
+    Ok(())
 }
 
 #[test]
@@ -564,23 +608,33 @@ fn geometry_depth_is_bounded() {
         let (case, depth) = spec.split_once(':').unwrap();
         let case = case.to_owned();
         let depth = depth.parse().unwrap();
-        std::thread::Builder::new().stack_size(256 * 1024)
-            .spawn(move || depth_case(&case, depth)).unwrap().join().unwrap();
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || depth_case(&case, depth))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
         return;
     }
     let executable = std::env::current_exe().unwrap();
     let mut failures = Vec::new();
     for case in [
-        "curve-to-kernel-leader", "curve-to-kernel-profile",
-        "surface-to-kernel-leader", "surface-to-kernel-profile",
-        "curve-to-record-leader", "curve-to-record-profile",
-        "surface-to-record-leader", "surface-to-record-profile",
+        "curve-to-kernel-leader",
+        "curve-to-kernel-profile",
+        "surface-to-kernel-leader",
+        "surface-to-kernel-profile",
+        "curve-to-record-leader",
+        "curve-to-record-profile",
+        "surface-to-record-leader",
+        "surface-to-record-profile",
     ] {
         for depth in [16, 17, 100_000] {
             let status = std::process::Command::new(&executable)
                 .args(["--exact", "geometry_depth_is_bounded", "--nocapture"])
                 .env(CHILD, format!("{case}:{depth}"))
-                .status().unwrap();
+                .status()
+                .unwrap();
             if !status.success() {
                 failures.push(format!("{case} depth {depth}: child {status}"));
             }
