@@ -2277,6 +2277,126 @@ mod tests {
         assert!(matches!(r, Err(SolidError::Upstream { code: SM_ERR, .. })));
     }
 
+    /// The full revolution about Z through the origin of the unbounded line
+    /// `point + s * vector` (`Line::create_canonical`, as the STEP reader builds a
+    /// `LINE` profile), with [`UpstreamFixes::revolution_frame_from_profile_origin`]
+    /// (`crate::kernel::UpstreamFixes`) set to `fix`.
+    fn unbounded_line_revolution(
+        fix: bool,
+        point: Point3,
+        vector: Vec3,
+    ) -> (Kernel, SurfOfRevolution) {
+        let mut k = k();
+        k.fixes.revolution_frame_from_profile_origin = fix;
+        let line = Line::create_canonical(point, vector);
+        let s =
+            SurfOfRevolution::create_canonical(&k, Curve::from(line), Vec3::ZERO, Vec3::Z, false)
+                .unwrap();
+        (k, s)
+    }
+
+    /// Asserts that `point` inverts to the STEP parameters `uv` (exact to rounding)
+    /// and that the surface evaluates there back to `point`.
+    fn assert_inverts(k: &Kernel, s: &SurfOfRevolution, point: Point3, uv: Point2) {
+        let (got, _) = s
+            .step_inversion(k, &s.step_uv_domain(), point, 1e-9, None)
+            .unwrap_or_else(|e| panic!("{point:?} does not invert: {e:?}"));
+        assert!(
+            (got.x - uv.x).abs() <= 1e-9 && (got.y - uv.y).abs() <= 1e-9,
+            "{point:?} inverts to {got:?}, expected {uv:?}"
+        );
+        let back = s.evaluate_step_point(k, uv).unwrap();
+        assert!(
+            (back - point).length() <= 1e-9,
+            "({uv:?}) evaluates to {back:?}"
+        );
+    }
+
+    /// tangency-labs/solidcore#2628 item 4: the profile `(1, 0, 0) + s (1, 0, 1)`
+    /// crosses the axis at `s = -1`. The surface is `S(u, v) = Rz(u) λ(v)` (ISO
+    /// 10303-42 `surface_of_revolution`: `u = 0` is the profile itself), so
+    /// `λ(1) = (2, 0, 1)` is `(u, v) = (0, 1)`; turned by 90° about Z it is
+    /// `(0, 2, 1) = (90, 1)`; `λ(-1/2) = (1/2, 0, -1/2)`, between the crossing and the
+    /// profile's origin, is `(0, -1/2)`. Upstream's frame faces the line's start at
+    /// `s = -SM_INFINITE_PARAMETER`, past the axis: X = (-1, 0, 0), and these points,
+    /// on the nappe of the profile's origin, do not invert (`SM_ERR`).
+    #[test]
+    fn unbounded_line_crossing_the_axis_inverts_on_its_origin_side() {
+        let (point, vector) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 1.0));
+        let (k, s) = unbounded_line_revolution(true, point, vector);
+        assert_eq!(s.position().x_axis(), Vec3::new(1.0, 0.0, 0.0));
+        assert_inverts(&k, &s, Vec3::new(2.0, 0.0, 1.0), Point2::new(0.0, 1.0));
+        assert_inverts(&k, &s, Vec3::new(0.0, 2.0, 1.0), Point2::new(90.0, 1.0));
+        assert_inverts(&k, &s, Vec3::new(0.5, 0.0, -0.5), Point2::new(0.0, -0.5));
+
+        let (k, s) = unbounded_line_revolution(false, point, vector);
+        assert_eq!(s.position().x_axis(), Vec3::new(-1.0, 0.0, 0.0));
+        let r = s.step_inversion(
+            &k,
+            &s.step_uv_domain(),
+            Vec3::new(2.0, 0.0, 1.0),
+            1e-9,
+            None,
+        );
+        assert!(
+            matches!(r, Err(SolidError::Upstream { code: SM_ERR, .. })),
+            "{r:?}"
+        );
+    }
+
+    /// The mirror image: `(-1, 0, 0) + s (-1, 0, 1)` lies on the -X side of the axis
+    /// near its origin, and its start at `s = -SM_INFINITE_PARAMETER` on the +X side.
+    /// The frame faces the origin, X = (-1, 0, 0) and Y = Z x X = (0, -1, 0):
+    /// `λ(1) = (-2, 0, 1)` is `(0, 1)`, and `(0, -2, 1)`, along Y, is `(90, 1)`.
+    #[test]
+    fn unbounded_line_on_the_other_side_inverts() {
+        let (point, vector) = (Vec3::new(-1.0, 0.0, 0.0), Vec3::new(-1.0, 0.0, 1.0));
+        let (k, s) = unbounded_line_revolution(true, point, vector);
+        assert_eq!(s.position().x_axis(), Vec3::new(-1.0, 0.0, 0.0));
+        assert_inverts(&k, &s, Vec3::new(-2.0, 0.0, 1.0), Point2::new(0.0, 1.0));
+        assert_inverts(&k, &s, Vec3::new(0.0, -2.0, 1.0), Point2::new(90.0, 1.0));
+    }
+
+    /// A line parallel to the axis, `(2, 0, 0) + s (0, 0, 1)` (a cylinder of radius 2),
+    /// never crosses it: upstream's frame (from the line's point at 45% of its
+    /// interval, its start being within 1° of the axis direction) and the fix's agree,
+    /// X = (1, 0, 0), and `(2, 0, 1)` is `(0, 1)`, `(0, -2, 5)` is `(270, 5)`.
+    #[test]
+    fn unbounded_line_parallel_to_the_axis_inverts_either_way() {
+        for fix in [false, true] {
+            let (k, s) =
+                unbounded_line_revolution(fix, Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+            assert_eq!(s.position().x_axis(), Vec3::new(1.0, 0.0, 0.0), "fix {fix}");
+            assert_inverts(&k, &s, Vec3::new(2.0, 0.0, 1.0), Point2::new(0.0, 1.0));
+            assert_inverts(&k, &s, Vec3::new(0.0, -2.0, 5.0), Point2::new(270.0, 5.0));
+        }
+    }
+
+    /// A bounded profile whose interval starts at its parameter origin keeps
+    /// upstream's frame bit for bit with the fix on: the cubic of `TestSmGeneral.cpp`
+    /// (interval [0, 1]) and the cone's segment.
+    #[test]
+    fn bounded_profile_frame_is_upstreams_with_the_fix() {
+        let mut fixed = k();
+        fixed.fixes.revolution_frame_from_profile_origin = true;
+        let a =
+            SurfOfRevolution::create_canonical(&k(), bezier(), Vec3::ZERO, Vec3::Z, false).unwrap();
+        let b = SurfOfRevolution::create_canonical(&fixed, bezier(), Vec3::ZERO, Vec3::Z, false)
+            .unwrap();
+        assert_eq!(a.position(), b.position());
+        let mut l = Line::from_points(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 3.0), 3);
+        l.make_nurb().unwrap();
+        let c = SurfOfRevolution::create_canonical(
+            &fixed,
+            Curve::from(l),
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 3.0),
+            false,
+        )
+        .unwrap();
+        assert_eq!(cone().position(), c.position());
+    }
+
     #[test]
     fn start_plane_of_an_axis_point_has_two_angles() {
         let s = cone();
