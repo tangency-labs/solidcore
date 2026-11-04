@@ -67,6 +67,18 @@ const OP_EVAL: &str = "surface::procedural_sweep::PathMotion::frame";
 /// The most cells the bound is split into.
 pub const MAX_CELLS: usize = 400_000;
 
+/// The remainder of a cell, relative to the part's size, below which the bound of a fitted net
+/// is not refined further (the goal of #2723, kept for the fitted nets: they are far from
+/// their definition, so a finer enclosure would only cost cells).
+const FITTED_GOAL: f64 = 1e-7;
+
+/// The same for a net built from its definition, which is that definition to rounding, so the
+/// enclosure is all that is left of the bound: the bound is about the goal, `1e-8 (1 + big)`,
+/// which is at most a tenth of the kernel's tolerance (`ZONE_TOL_3D = 1e-5`) for parts up to
+/// about a hundred mm across; a larger part gets a looser bound and, above the tolerance,
+/// keeps the fit ([`crate::primitive::primitive_creation`]'s `curve_sweep`).
+const EXACT_GOAL: f64 = 1e-8;
+
 /// The deepest a cell is halved.
 const MAX_DEPTH: u32 = 40;
 
@@ -519,7 +531,7 @@ impl PathMotion {
         };
         let columns = NetView::read(profile, net)?;
         motion.nodes = motion.find_nodes(&columns, &trace.pieces)?;
-        let bound = motion.certify(&columns)?;
+        let bound = motion.certify(&columns, FITTED_GOAL)?;
         Ok((motion, bound, columns.swapped))
     }
 
@@ -566,7 +578,7 @@ impl PathMotion {
         let weights = bezier_weights(&motion.path)?;
         let net = motion.exact_net(profile, &weights)?;
         let view = NetView::read(profile, &net)?;
-        let bound = motion.certify(&view)?;
+        let bound = motion.certify(&view, EXACT_GOAL)?;
         Ok((motion, net, bound))
     }
 
@@ -780,7 +792,9 @@ impl PathMotion {
     }
 
     /// The certified bound (module docs).
-    fn certify(&self, cols: &NetView) -> Result<f64> {
+    /// `goal_rel`: the remainder of a cell, relative to `1 + big` (the largest coordinate
+    /// met), below which the cell is not split.
+    fn certify(&self, cols: &NetView, goal_rel: f64) -> Result<f64> {
         let bounds = PathBounds::new(&self.path)?;
         let (v0, v1) = cols.domain;
         let to_v = |t: f64| -> Option<f64> {
@@ -813,7 +827,7 @@ impl PathMotion {
             .flat_map(|c| c.pts.ctrl.iter())
             .fold(0.0_f64, |m, p| m.max(p.length()))
             .max(self.reach()? + reach);
-        let goal = 1e-8 * (1.0 + big);
+        let goal = goal_rel * (1.0 + big);
         let mut worst = 0.0_f64;
         let mut cells = 0_usize;
         for w in cuts.windows(2) {
