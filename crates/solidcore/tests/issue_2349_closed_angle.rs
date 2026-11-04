@@ -210,6 +210,101 @@ fn closed_angle_solver_still_allocates_unlinked_zero_tolerance_split_vertices() 
 }
 
 #[test]
+fn closed_angle_exact_arc_geometry_samples_match_the_fork() {
+    // The native fork uses exact rational circular sections. Comparing its
+    // samples with the default approximate-arc path diagnoses unlike options.
+    let expected: Vec<[f64; 3]> = include_str!("data/issue_2349_fork_surface_samples.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            line.split_whitespace()
+                .map(|value| value.parse::<f64>().unwrap())
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap()
+        })
+        .collect();
+    let mut exact = Kernel::default();
+    exact.fixes.fillet_exact_arc_sections = true;
+    for mut k in [exact, new_blend_kernel()] {
+        let mut b = teardrop(&mut k);
+        let rim = top_rim(&k, &b);
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_constant_radius_edges(&mut k, &[rim], 0.5, 1, 1, 1.0)
+            .unwrap();
+        s.create_corners(&k, None).unwrap();
+        s.process_smooth_edge_sequences(&mut k).unwrap();
+        s.create_corner_vertices(&mut k).unwrap();
+        s.adjust_corner_topology(&mut k).unwrap();
+        s.calculate_solver_geometry(&mut k).unwrap();
+        let mut actual = Vec::new();
+        for object in &s.executive().solvers {
+            let solidcore::blend::fillet_executive::session::FilletObject::Solver(id) = *object
+            else {
+                panic!("expected a solver");
+            };
+            for &geometry in &s.solver(id).unwrap().base().fillet_geoms {
+                let surface = s.fillet_surface(geometry).unwrap().unwrap();
+                let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
+                for u in [0.17, 0.37, 0.83] {
+                    for v in [0.17, 0.37, 0.83] {
+                        let point = surface
+                            .evaluate_point(
+                                &k,
+                                solidcore::math::Point2::new(
+                                    domain.u_interval().evaluate(u),
+                                    domain.v_interval().evaluate(v),
+                                ),
+                            )
+                            .unwrap();
+                        actual.push([point.x, point.y, point.z]);
+                    }
+                }
+            }
+        }
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(&expected) {
+            for (&a, &b) in actual.iter().zip(expected) {
+                assert!(a.is_finite() && b.is_finite());
+                assert!((a - b).abs() <= 1e-9 * a.abs().max(b.abs()), "{a} vs {b}");
+            }
+        }
+        s.calculate_corner_edges(&mut k).unwrap();
+        let mut actual = Vec::new();
+        for id in s.fillet_corners().unwrap() {
+            for &id in &s.corner(id).unwrap().edges {
+                let edge = s.pseudo_brep().brep().edge(id).unwrap();
+                if let Some(curve) = edge.curve.as_ref() {
+                    let interval = curve.natural_interval();
+                    actual.extend([
+                        interval.min(),
+                        interval.max(),
+                        edge.interval.min(),
+                        edge.interval.max(),
+                    ]);
+                    for fraction in [0.0, 0.17, 0.37, 0.83, 1.0] {
+                        let p = curve
+                            .evaluate_point(&k, interval.evaluate(fraction))
+                            .unwrap();
+                        actual.extend([p.x, p.y, p.z]);
+                    }
+                }
+            }
+        }
+        let expected: Vec<f64> = include_str!("data/issue_2349_fork_corner_samples.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .map(|line| line.parse().unwrap())
+            .collect();
+        assert_eq!(actual.len(), expected.len());
+        for (&a, &b) in actual.iter().zip(&expected) {
+            assert!(a.is_finite() && b.is_finite());
+            assert!((a - b).abs() <= 1e-9 * a.abs().max(b.abs()), "{a} vs {b}");
+        }
+    }
+}
+
+#[test]
 #[ignore = "#2349: exact closed-angle blend event requires certified curved-spine self-mitre (#2307 merged)"]
 fn closed_angle_is_a_blend_event_instead_of_the_legacy_corner() {
     let mut k = Kernel::default();
