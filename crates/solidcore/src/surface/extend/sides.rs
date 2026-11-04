@@ -2,9 +2,9 @@
 //! ([`Surface::extended_by_distance`]): [`Surface::extended_sides`], the one kernel entry the
 //! callers that extend a surface "on every side" take.
 //!
-//! Not upstream: upstream's `CreateExtendedSurface` extends every side by an estimated
-//! distance, fits its extension by least squares and removes knots within a tolerance; this
-//! is the exact path side by side.
+//! Not upstream: it replaces upstream's `CreateExtendedSurface`, which extended every side by
+//! an estimated distance, fitted its extension by least squares and removed knots within a
+//! tolerance (#2730).
 //!
 //! Each asked side, in [`BoxSide::ALL`]'s order, is extended on the box the sides before it
 //! left (the result's natural box), so a later side runs along the earlier extensions. A side
