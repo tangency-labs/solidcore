@@ -55,14 +55,13 @@ fn measure(brep: &Brep) -> Outcome {
         store: &store,
         key_of: &|_| ObjectKey(0),
     };
-    let mut copy = brep.clone();
-    let area = brep_area(&kernel, &mut copy, 1e-9).ok();
-    let mut copy = brep.clone();
-    let volume = brep_volume(&kernel, &mut copy, 1e-9, &attrs).ok();
-    let mut copy = brep.clone();
+    // each measurement on its own copy standing for the body (none without a copy)
+    let copy = || brep.clone_standing_for_self().ok();
+    let area = copy().and_then(|mut c| brep_area(&kernel, &mut c, 1e-9).ok());
+    let volume = copy().and_then(|mut c| brep_volume(&kernel, &mut c, 1e-9, &attrs).ok());
     let mut check_kernel = Kernel::default();
-    let level2_failures = check_brep(&mut check_kernel, &mut copy, CheckLevel::Level2)
-        .ok()
+    let level2_failures = copy()
+        .and_then(|mut c| check_brep(&mut check_kernel, &mut c, CheckLevel::Level2).ok())
         .map(|check| check.failures().count());
     Outcome {
         counts: (
@@ -251,7 +250,7 @@ fn one_body_face_by_face() {
     println!("{stats:?}");
     let kernel = Kernel::default();
     let face_areas = |brep: &Brep| -> Vec<(String, Option<f64>)> {
-        let mut copy = brep.clone();
+        let mut copy = brep.clone_standing_for_self().unwrap();
         brep.face_list()
             .iter()
             .map(|&f| {
@@ -279,7 +278,7 @@ fn one_body_face_by_face() {
         println!("face {i} {kind}: {x:?} -> {y:?}{mark}");
     }
     let lines = |brep: &Brep| {
-        let mut copy = brep.clone();
+        let mut copy = brep.clone_standing_for_self().unwrap();
         let mut k = Kernel::default();
         check_brep(&mut k, &mut copy, CheckLevel::Level2)
             .map(|check| check.lines())

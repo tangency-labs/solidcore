@@ -745,9 +745,9 @@ impl FilletSession<'_> {
             }
             for wall in feature.walls.clone() {
                 let wall_body: Brep = if feature.boss {
-                    sheet.clone()
+                    sheet.clone_standing_for_self()?
                 } else {
-                    (*self.objects.target).clone()
+                    self.objects.target.clone_standing_for_self()?
                 };
                 let wall_box =
                     crate::query::api_queries::face_bounding_box(k, &wall_body, wall, false)?;
