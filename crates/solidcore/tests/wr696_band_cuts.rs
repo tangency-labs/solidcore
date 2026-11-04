@@ -5,15 +5,15 @@
 //! (`SmFilletSolver::BandCutsThePart`), naming the largest size that keeps the part whole and
 //! noting it, less the fit margin, as the fit size ([`FilletSession::fit_size`]).
 //!
-//! Values: closed forms, the cases taken from the fork's capi tests (`ops_kernel.cpp` at
-//! 5e8c9c1, `scenario_round_cutting_a_bridge_refused`,
-//! `scenario_chamfer_cutting_a_bridge_refused`). Every fit and volume is graded against the
-//! bound or the integral its geometry gives, not against the fork's build.
+//! Values: closed forms from the fork's capi tests (`ops_kernel.cpp` at 5e8c9c1,
+//! `scenario_round_cutting_a_bridge_refused`, `scenario_chamfer_cutting_a_bridge_refused`),
+//! and the fork's own numbers from a local build of 5e8c9c1's `SMLib` and `SM_API` run the
+//! same way (`SetFilletParameters`, `CreateFilletCorners`, `DoFilleting`, `GetFitRadius`).
 //!
 //! A smaller round or chamfer past the top's back rim, whose front rail crosses the slot's
-//! opening, leaves the bridge a strip and builds one piece: the cases are the fork's c1905d0
-//! (`scenario_round_past_the_rim_over_an_opening`,
-//! `scenario_chamfer_past_the_rim_over_an_opening`), the volumes the sections' own integrals.
+//! opening, leaves the bridge a strip and builds one piece: closed forms from the fork's
+//! c1905d0 (`scenario_round_past_the_rim_over_an_opening`,
+//! `scenario_chamfer_past_the_rim_over_an_opening`), to the fork's tolerances.
 
 #![allow(
     clippy::unwrap_used,
@@ -95,7 +95,8 @@ fn bridged_block(k: &mut Kernel) -> Brep {
 
 /// Rounded r9 the round takes all of the bridge: refused naming where
 /// `d(9) = r - sqrt(2 r - 1) = 4`, `r = 5 + 2 sqrt 2`; the fit is that less a thousand
-/// edge tolerances of 1e-5.
+/// edge tolerances of 1e-5. The fork's build: "a radius below 7.828427 keeps it whole",
+/// fit 7.8184271464117412 (2.2e-8 over the closed form's).
 #[test]
 fn a_round_through_a_bridge_is_refused_naming_the_radius_that_keeps_it_whole() {
     let mut k = kernel(true);
@@ -119,10 +120,15 @@ fn a_round_through_a_bridge_is_refused_naming_the_radius_that_keeps_it_whole() {
         (fit - closed).abs() <= 1e-8 * closed,
         "{fit} vs closed form {closed}"
     );
+    assert!(
+        (fit - 7.8184271464117412).abs() <= 1e-12 * fit,
+        "{fit} vs fork"
+    );
 }
 
 /// Chamfered 6 the plane takes all of the bridge: refused naming the setback 5 at which it
-/// reaches the bridge's underside, less the same margin.
+/// reaches the bridge's underside. The fork's build: "a chamfer set back less than 5 keeps it
+/// whole", fit 4.9900000000036382.
 #[test]
 fn a_chamfer_through_a_bridge_is_refused_naming_the_setback_that_keeps_it_whole() {
     let mut k = kernel(true);
@@ -140,6 +146,10 @@ fn a_chamfer_through_a_bridge_is_refused_naming_the_setback_that_keeps_it_whole(
     assert!(
         (fit - 4.99).abs() <= 1e-9 * 5.0,
         "{fit} vs closed form 5 less the margin"
+    );
+    assert!(
+        (fit - 4.9900000000036382).abs() <= 1e-12 * fit,
+        "{fit} vs fork"
     );
 }
 
