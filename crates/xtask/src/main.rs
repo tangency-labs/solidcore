@@ -268,6 +268,39 @@ mod tests {
         assert!(r.check(&tmp.join("elsewhere")).is_err());
     }
 
+    #[test]
+    fn refuses_git_components_case_insensitively() {
+        let tmp = tempdir("git-case");
+        fs::create_dir_all(tmp.join("wt/a/.git")).unwrap();
+        fs::write(tmp.join("wt/a/.git/keep"), b"keep").unwrap();
+        let r = roots(&tmp);
+        let alias = tmp.join("wt/a/.GIT/keep");
+        let actual_alias = fs::canonicalize(&alias).ok()
+            == Some(fs::canonicalize(tmp.join("wt/a/.git/keep")).unwrap());
+        eprintln!("host .GIT/keep aliases .git/keep: {actual_alias}");
+        for path in [".git", ".GIT", ".GiT", ".git/keep"] {
+            assert!(r.check(&tmp.join("wt/a").join(path)).is_err(), "{path}");
+        }
+        if actual_alias {
+            assert!(r.check(&alias).is_err());
+        }
+        assert!(tmp.join("wt/a/.git/keep").exists());
+    }
+
+    #[test]
+    fn allows_non_git_siblings() {
+        let tmp = tempdir("git-siblings");
+        fs::create_dir_all(tmp.join("wt/a")).unwrap();
+        let r = roots(&tmp);
+        assert!(r.check(&tmp.join("wt/a/.github")).is_ok());
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let name = OsString::from_vec(b".git\xff".to_vec());
+            assert!(r.check(&tmp.join("wt/a").join(name)).is_ok());
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_symlink_out_of_a_root_is_judged_where_it_sits() {
