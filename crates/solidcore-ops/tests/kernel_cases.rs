@@ -150,6 +150,7 @@ struct Slot {
 }
 
 /// Why a case stopped before grading.
+#[derive(Debug)]
 enum Stop {
     Unsupported(String),
     Fail(String),
@@ -337,7 +338,8 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
             Err(x) => return Err(Stop::Fail(format!("{name}: from_record: {x}"))),
         }
     }
-    for (i, c) in e["calls"].as_array().unwrap().iter().enumerate() {
+    let calls = e["calls"].as_array().unwrap();
+    for (i, c) in calls.iter().enumerate() {
         let op = c["op"].as_str().unwrap();
         let mut ins = Vec::new();
         for n in c["inputs"].as_array().unwrap() {
@@ -350,13 +352,29 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
             );
         }
         let traced_error = c.get("error").and_then(Value::as_str);
+        let continued = match c.get("continued") {
+            Some(v) => {
+                let continued = v.as_bool().ok_or_else(|| {
+                    Stop::Fail(format!("call {i} ({op}): continued must be a boolean"))
+                })?;
+                if traced_error.is_none() || (continued && i + 1 == calls.len()) {
+                    return Err(Stop::Fail(format!(
+                        "call {i} ({op}): continued requires an expected error and a later operation"
+                    )));
+                }
+                continued
+            }
+            None => false,
+        };
         match (call(c, &mut ins)?, traced_error) {
             (Ok(out), None) => {
                 for n in c["outputs"].as_array().into_iter().flatten() {
                     bodies.insert(n.as_str().unwrap().to_owned(), out.clone());
                 }
             }
-            // refused where the rig's kernel refused: the case ends there, as it did
+            // A handled refusal is an attempt, not the case's outcome. Keep checking the
+            // later operations and final geometry; an unmarked refusal still ends the case.
+            (Err(_), Some(_)) if continued => {}
             (Err(_), Some(_)) => return Ok(None),
             (Err(x), None) => return Err(Stop::Fail(format!("call {i} ({op}) refused: {x}"))),
             (Ok(_), Some(want)) => {
@@ -430,6 +448,86 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
     } else {
         Err(Stop::Fail(diffs.join(", ")))
     }
+}
+
+fn handled_refusal_case() -> Value {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    serde_json::json!({
+        "bodies": {},
+        "calls": [
+            {"op": "make_sphere", "inputs": [],
+             "params": {"center": [0, 0, 0], "radius": -1},
+             "error": "invalid radius", "continued": true},
+            {"op": "make_sphere", "inputs": [],
+             "params": {"center": [0, 0, 0], "radius": 1}, "outputs": ["b1"]}
+        ],
+        "result": [{"made": "b1"}],
+        "expected": {"body_count": 1, "volume_mm3": 4.0 * std::f64::consts::PI / 3.0}
+    })
+}
+
+#[test]
+fn a_handled_refusal_still_grades_the_final_geometry() {
+    let e = handled_refusal_case();
+    let deviation = run_case(Path::new("unused.json"), &e).unwrap();
+    assert!(
+        deviation.is_some(),
+        "the final sphere's volume must be measured"
+    );
+    let mut wrong = e;
+    wrong["expected"]["body_count"] = serde_json::json!(2);
+    assert!(
+        matches!(run_case(Path::new("unused.json"), &wrong), Err(Stop::Fail(why)) if why.contains("bodies 1"))
+    );
+}
+
+#[test]
+fn a_handled_refusal_does_not_hide_a_later_unexpected_refusal() {
+    let mut e = handled_refusal_case();
+    e["calls"][1]["params"]["radius"] = serde_json::json!(-2);
+    assert!(
+        matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("call 1 (make_sphere) refused"))
+    );
+}
+
+#[test]
+fn a_handled_refusal_must_actually_refuse() {
+    let mut e = handled_refusal_case();
+    e["calls"][0]["params"]["radius"] = serde_json::json!(1);
+    assert!(
+        matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("ran where the rig's refused"))
+    );
+}
+
+#[test]
+fn an_unmarked_refusal_keeps_the_existing_terminal_behavior() {
+    let mut e = handled_refusal_case();
+    e["calls"][0].as_object_mut().unwrap().remove("continued");
+    assert_eq!(run_case(Path::new("unused.json"), &e).unwrap(), None);
+}
+
+#[test]
+fn malformed_continuation_markers_fail_before_replaying_the_call() {
+    for marker in [serde_json::json!("true"), Value::Null] {
+        let mut e = handled_refusal_case();
+        e["calls"][0]["continued"] = marker;
+        assert!(
+            matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("continued must be a boolean"))
+        );
+    }
+    let mut successful_call = handled_refusal_case();
+    successful_call["calls"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("error");
+    assert!(
+        matches!(run_case(Path::new("unused.json"), &successful_call), Err(Stop::Fail(why)) if why.contains("continued requires"))
+    );
+    let mut last_call = handled_refusal_case();
+    last_call["calls"].as_array_mut().unwrap().truncate(1);
+    assert!(
+        matches!(run_case(Path::new("unused.json"), &last_call), Err(Stop::Fail(why)) if why.contains("continued requires"))
+    );
 }
 
 fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> Graded {
