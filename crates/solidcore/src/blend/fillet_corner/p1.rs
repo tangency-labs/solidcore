@@ -31,7 +31,7 @@
 //! | [`FilletCorner::add_fillet_vertex`]          | `AddFilletVertex`                           |
 //! | [`FilletCorner::set_bevel`], [`FilletCorner::set_calc_as_const_rad`], [`FilletCorner::set_chamfer`] | `SetBevel`, `SetCalcAsConstRad`, `SmFilletConvexNxNCorner::SetChamfer` |
 //! | [`FilletCorner::is_bevel_corner`], [`FilletCorner::is_blending_corner`], [`FilletCorner::is_degenerate_corner`], [`FilletCorner::is_extended_surface_patch`], [`FilletCorner::is_calc_as_const_rad`] | `IsBevelCorner`, `IsBlendingCorner`, `IsDegenerateCorner`, `IsExtendedSurfacePatch`, `IsCalcAsConstRad` |
-//! | [`FilletCorner::is_tangent_corner`]          | `IsTangentCorner` (base, `SmFilletNx1ClosedCorner`, `SmFilletNx2Corner`) |
+//! | [`FilletCorner::is_tangent_corner`]          | `IsTangentCorner` (base, `SmFilletNx2Corner`) |
 //! | [`FilletCorner::tangent_fillet_solver`]      | `GetTangentFilletSolver` (base)             |
 //! | [`FilletCorner::fillet_solvers`]             | `GetFilletSolvers`                          |
 //! | [`FilletCorner::extended_surface`], [`FilletCorner::add_extended_original_surface`] | `GetExtendedSurface`, `AddExtendedOriginalSurface` |
@@ -852,12 +852,13 @@ impl FilletCorner {
         self.calc_as_const_rad
     }
 
-    /// `IsTangentCorner` (virtual): `m_bG1Case` for the closed Nx1 and the Nx2 corner,
-    /// `FALSE` for every other kind.
+    /// `IsTangentCorner` (virtual): `m_bG1Case` for the Nx2 corner (the blend corner's
+    /// Join), `FALSE` for every other kind; the closed Nx1 corner, which only meets itself at
+    /// an angle now, never is one (the fork's smlib#113 caa67d0).
     #[must_use]
     pub const fn is_tangent_corner(&self) -> bool {
         match self.kind {
-            FilletCornerKind::NByOneClosed | FilletCornerKind::NByTwo => self.g1_case,
+            FilletCornerKind::NByTwo => self.g1_case,
             _ => false,
         }
     }
