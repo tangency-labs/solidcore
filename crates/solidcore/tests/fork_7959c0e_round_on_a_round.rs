@@ -470,14 +470,17 @@ fn outside(e: V3<Ivl>, p: Point3) -> f64 {
 /// turn), so a piece of it spans a station: where a foot crosses a knot line of the twisted
 /// top, a C2 cubic, or the leader's knot. The enclosure of its definition at 21 points
 /// across that piece must hold the definition there (its own evaluator, the station solved
-/// at that s). Before, the enclosure took the faces' pieces at the station in the middle
-/// of the net's piece, continued past the station, and every one was proved, up to
-/// 1.38e-3 off the definition.
+/// at that s), and so must its enclosure over a box across the lost station. Before, the
+/// enclosure took the faces' pieces at the station in the middle of the net's piece,
+/// continued past the station, and every one was proved, up to 1.38e-3 off the definition.
+/// Every point is proved but the round's two ends, where its feet lie on the edge of the
+/// front face's knot range and Krawczyk's box reaches past it, which is refused.
 #[test]
 fn a_net_with_a_knot_removed_is_enclosed_on_its_definition() {
     let mut k = solidcraft_kernel();
     let r = rounded_wedge(&mut k);
     let (mut rounds, mut points, mut proved, mut worst) = (0, 0, 0, 0.0_f64);
+    let (mut boxes, mut boxes_proved, mut ends_refused) = (0, 0, 0);
     for &f in r.face_list() {
         let Some(s) = face2::surface(&r, f).unwrap() else {
             continue;
@@ -494,6 +497,42 @@ fn a_net_with_a_knot_removed_is_enclosed_on_its_definition() {
         for j in 1..ks.len() - 1 {
             let coarse = without_knot(&net, along_u, ks[j]);
             let (a, b) = (ks[j - 1], ks[j + 1]);
+            // a box across the station the coarse net lost, a quarter of the way to the
+            // stations beside it along s and 2% of t across the middle line: its feet cross
+            // the knot line or the leader's knot there, and the enclosure, cut at those,
+            // must hold the definition at every point of the box
+            let (sa, sb) = (ks[j] - 0.25 * (ks[j] - a), ks[j] + 0.25 * (b - ks[j]));
+            let (c, w) = if along_u {
+                (0.5 * (lo.y + hi.y), 0.01 * (hi.y - lo.y))
+            } else {
+                (0.5 * (lo.x + hi.x), 0.01 * (hi.x - lo.x))
+            };
+            let (ua, ub, va, vb) = if along_u {
+                (sa, sb, c - w, c + w)
+            } else {
+                (c - w, c + w, sa, sb)
+            };
+            let mut d = gn_def_face_of(&k, s).unwrap();
+            let ku = span(&coarse.u, coarse.p, coarse.nu, 0.5 * (ua + ub));
+            let kv = span(&coarse.v, coarse.q, coarse.nv, 0.5 * (va + vb));
+            boxes += 1;
+            if let Ok(p) =
+                definition_partials_over_box(&k, &mut d, &coarse, ku, kv, ua, ub, va, vb, 0)
+            {
+                boxes_proved += 1;
+                for i in 0..=20 {
+                    for q in [-1.0, 0.0, 1.0] {
+                        let x = sa + (sb - sa) * f64::from(i) / 20.0;
+                        let uv = if along_u {
+                            Point2::new(x, c + q * w)
+                        } else {
+                            Point2::new(c + q * w, x)
+                        };
+                        let want = pb.evaluate_point(&k, uv).unwrap();
+                        worst = worst.max(outside(p.at(0, 0), want));
+                    }
+                }
+            }
             for i in 0..=20 {
                 let x = a + (b - a) * f64::from(i) / 20.0;
                 let uv = if along_u {
@@ -508,18 +547,22 @@ fn a_net_with_a_knot_removed_is_enclosed_on_its_definition() {
                 let got = definition_partials_over_box(
                     &k, &mut d, &coarse, ku, kv, uv.x, uv.x, uv.y, uv.y, 0,
                 );
-                if let Ok(p) = got {
-                    proved += 1;
-                    let want = pb.evaluate_point(&k, uv).unwrap();
-                    worst = worst.max(outside(p.at(0, 0), want));
+                match got {
+                    Ok(p) => {
+                        proved += 1;
+                        let want = pb.evaluate_point(&k, uv).unwrap();
+                        worst = worst.max(outside(p.at(0, 0), want));
+                    }
+                    Err(_) if x == ks[0] || x == ks[ks.len() - 1] => ends_refused += 1,
+                    Err(_) => {}
                 }
             }
         }
     }
-    println!("{rounds} round(s): {proved} of {points} enclosures proved, the worst {worst:.3e} off its definition");
+    println!("{rounds} round(s): {proved} of {points} points ({ends_refused} at the ends refused) and {boxes_proved} of {boxes} boxes proved, the worst {worst:.3e} off its definition");
     assert_eq!(rounds, 1);
     assert!(
-        proved == points && worst == 0.0,
-        "{proved} of {points}, worst {worst:e}"
+        proved + ends_refused == points && boxes_proved == boxes && worst == 0.0,
+        "{proved} of {points} ({ends_refused} ends refused), {boxes_proved} of {boxes} boxes, worst {worst:e}"
     );
 }
