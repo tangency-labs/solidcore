@@ -483,9 +483,9 @@ fn bar_into_post(k: &mut Kernel, open: bool) -> Blended {
 /// builds the sheet of 10 faces, 30 edges and 21 vertices, 9 of them free. In solidcore
 /// the trim classified the bar's inside as outside (the B-rep ray built its face caches
 /// afresh while the target was being edited, without their trims) and refused the blend
-/// as `NoRoom`. It stays ignored until #2503's fix lands.
+/// as `NoRoom`, until #2503 (`brep_ray_classifies_current_trims`, WR-732, which `all_fixes`
+/// turns on): the trim classifies against the faces' current trims.
 #[test]
-#[ignore = "known failing: the trim classifies on a face cache built without its trims while editing (#2503)"]
 fn open_hole_on_a_body_with_a_closed_face_is_the_corner_nine_edges() {
     let mut k = all_fixes(true);
     let r = bar_into_post(&mut k, true);
