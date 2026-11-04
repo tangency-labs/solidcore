@@ -3035,6 +3035,44 @@ mod tests {
         }
     }
 
+    /// A closed row's closing step — its last point back to its first — is the difference
+    /// the walk starts with. Far from the origin that step can be pure rounding and still
+    /// be longer than an absolute `SM_EFF_ZERO`, and then the seam of a plain triangle is
+    /// reported: its three real steps turn by 90 and 45 degrees, and only the 1e-11
+    /// closing step looks like a reversal against the first. The bound at these
+    /// coordinates is 1.1e-10, so that step carries no direction and the seam is clean
+    /// (#2560; the same fix as at a pole, in a closed row).
+    #[test]
+    fn issue_2560_a_closed_seam_step_of_rounding_is_not_a_reversal() {
+        const B: f64 = 1.0e5;
+        // above EFF_ZERO (1e-12), inside the bound at these coordinates (1.1e-10)
+        const NOISE: f64 = 1.0e-11;
+
+        let p = |x: f64, y: f64| Point3::new(x, y, 0.0);
+        // row 0 is the triangle, its closing step NOISE long; row 1 is a clean square, so
+        // only the first row's seam can be reported (the columns hold one step each)
+        let points = vec![
+            p(B, 0.0),
+            p(B - 1.0, 0.0),
+            p(B - 1.0, 1.0),
+            p(B - NOISE, 1.0e-13),
+            p(B, 10.0),
+            p(B + 1.0, 10.0),
+            p(B + 1.0, 11.0),
+            p(B, 11.0),
+        ];
+
+        // the grid's closed row is upstream's bClosedCol, the fourth argument
+        assert!(
+            grid_has_non_monotonic_points(&points, 4, false, true).unwrap(),
+            "upstream reads a direction off the rounding-sized closing step"
+        );
+        assert!(
+            !grid_has_non_monotonic_points_to_rounding(&points, 4, false, true).unwrap(),
+            "the closing step is within the rounding of its own two points"
+        );
+    }
+
     #[test]
     fn plane_negative_scale() {
         let want = [(PLANE_TYPE, 3, "Scale", "m_vUVScale should be positive in X")];
