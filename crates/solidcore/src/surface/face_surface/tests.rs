@@ -115,7 +115,9 @@ fn an_analytic_face_on_its_form_is_proved_on_it() {
         frame: frame(),
         radius: 3.0,
     };
-    assert!(is_nurbs(&face_surface(&k, &wrong, Some(&net), d, &[]).unwrap()));
+    assert!(is_nurbs(
+        &face_surface(&k, &wrong, Some(&net), d, &[]).unwrap()
+    ));
 }
 
 /// F1: a label's own numbers are proved on its form. A cylinder label of radius 5 over the
@@ -195,7 +197,9 @@ fn a_small_cylinder_far_from_the_origin_is_proved_on_its_form() {
         },
         radius: 1.8,
     };
-    assert!(is_nurbs(&face_surface(&k, &moved, Some(&net), d, &[]).unwrap()));
+    assert!(is_nurbs(
+        &face_surface(&k, &moved, Some(&net), d, &[]).unwrap()
+    ));
 }
 
 /// A rational spline that is an extruded circle is its cylinder.
@@ -240,7 +244,8 @@ fn a_ball_patch_is_certified_on_its_sphere() {
             radius: 4.0,
         },
         Some(&net),
-        d, &[],
+        d,
+        &[],
     )
     .unwrap();
     assert!(matches!(f.surface.kind(), SurfaceKind::BallPatch(_)));
@@ -253,7 +258,8 @@ fn a_ball_patch_is_certified_on_its_sphere() {
                 radius: 4.0
             },
             Some(&net),
-            d, &[]
+            d,
+            &[]
         )
         .unwrap()
     ));
@@ -264,7 +270,8 @@ fn a_ball_patch_is_certified_on_its_sphere() {
             radius: 4.0
         },
         None,
-        d, &[]
+        d,
+        &[]
     )
     .is_err());
 }

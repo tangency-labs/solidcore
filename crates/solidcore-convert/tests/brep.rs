@@ -972,7 +972,11 @@ fn record_net_bits(f: &Face) -> Vec<[u64; 4]> {
     let Some(Surface::RationalSpline { homogeneous, .. }) = &f.nurbs else {
         panic!("a ball patch face on a rational net");
     };
-    homogeneous.iter().flatten().map(|h| h.map(f64::to_bits)).collect()
+    homogeneous
+        .iter()
+        .flatten()
+        .map(|h| h.map(f64::to_bits))
+        .collect()
 }
 
 /// A kernel net's homogeneous control points as bits, as the record stores them.
@@ -998,7 +1002,11 @@ fn read_ball(k: &mut Kernel, r: &Record, i: usize) -> Option<([f64; 3], f64, Vec
             Some(([c.x, c.y, c.z], bp.radius(), kernel_net_bits(bp.net())))
         }
         SurfaceKind::BSpline(net) => {
-            assert_eq!(kernel_net_bits(net), record_net_bits(&r.faces[i]), "face {i}");
+            assert_eq!(
+                kernel_net_bits(net),
+                record_net_bits(&r.faces[i]),
+                "face {i}"
+            );
             None
         }
         other => panic!("face {i} read as {other:?}"),
@@ -1076,7 +1084,10 @@ fn a_ball_patch_off_its_sphere_reads_as_its_nurbs() {
         if let Surface::BallPatch { radius, .. } = &mut off.faces[i].surface {
             *radius += 1e-9;
         }
-        assert!(read_ball(&mut k, &off, i).is_none(), "face {i}: larger sphere");
+        assert!(
+            read_ball(&mut k, &off, i).is_none(),
+            "face {i}: larger sphere"
+        );
 
         let mut off = r.clone();
         if let Some(Surface::RationalSpline { homogeneous, .. }) = &mut off.faces[i].nurbs {
@@ -1116,7 +1127,10 @@ fn a_ball_patch_far_from_the_origin_reads_as_one() {
     for &i in &balls {
         let (c, radius, _) = read_ball(&mut k, &r, i).unwrap_or_else(|| panic!("face {i}"));
         assert_eq!(radius, 1.5);
-        assert!(c[0] > 9.9e4 && c[1] < -6.9e4 && c[2] > 2.9e4, "face {i}: {c:?}");
+        assert!(
+            c[0] > 9.9e4 && c[1] < -6.9e4 && c[2] > 2.9e4,
+            "face {i}: {c:?}"
+        );
         let mut off = r.clone();
         if let Surface::BallPatch { radius, .. } = &mut off.faces[i].surface {
             *radius += 1e-9;
