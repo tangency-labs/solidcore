@@ -396,13 +396,13 @@ impl FilletSession<'_> {
                 // each side's touch circle: its piece's end section at the corner
                 let section = |j: usize| -> Result<Curve> {
                     let piece = kept.pieces.get(i + j).ok_or_else(null)?;
-                    let domain = piece.natural_uv_domain();
+                    let domain = piece.natural_uv_domain_with_nurb(k)?;
                     let u = if j == 0 {
                         domain.max().x
                     } else {
                         domain.min().x
                     };
-                    Ok(Surface::from(piece.copy())
+                    Ok(piece
                         .create_iso_parametric_curve(k, SurfParamType::U, u, 0.0, None, false)?
                         .curve)
                 };
@@ -413,11 +413,10 @@ impl FilletSession<'_> {
                 else {
                     return Err(null());
                 };
-                let (first, second) = (Surface::from(first.copy()), Surface::from(second.copy()));
                 let found = first.global_surface_intersect(
                     k,
                     &first.natural_uv_domain_with_nurb(k)?,
-                    &second,
+                    second,
                     &second.natural_uv_domain_with_nurb(k)?,
                     [true, true],
                     Some(kept.tol_3d / 4.0),
@@ -542,7 +541,7 @@ impl FilletSession<'_> {
                     b,
                     env,
                     f,
-                    Surface::from(piece.copy()),
+                    piece.clone(),
                     face_ref,
                     OldSurface::Delete,
                     true,

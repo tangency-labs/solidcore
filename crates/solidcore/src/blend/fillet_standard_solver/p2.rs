@@ -2503,6 +2503,39 @@ impl CircularCrossSectionFsg {
     }
 }
 
+/// What [`CircularCrossSectionFsg::piecewise_surface`] needs to build each piece of a
+/// round whose law has corners by its definition (not the fork's, #430): the solver's
+/// stations, the faces the ball rolls on, the rails' uv curves on them (rebuilt with the
+/// rails where the pieces are definitions) and what the generator reads off the solver.
+pub struct PieceDefinitionInputs<'a> {
+    /// The solver's stations, each at its rail parameter (`curve_parameter`) and its law
+    /// parameter (the first user double).
+    pub points: &'a [TsectPnt],
+    /// The two faces the ball rolls on.
+    pub surfaces: [&'a Surface; 2],
+    /// The rails' uv curves on them.
+    pub uv: [&'a mut BSplineCurve; 2],
+    /// What the generator reads off the solver.
+    pub ball: &'a CircleBall,
+}
+
+/// The pieces of a round whose law has corners built by their definitions, in order, with
+/// the curves each piece's definition rebuilt on its stations: the centre line, the rails
+/// and their uv curves.
+struct PieceDefinitions {
+    surfaces: Vec<Surface>,
+    centres: Vec<BSplineCurve>,
+    rails: [Vec<BSplineCurve>; 2],
+    uvs: [Vec<BSplineCurve>; 2],
+}
+
+/// The joined curve of `pieces`, end to end in order (`CreateByJoining`).
+fn joined_curve(mut pieces: Vec<BSplineCurve>) -> Result<BSplineCurve> {
+    let mut joined = BSplineCurve::create_by_joining(&mut pieces, None)?;
+    joined.set_out_of_bounds_enabled(true);
+    Ok(joined)
+}
+
 impl CircularCrossSectionFsg {
     /// The fork's `SmGnSectionFSG::CircleSurface` where the centre line or a rail turns at
     /// `corners` (the first rail's interior knots where one of the three curves turns,
@@ -2515,19 +2548,27 @@ impl CircularCrossSectionFsg {
     /// varies (a variable-radius or a constant-distance solver) the pieces are kept too,
     /// exact, with each corner's kind and ball ([`LawCornerPieces::classify`], 7babe17).
     ///
+    /// Not the fork's (#430): with `definition`, where each piece is a round by its
+    /// definition ([`Self::definition_surface`] on its own curves and stations, the law
+    /// trimmed to its span, [`LawBall::span`]), the pieces are those definitions and the
+    /// joined surface is their nets'; the centre line, the rails and their uv curves are
+    /// then the pieces' rebuilt ones joined, as a whole round's definition rebuilds them.
+    ///
     /// # Errors
     ///
-    /// Those of `Trim`, the pieces' skin, `JoinSurface` and the classification.
+    /// Those of `Trim`, the pieces' skin or definitions, `JoinSurface`, `CreateByJoining`
+    /// and the classification.
     #[allow(clippy::too_many_arguments)]
     pub fn piecewise_surface(
         &self,
         k: &Kernel,
         approx_tol_3d: f64,
         solver_type: FilletSolverType,
-        center_line: &BSplineCurve,
-        rail1: &BSplineCurve,
-        rail2: &BSplineCurve,
+        center_line: &mut BSplineCurve,
+        rail1: &mut BSplineCurve,
+        rail2: &mut BSplineCurve,
         corners: &[f64],
+        definition: Option<PieceDefinitionInputs<'_>>,
     ) -> Result<(BSplineSurface, Option<LawCornerPieces>)> {
         use crate::nurbs::b_spline_curve_n_lib::TrimMode;
         use crate::nurbs::b_spline_surface::SurfParamType;
@@ -2539,39 +2580,63 @@ impl CircularCrossSectionFsg {
         let mut ends = vec![ivl.min()];
         ends.extend_from_slice(corners);
         ends.push(ivl.max());
+        let mut definition = definition;
+        let defined = match definition.as_mut() {
+            Some(d) if ball_radius_varies => self.piece_definitions(
+                k,
+                approx_tol_3d,
+                solver_type,
+                [&*center_line, &*rail1, &*rail2],
+                &ends,
+                d,
+            )?,
+            _ => None,
+        };
         let mut joined: Option<BSplineSurface> = None;
         let mut pieces = Vec::new();
         let mut joined_ends = Vec::new();
-        for span in ends.windows(2) {
+        for (i, span) in ends.windows(2).enumerate() {
             let [from, to] = *span else {
                 continue;
             };
-            let mut trimmed = [center_line.copy(), rail1.copy(), rail2.copy()];
-            for curve in &mut trimmed {
-                let mut interval = Extent1d::from_min_max(from, to);
-                curve.trim(k, &mut interval, TrimMode::Notify)?;
-            }
-            let [mut cl, mut r1, mut r2] = trimmed;
-            let mut piece =
-                self.create_surface(k, approx_tol_3d, solver_type, &mut cl, &mut r1, &mut r2)?;
+            // the piece: its definition (on its net), else its skin
+            let (mut net, piece) = if let Some(surface) =
+                defined.as_ref().and_then(|d| d.surfaces.get(i))
+            {
+                let crate::surface::surface::SurfaceKind::ProceduralBlend(pb) = surface.kind()
+                else {
+                    return Err(SolidError::sm_err(OP_PIECEWISE));
+                };
+                (pb.net().copy(), surface.clone())
+            } else {
+                let mut trimmed = [center_line.copy(), rail1.copy(), rail2.copy()];
+                for curve in &mut trimmed {
+                    let mut interval = Extent1d::from_min_max(from, to);
+                    curve.trim(k, &mut interval, TrimMode::Notify)?;
+                }
+                let [mut cl, mut r1, mut r2] = trimmed;
+                let skin =
+                    self.create_surface(k, approx_tol_3d, solver_type, &mut cl, &mut r1, &mut r2)?;
+                let piece = Surface::from(skin.copy());
+                (skin, piece)
+            };
             if ball_radius_varies {
-                pieces.push(piece.copy());
+                pieces.push(piece);
             }
             // join the piece on at its u-min side; no knot removal there, the surface turns
             let next = match joined.as_mut() {
-                None => piece,
-                Some(j) => j.join_surface(&mut piece, SurfParamType::U, 0.0)?,
+                None => net,
+                Some(j) => j.join_surface(&mut net, SurfParamType::U, 0.0)?,
             };
             if ball_radius_varies {
                 joined_ends.push(next.natural_uv_domain().max().x);
             }
             joined = Some(next);
         }
-        let joined = joined.ok_or_else(|| {
-            SolidError::sm_err("blend::fillet_standard_solver::p2::piecewise_surface")
-        })?;
+        let joined = joined.ok_or_else(|| SolidError::sm_err(OP_PIECEWISE))?;
         let kept = if ball_radius_varies {
             Some(LawCornerPieces::classify(
+                k,
                 center_line,
                 rail1,
                 &ends,
@@ -2586,9 +2651,118 @@ impl CircularCrossSectionFsg {
         } else {
             None
         };
+        // the curves the definitions were built on, joined, as a whole round's definition
+        // replaces them
+        if let (Some(d), Some(inputs)) = (defined, definition) {
+            let PieceDefinitions {
+                centres,
+                rails: [r1, r2],
+                uvs: [u1, u2],
+                ..
+            } = d;
+            let [uv1, uv2] = inputs.uv;
+            *center_line = joined_curve(centres)?;
+            *rail1 = joined_curve(r1)?;
+            *rail2 = joined_curve(r2)?;
+            *uv1 = joined_curve(u1)?;
+            *uv2 = joined_curve(u2)?;
+        }
         Ok((joined, kept))
     }
+
+    /// Each piece of a round whose law has corners by its definition (not the fork's,
+    /// #430): between each two of `ends` (the rails' parameters: their start, the law's
+    /// corners, their end), [`Self::definition_surface`] on copies of the centre line, the
+    /// rails and the uv curves trimmed there and on the solver's stations there (a corner
+    /// is a station of both pieces), its law trimmed to their span. `None` where a piece is
+    /// not one (its gate is a whole round's), or has fewer than two stations.
+    ///
+    /// # Errors
+    ///
+    /// Those of `Trim` and [`Self::definition_surface`].
+    fn piece_definitions(
+        &self,
+        k: &Kernel,
+        approx_tol_3d: f64,
+        solver_type: FilletSolverType,
+        curves: [&BSplineCurve; 3],
+        ends: &[f64],
+        inputs: &PieceDefinitionInputs<'_>,
+    ) -> Result<Option<PieceDefinitions>> {
+        use crate::nurbs::b_spline_curve_n_lib::TrimMode;
+        let mut out = PieceDefinitions {
+            surfaces: Vec::new(),
+            centres: Vec::new(),
+            rails: [Vec::new(), Vec::new()],
+            uvs: [Vec::new(), Vec::new()],
+        };
+        let [center_line, rail1, rail2] = curves;
+        let [uv1, uv2] = &inputs.uv;
+        for span in ends.windows(2) {
+            let [from, to] = *span else {
+                continue;
+            };
+            let mut trimmed = [
+                center_line.copy(),
+                rail1.copy(),
+                rail2.copy(),
+                uv1.copy(),
+                uv2.copy(),
+            ];
+            for curve in &mut trimmed {
+                let mut interval = Extent1d::from_min_max(from, to);
+                curve.trim(k, &mut interval, TrimMode::Notify)?;
+            }
+            let points: Vec<TsectPnt> = inputs
+                .points
+                .iter()
+                .filter(|p| from <= p.curve_parameter && p.curve_parameter <= to)
+                .cloned()
+                .collect();
+            // the stations' span of the law's parameter
+            let mut t0 = BIG_DOUBLE;
+            let mut t1 = -BIG_DOUBLE;
+            for p in &points {
+                let t = p.user_doubles.first().copied().unwrap_or(f64::NAN);
+                t0 = if t0 < t { t0 } else { t }; // smos_Min
+                t1 = if t1 > t { t1 } else { t }; // smos_Max
+            }
+            if points.len() < 2 || t1 <= t0 {
+                return Ok(None);
+            }
+            let mut ball = inputs.ball.clone();
+            if let Some(law) = ball.law.as_mut() {
+                law.span = Some(Extent1d::from_min_max(t0, t1));
+            }
+            let [mut cl, mut r1, mut r2, mut u1, mut u2] = trimmed;
+            let Some(surface) = self.definition_surface(
+                k,
+                approx_tol_3d,
+                solver_type,
+                &mut cl,
+                [&mut r1, &mut r2],
+                &points,
+                inputs.surfaces,
+                [&mut u1, &mut u2],
+                &ball,
+            )?
+            else {
+                return Ok(None);
+            };
+            out.surfaces.push(surface);
+            out.centres.push(cl);
+            let [rails1, rails2] = &mut out.rails;
+            rails1.push(r1);
+            rails2.push(r2);
+            let [uvs1, uvs2] = &mut out.uvs;
+            uvs1.push(u1);
+            uvs2.push(u2);
+        }
+        Ok(Some(out))
+    }
 }
+
+const OP_PIECEWISE: &str = "blend::fillet_standard_solver::p2::piecewise_surface";
 
 /// What the fork's circle generator reads off its solver for the round by its definition
 /// (`SmGnSectionFSG::CircleSurface`, cc08236): a constant-radius solver's radii
@@ -2628,6 +2802,11 @@ pub struct LawBall {
     pub interval: Extent1d,
     /// `GetFilletLawOrientation()`.
     pub reverse: bool,
+    /// Not the fork's (#430): for one piece of a round whose law has corners
+    /// ([`CircularCrossSectionFsg::piecewise_surface`]), the edge's parameters the law is
+    /// trimmed to, the piece's, so that a station at a corner takes its own side's slope;
+    /// `None` for a whole round.
+    pub span: Option<Extent1d>,
 }
 
 /// `sm_LawInParameter` (the fork's 0d43b4c): the variable radius solver's law as a curve
@@ -2876,9 +3055,30 @@ impl CircularCrossSectionFsg {
                 }
                 let mut leader = edge.copy();
                 leader.set_out_of_bounds_enabled(true);
-                let Some(law) = law_in_parameter(lb)? else {
+                let Some(mut law) = law_in_parameter(lb)? else {
                     return Ok(None);
                 };
+                // (one piece of a law-cornered round: the law cut at the piece's corners, so
+                // carried on past them with the piece's own end spans, as past the law's own
+                // ends, which the stations run beyond)
+                if let Some(span) = lb.span {
+                    let whole = law.natural_interval();
+                    let mut cut = Extent1d::from_min_max(
+                        span.min().max(whole.min()),
+                        span.max().min(whole.max()),
+                    );
+                    if cut.length() <= 0.0 {
+                        return Ok(None);
+                    }
+                    if cut != whole {
+                        law.trim(
+                            k,
+                            &mut cut,
+                            crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
+                        )?;
+                        law.set_out_of_bounds_enabled(true);
+                    }
+                }
                 // the solver's stations run past the edge's ends, the law continued there:
                 // a ball of the law's radius exists over them only where it stays positive
                 // (an enclosure of the law over their range)

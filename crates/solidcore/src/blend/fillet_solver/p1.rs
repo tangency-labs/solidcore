@@ -508,6 +508,14 @@ impl FilletSurfaceGenerator {
                 let corners =
                     fillet_curve_corners(center, rail1, rail2, corner_angle(ball.ang_tol_rad))?;
                 if !corners.is_empty() {
+                    // (each piece by its definition where it is one, #430)
+                    let definition =
+                        crate::blend::fillet_standard_solver::p2::PieceDefinitionInputs {
+                            points,
+                            surfaces,
+                            uv: [&mut *uv1, &mut *uv2],
+                            ball,
+                        };
                     let (s, kept) = g.piecewise_surface(
                         k,
                         approx_tol_3d,
@@ -516,6 +524,7 @@ impl FilletSurfaceGenerator {
                         rail1,
                         rail2,
                         &corners,
+                        Some(definition),
                     )?;
                     return Ok((Surface::from(s), kept));
                 }

@@ -33,14 +33,16 @@
 //!
 //! The executive splits the round's faces at the corners after the merge
 //! (`NoteRadiusCornerSurfaces`, `SplitFilletFacesAtRadiusCorners`, 6eecf04, on
-//! `SmBrep::SubdivideFaceAtDiscontinuities` and `ReplaceCurve`: the live session's
-//! `law_corners`).
+//! `SmBrep::SubdivideFaceAtDiscontinuities` and `ReplaceCurve`) and, where a corner dips or
+//! peaks, builds the round there as the union of its balls (`BuildLawCorners`, 7babe17
+//! with 62fcc82 and 58d03ef): each side its piece, the zone at a dip, the crossing at a
+//! peak (the live session's `law_corners`).
 //!
-//! Not ported yet: `SmFilletExecutive::BuildLawCorners` (which puts the pieces back on the
-//! split faces, adds the zones and stitches the round again, with `sm_PieceOfFace`,
-//! `sm_EdgeBetween` and the 62fcc82 unstitch), with the `EaseSetBackSections` refusal of a
-//! law-cornered round (58d03ef). Until then the split faces carry the joined surface, which
-//! near a corner that dips or peaks is not its balls' envelope.
+//! Not the fork's (#430): where each piece passes a variable round's definition gate, the
+//! pieces are rounds by their definitions, the law trimmed to each piece
+//! ([`CircularCrossSectionFsg::piecewise_surface`](crate::blend::fillet_standard_solver::p1::CircularCrossSectionFsg::piecewise_surface)).
+//!
+//! Not ported yet: the `EaseSetBackSections` refusal of a law-cornered round (58d03ef).
 //!
 //! Deviations: out-params are return values; `SmLawCornerPieces::Copy` is `Clone`, and the
 //! solver's list of kept pieces is a slice the caller owns, so
@@ -49,8 +51,10 @@
 //! in length. [`sphere_zone`] takes the corner ball's centre and radius, which the fork's
 //! `sm_SphereZone` does not, and returns the zone as a [`BallPatch`] that keeps the
 //! sphere, where the fork returns a bare `SmBSplineSurface`; the net is the fork's bit for
-//! bit. The fork's per-piece `SER` on a failed cast has no counterpart (the pieces are
-//! `BSplineSurface` by type). No loop depends on input beyond the pieces and knots given.
+//! bit. The pieces are surfaces, each a round by its definition where it is one (not the
+//! fork's, whose pieces are skins, `SmBSplineSurface`; #430), so the fork's per-piece `SER`
+//! on a failed cast has no counterpart. No loop depends on input beyond the pieces and
+//! knots given.
 
 use crate::curve::curve::Curve;
 use crate::error::{Result, SolidError};
@@ -97,8 +101,9 @@ pub struct LawCorner {
 pub struct LawCornerPieces {
     /// `m_bTaken`: matched to a fillet geom's surface already ([`find_law_corner_pieces`]).
     pub taken: bool,
-    /// `m_vPieces`: the pieces in order along the round.
-    pub pieces: Vec<BSplineSurface>,
+    /// `m_vPieces`: the pieces in order along the round: each a round by its definition
+    /// where it is one (not the fork's, #430), else its skin, a B-spline surface.
+    pub pieces: Vec<Surface>,
     /// `m_vJoinedEnds`: each piece's end in the joined surface's u.
     pub joined_ends: Vec<f64>,
     /// `m_vKinds`, `m_vCentres` and `m_vRadii`: the corners in order along the round, one
@@ -144,10 +149,11 @@ impl LawCornerPieces {
     /// `SM_ERR` where the rail has no direction at a corner or `ends` does not hold a
     /// corner for each pair of pieces; those of `Evaluate` and `EvaluatePoint`.
     pub fn classify(
+        k: &Kernel,
         center_line: &BSplineCurve,
         rail1: &BSplineCurve,
         ends: &[f64],
-        pieces: Vec<BSplineSurface>,
+        pieces: Vec<Surface>,
         joined_ends: Vec<f64>,
         approx_tol_3d: f64,
         arcs: ArcApproximation,
@@ -175,7 +181,7 @@ impl LawCornerPieces {
             let along = along / along.length();
             let mut mid = [Point3::ZERO; 2];
             for (j, (side, at)) in [before, after].into_iter().zip(&mut mid).enumerate() {
-                let domain = side.natural_uv_domain();
+                let domain = side.natural_uv_domain_with_nurb(k)?;
                 let uv = Point2::new(
                     if j == 0 {
                         domain.max().x
@@ -184,7 +190,7 @@ impl LawCornerPieces {
                     },
                     0.5 * (domain.min().y + domain.max().y),
                 );
-                *at = side.evaluate_point(uv)?;
+                *at = side.evaluate_point(k, uv)?;
             }
             let [mid_before, mid_after] = mid;
             let ahead = (mid_after - mid_before).dot(along);

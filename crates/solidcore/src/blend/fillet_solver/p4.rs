@@ -4804,6 +4804,7 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
                     law: v.fillet_law().clone(),
                     interval: v.fillet_law_interval(),
                     reverse: v.fillet_law_orientation(),
+                    span: None,
                 }),
                 None => None,
             }

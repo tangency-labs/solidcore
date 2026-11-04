@@ -1,0 +1,19 @@
+Updates: WR-685. Under the same flag, `fillet_gn_section_generator`, the round is built at its law's corners where they dip or peak: the fork's `SmFilletExecutive::BuildLawCorners` (tangency-labs/smlib 7babe17, with 62fcc82's new faces after the unstitch and 58d03ef's corner edge tolerances). This completes the 2026-11-02 law-corner addendum's split.
+
+- **The build (`fillet_executive::session::law_corners`).** After the split, the faces of a round whose kept pieces dip or peak are rebuilt:
+  - each face's piece (`sm_PieceOfFace`, by the middle of its uv box against the pieces' joined ends);
+  - the round's faces unstitched (`SmBrep::UnStitch`, solidcore#2646), and the new faces mapped to their pieces again;
+  - at a dip, each side's corner edge becomes its touch circle (its piece's end section), and the corner ball's zone between them (`sm_SphereZone`) a face of its own (`MakeFaceWithCurves`);
+  - at a peak, both sides end on their crossing (the pieces' intersection between the rail points, `sm_CurveBetween`, `sm_EdgeBetween`);
+  - each face given its piece (`ReplaceSurface`, `ShrinkGeometry`), the lot stitched (`StitchFaces`, refused with lamina edges) and oriented, and the crossing's and the zone's edges given the pieces' tolerance.
+- **Not the fork's (#430): the pieces are rounds by their definitions.** Where every piece passes a variable round's definition gate (the fork's 0d43b4c, solidcore's `CircularCrossSectionFsg::definition_surface`), each piece is built by its definition on its own curves and stations, with the law trimmed to the piece (`LawBall::span`), so a station at a corner takes its own side's slope. The joined surface is the pieces' nets, and the centre line, the rails and their uv curves are the pieces' rebuilt ones joined, as a whole round's definition rebuilds them. `LawCornerPieces::pieces` holds surfaces.
+  - The fork's pieces are skins, so its faces are within 7.6e-10 of the balls' union. The definitions are on it to 1.5e-14.
+  - Where a piece fails the gate, every piece is skinned, as in the fork. The fork's `variable_round_law_dips` is such a case: its last side's law, 4 -> 2 over the last quarter, carried on past the edge's end as the trace's stations run (10 past it), falls through zero at 25, where the definition has no ball. A smooth round with so steep a law is refused by the same gate.
+- **Not the fork's (#2489): the blend face log.** The session reads the log after the split, not inside `do_filleting`, because the split's faces replace the round's. The rebuilt faces keep their old faces' marks, and a dip's zone is marked as a corner ball's patch.
+- **Checked** in `crates/solidcore/tests/wr685_law_corners.rs` on the dip (from either end and as a quadratic law), the peak and the dip then peak:
+  - every point inside every round face is on the boundary of the union of the law's balls, closed form from the law, to 1.5e-14 (the dip then peak, skinned, to 1.5e-10);
+  - a dip's zone is a ball patch on its corner ball (1.1e-14), met G1 along its two circles (2.1e-8 rad);
+  - a peak's sides meet along their crossing with each face's normal its own side's ball's (2.6e-8 rad), the crease 0.018 to 0.083 rad on the peak 2 -> 3 -> 2, 0.052 to 0.241 rad on the dip then peak;
+  - the body is clean at check level 2, and every face the round made is a definition or listed in the ledger (#2505), except the skinned case's sides.
+  - The fork's capi cases now pass with its volumes at 1e-7: the dip 39.5420558 (fork 39.5420559) with 9 faces; the peaks 21.7998779, 27.0936772, 29.3899112, 39.5409746 (fork 21.7998779, 27.0936773, 29.3899112, 39.5410833) with 8; the dip then peak 38.8181185 (fork 38.8181414) with 10.
+- **Not ported:** 58d03ef's refusal of a law-cornered round in `EaseSetBackSections`. A round whose corners all match is left on its split faces, as in the fork, where `BuildLawCorners` returns at once.
