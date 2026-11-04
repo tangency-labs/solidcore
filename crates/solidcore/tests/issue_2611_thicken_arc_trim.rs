@@ -155,7 +155,7 @@ fn sheet(k: &mut Kernel, r: f64, sweep: f64) -> Brep {
     let mut part = boolean_difference(k, pipe, cut).unwrap();
     let face = outer_face(k, &part);
     let mut dest = new_brep(k, USE_DEFAULT, USE_DEFAULT).unwrap();
-    let mut state = ArenaNotifyState::new(&mut dest);
+    let mut state = ArenaNotifyState::new(&dest);
     state.seed(&part);
     let mut env = state.env(None);
     let key_of = env.key_of;
