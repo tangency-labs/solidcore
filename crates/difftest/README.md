@@ -416,8 +416,9 @@ cites **names that case**:
   names it, in the base record or in an addendum: what the C++ answers, what solidcore
   answers and why solidcore's answer is the right one;
 - to `known_mismatch`, when the construction was deliberately replaced or deleted in the
-  same change and the `plan/findings/<slug>.md` record the `why` cites names it, with
-  the value that moves and how the old path's result was reproduced.
+  same change and the `plan/findings/<slug>.md` record the `why` cites names it — in
+  that record or in one of its `--addendum-` files — with the value that moves and how
+  the old path's result was reproduced.
 
 A record that only describes the change in general lists nothing, so nothing is waived
 cheaply, and a case the evidence does not reach stays a regression and keeps the sweep

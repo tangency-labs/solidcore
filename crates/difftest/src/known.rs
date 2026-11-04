@@ -268,9 +268,35 @@ pub fn findings_records(root: &Path, why: &str) -> String {
     let dir = root.join(FINDINGS_DIR);
     let mut text = String::new();
     for name in findings_cited(why) {
-        if let Ok(t) = std::fs::read_to_string(dir.join(name)) {
+        if let Ok(t) = std::fs::read_to_string(dir.join(&name)) {
             text.push_str(&t);
             text.push('\n');
+        }
+        // A finding is not edited either: an update is
+        // `<name without .md>--addendum-<date>-<slug>.md` (plan/findings/README.md), and
+        // a case measured there counts like one measured in the record itself.
+        let Some(stem) = name.strip_suffix(".md") else {
+            continue;
+        };
+        let prefix = format!("{stem}--addendum-");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut addenda: Vec<String> = entries
+            .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+            .filter(|n| {
+                n.starts_with(&prefix)
+                    && Path::new(n)
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+            })
+            .collect();
+        addenda.sort();
+        for a in addenda {
+            if let Ok(t) = std::fs::read_to_string(dir.join(a)) {
+                text.push_str(&t);
+                text.push('\n');
+            }
         }
     }
     text
@@ -438,6 +464,43 @@ nothing confirmed here
         assert!(findings_cited("plan/findings/").is_empty());
         // a nested path is not a record name
         assert!(findings_cited("plan/findings/sub/dir.md").is_empty());
+    }
+
+    /// A finding is not edited either, so a case measured in its addendum counts like
+    /// one measured in the record itself.
+    #[test]
+    fn a_findings_addendum_carries_evidence_too() {
+        let dir = std::env::temp_dir().join(format!("difftest-findings-{}", std::process::id()));
+        let findings = dir.join(FINDINGS_DIR);
+        std::fs::create_dir_all(&findings).unwrap();
+        let why = "replaced (plan/findings/blend.corner--one-path.md)";
+        std::fs::write(
+            findings.join("blend.corner--one-path.md"),
+            "the old corner is gone; cases follow in an addendum
+",
+        )
+        .unwrap();
+        assert!(!names_case(&findings_records(&dir, why), "gen0042"));
+
+        std::fs::write(
+            findings.join("blend.corner--one-path--addendum-2026-11-04-cases.md"),
+            "Updates: plan/findings/blend.corner--one-path.md
+| gen0042 | 1.5 | 1.25 |
+",
+        )
+        .unwrap();
+        assert!(names_case(&findings_records(&dir, why), "gen0042"));
+        // a case no record reaches is still unevidenced
+        assert!(!names_case(&findings_records(&dir, why), "gen0043"));
+        // an addendum of a record that was never cited does not count
+        std::fs::write(
+            findings.join("other--addendum-2026-11-04-x.md"),
+            "| gen0044 |
+",
+        )
+        .unwrap();
+        assert!(!names_case(&findings_records(&dir, why), "gen0044"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The evidence check matches a case as a whole word, so a shorter name does not
