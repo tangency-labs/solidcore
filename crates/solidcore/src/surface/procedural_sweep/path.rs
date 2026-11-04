@@ -369,6 +369,10 @@ impl PathMotion {
     ///
     /// `InvalidInput` where the path's tangent vanishes; those of evaluating the path.
     pub fn frame(&self, t: f64) -> Result<Frame> {
+        // `from_left = true` is the curve's `Side::Left`, which at a knot gives the derivatives of
+        // the span that starts there (at `t = 1` of a line then an arc: the arc's; the test
+        // `the_definitions_partials_at_the_joints_are_right_sided` holds this), and at the
+        // domain's end those of the last span
         let d = self.path.evaluate(t, 2, true, false)?;
         let (Some(&point), Some(&t1), Some(&t2)) = (d.first(), d.get(1), d.get(2)) else {
             return Err(SolidError::invalid_input(

@@ -756,3 +756,67 @@ fn the_definitions_partials_at_the_ends_are_its_slopes() {
         }
     }
 }
+
+/// At every interior joint of the wire the definition's partials along the path are the
+/// right-sided slopes of its points: a span's start takes its own span's derivatives.
+#[test]
+fn the_definitions_partials_at_the_joints_are_right_sided() {
+    let mut k = Kernel::default();
+    let wire = wire_path(&k);
+    let b = create_pipe_sweep(&mut k, RADIUS, Some(&Curve::from(wire)), false).unwrap();
+    let all = walls(&b);
+    assert!(all.len() > 3);
+    let mut joints = 0;
+    for wall in &all {
+        let s = wall.procedural_sweep().expect("a definition");
+        let d = s.definition();
+        let dom = s.net().natural_uv_domain();
+        let (along_u, a) = if d.definition_map().2 {
+            (true, dom.u_interval())
+        } else {
+            (false, dom.v_interval())
+        };
+        let other = if along_u {
+            dom.v_interval()
+        } else {
+            dom.u_interval()
+        };
+        let t_start = d
+            .path()
+            .unwrap()
+            .path_parameter(
+                d.definition_parameters(Point2::new(dom.min().x, dom.min().y))
+                    .y,
+            )
+            .0;
+        if t_start <= d.path().unwrap().path().natural_interval().min() + 1e-12 {
+            continue;
+        }
+        joints += 1;
+        let h = 1e-7 * (a.max() - a.min());
+        for mid in [0.2, 0.55, 0.8] {
+            let o = other.min() + (other.max() - other.min()) * mid;
+            let make = |x: f64| {
+                if along_u {
+                    Point2::new(x, o)
+                } else {
+                    Point2::new(o, x)
+                }
+            };
+            let partials = d.evaluate_definition(make(a.min()), 1, 1).unwrap();
+            let analytic = if along_u {
+                partials[1][0]
+            } else {
+                partials[0][1]
+            };
+            let p0 = d.evaluate_definition_point(make(a.min())).unwrap();
+            let p1 = d.evaluate_definition_point(make(a.min() + h)).unwrap();
+            let fd = (p1 - p0) * (1.0 / h);
+            assert!(
+                (analytic - fd).length() <= 1e-4 * (1.0 + analytic.length()),
+                "joint at {t_start}: {analytic:?} against {fd:?}"
+            );
+        }
+    }
+    assert!(joints >= 3, "{joints}");
+}
