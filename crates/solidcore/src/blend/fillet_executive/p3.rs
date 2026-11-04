@@ -186,6 +186,12 @@ pub enum NoRoomReason {
     /// ball at an end of the edge, so no round ends there (not the fork's, #2401;
     /// `fixes.fillet_gn_section_generator`).
     OffsetCollapses,
+    /// A rail of a constant ball's round or chamfer along an arc would have its ends
+    /// within the part's resolution of each other (two vertex tolerances) without closing
+    /// to a point: a chamfer just short of the corner rounds it runs round, its corner
+    /// arcs on the bottom face shorter than the part resolves (not the fork's, #2546;
+    /// `fixes.fillet_refuse_rails_below_resolution`, WR-739).
+    RailBelowResolution,
 }
 
 /// The initialized error-info members p3 reads or writes. Corner kinds use the

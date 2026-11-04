@@ -2537,6 +2537,71 @@ mod tests {
         assert!(!found);
     }
 
+    /// The quarter circle of radius 5 about the origin from (5, 0) to (0, 5), as the
+    /// rational quadratic B-spline a round's edge is.
+    fn quarter_circle() -> Curve {
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::crv_basic::Curve as NurbCurve;
+        use crate::nurbs::math::CPoint;
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        let pw = vec![
+            CPoint::new(5.0, 0.0, 0.0, 1.0),
+            CPoint::new(5.0 * w, 5.0 * w, 0.0, w),
+            CPoint::new(0.0, 5.0, 0.0, 1.0),
+        ];
+        let nurb = NurbCurve::new(pw, 2, vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
+        Curve::from(BSplineCurve::from_nurb(nurb, 3, false))
+    }
+
+    /// #2546 (WR-738): the closest point of an arc to a point `rho` from its centre is the
+    /// arc's point at the point's angle, `5 - rho` away. Newton's derivative there is
+    /// `C'.C' rho / 5`; upstream's limit holds it at `0.05 C'.C'` and the solve runs out of
+    /// iterations, from within about R / 100 of the centre. With
+    /// `fixes.curve_point_minimize_full_newton` it is Newton's, down to rho = 1e-6.
+    #[test]
+    fn issue_2546_closest_point_from_near_an_arcs_centre() {
+        let c = quarter_circle();
+        let ivl = c.natural_interval();
+        let angle = 30f64.to_radians();
+        for rho in [1e-2, 1e-4, 1e-6] {
+            let p = Vec3::new(rho * angle.cos(), rho * angle.sin(), 0.0);
+            for fix in [false, true] {
+                let mut k = Kernel::default();
+                k.fixes.curve_point_minimize_full_newton = fix;
+                let (found, sol): (bool, Solution<()>) = c
+                    .local_point_solve(
+                        &k,
+                        &ivl,
+                        SolverOperation::Minimize,
+                        p,
+                        &PointSolveOptions::default(),
+                        0.05,
+                    )
+                    .unwrap();
+                if !fix {
+                    assert!(!found, "rho {rho}: upstream runs out of iterations");
+                    continue;
+                }
+                assert!(found, "rho {rho}");
+                let q = c.evaluate_point(&k, sol.start.parameters[0]).unwrap();
+                let at = q.y.atan2(q.x);
+                // the solve stops where the gap is square to the tangent within EFF_ZERO,
+                // an angle of (rho / R) (at - angle) there: the point is as ill-conditioned
+                // as R / rho, its distance not
+                assert!(
+                    (at - angle).abs() * rho <= EFF_ZERO * 5.0,
+                    "rho {rho}: angle {at}"
+                );
+                let want = 5.0 - rho;
+                assert!(
+                    (sol.start.solution_value - want).abs() < 1e-12,
+                    "rho {rho}: {} vs {want}",
+                    sol.start.solution_value
+                );
+            }
+        }
+    }
+
     #[test]
     fn crossing_lines_intersect_locally() {
         let k = &Kernel::default();
