@@ -673,7 +673,10 @@ fn point(out: &mut Vec<f64>, p: Vec3) {
 pub(super) fn status(error: SolidError) -> SolidResult<f64> {
     match error {
         SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => Ok(1007.0),
-        SolidError::Upstream { code, .. } => Ok(f64::from(code)),
+        // a refusal naming the size that builds is the same status (SolidError::sm_status)
+        SolidError::Upstream { code, .. } | SolidError::FilletRefused { code, .. } => {
+            Ok(f64::from(code))
+        }
         error => Err(error),
     }
 }

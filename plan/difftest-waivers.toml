@@ -44,7 +44,7 @@ reason = "old corner code deleted, #2400: the blend corner is the default; its c
 [[waiver]]
 unit = "blend.fillet_executive_p3"
 check = "ratchet"
-reason = "old corner code deleted, #2400: the blend corner is the default; 176 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+reason = "old corner code deleted, #2400: the blend corner is the default; 158 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
 
 [[waiver]]
 unit = "blend.fillet_geom_p4"

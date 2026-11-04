@@ -904,7 +904,8 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
             }
             match error {
                 SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007,
-                SolidError::Upstream { code, .. } => code,
+                // a refusal naming the size that builds is the same status
+                SolidError::Upstream { code, .. } | SolidError::FilletRefused { code, .. } => code,
                 other => return Err(HarnessError::new(other.to_string())),
             }
         }
