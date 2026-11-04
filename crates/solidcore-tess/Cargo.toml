@@ -4,6 +4,7 @@ description = "Geometry made drawable: each face of a B-rep record meshed in its
 edition = "2024"
 license.workspace = true
 version.workspace = true
+publish = false
 # Let chains (edition 2024, Rust 1.88).
 rust-version = "1.88"
 repository = "https://github.com/tangency-labs/solidcore"
