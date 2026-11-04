@@ -34,7 +34,7 @@ warn() {
 restore_backup() {
   local backup=$1 replaced_times=$2 f
   # The complete old set is in BACKUP, so anything in DEST can be replaced.
-  # Move links as links and leave unrelated subdirectories.
+  # Copy links as links and leave unrelated subdirectories.
   for f in "$dest"/*.json; do
     if [ ! -e "$f" ] && [ ! -L "$f" ]; then continue; fi
     if [ -d "$f" ] && [ ! -L "$f" ]; then continue; fi
@@ -45,10 +45,10 @@ restore_backup() {
   fi
   for f in "$backup"/*.json; do
     if [ ! -e "$f" ] && [ ! -L "$f" ]; then continue; fi
-    if ! mv -- "$f" "$dest/"; then return 1; fi
+    if ! cp -P -- "$f" "$dest/"; then return 1; fi
   done
   if [ "$replaced_times" -eq 1 ] && { [ -e "$backup/times.tsv" ] || [ -L "$backup/times.tsv" ]; }; then
-    if ! mv -- "$backup/times.tsv" "$dest/"; then return 1; fi
+    if ! cp -P -- "$backup/times.tsv" "$dest/"; then return 1; fi
   fi
   return 0
 }
