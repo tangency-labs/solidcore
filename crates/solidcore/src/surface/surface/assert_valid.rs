@@ -803,20 +803,17 @@ fn b_spline_surface_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) 
 
         // (bClosedRow is passed as the grid's bClosedCol and bClosedCol as its
         // bClosedRow, as upstream)
-        let non_monotonic = if k.fixes.grid_monotonic_zero_from_rounding {
-            // a step within the rounding of the two control points it is between is no
-            // step; upstream's monotonicity pass skips a step only below an absolute
-            // SM_EFF_ZERO, which one ulp of a coordinate is above past about 8192 mm
-            // from the origin (WR-737, #2560)
-            grid_has_non_monotonic_points_to_rounding(
-                &net.points,
-                net.v_count,
-                closed_row,
-                closed_col,
-            )?
-        } else {
-            grid_has_non_monotonic_points(&net.points, net.v_count, closed_row, closed_col)?
-        };
+        // a step within the rounding of the two control points it is between is no step;
+        // upstream's monotonicity pass skips a step only below an absolute SM_EFF_ZERO,
+        // which one ulp of a coordinate is above past about 8192 mm from the origin, so
+        // it reads a collapsed pole row carrying one ulp of noise as a zigzag that
+        // reverses at every point (WR-737, #2560)
+        let non_monotonic = grid_has_non_monotonic_points_to_rounding(
+            &net.points,
+            net.v_count,
+            closed_row,
+            closed_col,
+        )?;
         rtn &= r.report(B_SPLINE_SURFACE_TYPE, 5, 0, !non_monotonic, UNDEF, UNDEF)?;
     }
 
@@ -1097,9 +1094,11 @@ pub fn has_degenerate_control_point_row(b: &BSplineSurface, tol: f64) -> Result<
 /// neighbouring differences (coincident pairs skipped). As upstream, a failing column
 /// clears the row flag.
 ///
-/// A pair counts as coincident below an absolute `SM_EFF_ZERO`, as upstream;
-/// [`grid_has_non_monotonic_points_to_rounding`] counts a step within the rounding of
-/// the two points it is between instead.
+/// A pair counts as coincident below an absolute `SM_EFF_ZERO`, as upstream. Test #5 of
+/// `AssertValid` takes [`grid_has_non_monotonic_points_to_rounding`] instead, which counts
+/// a step within the rounding of the two points it is between; this entry point is left
+/// for the curved Setback fill's net certificate (#2366), whose own criterion is #2243's
+/// question.
 ///
 /// # Errors
 ///
@@ -1117,7 +1116,9 @@ pub fn grid_has_non_monotonic_points(
 /// [`grid_has_non_monotonic_points`] taking a step for no step when it is within the
 /// rounding of the two control points it is between ([`step_within_rounding`]), instead
 /// of upstream's absolute `SM_EFF_ZERO`, and keeping the last step that had a direction
-/// as the one the next is compared against.
+/// as the one the next is compared against. This is what `AssertValid` test #5 asks, so
+/// it is solidcore's result for a B-spline surface; the difference from
+/// `SmPointGrid::SetUpMonotonic` is recorded in `plan/upstream-issues/WR-737`.
 ///
 /// A direction is what the pass reads off a step, and a step shorter than the rounding of
 /// its own endpoints has none: the two points are one point as far as the numbers can
@@ -2918,41 +2919,31 @@ mod tests {
 
     /// tangency-labs/solidcore#2560: a sphere's net has a collapsed row of control points
     /// at each pole, and consecutive points of a collapsed row are exactly equal, so test
-    /// #5 skips their zero-length steps. One ulp of noise along such a row is a zigzag
-    /// whose steps reverse at every point. Past about 8192 mm from the origin one ulp is
-    /// above `EFF_ZERO`, so the skip no longer takes them for coincident and the check
-    /// reads a 180-degree turn at every point of the pole column. The step is noise: the
-    /// row is collapsed to within one ulp, 1/2,750,000 of `SM_ZONE_TOL_3D`.
+    /// #5 passes over their zero-length steps. One ulp of noise along such a row is a
+    /// zigzag whose steps reverse at every point. Past about 8192 mm from the origin one
+    /// ulp is above `EFF_ZERO`, which is where upstream's absolute zero stops recognising
+    /// such a step and the check reads a 180-degree turn at every point of the pole
+    /// column. The step is noise: the row is collapsed to within one ulp, 1/2,750,000 of
+    /// `SM_ZONE_TOL_3D`.
     #[test]
     fn issue_2560_one_ulp_noise_along_a_pole_row_is_not_a_reversal() {
         const T: [f64; 3] = [1.0e5, -7.0e4, 3.0e4];
-        let mut k = Kernel::default();
+        let k = Kernel::default();
 
-        let pinned = sphere_moved_homogeneously(&k, T);
-        let (ok, failed) = failed_tests(&k, &pinned);
-        assert!(!ok, "upstream refuses the moved sphere");
+        let moved = sphere_moved_homogeneously(&k, T);
         assert_eq!(
-            failed,
-            vec![(B_SPLINE_SURFACE_TYPE, 5)],
-            "upstream's absolute SM_EFF_ZERO takes the pole row's ulps for steps"
-        );
-
-        k.fixes.grid_monotonic_zero_from_rounding = true;
-        let fixed = sphere_moved_homogeneously(&k, T);
-        assert_eq!(
-            failed_tests(&k, &fixed),
+            failed_tests(&k, &moved),
             (true, vec![]),
             "the moved sphere's net is the sphere to rounding"
         );
 
-        // at the origin the pole rows stay bit-identical, so upstream passes the sphere too
-        let pinned_k = Kernel::default();
-        let near = sphere_moved_homogeneously(&pinned_k, [0.0, 0.0, 0.0]);
-        assert_eq!(failed_tests(&pinned_k, &near), (true, vec![]));
+        // at the origin the pole rows stay bit-identical, so the row has no steps at all
+        let near = sphere_moved_homogeneously(&k, [0.0, 0.0, 0.0]);
+        assert_eq!(failed_tests(&k, &near), (true, vec![]));
     }
 
-    /// A net that really doubles back is still refused with the opt-in: its steps are far
-    /// longer than the rounding of their own endpoints, so none of them is passed over
+    /// A net that really doubles back is still refused: its steps are far longer than the
+    /// rounding of their own endpoints, so none of them is passed over
     /// (#2560; the planar G2 Setback patches of
     /// `plan/findings/blend.blend_corner--planar-g2-setback-patch-net-doubles-back.md`
     /// turn back between steps of 3.3e-2 and 5.3e-1).
@@ -2962,8 +2953,7 @@ mod tests {
         pts[2 * 4 + 1] = [0.2, 1.0, 0.0];
         pts[2 * 4 + 2] = [0.2, 2.0, 0.0];
         let s = bspline(3, 3, &BEZ3, &BEZ3, &pts);
-        let mut k = Kernel::default();
-        k.fixes.grid_monotonic_zero_from_rounding = true;
+        let k = Kernel::default();
         let (ok, failed) = failed_tests(&k, &s);
         assert!(!ok);
         assert_eq!(failed, vec![(B_SPLINE_SURFACE_TYPE, 5)], "{failed:?}");
