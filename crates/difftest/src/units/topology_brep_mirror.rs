@@ -156,6 +156,8 @@ pub(super) fn status(r: SolidResult<()>) -> SolidResult<f64> {
         Ok(()) => Ok(0.),
         Err(e) if e.is_unported() => Err(e),
         Err(SolidError::Upstream { code, .. }) => Ok(f64::from(code)),
+        // a failure in solidcore's terms (#2615) carries the status it stands for
+        Err(SolidError::Failed(f)) => Ok(f64::from(f.status)),
         Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(1007.),
         Err(e) => Err(e),
     }

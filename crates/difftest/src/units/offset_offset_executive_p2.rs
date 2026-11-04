@@ -667,6 +667,8 @@ fn operation<T>(result: solidcore::Result<T>) -> RResult<(i32, Option<T>)> {
     match result {
         Ok(value) => Ok((ffi::NATIVE_SUCCESS, Some(value))),
         Err(SolidError::Upstream { code, .. }) => Ok((code, None)),
+        // a failure in solidcore's terms (#2615) carries the status it stands for
+        Err(SolidError::Failed(f)) => Ok((f.status, None)),
         Err(error) => Err(RunError::Kernel(error)),
     }
 }

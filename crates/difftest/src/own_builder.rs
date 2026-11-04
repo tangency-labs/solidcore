@@ -1857,6 +1857,8 @@ pub(crate) fn counts(b: &Brep) -> [usize; 10] {
 pub(crate) fn build_status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
+        // a failure in solidcore's terms (#2615) carries the status it stands for
+        SolidError::Failed(f) => f64::from(f.status),
         SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => {
             f64::from(solidcore::error::SM_ERR_INVALID_INPUT)
         }
