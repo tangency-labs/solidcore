@@ -295,17 +295,133 @@ fn every_curve_kind_becomes_the_kernel_kind_and_comes_back() {
         },
     ));
     for (r, want) in all {
-        assert_eq!(curve(&r), want);
-        assert_eq!(record_curve(curve(&r)), r);
+        assert_eq!(curve(&r).unwrap(), want);
+        assert_eq!(record_curve(curve(&r).unwrap()).unwrap(), r);
     }
 }
 
 #[test]
 fn every_surface_kind_becomes_the_kernel_kind_and_comes_back() {
     for (r, want) in surfaces() {
-        assert_eq!(surface(&r), want);
-        assert_eq!(record_surface(surface(&r)), r);
+        assert_eq!(surface(&r).unwrap(), want);
+        assert_eq!(record_surface(surface(&r).unwrap()).unwrap(), r);
     }
+}
+
+/// Saving retains both the exact offset source and the distinct fitted profile, together
+/// with the face's parameter map and certified bound; conversion copies their raw fields.
+#[test]
+fn procedural_screw_records_preserve_source_fit_and_parameter_map() {
+    use solidcore_record::brep::sweep as r;
+
+    let source = r::NurbsCurveRecord {
+        dim: 3,
+        points_3d: true,
+        degree: 1,
+        knots: vec![2.0, 2.0, 5.0, 5.0],
+        points: vec![[2.0, -0.0, 0.25], [3.0, 0.0, 0.5]],
+        weights: None,
+    };
+    let fitted = r::NurbsCurveRecord {
+        knots: vec![1.0, 1.0, 3.0, 6.0, 6.0],
+        points: vec![[2.1, 0.0, 0.2], [2.4, 0.0, 0.3], [3.1, 0.0, 0.6]],
+        weights: Some(vec![0.75, 0.875, 1.0]),
+        ..source.clone()
+    };
+    let saved = Surface::ProceduralSweep(Box::new(r::ProceduralSweepRecord {
+        definition: r::SweepDefinitionRecord::Screw {
+            profile: fitted.clone(),
+            motion: r::ScrewMotionRecord {
+                origin: [1.25, -2.5, 3.75],
+                axis: [0.0, 0.0, 1.0],
+                pitch: -1.5,
+                law: Some(r::RadialLawRecord {
+                    direction: [1.0, 0.0, 0.0],
+                    angles: vec![-1.0, 0.5, 2.0],
+                    offsets: vec![0.1, 0.2, 0.15],
+                }),
+            },
+            offset: Some(r::ScrewOffsetRecord {
+                source: source.clone(),
+                signed_distance: -0.125,
+                approximation_bound: 0.000_25,
+            }),
+        },
+        net: r::NurbsSurfaceRecord {
+            u_degree: 1,
+            v_degree: 1,
+            u_count: 2,
+            v_count: 2,
+            u_knots: vec![1.0, 1.0, 6.0, 6.0],
+            v_knots: vec![-1.0, -1.0, 2.0, 2.0],
+            points: vec![
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.5],
+                [3.0, 1.0, 0.0],
+                [4.0, 1.0, 0.5],
+            ],
+            weights: Some(vec![0.5, 0.75, 1.0, 1.25]),
+        },
+        stations: vec![-1.0, 0.5, 2.0],
+        half: 0.1875,
+        bound: 0.000_75,
+        map_a: [7.0, -0.25],
+        map_b: [-2.0, 0.5],
+        swapped: true,
+    }));
+    solidcore_record::brep::check_surface(&saved, &mut solidcore_record::brep::Budget::input())
+        .unwrap();
+    let json = serde_json::to_string(&saved).unwrap();
+    let loaded: Surface = serde_json::from_str(&json).unwrap();
+    let k::Surface::ProceduralSweep(kernel) = surface(&loaded).unwrap() else {
+        panic!("a procedural sweep")
+    };
+    let k::geometry::sweep::SweepDefinitionRecord::Screw {
+        profile,
+        motion,
+        offset,
+    } = &kernel.definition;
+    assert_eq!(profile.knots, fitted.knots);
+    assert_eq!(profile.points, fitted.points);
+    assert_eq!(profile.weights, fitted.weights);
+    assert_eq!(motion.origin, [1.25, -2.5, 3.75]);
+    assert_eq!(motion.axis, [0.0, 0.0, 1.0]);
+    assert_eq!(motion.pitch, -1.5);
+    assert_eq!(motion.law.as_ref().unwrap().offsets, [0.1, 0.2, 0.15]);
+    let offset = offset.as_ref().unwrap();
+    assert_eq!(offset.source.knots, source.knots);
+    assert_eq!(offset.source.weights, None);
+    assert_eq!(offset.source.points[0][1].to_bits(), (-0.0_f64).to_bits());
+    assert_eq!(offset.signed_distance, -0.125);
+    assert_eq!(offset.approximation_bound, 0.000_25);
+    assert_eq!(
+        (kernel.map_a, kernel.map_b, kernel.swapped),
+        ([7.0, -0.25], [-2.0, 0.5], true)
+    );
+    assert_eq!((kernel.half, kernel.bound), (0.1875, 0.000_75));
+    assert_eq!(
+        kernel.net.weights.as_deref(),
+        Some([0.5, 0.75, 1.0, 1.25].as_slice())
+    );
+    let back = record_surface(k::Surface::ProceduralSweep(kernel)).unwrap();
+    assert_eq!(serde_json::to_string(&back).unwrap(), json);
+
+    // These records are data only: malformed metadata crosses unchanged for the kernel,
+    // while the portable-record structural check refuses it before body reconstruction.
+    let Surface::ProceduralSweep(mut malformed) = back else {
+        panic!("a procedural sweep")
+    };
+    malformed.map_b[0] = 0.0;
+    let malformed = Surface::ProceduralSweep(malformed);
+    assert!(solidcore_record::brep::check_surface(
+        &malformed,
+        &mut solidcore_record::brep::Budget::input()
+    )
+    .is_err());
+    assert_eq!(
+        record_surface(surface(&malformed).unwrap()).unwrap(),
+        malformed
+    );
 }
 
 #[test]
@@ -422,9 +538,8 @@ fn vectors_keep_every_bit() {
     );
 }
 
-/// Every record kind has its kernel kind, so the conversion never refuses: a malformed record
-/// (knots that do not match its points, a NaN) is carried over as it is, and the kernel's
-/// evaluator is what refuses it.
+/// Within the depth bound, malformed geometry (knots that do not match its points, a NaN) is
+/// carried over as it is, and the kernel's evaluator is what refuses it.
 #[test]
 fn a_malformed_record_is_carried_over_for_the_kernel_to_refuse() {
     let bad_spline = Surface::Spline {
@@ -432,14 +547,17 @@ fn a_malformed_record_is_carried_over_for_the_kernel_to_refuse() {
         v_knots: vec![0.0, 0.0, 1.0, 1.0],
         points: vec![vec![[0.0; 3]; 2]; 2],
     };
-    assert_eq!(record_surface(surface(&bad_spline)), bad_spline);
-    assert!(SurfaceEval::new(&surface(&bad_spline)).is_err());
+    assert_eq!(
+        record_surface(surface(&bad_spline).unwrap()).unwrap(),
+        bad_spline
+    );
+    assert!(SurfaceEval::new(&surface(&bad_spline).unwrap()).is_err());
     let bad_curve = Curve::Spline {
         knots: vec![0.0, 1.0],
         points: vec![[0.0; 3]; 3],
     };
-    assert_eq!(record_curve(curve(&bad_curve)), bad_curve);
-    assert!(CurveEval::new(&curve(&bad_curve)).is_err());
+    assert_eq!(record_curve(curve(&bad_curve).unwrap()).unwrap(), bad_curve);
+    assert!(CurveEval::new(&curve(&bad_curve).unwrap()).is_err());
     let nan = Surface::Sphere {
         frame: Frame {
             origin: [f64::NAN, 0.0, 0.0],
@@ -447,7 +565,7 @@ fn a_malformed_record_is_carried_over_for_the_kernel_to_refuse() {
         },
         radius: 1.0,
     };
-    let Surface::Sphere { frame: g, .. } = record_surface(surface(&nan)) else {
+    let Surface::Sphere { frame: g, .. } = record_surface(surface(&nan).unwrap()).unwrap() else {
         panic!("a sphere")
     };
     assert!(g.origin[0].is_nan());
@@ -540,4 +658,193 @@ fn planar_profiles_become_the_kernel_kinds_and_come_back() {
     let k = region2(&region);
     assert_eq!(k.holes.len(), 2);
     assert_eq!(record_region2(&k), region);
+}
+
+// These builders and destructors never recurse, including for rejected borrowed inputs.
+// The same shapes are built independently on both sides of the conversion boundary.
+macro_rules! depth_fixtures {
+    ($module:ident, $types:ident) => {
+        mod $module {
+            use super::$types::{Curve, Surface};
+
+            fn line() -> Curve {
+                Curve::Line {
+                    start: [0.0; 3],
+                    end: [1.0; 3],
+                }
+            }
+            fn plane() -> Surface {
+                Surface::Plane {
+                    origin: [0.0; 3],
+                    u_axis: [1.0, 0.0, 0.0],
+                    v_axis: [0.0, 1.0, 0.0],
+                }
+            }
+            fn intersection(leader: Curve, first: Surface) -> Curve {
+                Curve::SurfaceIntersection {
+                    surfaces: [Box::new(first), Box::new(plane())],
+                    leader: Box::new(leader),
+                    tolerance: 1e-6,
+                }
+            }
+            fn revolution(profile: Curve) -> Surface {
+                Surface::PlacedRevolution {
+                    profile: Box::new(profile),
+                    origin: [0.0; 3],
+                    axis: [0.0, 0.0, 1.0],
+                    matrix: super::M,
+                    forward: true,
+                }
+            }
+            // Exactly `depth` edges from root to deepest leaf. Profile chains alternate
+            // intersection surface and revolution profile; leader chains stay in curves.
+            pub fn curve(depth: usize, profiles: bool) -> Curve {
+                if !profiles {
+                    let mut c = line();
+                    for _ in 0..depth {
+                        c = intersection(c, plane());
+                    }
+                    return c;
+                }
+                if depth % 2 == 0 {
+                    let mut c = line();
+                    for _ in 0..depth / 2 {
+                        c = intersection(line(), revolution(c));
+                    }
+                    c
+                } else {
+                    let mut s = plane();
+                    for _ in 0..depth / 2 {
+                        s = revolution(intersection(line(), s));
+                    }
+                    intersection(line(), s)
+                }
+            }
+            pub fn surface(depth: usize, profiles: bool) -> Surface {
+                if depth == 0 {
+                    plane()
+                } else {
+                    revolution(curve(depth - 1, profiles))
+                }
+            }
+            enum Node {
+                Curve(Curve),
+                Surface(Surface),
+            }
+            fn dismantle(root: Node) {
+                let mut pending = vec![root];
+                while let Some(node) = pending.pop() {
+                    match node {
+                        Node::Curve(Curve::SurfaceIntersection {
+                            surfaces: [a, b],
+                            leader,
+                            ..
+                        }) => {
+                            pending.push(Node::Curve(*leader));
+                            pending.push(Node::Surface(*a));
+                            pending.push(Node::Surface(*b));
+                        }
+                        Node::Surface(Surface::PlacedRevolution { profile, .. }) => {
+                            pending.push(Node::Curve(*profile));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            pub fn drop_curve(c: Curve) {
+                dismantle(Node::Curve(c));
+            }
+            pub fn drop_surface(s: Surface) {
+                dismantle(Node::Surface(s));
+            }
+        }
+    };
+}
+
+use solidcore_record::brep as r;
+depth_fixtures!(record_depth, r);
+depth_fixtures!(kernel_depth, k);
+
+fn depth_case(case: &str, depth: usize) -> Result<(), &'static str> {
+    let profiles = case.ends_with("profile");
+    match case {
+        "curve-to-kernel-leader" | "curve-to-kernel-profile" => {
+            let input = record_depth::curve(depth, profiles);
+            let output = curve(&input);
+            record_depth::drop_curve(input);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                kernel_depth::drop_curve(output);
+            }
+        }
+        "surface-to-kernel-leader" | "surface-to-kernel-profile" => {
+            let input = record_depth::surface(depth, profiles);
+            let output = surface(&input);
+            record_depth::drop_surface(input);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                kernel_depth::drop_surface(output);
+            }
+        }
+        "curve-to-record-leader" | "curve-to-record-profile" => {
+            let input = kernel_depth::curve(depth, profiles);
+            let output = record_curve(input);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                record_depth::drop_curve(output);
+            }
+        }
+        "surface-to-record-leader" | "surface-to-record-profile" => {
+            let input = kernel_depth::surface(depth, profiles);
+            let output = record_surface(input);
+            assert_eq!(output.is_ok(), depth <= 16);
+            if let Ok(output) = output {
+                record_depth::drop_surface(output);
+            }
+        }
+        _ => return Err("unknown depth case"),
+    }
+    Ok(())
+}
+
+#[test]
+fn geometry_depth_is_bounded() {
+    const CHILD: &str = "SOLIDCORE_CONVERT_DEPTH_CHILD";
+    if let Ok(spec) = std::env::var(CHILD) {
+        let (case, depth) = spec.split_once(':').unwrap();
+        let case = case.to_owned();
+        let depth = depth.parse().unwrap();
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || depth_case(&case, depth))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        return;
+    }
+    let executable = std::env::current_exe().unwrap();
+    let mut failures = Vec::new();
+    for case in [
+        "curve-to-kernel-leader",
+        "curve-to-kernel-profile",
+        "surface-to-kernel-leader",
+        "surface-to-kernel-profile",
+        "curve-to-record-leader",
+        "curve-to-record-profile",
+        "surface-to-record-leader",
+        "surface-to-record-profile",
+    ] {
+        for depth in [16, 17, 100_000] {
+            let status = std::process::Command::new(&executable)
+                .args(["--exact", "geometry_depth_is_bounded", "--nocapture"])
+                .env(CHILD, format!("{case}:{depth}"))
+                .status()
+                .unwrap();
+            if !status.success() {
+                failures.push(format!("{case} depth {depth}: child {status}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

@@ -144,7 +144,7 @@ fn to_u32(x: usize) -> Result<u32> {
 }
 
 /// A NURBS curve's stored numbers.
-fn curve_record(c: &BSplineCurve) -> Result<NurbsCurveRecord> {
+pub(crate) fn curve_record(c: &BSplineCurve) -> Result<NurbsCurveRecord> {
     let nurb = c.nurb.as_ref().ok_or_else(|| SolidError::sm_err(OP_TO))?;
     let rational = nurb.is_rational();
     let points_3d = nurb.is_3d();
@@ -163,7 +163,7 @@ fn curve_record(c: &BSplineCurve) -> Result<NurbsCurveRecord> {
 }
 
 /// A NURBS surface's stored numbers.
-fn surface_record(s: &BSplineSurface) -> Result<NurbsSurfaceRecord> {
+pub(crate) fn surface_record(s: &BSplineSurface) -> Result<NurbsSurfaceRecord> {
     let nurb = s.gw_nurb().ok_or_else(|| SolidError::sm_err(OP_TO))?;
     let rational = nurb.is_rational();
     let mut points = Vec::new();
@@ -363,7 +363,7 @@ fn stored_point(
 }
 
 /// The curve a record holds, its NURB as stored (no knot fix-up).
-fn curve_of(r: &NurbsCurveRecord) -> Result<BSplineCurve> {
+pub(crate) fn curve_of(r: &NurbsCurveRecord) -> Result<BSplineCurve> {
     let p = degree_of(r.degree)?;
     non_decreasing(&r.knots)?;
     let mut pw = Vec::new();
@@ -379,7 +379,7 @@ fn curve_of(r: &NurbsCurveRecord) -> Result<BSplineCurve> {
 }
 
 /// The surface a record holds, its NURB as stored (no knot fix-up).
-fn surface_of(r: &NurbsSurfaceRecord) -> Result<BSplineSurface> {
+pub(crate) fn surface_of(r: &NurbsSurfaceRecord) -> Result<BSplineSurface> {
     let p = degree_of(r.u_degree)?;
     let q = degree_of(r.v_degree)?;
     non_decreasing(&r.u_knots)?;

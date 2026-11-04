@@ -40,6 +40,12 @@
 //! `sqrt((lambda E_l*)^2 + (D / 2 E_o*)^2)` plus a floor ([`ProceduralSweep::floor`]), a
 //! forward error bound of computing the net and of evaluating B and S.
 //!
+//! **Two motions, one kind (slice 2).** A wall swept along a general path ([`path`],
+//! [`PathMotion`]) is the same definition with another motion: the profile carried along the
+//! path in the frame of `sweep_scale`'s projection normal method, in closed form, the net
+//! across a map from its parameter to the path's, and the bound an enclosure of the net
+//! against it (the module's docs state the frame rule and the enclosure).
+//!
 //! The definition keeps no analytic kind of its own: the face's surface stays a B-spline,
 //! so every match on its kind still sees the wall; the definition rides on the surface
 //! ([`crate::surface::surface::Surface::procedural_sweep`]) as an exact round's does. A
@@ -50,6 +56,12 @@
 
 // The range tests are NaN-safe negations (`!(x > y)`), as `sweep::screw`'s.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
+
+mod derivatives;
+mod offset;
+mod offset_profile;
+mod record;
+pub mod screw_offset;
 
 use std::f64::consts::TAU;
 
@@ -64,7 +76,12 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::math::gamma;
+use crate::nurbs::srf_adv::p6::SweepTrace;
 use crate::surface::procedural_blend::{BlendRef, NetScope};
+
+pub mod path;
+
+pub use path::PathMotion;
 
 const OP_CREATE: &str = "surface::procedural_sweep::ProceduralSweep::create";
 const OP_MOTION: &str = "surface::procedural_sweep::ScrewMotion::new";
@@ -300,11 +317,21 @@ impl Default for SweepMap {
     }
 }
 
-/// A screw-swept wall by its definition (module docs).
+/// How a sweep carries its profile: one definition kind, two motions (#2572).
+#[derive(Debug, Clone)]
+pub enum Motion {
+    /// A screw motion about an axis (slice 1, [`crate::sweep::screw`]).
+    Screw(ScrewMotion),
+    /// The profile along a general path in a frame (slice 2, [`path`]).
+    Path(PathMotion),
+}
+
+/// A swept wall by its definition (module docs).
 #[derive(Debug, Clone)]
 pub struct ProceduralSweep {
     profile: BSplineCurve,
-    motion: ScrewMotion,
+    offset: Option<offset_profile::OffsetProfile>,
+    motion: Motion,
     stations: Vec<f64>,
     half: f64,
     tau: f64,
@@ -473,9 +500,16 @@ impl ProceduralSweep {
         }
         let mut profile = profile.copy();
         profile.set_out_of_bounds_enabled(false);
+        // Joined walls retain their original arc spans, which can have different
+        // widths. The largest bounds every span; turn_at uses each local width.
+        let half = stations.windows(2).fold(half, |largest, pair| match pair {
+            [a, b] => largest.max(0.5 * (b - a)),
+            _ => largest,
+        });
         let mut sweep = Self {
             profile,
-            motion,
+            offset: None,
+            motion: Motion::Screw(motion),
             stations: stations.to_vec(),
             half,
             tau: (0.5 * half).tan(),
@@ -492,10 +526,28 @@ impl ProceduralSweep {
         &self.profile
     }
 
-    /// The screw motion.
+    /// The motion.
     #[must_use]
-    pub const fn motion(&self) -> &ScrewMotion {
+    pub const fn motion(&self) -> &Motion {
         &self.motion
+    }
+
+    /// The screw motion, for a screw-swept wall.
+    #[must_use]
+    pub const fn screw(&self) -> Option<&ScrewMotion> {
+        match &self.motion {
+            Motion::Screw(m) => Some(m),
+            Motion::Path(_) => None,
+        }
+    }
+
+    /// The path motion, for a wall swept along a general path.
+    #[must_use]
+    pub const fn path(&self) -> Option<&PathMotion> {
+        match &self.motion {
+            Motion::Path(m) => Some(m),
+            Motion::Screw(_) => None,
+        }
     }
 
     /// The net's stations across the turns, radians: the face's turn range is their
@@ -548,6 +600,13 @@ impl ProceduralSweep {
     /// (clamped to the stations), and `d theta / dt`.
     #[must_use]
     pub fn turn_at(&self, t: f64) -> (f64, f64) {
+        self.turn_at_side(t, false)
+    }
+
+    fn turn_at_side(&self, t: f64, ending_span: bool) -> (f64, f64) {
+        if !matches!(self.motion, Motion::Screw(_)) {
+            return (t, 1.0);
+        }
         let (Some(&first), Some(&last)) = (self.stations.first(), self.stations.last()) else {
             return (t, 1.0);
         };
@@ -555,7 +614,7 @@ impl ProceduralSweep {
         let spans = self.stations.len().saturating_sub(1);
         let i = self
             .stations
-            .partition_point(|&x| x <= t)
+            .partition_point(|&x| if ending_span { x < t } else { x <= t })
             .saturating_sub(1)
             .min(spans.saturating_sub(1));
         let (Some(&t0), Some(&t1)) = (self.stations.get(i), self.stations.get(i + 1)) else {
@@ -563,9 +622,10 @@ impl ProceduralSweep {
         };
         let width = t1 - t0;
         let s = 2.0 * (t - t0) / width - 1.0;
-        let x = self.tau * s;
+        let tau = (0.25 * width).tan();
+        let x = tau * s;
         let theta = 0.5 * (t0 + t1) + 2.0 * x.atan();
-        let rate = 2.0 * self.tau / (1.0 + x * x) * (2.0 / width);
+        let rate = 2.0 * tau / (1.0 + x * x) * (2.0 / width);
         (theta, rate)
     }
 
@@ -575,13 +635,17 @@ impl ProceduralSweep {
     ///
     /// # Errors
     ///
-    /// `InvalidInput` for an order above 1; those of evaluating the profile.
+    /// `InvalidInput` for a screw order above four or a path order above one;
+    /// those of evaluating the retained profile or exact offset section.
     pub fn evaluate_definition(
         &self,
         uv: Point2,
         highest_u_deriv: usize,
         highest_v_deriv: usize,
     ) -> Result<Vec<Vec<Vec3>>> {
+        if self.screw().is_some() && (highest_u_deriv > 1 || highest_v_deriv > 1) {
+            return self.screw_derivatives(uv, highest_u_deriv, highest_v_deriv);
+        }
         if highest_u_deriv > 1 || highest_v_deriv > 1 {
             return Err(SolidError::invalid_input(
                 OP_EVAL,
@@ -590,13 +654,32 @@ impl ProceduralSweep {
         }
         let wt = self.definition_parameters(uv);
         let first = highest_u_deriv + highest_v_deriv > 0;
-        let p = self
-            .profile
-            .evaluate(wt.x, usize::from(first), false, false)?;
-        let point = p.first().copied().unwrap_or(Vec3::ZERO);
-        let tangent = p.get(1).copied().unwrap_or(Vec3::ZERO);
+        let (s, s_w, s_t, s_wt) = match &self.motion {
+            Motion::Screw(m) => self.screw_partials(m, wt, first)?,
+            Motion::Path(m) => self.path_partials(m, wt, first)?,
+        };
+        Ok(self.assemble(s, s_w, s_t, s_wt, highest_u_deriv, highest_v_deriv))
+    }
+
+    /// The screw definition's `S`, `S_w`, `S_t` and `S_wt` at `(w, t)`.
+    fn screw_partials(
+        &self,
+        m: &ScrewMotion,
+        wt: Point2,
+        first: bool,
+    ) -> Result<(Vec3, Vec3, Vec3, Vec3)> {
+        let domain = self.profile.natural_interval();
+        let w = wt.x.clamp(domain.min(), domain.max());
+        let (point, tangent) = if let Some(offset) = &self.offset {
+            offset.evaluate(m, w)?
+        } else {
+            let p = self.profile.evaluate(w, usize::from(first), false, false)?;
+            (
+                p.first().copied().unwrap_or(Vec3::ZERO),
+                p.get(1).copied().unwrap_or(Vec3::ZERO),
+            )
+        };
         let (theta, rate) = self.turn_at(wt.y);
-        let m = &self.motion;
         let (first_t, last_t) = (
             self.stations.first().copied().unwrap_or(0.0),
             self.stations.last().copied().unwrap_or(0.0),
@@ -612,6 +695,41 @@ impl ProceduralSweep {
         let s_w = m.turn(tangent, theta);
         let s_t = (m.axis.cross(arm) + m.turn(shift_rate, theta) + m.axis * (m.pitch / TAU)) * rate;
         let s_wt = m.axis.cross(s_w) * rate;
+        Ok((s, s_w, s_t, s_wt))
+    }
+
+    /// The path definition's `S`, `S_w`, `S_t` and `S_wt` at `(w, v)`, `v` the net's
+    /// parameter across the sweep ([`PathMotion::path_parameter`]).
+    fn path_partials(
+        &self,
+        m: &PathMotion,
+        wt: Point2,
+        first: bool,
+    ) -> Result<(Vec3, Vec3, Vec3, Vec3)> {
+        let p = self
+            .profile
+            .evaluate(wt.x, usize::from(first), false, false)?;
+        let point = p.first().copied().unwrap_or(Vec3::ZERO);
+        let tangent = p.get(1).copied().unwrap_or(Vec3::ZERO);
+        let (t, slope) = m.path_parameter(wt.y);
+        let frame = m.frame(t)?;
+        let s = frame.place(point);
+        let s_w = frame.turn(tangent);
+        let s_t = frame.rate(point) * slope;
+        let s_wt = frame.turn_rate(tangent) * slope;
+        Ok((s, s_w, s_t, s_wt))
+    }
+
+    /// The partials of the face at its `(u, v)` from those at the definition's `(w, t)`.
+    fn assemble(
+        &self,
+        s: Vec3,
+        s_w: Vec3,
+        s_t: Vec3,
+        s_wt: Vec3,
+        highest_u_deriv: usize,
+        highest_v_deriv: usize,
+    ) -> Vec<Vec<Vec3>> {
         let [b0, b1] = self.map.b;
         let (du, dv) = if self.map.swapped {
             (s_t * b1, s_w * b0)
@@ -630,7 +748,7 @@ impl ProceduralSweep {
                 };
             }
         }
-        Ok(d)
+        d
     }
 
     /// The definition's point at the face's `uv`.
@@ -655,7 +773,10 @@ impl ProceduralSweep {
     ///
     /// `InvalidInput` where the enclosure is not finite; those of reading the profile.
     pub fn certify(&self) -> Result<f64> {
-        let lam = Ivl::from(self.motion.pitch.abs()) / Ivl::from(TAU);
+        let Motion::Screw(m) = &self.motion else {
+            return Ok(self.bound);
+        };
+        let lam = Ivl::from(m.pitch.abs()) / Ivl::from(TAU);
         let lift = lam * Ivl::from(lift_error_bound(self.tau));
         let change = self.largest_change_per_span();
         let offset = if change > 0.0 {
@@ -664,7 +785,8 @@ impl ProceduralSweep {
             Ivl::from(0.0)
         };
         let exact = (lift * lift + offset * offset).sqrt().hi;
-        let bound = round_up(exact + self.floor()?);
+        let section = self.offset.as_ref().map_or(0.0, |offset| offset.bound);
+        let bound = (Ivl::from(exact) + Ivl::from(section) + Ivl::from(self.floor()?)).hi;
         if bound.is_finite() && bound > 0.0 {
             Ok(bound)
         } else {
@@ -677,7 +799,10 @@ impl ProceduralSweep {
 
     /// An upper bound of the law's change across one span, `|D|`.
     fn largest_change_per_span(&self) -> f64 {
-        let Some(law) = self.motion.law.as_ref() else {
+        let Motion::Screw(m) = &self.motion else {
+            return 0.0;
+        };
+        let Some(law) = m.law.as_ref() else {
             return 0.0;
         };
         let (Some(&first), Some(&last)) = (self.stations.first(), self.stations.last()) else {
@@ -713,7 +838,9 @@ impl ProceduralSweep {
     /// Those of reading the profile.
     pub fn floor(&self) -> Result<f64> {
         let c = self.profile.canonical()?;
-        let m = &self.motion;
+        let Motion::Screw(m) = &self.motion else {
+            return self.path_floor();
+        };
         let (w_lo, w_hi) = if c.weights.is_empty() {
             (1.0, 1.0)
         } else {
@@ -805,8 +932,26 @@ impl ProceduralSweep {
             .max((y.dot(y) - 1.0).abs())
             .max(x.dot(y).abs());
         let reach = self.reach()?;
-        self.profile.transform(rotate_n_move, scale)?;
-        let m = &mut self.motion;
+        let m = match &mut self.motion {
+            Motion::Screw(m) => {
+                self.profile.transform(rotate_n_move, scale)?;
+                if let Some(offset) = &mut self.offset {
+                    offset.source.transform(rotate_n_move, scale)?;
+                    offset.distance *= factor;
+                    offset.bound *= factor;
+                }
+                m
+            }
+            Motion::Path(p) => {
+                p.transform(rotate_n_move, scale)?;
+                self.profile.transform(&Axis2Placement::IDENTITY, scale)?;
+                self.bound = round_up(
+                    self.bound * factor * (1.0 + 3.0 * eta)
+                        + 12.0 * eta * (reach + self.bound) * factor,
+                );
+                return Ok(());
+            }
+        };
         let origin = rotate_n_move.transform_point(m.origin * factor);
         let axis = rotate_n_move.transform_vector(m.axis);
         let law = match m.law.take() {
@@ -839,7 +984,9 @@ impl ProceduralSweep {
     /// Theta`.
     fn reach(&self) -> Result<f64> {
         let c = self.profile.canonical()?;
-        let m = &self.motion;
+        let Motion::Screw(m) = &self.motion else {
+            return self.path_reach();
+        };
         let dist = c
             .control_points
             .iter()
@@ -847,6 +994,59 @@ impl ProceduralSweep {
         let delta = m.law.as_ref().map_or(0.0, RadialLaw::largest_offset);
         let theta = self.stations.iter().fold(0.0_f64, |t, &x| t.max(x.abs()));
         Ok(dist + delta + m.pitch.abs() / TAU * theta)
+    }
+}
+
+impl ProceduralSweep {
+    /// How far a path sweep reaches from the origin: the path's and the profile's.
+    fn path_reach(&self) -> Result<f64> {
+        let Motion::Path(p) = &self.motion else {
+            return Ok(0.0);
+        };
+        let c = self.profile.canonical()?;
+        let r = c
+            .control_points
+            .iter()
+            .fold(0.0_f64, |m, q| m.max(q.length()));
+        Ok(p.reach()? + r)
+    }
+
+    /// The floor of a path sweep's bound (included in it): a forward error bound of
+    /// evaluating the net and the definition.
+    fn path_floor(&self) -> Result<f64> {
+        Ok(gamma(96) * 4.0 * 2.0 * self.path_reach()?)
+    }
+
+    /// The definition of the wall `sweep_scale` fitted: `profile` carried along `path` in the
+    /// frame the chain of `trace` gives, its bound certified against `net`
+    /// ([`PathMotion::create`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`PathMotion::create`]: a net that is not the profile swept along the path.
+    pub(crate) fn create_path(
+        profile: &BSplineCurve,
+        path: &BSplineCurve,
+        trace: &SweepTrace,
+        net: &BSplineSurface,
+    ) -> Result<Self> {
+        let (motion, bound, swapped) = PathMotion::create(profile, path, trace, net)?;
+        let mut profile = profile.copy();
+        profile.set_out_of_bounds_enabled(false);
+        let stations = motion.nodes().iter().map(|n| n.0).collect();
+        Ok(Self {
+            profile,
+            offset: None,
+            motion: Motion::Path(motion),
+            stations,
+            half: 0.0,
+            tau: 0.0,
+            bound,
+            map: SweepMap {
+                swapped,
+                ..SweepMap::default()
+            },
+        })
     }
 }
 
@@ -889,8 +1089,9 @@ impl<'a> SweepRef<'a> {
         self.sweep.evaluate_definition_point(uv)
     }
 
-    /// The partials at `uv` to the first order in each parameter, the net's or the
-    /// definition's as [`SweepRef::evaluate_point`] chooses.
+    /// The partials at `uv`, the net's or the definition's as
+    /// [`SweepRef::evaluate_point`] chooses. Exact screw partials support order
+    /// four in each parameter; exact path partials support order one.
     ///
     /// # Errors
     ///

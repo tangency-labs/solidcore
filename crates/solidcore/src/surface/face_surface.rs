@@ -107,7 +107,7 @@ pub fn face_surface(
                     scale: [1.0, 1.0],
                 })
             }
-            Record::Spline { .. } => {
+            Record::Spline { .. } | Record::ProceduralSweep(_) => {
                 let (surface, uv_domain) = from_parameters(k, label, domain)?;
                 Ok(FaceSurface {
                     surface,
@@ -361,6 +361,15 @@ pub fn record_face(k: &Kernel, s: &Surface, uv_domain: &Extent2d) -> Result<Reco
         [uv_domain.u_min(), uv_domain.u_max()],
         [uv_domain.v_min(), uv_domain.v_max()],
     ];
+    if let Some(sweep) = s.procedural_sweep() {
+        return Ok(RecordFace {
+            surface: Record::ProceduralSweep(Box::new(sweep.definition().to_record(sweep.net())?)),
+            nurbs: None,
+            domain: box_,
+            scale: [1.0, 1.0],
+            agrees: true,
+        });
+    }
     if let SurfaceKind::Plane(p) = s.kind_with_nurb(k)? {
         A::check(k, s)?;
         let (o, x, y) = p.position().canonical();

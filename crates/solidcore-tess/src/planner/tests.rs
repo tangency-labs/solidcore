@@ -480,6 +480,7 @@ fn analytic(b: &brep::Brep, face: usize) -> bool {
         !matches!(
             f.surface,
             brep::Surface::Spline { .. }
+                | brep::Surface::ProceduralSweep(_)
                 | brep::Surface::RationalSpline { .. }
                 | brep::Surface::PlacedRevolution { .. }
         )
@@ -499,7 +500,7 @@ fn max_chord(body: &brep::Brep, plan: &TessPlan) -> f64 {
             continue;
         }
         let record = &body.faces[f.face as usize];
-        let Ok(exact) = SurfaceEval::new(&kernel::surface(&record.surface)) else {
+        let Ok(exact) = SurfaceEval::new(&kernel::surface(&record.surface).unwrap()) else {
             panic!("face {}: the record's evaluator", f.face)
         };
         let s = &plan.surfaces[f.surface.unwrap() as usize];

@@ -2559,6 +2559,15 @@ impl Surface {
         signed_offset_distance: f64,
         approx_tol_3d: f64,
     ) -> Result<Option<Self>> {
+        if let Some(sweep) = self
+            .procedural_sweep()
+            .filter(|s| s.definition().is_screw_invariant())
+        {
+            return sweep
+                .definition()
+                .normal_offset(sweep.net(), signed_offset_distance, approx_tol_3d)
+                .map(Some);
+        }
         // a blend by its definition (#2487): the round of the moved radius on the offset
         // supports, built from its definition S, never an offset of its net
         if let Some(blend) = self.procedural_blend() {

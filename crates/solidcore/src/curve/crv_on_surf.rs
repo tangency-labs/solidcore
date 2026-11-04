@@ -851,6 +851,13 @@ impl CrvOnSurf {
         from_left: bool,
         non_zero_tangents: bool,
     ) -> Result<Vec<Vec3>> {
+        // A curve on a retained screw denotes its exact lift, even when a caller
+        // permits the support net for a separate surface query.
+        let screw = self
+            .surface
+            .procedural_sweep()
+            .is_some_and(|s| s.definition().screw().is_some());
+        let _exact = screw.then(|| crate::surface::procedural_blend::NetScope::exact(k));
         // limit the number of derivatives to 3
         let mut n_eval = num_derivs.min(MAX_DERIVS);
 
@@ -876,7 +883,7 @@ impl CrvOnSurf {
 
         // If the surface can't handle this many derivatives (default bNonZeroTangents)
         while let Err(e) = &srf {
-            if e.is_unported_or_cancelled() || n_eval == 0 {
+            if screw || e.is_unported_or_cancelled() || n_eval == 0 {
                 break;
             }
             n_eval -= 1;
@@ -960,6 +967,11 @@ impl CrvOnSurf {
     ///
     /// Those of the UV curve's and the surface's point evaluation.
     pub fn evaluate_point(&self, k: &Kernel, t: f64) -> Result<Point3> {
+        let _exact = self
+            .surface
+            .procedural_sweep()
+            .is_some_and(|s| s.definition().screw().is_some())
+            .then(|| crate::surface::procedural_blend::NetScope::exact(k));
         // UVCurve eval
         let p = self.uv_curve.evaluate_point(k, t)?;
 

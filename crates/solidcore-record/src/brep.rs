@@ -15,6 +15,7 @@ mod curve2;
 pub mod envelope;
 pub mod history;
 pub mod part;
+pub mod sweep;
 mod topology;
 pub use curve2::Curve2;
 
@@ -24,7 +25,8 @@ pub const VERSION: u32 = 4;
 /// ([`Brep::validate_built`]) has no such cap.
 pub const MAX_ITEMS: usize = 4_000_000;
 pub const MAX_SHELLS: usize = 1024;
-const MAX_DEPTH: usize = 16;
+/// Maximum number of nested geometry edges, with the root at depth zero.
+pub const MAX_DEPTH: usize = 16;
 /// The highest spline degree a record may carry.
 pub const MAX_SPLINE_DEGREE: usize = 16;
 const TAU: f64 = std::f64::consts::TAU;
@@ -230,6 +232,8 @@ pub enum Curve {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Surface {
+    /// A procedural sweep's exact definition, fitted net and certified error bound.
+    ProceduralSweep(Box<sweep::ProceduralSweepRecord>),
     /// `origin + u * u_axis + v * v_axis` (STEP `PLANE`).
     Plane {
         origin: [f64; 3],
@@ -452,6 +456,14 @@ fn curve_natural(c: &Curve) -> Natural {
 /// validation requires; their natural ranges are the kernel's (a cone's apex is computed).
 fn parameter_natural(s: &Surface) -> Result<[Natural; 2]> {
     match s {
+        Surface::ProceduralSweep(s) => {
+            let u = usize::try_from(s.net.u_count).map_err(|_| Invalid("sweep net u count"))?;
+            let v = usize::try_from(s.net.v_count).map_err(|_| Invalid("sweep net v count"))?;
+            Ok([
+                knot_domain(&s.net.u_knots, u),
+                knot_domain(&s.net.v_knots, v),
+            ])
+        }
         Surface::Plane { .. } | Surface::PlaneThrough { .. } => Ok([UNBOUNDED; 2]),
         Surface::Spline {
             u_knots,
@@ -640,6 +652,7 @@ fn surface(s: &Surface, depth: usize, budget: &mut Budget) -> Result<()> {
     require(depth <= MAX_DEPTH, "geometry depth")?;
     budget.add(1)?;
     match s {
+        Surface::ProceduralSweep(s) => sweep::check(s, budget),
         Surface::Plane {
             origin,
             u_axis,

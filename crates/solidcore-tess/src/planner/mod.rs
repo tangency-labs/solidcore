@@ -338,6 +338,7 @@ fn unsupported(what: impl std::fmt::Display) -> TessError {
 /// The surface kind of a face, for an error that names it.
 fn kind(s: &brep::Surface) -> &'static str {
     match s {
+        brep::Surface::ProceduralSweep(_) => "procedural sweep",
         brep::Surface::Plane { .. } | brep::Surface::PlaneThrough { .. } => "plane",
         brep::Surface::Cylinder { .. } => "cylinder",
         brep::Surface::Cone { .. } => "cone",

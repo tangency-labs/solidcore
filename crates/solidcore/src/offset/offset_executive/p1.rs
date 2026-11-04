@@ -853,18 +853,31 @@ impl OffsetExecutive {
                 // The obsolete offset-specific `else` at cpp:2158 is unreachable:
                 // NER(pBase) already established pOrigSurf == pBase != NULL.
                 let dist = self.offset_distance * 5.0;
-                let extension = match base.kind() {
-                    // Not upstream (WR-532), opt-in `offset_extends_cones_as_themselves`
-                    SurfaceKind::Cone(cone) if kernel.fixes.offset_extends_cones_as_themselves => {
-                        extend_cone_as_itself(kernel, base, cone, dist)?
+                let extension = if let Some(sweep) = base
+                    .procedural_sweep()
+                    .filter(|s| s.definition().is_screw_invariant())
+                {
+                    sweep.definition().extended_for_offset(
+                        sweep.net(),
+                        dist,
+                        self.approximation_tol_3d,
+                    )?
+                } else {
+                    match base.kind() {
+                        // Not upstream (WR-532), opt-in `offset_extends_cones_as_themselves`
+                        SurfaceKind::Cone(cone)
+                            if kernel.fixes.offset_extends_cones_as_themselves =>
+                        {
+                            extend_cone_as_itself(kernel, base, cone, dist)?
+                        }
+                        // Not upstream (WR-728), opt-in `offset_extends_ball_patches_as_themselves`
+                        SurfaceKind::BallPatch(patch)
+                            if kernel.fixes.offset_extends_ball_patches_as_themselves =>
+                        {
+                            extend_ball_patch_as_itself(kernel, base, patch, dist)?
+                        }
+                        _ => base.create_extended_surface(kernel, dist, ContinuityType::G1R)?,
                     }
-                    // Not upstream (WR-728), opt-in `offset_extends_ball_patches_as_themselves`
-                    SurfaceKind::BallPatch(patch)
-                        if kernel.fixes.offset_extends_ball_patches_as_themselves =>
-                    {
-                        extend_ball_patch_as_itself(kernel, base, patch, dist)?
-                    }
-                    _ => base.create_extended_surface(kernel, dist, ContinuityType::G1R)?,
                 };
                 Ok(entry.insert(extension))
             }
