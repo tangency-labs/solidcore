@@ -22,22 +22,22 @@
 //! | [`sphere_zone`]              | `sm_SphereZone` (`SmFilletExecutive.cpp`)                |
 //! | [`curve_between`]            | `sm_CurveBetween` (`SmFilletExecutive.cpp`)              |
 //!
-//! Not ported yet, because what they build on is not in solidcore: the fork's
-//! `CircleSurface` skins a variable round piece by piece between the law's corners and
-//! joins the pieces (tangency-labs/smlib@6eecf04 and 5fbffc9), and the executive splits the
-//! round's faces at the corners (`NoteRadiusCornerSurfaces`,
-//! `SplitFilletFacesAtRadiusCorners`, 6eecf04, with `SmBrep::SubdivideFaceAtDiscontinuities`
-//! and `ReplaceCurve`, solidcore#1828). So nothing calls these yet: the pieces are not
-//! kept, and `SmFilletExecutive::BuildLawCorners` (which puts them
-//! back on the split faces, adds the zones and stitches the round again, with
-//! `sm_PieceOfFace`, `sm_EdgeBetween` and the 62fcc82 unstitch) and the
-//! `EaseSetBackSections` refusal of a law-cornered round (58d03ef) wait for that.
-//!
-//! The trace part of 6eecf04 is in, under the same flag: the law's corners
-//! ([`FilletLaw::corner_parameters`](crate::blend::fillet_standard_solver::p1::FilletLaw::corner_parameters))
+//! What is in, under `fixes.fillet_gn_section_generator`: 6eecf04's trace (the law's
+//! corners, [`FilletLaw::corner_parameters`](crate::blend::fillet_standard_solver::p1::FilletLaw::corner_parameters),
 //! are through points, and the fillet intersector steps onto them and flushes each span
-//! with its own side's tangents, so the round's curves turn there. Until the skin is
-//! ported, the round is still skinned as one surface across the turn.
+//! with its own side's tangents, so the round's curves turn there), and its piecewise skin
+//! (the round skinned piece by piece between the turns and joined C0 there,
+//! [`CircularCrossSectionFsg::piecewise_surface`](crate::blend::fillet_standard_solver::p1::CircularCrossSectionFsg::piecewise_surface)),
+//! whose pieces [`LawCornerPieces::classify`] keeps on the solver (the fork's
+//! `AddLawCornerPieces`, 7babe17).
+//!
+//! Not ported yet: the executive's split of the round's faces at the corners
+//! (`NoteRadiusCornerSurfaces`, `SplitFilletFacesAtRadiusCorners`, 6eecf04, on
+//! `SmBrep::SubdivideFaceAtDiscontinuities` and `ReplaceCurve`, now on main from
+//! solidcore#1828), and `SmFilletExecutive::BuildLawCorners` (which puts the pieces back on
+//! the split faces, adds the zones and stitches the round again, with `sm_PieceOfFace`,
+//! `sm_EdgeBetween` and the 62fcc82 unstitch), with the `EaseSetBackSections` refusal of a
+//! law-cornered round (58d03ef). Until then the round is one face across its turns.
 //!
 //! Deviations: out-params are return values; `SmLawCornerPieces::Copy` is `Clone`, and the
 //! solver's list of kept pieces is a slice the caller owns, so

@@ -295,6 +295,7 @@ fn generator_round(k: &Kernel, has_edgeuse: bool) -> Surface {
         Some(&ball),
     )
     .unwrap()
+    .0
 }
 
 #[test]

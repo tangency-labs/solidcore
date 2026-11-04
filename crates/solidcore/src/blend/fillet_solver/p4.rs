@@ -4835,20 +4835,23 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
             ang_tol_rad: this_ang_tol_rad,
             law,
         };
-        generator
-            .create_surface_replacing_uv(
-                k,
-                approx_tol_3d,
-                solver_type,
-                Some(center_line),
-                curve1,
-                curve2,
-                points,
-                [&sur0, &sur1],
-                [uv1, uv2],
-                Some(&ball),
-            )
-            .map(Some)
+        let (surface, kept) = generator.create_surface_replacing_uv(
+            k,
+            approx_tol_3d,
+            solver_type,
+            Some(center_line),
+            curve1,
+            curve2,
+            points,
+            [&sur0, &sur1],
+            [uv1, uv2],
+            Some(&ball),
+        )?;
+        // the fork's `rFilletSolver.AddLawCornerPieces` (7babe17)
+        if let Some(kept) = kept {
+            self.ops.solver_mut().law_corner_pieces.push(kept);
+        }
+        Ok(Some(surface))
     }
 
     fn set_fillet_surface(

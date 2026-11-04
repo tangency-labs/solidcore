@@ -641,7 +641,7 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
                 [uv1, uv2],
                 None,
             )
-            .map(Some)
+            .map(|(surface, _)| Some(surface))
     }
 
     fn rail_surface_evaluate_1st_derivatives(

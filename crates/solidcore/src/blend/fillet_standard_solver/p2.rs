@@ -122,6 +122,7 @@ use crate::blend::fillet_standard_solver::p1::{
     DistanceInitialValues, FilletLaw, FilletSolverType, JacobianSurfaces, RailSurface,
     SurfaceSurfaceFs, VariableRadiusFs, CONSTANT_RADIUS_ASSISTED_FS_TYPE, CURVE_BASED_FS_TYPE,
 };
+use crate::blend::law_corners::{ArcApproximation, LawCornerPieces};
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{ignored, Result, SolidError};
@@ -2499,6 +2500,93 @@ impl CircularCrossSectionFsg {
         };
         *center_line = b;
         r
+    }
+}
+
+impl CircularCrossSectionFsg {
+    /// The fork's `SmGnSectionFSG::CircleSurface` where the centre line or a rail turns at
+    /// `corners` (the first rail's interior knots where one of the three curves turns,
+    /// `sm_FilletCurveCorners`; tangency-labs/smlib@6eecf04 and 5fbffc9): a skinned
+    /// surface interpolates its sections smoothly, so across a turn (a corner of a
+    /// variable radius) it would overshoot. The round is skinned piece by piece between
+    /// the turns, each piece from copies of the three curves trimmed to its interval
+    /// ([`Self::create_surface`], `CircleSurfaceFromCurves`), and the pieces joined there
+    /// (`JoinSurface` in u, no knot removed: the surface turns). For a ball whose radius
+    /// varies (a variable-radius or a constant-distance solver) the pieces are kept too,
+    /// exact, with each corner's kind and ball ([`LawCornerPieces::classify`], 7babe17).
+    ///
+    /// # Errors
+    ///
+    /// Those of `Trim`, the pieces' skin, `JoinSurface` and the classification.
+    #[allow(clippy::too_many_arguments)]
+    pub fn piecewise_surface(
+        &self,
+        k: &Kernel,
+        approx_tol_3d: f64,
+        solver_type: FilletSolverType,
+        center_line: &BSplineCurve,
+        rail1: &BSplineCurve,
+        rail2: &BSplineCurve,
+        corners: &[f64],
+    ) -> Result<(BSplineSurface, Option<LawCornerPieces>)> {
+        use crate::nurbs::b_spline_curve_n_lib::TrimMode;
+        use crate::nurbs::b_spline_surface::SurfParamType;
+        let ball_radius_varies = matches!(
+            solver_type,
+            FilletSolverType::VariableRadius | FilletSolverType::ConstDist
+        );
+        let ivl = rail1.natural_interval();
+        let mut ends = vec![ivl.min()];
+        ends.extend_from_slice(corners);
+        ends.push(ivl.max());
+        let mut joined: Option<BSplineSurface> = None;
+        let mut pieces = Vec::new();
+        let mut joined_ends = Vec::new();
+        for span in ends.windows(2) {
+            let [from, to] = *span else {
+                continue;
+            };
+            let mut trimmed = [center_line.copy(), rail1.copy(), rail2.copy()];
+            for curve in &mut trimmed {
+                let mut interval = Extent1d::from_min_max(from, to);
+                curve.trim(k, &mut interval, TrimMode::Notify)?;
+            }
+            let [mut cl, mut r1, mut r2] = trimmed;
+            let mut piece =
+                self.create_surface(k, approx_tol_3d, solver_type, &mut cl, &mut r1, &mut r2)?;
+            if ball_radius_varies {
+                pieces.push(piece.copy());
+            }
+            // join the piece on at its u-min side; no knot removal there, the surface turns
+            let next = match joined.as_mut() {
+                None => piece,
+                Some(j) => j.join_surface(&mut piece, SurfParamType::U, 0.0)?,
+            };
+            if ball_radius_varies {
+                joined_ends.push(next.natural_uv_domain().max().x);
+            }
+            joined = Some(next);
+        }
+        let joined = joined.ok_or_else(|| {
+            SolidError::sm_err("blend::fillet_standard_solver::p2::piecewise_surface")
+        })?;
+        let kept = if ball_radius_varies {
+            Some(LawCornerPieces::classify(
+                center_line,
+                rail1,
+                &ends,
+                pieces,
+                joined_ends,
+                approx_tol_3d,
+                ArcApproximation {
+                    approximate_arcs: self.approximate_arcs,
+                    tol_percent_radius: self.tol_percent_radius,
+                },
+            )?)
+        } else {
+            None
+        };
+        Ok((joined, kept))
     }
 }
 
