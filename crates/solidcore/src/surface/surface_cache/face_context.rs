@@ -22,11 +22,8 @@ use crate::intersect::point_class::PointClassification;
 use crate::kernel::Kernel;
 use crate::math::Point2;
 use crate::nurbs::b_spline_curve::BSplineCurve;
-use crate::query::face::p2::{
-    point_classify_prepared, solve_surface_cache_of_face, surface_cache_state_of_face,
-    BrepCacheFace, PointClassifyOptions,
-};
-use crate::surface::surface::p1::{get_surface_cache_with_face, make_surface_cache};
+use crate::query::face::p2::{point_classify_prepared, BrepCacheFace, PointClassifyOptions};
+use crate::surface::surface::p1::get_surface_cache_with_face;
 use crate::surface::surface::CacheTreeState;
 use crate::surface::surface_cache::p1::{FaceContainment, SurfaceCache};
 use crate::surface::trim_srf_cache::CacheFace;
@@ -76,6 +73,7 @@ pub struct MappedCacheFace<'a, O> {
     face_handle: O,
     handle_of: &'a dyn Fn(EntityRef) -> Result<O>,
     entity_of: &'a dyn Fn(O) -> Result<EntityRef>,
+    implants_while_editing: bool,
 }
 
 impl<O> Debug for MappedCacheFace<'_, O> {
@@ -108,7 +106,16 @@ impl<'a, O: Copy + PartialEq> MappedCacheFace<'a, O> {
             face_handle,
             handle_of,
             entity_of,
+            implants_while_editing: false,
         })
+    }
+
+    /// This adapter with the face's trims implanted even while its B-rep is being
+    /// edited ([`CacheFace::implants_while_editing`]).
+    #[must_use]
+    pub const fn implanting_while_editing(mut self) -> Self {
+        self.implants_while_editing = true;
+        self
     }
 
     fn mapping_error() -> SolidError {
@@ -150,6 +157,10 @@ impl<O: Copy + PartialEq> CacheFace<O> for MappedCacheFace<'_, O> {
 
     fn set_brep_editing_enabled(&mut self, enabled: bool) -> Result<()> {
         self.inner.set_brep_editing_enabled(enabled)
+    }
+
+    fn implants_while_editing(&self) -> bool {
+        self.implants_while_editing
     }
 
     fn create_uv_trim_curves(&mut self, k: &Kernel) -> Result<()> {
@@ -372,22 +383,6 @@ fn face_surface_cache<O: Copy + PartialEq>(
         .as_ref()
         .ok_or(SolidError::null_pointer(OP))?
         .clone_for_evaluation()?;
-    // the trimmed cache kept on the face's surface, made by the first lookup and reused
-    // by every later one (the classification rays' too), as upstream keeps it on the
-    // surface (`m_pCacheObj`)
-    if let Some(owner) = surface.face()? {
-        let handle = Some(surface_handle);
-        let kept = if get_tree {
-            solve_surface_cache_of_face(k, b, face, owner, &surface, handle, handle_of)?
-        } else {
-            surface_cache_state_of_face(k, b, face, owner, &surface, handle, handle_of)?
-        };
-        return match kept {
-            Some(cache) => Ok(cache),
-            // no trimmed cache: the surface cache, built fresh
-            None => make_surface_cache(k, &surface, handle),
-        };
-    }
     // upstream reuses a cache whose tree is built, with the built tree's state bits
     let get_tree = get_tree || surface.cache_tree_state() == CacheTreeState::Built;
     let mut mapped = MappedCacheFace::new(BrepCacheFace { b, f: face }, handle_of, entity_of)?;

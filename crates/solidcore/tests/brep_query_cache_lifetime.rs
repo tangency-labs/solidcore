@@ -1,23 +1,62 @@
-//! #2503: a B-rep ray classification keeps the face surfaces' trimmed caches, as
-//! upstream's `SmBrep::Point3DClassify` does through `smsurf_GetSurfaceCache`
-//! (`SmSurface::CacheMakeOrValidate`, SmSurface.cpp:5784). A cache kept on a face's
-//! surface is reused while the B-rep is being edited, even when its face was modified;
-//! `SmTrimSrfCache::BuildTree` implants no trims while editing is on, so a cache first
-//! built then would count every face as its untrimmed rectangle. Before #2503 every ray
-//! built its caches afresh, and once editing was on (the fillet session's trim step,
-//! #2365) points inside the bar classified as outside.
+//! WR-732 (#2503): with `UpstreamFixes::brep_ray_classifies_current_trims`, a B-rep
+//! point classification classifies against each face's current trims, also while the
+//! B-rep is being edited. `SmTrimSrfCache::BuildTree` implants no trims while editing
+//! is on, so upstream counts a face it builds a cache for then as its untrimmed
+//! surface, and answers right only when it reuses a cache it built before the edit.
+//! The rays build their caches afresh, so once editing was on (the fillet session's
+//! trim step, #2365) points inside the bar classified as outside. With the flag the
+//! ray's tree of a face whose loops close is built against the face as it is,
+//! whatever the editing flag; a face whose loops are open mid-edit keeps upstream's.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 
 use solidcore::boolean::api_brep::boolean_union;
+use solidcore::curve::curve::Curve;
+use solidcore::curve::ellipse::{Ellipse, EllipseOptions};
+use solidcore::geom::attribute::{AttributeStore, ObjectKey};
+use solidcore::geom::extent1d::Extent1d;
+use solidcore::geom::object::ObjectRef;
 use solidcore::intersect::point_class::PointClassType;
 use solidcore::math::{Point3, Vec3};
-use solidcore::primitive::api_primitives::{create_box, create_cylinder};
+use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use solidcore::primitive::api_primitives::{create_box, create_cylinder, create_sphere};
 use solidcore::query::brep::BrepQuery;
+use solidcore::query::face::p2::note_face_surface_cache;
 use solidcore::surface::surface::Surface;
-use solidcore::topology::brep::p2::delete_stale_caches;
+use solidcore::topology::brep::make_vertex_loop;
+use solidcore::topology::brep::p5::{make_edge_in_face, EdgeInFace};
+use solidcore::topology::edge::NotifyEnv;
 use solidcore::topology::proto_topology::p1::api_transform::{api_rotate, TransformObject};
+use solidcore::topology::topology::NotifyRecords;
 use solidcore::topology::FaceId;
-use solidcore::{Brep, EntityRef, Kernel};
+use solidcore::{Brep, EntityRef, Kernel, SolidError};
+
+/// Notification keys for the edits.
+fn key_of(entity: EntityRef) -> ObjectRef {
+    let (type_code, index) = match entity {
+        EntityRef::Face(f) => (1, f.index()),
+        EntityRef::Edge(e) => (2, e.index()),
+        EntityRef::Edgeuse(e) => (3, e.index()),
+        EntityRef::Vertex(v) => (4, v.index()),
+        EntityRef::Vertexuse(v) => (5, v.index()),
+        EntityRef::Loop(l) => (6, l.index()),
+        EntityRef::Loopuse(l) => (7, l.index()),
+        EntityRef::Faceuse(f) => (8, f.index()),
+        EntityRef::Shell(s) => (9, s.index()),
+        EntityRef::Region(r) => (10, r.index()),
+        EntityRef::Brep(_) => (11, 0),
+    };
+    ObjectRef {
+        type_code: 0,
+        key: ObjectKey(type_code * 1_000_000 + u64::from(index)),
+    }
+}
+
+/// A kernel with the WR-732 fix on.
+fn kernel() -> Kernel {
+    let mut k = Kernel::default();
+    k.fixes.brep_ray_classifies_current_trims = true;
+    k
+}
 
 /// Points in the bar, in the post, and outside both.
 const POINTS: [[f64; 3]; 6] = [
@@ -37,11 +76,6 @@ fn bar_into_post(k: &mut Kernel) -> Brep {
     boolean_union(k, bar, post).unwrap()
 }
 
-/// Whether each point classifies to a material region of `b`.
-fn in_material(k: &Kernel, b: &mut Brep) -> Vec<bool> {
-    in_material_at(k, b, &POINTS)
-}
-
 /// Whether each of `points` classifies to a material region of `b`.
 fn in_material_at(k: &Kernel, b: &mut Brep, points: &[[f64; 3]]) -> Vec<bool> {
     points
@@ -59,88 +93,194 @@ fn in_material_at(k: &Kernel, b: &mut Brep, points: &[[f64; 3]]) -> Vec<bool> {
         .collect()
 }
 
-const EXPECTED: [bool; 6] = [true, true, true, true, false, false];
-
 #[test]
 fn classification_is_unchanged_once_editing_is_on() {
-    let mut k = Kernel::default();
+    let mut k = kernel();
     let mut b = bar_into_post(&mut k);
-    assert_eq!(in_material(&k, &mut b), EXPECTED, "editing off");
-    // the caches the rays kept are reused while the B-rep is edited
+    let expected = [true, true, true, true, false, false];
+    assert_eq!(in_material_at(&k, &mut b, &POINTS), expected, "editing off");
     b.set_editing_enabled(true);
-    assert_eq!(in_material(&k, &mut b), EXPECTED, "editing on");
+    assert_eq!(in_material_at(&k, &mut b, &POINTS), expected, "editing on");
     b.set_editing_enabled(false);
-    assert_eq!(in_material(&k, &mut b), EXPECTED, "editing off again");
+    assert_eq!(
+        in_material_at(&k, &mut b, &POINTS),
+        expected,
+        "editing off again"
+    );
 }
 
-/// The face surfaces holding a trimmed cache.
-fn faces_with_caches(b: &Brep) -> Vec<FaceId> {
-    b.faces()
-        .iter()
-        .filter(|(_, f)| f.surface.as_ref().is_some_and(Surface::has_trim_cache))
-        .map(|(id, _)| id)
-        .collect()
+/// The face a point on the boundary of `b` classifies to.
+fn face_at(k: &Kernel, b: &mut Brep, p: Point3) -> Result<Option<FaceId>, SolidError> {
+    let pc = BrepQuery::of_brep(b).point_3d_classify(k, b, p, 1e-6, true)?;
+    Ok(match (pc.point_class(), pc.object()) {
+        (PointClassType::Face, Some(EntityRef::Face(f))) => Some(f),
+        _ => None,
+    })
 }
 
+/// A face edited mid-session classifies against its new trims: a circle made in a
+/// sphere's face while the sphere is edited cuts a cap off it. Upstream builds both
+/// faces' trees untrimmed then (a planar face is classified by its loops, so the test
+/// needs a curved one), and gives a point of the cap to whichever face the solve meets
+/// first.
 #[test]
-fn the_rays_keep_the_face_surfaces_trimmed_caches() {
-    let mut k = Kernel::default();
-    let mut b = bar_into_post(&mut k);
-    in_material(&k, &mut b);
-    let kept = faces_with_caches(&b);
-    assert!(!kept.is_empty(), "the rays kept no trimmed cache");
-    // the next rays reuse them, while the B-rep is edited too
-    in_material(&k, &mut b);
+fn a_face_edited_mid_session_classifies_against_its_new_trims() {
+    let mut k = kernel();
+    let mut b = create_sphere(&mut k, Point3::new(0.0, 0.0, 0.0), 5.0).unwrap();
+    let in_cap = Point3::new(-5.0, 0.0, 0.0);
+    let off_cap = Point3::new(0.0, -5.0, 0.0);
+    let sphere = face_at(&k, &mut b, off_cap)
+        .unwrap()
+        .expect("on the sphere");
+    assert_eq!(face_at(&k, &mut b, in_cap).unwrap(), Some(sphere));
+
     b.set_editing_enabled(true);
-    in_material(&k, &mut b);
-    b.set_editing_enabled(false);
-    assert_eq!(faces_with_caches(&b), kept);
-    // a cache not marked modified is not stale
-    delete_stale_caches(&b).unwrap();
-    assert_eq!(faces_with_caches(&b), kept);
-}
-
-#[test]
-fn delete_stale_caches_drops_the_caches_of_modified_faces() {
-    let mut k = Kernel::default();
-    let mut b = bar_into_post(&mut k);
-    in_material(&k, &mut b);
-    let with_cache = faces_with_caches(&b);
-    let (&modified, unmodified) = with_cache.split_first().expect("a kept cache");
-    // `SmFace::Notify(SM_NO_PRE_EDIT)` marks the face surface's cache modified
-    b.face(modified)
-        .unwrap()
-        .surface
-        .as_ref()
-        .unwrap()
-        .mark_trim_cache_face_modified();
-    delete_stale_caches(&b).unwrap();
-    let has = |id| {
-        b.face(id)
-            .unwrap()
-            .surface
-            .as_ref()
-            .is_some_and(Surface::has_trim_cache)
+    // the circle x = -4, radius 3, on the sphere and away from its seam and poles
+    let circle = Ellipse::new_circle(
+        &k,
+        Point3::new(-4.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        Extent1d::from_min_max(0.0, 360.0),
+        3.0,
+        &EllipseOptions::default(),
+    )
+    .unwrap();
+    let interval = Curve::from(circle.clone()).natural_interval();
+    // the circle's vertex, where it starts and ends
+    let mut records = NotifyRecords::new();
+    let mut attributes = AttributeStore::default();
+    let mut env = NotifyEnv {
+        records: &mut records,
+        attributes: &mut attributes,
+        context: None,
+        key_of: &key_of,
     };
-    assert!(!has(modified));
-    assert!(unmodified.iter().all(|&id| has(id)));
+    let (_, vertex) = make_vertex_loop(
+        &mut b,
+        sphere,
+        Point3::new(-4.0, 3.0, 0.0),
+        OrientType::Opposite,
+        &mut env,
+    )
+    .unwrap();
+    let mut made = EdgeInFace::default();
+    make_edge_in_face(
+        &mut k,
+        &mut b,
+        true,
+        Some(sphere),
+        Some(vertex),
+        Some(vertex),
+        Curve::from(circle),
+        None,
+        interval,
+        OrientType::Same,
+        1e-6,
+        &mut made,
+        None,
+    )
+    .unwrap();
+    let cap = made.face.expect("the circle cuts a cap off the sphere");
+    assert_ne!(cap, sphere);
+
+    // still editing: each point is on the face its trims now hold it in
+    assert_eq!(
+        face_at(&k, &mut b, in_cap).unwrap(),
+        Some(cap),
+        "in the cap"
+    );
+    assert_eq!(
+        face_at(&k, &mut b, off_cap).unwrap(),
+        Some(sphere),
+        "off it"
+    );
+    b.set_editing_enabled(false);
+    assert_eq!(
+        face_at(&k, &mut b, in_cap).unwrap(),
+        Some(cap),
+        "editing off"
+    );
+    assert_eq!(
+        face_at(&k, &mut b, off_cap).unwrap(),
+        Some(sphere),
+        "editing off"
+    );
+}
+
+/// The classification of `p` in `b`, its region or face and whether it failed.
+fn classified(k: &Kernel, b: &mut Brep, p: Point3, boundaries: bool) -> String {
+    match BrepQuery::of_brep(b).point_3d_classify(k, b, p, 1e-6, boundaries) {
+        Ok(pc) => format!("{:?} {:?}", pc.point_class(), pc.object()),
+        Err(e) => format!("error {e:?}"),
+    }
+}
+
+/// While editing, a face whose loop does not close has no boundary to implant yet: it
+/// keeps upstream's untrimmed tree, so the classification is upstream's, not an error.
+/// (The fillet session classifies against such faces, and builds with upstream's
+/// answers.)
+#[test]
+fn an_open_loop_mid_edit_keeps_upstream_s_answer() {
+    let broken = |k: &mut Kernel| {
+        // (the stitch that builds it classifies mid-glue, where an edge use can start
+        // at a vertex still being merged into its edge's: those loops close)
+        let mut b = create_cylinder(k, Point3::new(0.0, 0.0, 0.0), 1.5, 10.0).unwrap();
+        // in the side face, the first edge use starts where the second does: its edge
+        // then ends away from the second's start, and the loop no longer closes
+        let mut opened = 0;
+        let faces: Vec<FaceId> = b.faces().ids().collect();
+        for f in faces {
+            let lu = solidcore::topology::face::p4::upward_loopuses(&b, f, false, None).unwrap()[0];
+            let eus = solidcore::topology::loopuse::edgeuses(&b, lu, None, None).unwrap();
+            if let [first, second, ..] = eus[..] {
+                let start = b.edgeuse(second).unwrap().vertexuse;
+                b.edgeuse_mut(first).unwrap().vertexuse = start;
+                opened += 1;
+            }
+        }
+        assert_eq!(opened, 1, "the side face");
+        b.set_editing_enabled(true);
+        b
+    };
+    let mut k = kernel();
+    let mut upstream = Kernel::default();
+    let mut b = broken(&mut k);
+    let mut c = broken(&mut upstream);
+    // the region's ray fires and the boundary solve
+    for boundaries in [false, true] {
+        let p = Point3::new(0.0, 0.0, 5.0);
+        let with_fix = classified(&k, &mut b, p, boundaries);
+        assert!(!with_fix.starts_with("error"), "{with_fix}");
+        assert_eq!(with_fix, classified(&upstream, &mut c, p, boundaries));
+    }
 }
 
 /// `SmBSplineSurface::Transform` notifies `SM_NO_PRE_EDIT`, and `SmSurface::Notify`
 /// deletes the surface's trimmed cache (`SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF)`),
-/// so a body moved after its caches were built classifies where it now is, also while
-/// it is edited (the Boolean of `boolean.api_brep`'s `arc_lengths_cylinder_cylinder_tee_union`
-/// kept the moved cylinder where it was made).
+/// so a face classification after the move does not reuse a cache of where the face
+/// was.
 #[test]
 fn a_moved_body_drops_its_trimmed_caches() {
     let mut k = Kernel::default();
-    // along +z from the origin; its stitch's infinite-region ray keeps the caches
     let mut b = create_cylinder(&mut k, Point3::new(0.0, 0.0, 0.0), 1.5, 10.0).unwrap();
-    assert!(
-        !faces_with_caches(&b).is_empty(),
-        "the ray keeps the face surfaces' caches"
-    );
-    // a quarter turn about x: along -y
+    let faces: Vec<FaceId> = b.faces().ids().collect();
+    for &f in &faces {
+        note_face_surface_cache(&k, &mut b, f).unwrap();
+    }
+    let with_cache = |b: &Brep| {
+        faces
+            .iter()
+            .filter(|&&f| {
+                b.face(f)
+                    .unwrap()
+                    .surface
+                    .as_ref()
+                    .is_some_and(Surface::has_trim_cache)
+            })
+            .count()
+    };
+    assert_eq!(with_cache(&b), faces.len(), "a face lookup keeps the cache");
     api_rotate(
         &mut k,
         Some(TransformObject::Brep(&mut b)),
@@ -150,21 +290,8 @@ fn a_moved_body_drops_its_trimmed_caches() {
     )
     .unwrap();
     assert_eq!(
-        faces_with_caches(&b).len(),
+        with_cache(&b),
         0,
         "a transformed surface keeps a trimmed cache"
-    );
-    let points = [[0.0, -5.0, 0.0], [0.0, 0.0, 5.0]];
-    b.set_editing_enabled(true);
-    assert_eq!(
-        in_material_at(&k, &mut b, &points),
-        [true, false],
-        "editing on"
-    );
-    b.set_editing_enabled(false);
-    assert_eq!(
-        in_material_at(&k, &mut b, &points),
-        [true, false],
-        "editing off"
     );
 }

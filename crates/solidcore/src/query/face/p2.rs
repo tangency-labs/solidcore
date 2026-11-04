@@ -529,12 +529,9 @@ fn surface_cache_copy_of_face<O: Copy + PartialEq>(
             created?;
             refreshed?;
         }
-        // the kept cache names the surface by its face's handle; the copy names it
-        // `handle` wherever the surface is meant, as a cache built with `handle` does
-        Ok(lease
-            .cache
-            .map_handles_naming_surface(&map, handle)?
-            .into_base())
+        let mut copy = lease.cache.map_handles(&map)?;
+        copy.base_mut().set_surface_handle(handle);
+        Ok(copy.into_base())
     })();
     lease.release();
     built.map(Some)
@@ -554,12 +551,12 @@ fn surface_cache_of_face(
     let handle = Some(EntityRef::Face(f));
     match surface.take_trim_cache() {
         TrimCacheSlot::Stored(mut cache) => {
-            // the cache's surface is the face's surface: its owner and out-of-bounds
-            // flag as they are now
-            cache
-                .base_mut()
-                .surface_mut()
-                .adopt_evaluation_state_of(if cleared { &standalone } else { surface });
+            // the cache's surface is the face's surface: its owner as it is now
+            cache.base_mut().surface_mut().adopt_owner_of(if cleared {
+                &standalone
+            } else {
+                surface
+            });
             // If the face was modified and Brep editing is no longer enabled
             // then delete the old cache and create a new one.
             if !(cache.base().face_was_modified && !cleared && !b.editing_enabled()) {
@@ -599,14 +596,11 @@ fn surface_cache_of_face(
         make_trim_srf_cache_with_face(k, surface, handle, &mut BrepCacheFace { b, f })
     };
     match built {
-        Ok(mut cache) => {
-            crate::surface::surface::p2::name_subdivision_surfaces(&mut cache);
-            Ok(FaceSurfaceCache {
-                cache,
-                trimmed: true,
-                kept: true,
-            })
-        }
+        Ok(cache) => Ok(FaceSurfaceCache {
+            cache,
+            trimmed: true,
+            kept: true,
+        }),
         Err(e) => {
             // when construction failed - the cache is deleted
             surface.delete_trim_cache();
@@ -2736,33 +2730,6 @@ pub(crate) mod tests {
         let lease = face_surface_cache(&k, &mut b, f).unwrap();
         assert!(lease.cache.base().face_was_modified);
         lease.release();
-    }
-
-    /// #2503: a kept cache's surface is the surface upstream (`m_cpSurface`), so a reuse
-    /// evaluates with the out-of-bounds flag its user has set on the surface for a while
-    /// (the point solves' `SmTemporaryChangeValue` of `GetOutOfBoundsEnabled()`), and with
-    /// the flag back once the user is done.
-    #[test]
-    fn a_reused_cache_evaluates_with_the_surface_s_out_of_bounds_flag() {
-        use crate::surface::surface::p3::{out_of_bounds_enabled, set_out_of_bounds_enabled};
-        let k = Kernel::default();
-        let mut b = Brep::new();
-        let f = square(&mut b);
-        face_surface_cache(&k, &mut b, f).unwrap().release();
-        let surface = b.face(f).unwrap().surface.as_ref().unwrap();
-        let mut enabled = surface.clone_for_evaluation().unwrap();
-        let plain = surface.clone_for_evaluation().unwrap();
-        set_out_of_bounds_enabled(&mut enabled, true);
-        assert_eq!(out_of_bounds_enabled(&plain), Some(false));
-        for (user, flag) in [(&enabled, true), (&plain, false)] {
-            let lease = owned_surface_cache(&k, &mut b, f, user).unwrap();
-            assert!(lease.kept);
-            assert_eq!(
-                out_of_bounds_enabled(lease.cache.base().surface()),
-                Some(flag)
-            );
-            lease.release();
-        }
     }
 
     #[test]
