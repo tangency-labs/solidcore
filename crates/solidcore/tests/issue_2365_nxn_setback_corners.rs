@@ -506,7 +506,7 @@ fn fill_asked(
             s.add_set_back_vertex(v);
         }
         s.set_set_back_fill(v, 8.0, 0.0, false);
-        let mut done = s.create_corners(&mut k, None).is_ok();
+        let mut done = s.create_corners(&k, None).is_ok();
         let (mut event, mut kind) = (None, None);
         if done {
             for c in s.fillet_corners().unwrap() {
@@ -522,7 +522,8 @@ fn fill_asked(
         (
             event,
             kind,
-            done.then_some(()).ok_or((info.code, info.comment.clone())),
+            done.then_some(())
+                .ok_or_else(|| (info.code, info.comment.clone())),
         )
     };
     (
@@ -532,7 +533,7 @@ fn fill_asked(
 }
 
 /// A fill asked with `set_set_back_fill` alone keeps the vertex from the Ball, as
-/// `add_set_back_vertex` does (jyviko's and CodeRabbit's review of #2365): three equal
+/// `add_set_back_vertex` does (jyviko's and `CodeRabbit`'s review of #2365): three equal
 /// rounds at a box corner are the Setback by either call, the same body. Before, the fill
 /// alone left the vertex to the Ball, which builds no setback, and the corner was refused
 /// `CornerUnsupported`.
