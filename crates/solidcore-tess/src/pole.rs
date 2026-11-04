@@ -96,8 +96,8 @@ fn foot(
 }
 
 /// The limit normal of `s` (unflipped) at pole node `k` of face `f` for its triangle `t`,
-/// collapsed along `along`; `poles` says which nodes are on the pole. The kernel's refusal as
-/// its message.
+/// collapsed along `along`; `poles` says which nodes are on the pole; `reach` is the face's, as
+/// the planner gives it to the pole classifier. The kernel's refusal as its message.
 pub(crate) fn limit_normal(
     s: &EvalSurface,
     f: &FacePlan,
@@ -105,6 +105,7 @@ pub(crate) fn limit_normal(
     t: &[u32; 3],
     along: usize,
     poles: &[u32],
+    reach: f64,
 ) -> Result<Vec3, String> {
     let q = *f
         .uv
@@ -122,7 +123,7 @@ pub(crate) fn limit_normal(
         .flatten();
     let (at, dir) = foot(q, along, period, &others)
         .ok_or_else(|| "a triangle with no corner off the pole".to_string())?;
-    s.normal_along(at[0], at[1], dir)
+    s.normal_along(at[0], at[1], dir, reach)
         .map(solidcore_convert::record_vec3)
         .map_err(crate::eval_message)
 }
@@ -156,7 +157,7 @@ pub(crate) fn plan_poles(
             .and_then(|d| d.ok_or_else(|| format!("no direction is collapsed at {q:?}")))
             .and_then(|along| {
                 for t in f.triangles.iter().filter(|t| t.contains(&k)) {
-                    limit_normal(s, f, k, t, along, &found)?;
+                    limit_normal(s, f, k, t, along, &found, reach)?;
                 }
                 Ok(along)
             });
@@ -247,13 +248,13 @@ pub(crate) fn apply(
     for t in &mut triangles {
         let corners = *t;
         for (c, &k) in t.iter_mut().zip(&corners) {
-            let Some(PoleRule::Limit { along, .. }) = f.pole(k as usize) else {
+            let Some(PoleRule::Limit { along, reach }) = f.pole(k as usize) else {
                 continue;
             };
             if !at_poles.contains(&(k as usize)) {
                 continue;
             }
-            let n = limit_normal(s, f, k, &corners, along, &names)
+            let n = limit_normal(s, f, k, &corners, along, &names, reach)
                 .map_err(|why| format!("pole vertex {k}: {why}"))?;
             let copy = u32::try_from(positions.len())
                 .map_err(|_| format!("its vertices lie past the mesh's {} index", u32::MAX))?;
