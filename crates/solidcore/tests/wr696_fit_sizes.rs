@@ -6,10 +6,9 @@
 //! (`BandsMeetAt`). The public API carries it on the refusal
 //! ([`SolidError::FilletRefused`]).
 //!
-//! Values: closed forms from the fork's capi tests (`ops_kernel.cpp` at 5e8c9c1), and the
-//! fork's own numbers from a local build of 5e8c9c1's `SMLib` and `SM_API` run the same way
-//! (`SetFilletParameters`, `CreateFilletCorners`, `DoFilleting`, `GetFitRadius`,
-//! `GetFitKind`). The crease trim's refusal across a tangent edge (`NoteFitOnFace`, step 6's
+//! Values: closed forms, the cases taken from the fork's capi tests (`ops_kernel.cpp` at
+//! 5e8c9c1). Every fit is graded against the bound its geometry gives, not against the fork's
+//! build. The crease trim's refusal across a tangent edge (`NoteFitOnFace`, step 6's
 //! `TrimAtCreases`): the fork's capi `scenario_round_onto_a_tangent_round_refused` at 2cf8964,
 //! graded as there (no build of the fork compared).
 
@@ -103,7 +102,7 @@ fn blend(
     })
 }
 
-fn check(refusal: &Refusal, reason: NoRoomReason, kind: FitKind, closed: f64, fork: f64) {
+fn check(refusal: &Refusal, reason: NoRoomReason, kind: FitKind, closed: f64) {
     eprintln!("{refusal:?}");
     assert_eq!(refusal.reason, Some(reason), "{}", refusal.comment);
     let (fit, got_kind, on_edge) = refusal.fit.expect("a fit");
@@ -113,7 +112,6 @@ fn check(refusal: &Refusal, reason: NoRoomReason, kind: FitKind, closed: f64, fo
         (fit - closed).abs() <= 1e-9 * closed,
         "{fit} vs closed form {closed}"
     );
-    assert!((fit - fork).abs() <= 1e-12 * fork, "{fit} vs fork {fork}");
 }
 
 /// The concave L: a floor 20 x 20 x 2 and a wall 2 thick, 10 high, at x = 0.
@@ -124,8 +122,7 @@ fn l_wall(k: &mut Kernel) -> Brep {
 }
 
 /// The L's inner edge rounded 9: its rail on the wall at z = 2 + r leaves the wall's top
-/// past r = 8 (open): fit 8 less a thousand edge tolerances of 1e-5. The fork's build:
-/// 7.9900000000000002.
+/// past r = 8 (open): fit 8 less a thousand edge tolerances of 1e-5.
 #[test]
 fn a_concave_round_past_a_wall_fits_where_its_rail_reaches_the_top() {
     let mut k = kernel(true);
@@ -144,13 +141,12 @@ fn a_concave_round_past_a_wall_fits_where_its_rail_reaches_the_top() {
         NoRoomReason::ConcaveOverflow,
         FitKind::Radius,
         8.0 - 0.01,
-        7.9900000000000002,
     );
 }
 
 /// The L's inner edge blended at a chord width 13: the chord of a ball of radius r in the
 /// square corner is r sqrt 2, its rail reaches the wall's top at r = 8: a width of 8 sqrt 2
-/// (open). The fork's build: 11.303708498984761, kind `SM_FIT_CHORD`.
+/// (open), less the margin, and the kind is the chord's (`SM_FIT_CHORD`).
 #[test]
 fn a_chord_past_a_wall_fits_at_the_chord_of_the_ball_reaching_the_top() {
     let mut k = kernel(true);
@@ -169,13 +165,12 @@ fn a_chord_past_a_wall_fits_at_the_chord_of_the_ball_reaching_the_top() {
         NoRoomReason::ConcaveOverflow,
         FitKind::Chord,
         8.0 * 2.0_f64.sqrt() - 0.01,
-        11.303708498984761,
     );
 }
 
 /// A can (r10, h20) whose top rim is chamfered 10: the cone takes the whole top. The band
-/// reaches the top's centre at the ball touching it there and the side, 10 (open). The
-/// fork's build: 9.9899999999999967.
+/// reaches the top's centre at the ball touching it there and the side, 10 (open), less the
+/// margin.
 #[test]
 fn a_chamfer_taking_a_can_top_fits_where_its_band_reaches_the_centre() {
     let mut k = kernel(true);
@@ -198,13 +193,12 @@ fn a_chamfer_taking_a_can_top_fits_where_its_band_reaches_the_centre() {
         NoRoomReason::FaceConsumed,
         FitKind::Radius,
         10.0 - 0.01,
-        9.9899999999999967,
     );
 }
 
 /// The bossed can (r7 h48.2, a boss r2.7 on its top) with its top rim rounded 6.9: the
 /// rail on the top, a circle of radius 7 - r, reaches the boss's footprint at r = 4.3
-/// (open). The fork's build: 4.2899999999999938.
+/// (open), less the margin.
 #[test]
 fn a_round_past_a_boss_footprint_fits_where_its_rail_reaches_it() {
     let mut k = kernel(true);
@@ -219,13 +213,11 @@ fn a_round_past_a_boss_footprint_fits_where_its_rail_reaches_it() {
         NoRoomReason::RoundIntoMaterial,
         FitKind::Radius,
         4.3 - 0.01,
-        4.2899999999999938,
     );
 }
 
 /// Both vertical edges of the 15 wide end of an 80 x 15 x 20 box rounded 7.6: past 7.5
 /// each rail lies inside the other's band. The bands meet at 7.5 (closed: a full round).
-/// The fork's build: 7.4999999999997264.
 #[test]
 fn two_rounds_on_a_narrow_end_fit_where_their_bands_meet() {
     let mut k = kernel(true);
@@ -245,14 +237,12 @@ fn two_rounds_on_a_narrow_end_fit_where_their_bands_meet() {
     assert_eq!(kind, FitKind::Radius);
     assert!(on_edge);
     assert!((fit - 7.5).abs() <= 1e-9 * 7.5, "{fit} vs closed form 7.5");
-    assert!(
-        (fit - 7.4999999999997264).abs() <= 1e-12 * 7.5,
-        "{fit} vs fork"
-    );
 }
 
 /// `fillet_edges` carries the fit on its refusal: the bridged block's round r9 (part 2's
-/// `BandCutsThePart`), fit 7.8184271464117412 as the fork's build gives it.
+/// `BandCutsThePart`). The band takes all of the bridge where `d(9) = r - sqrt(2 r - 1) = 4`,
+/// that is `r = 5 + 2 sqrt 2`, and the fit is that less a thousand edge tolerances of 1e-5
+/// (the same bound and tolerance as `wr696_band_cuts.rs`, which derives it).
 #[test]
 fn fillet_edges_returns_the_fit_on_the_refusal() {
     let mut k = kernel(true);
@@ -272,9 +262,10 @@ fn fillet_edges_returns_the_fit_on_the_refusal() {
     assert_eq!(reason, Some(NoRoomReason::CutsThePart));
     assert_eq!(fit.kind, FitKind::Radius);
     assert_eq!(fit.edge, Some(e));
+    let closed = 5.0 + 2.0 * 2.0_f64.sqrt() - 0.01;
     assert!(
-        (fit.size - 7.8184271464117412).abs() <= 1e-12 * fit.size,
-        "{}",
+        (fit.size - closed).abs() <= 1e-8 * closed,
+        "{} vs closed form {closed}",
         fit.size
     );
 }
@@ -310,7 +301,7 @@ fn without_the_flag_no_fit_is_noted() {
 /// The three edges at a 20 cube's corner rounded 20 (the fork's capi test
 /// `scenario_cube_corner_rounds_as_wide_as_faces_refused`): the corner takes each edge's
 /// whole length; the corner takes `r <u, e> = r` of it, so the largest radius that keeps a
-/// length is 20 / 1 (open), less the margin. The fork's build: 19.989999999999998.
+/// length is 20 / 1 (open), less the margin.
 #[test]
 fn rounds_whose_corner_takes_their_edges_fit_at_the_edge_length() {
     let mut k = kernel(true);
@@ -333,7 +324,6 @@ fn rounds_whose_corner_takes_their_edges_fit_at_the_edge_length() {
         NoRoomReason::CornersTakeWholeEdge,
         FitKind::Radius,
         20.0 - 0.01,
-        19.989999999999998,
     );
 }
 

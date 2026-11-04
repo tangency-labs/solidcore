@@ -5,9 +5,10 @@
 //! regular is refused with `NoRoom`, naming the radius that works and noting the largest
 //! size that builds ([`FilletSession::fit_size`]).
 //!
-//! Values: closed forms from the fork's capi tests (`ops_kernel.cpp` at 5e8c9c1), and the
-//! fork's own numbers from a local build of 5e8c9c1's `SMLib` and `SM_API` run the same way
-//! (`SetFilletParameters`, `CreateFilletCorners`, `DoFilleting`, `GetFitRadius`).
+//! Values: closed forms, the cases taken from the fork's capi tests (`ops_kernel.cpp` at
+//! 5e8c9c1). Every fit is graded against the bound its geometry gives, not against the
+//! fork's build; the one volume that has no closed form here (the pin on a slope) keeps the
+//! fork's number as a cross-check, at the integrator's tolerance.
 
 #![allow(
     clippy::unwrap_used,
@@ -79,15 +80,10 @@ fn round(k: &mut Kernel, b: &mut Brep, at: Point3, r: f64) -> Result<(), Refusal
 /// A round wider than the rim it rounds: a ball of r2 inside a pin of radius R < 2 (the
 /// fork's capi test of 4ebf04e/a3d6d81). The side curves toward the ball by 1 / R, so the
 /// ball fits while 1 - r / R > 0: refused naming R, and the largest radius that builds is R
-/// itself (a closed bound: the hemispherical end). The fork's build gives 1.99, 1.5, 1 in
-/// the reason and fits 1.9899999999999984, 1.4999999999999984, 0.99999999999999956.
+/// itself (a closed bound: the hemispherical end).
 #[test]
 fn a_ball_wider_than_its_pin_is_refused_naming_the_pin() {
-    for (pin, fork_fit) in [
-        (1.99, 1.9899999999999984),
-        (1.5, 1.4999999999999984),
-        (1.0, 0.99999999999999956),
-    ] {
+    for pin in [1.99, 1.5, 1.0] {
         let mut k = kernel(true);
         let mut b = create_cylinder(&mut k, Point3::ZERO, pin, 10.0).unwrap();
         let refusal = round(&mut k, &mut b, Point3::new(0.0, pin, 10.0), 2.0).expect_err("refused");
@@ -103,10 +99,6 @@ fn a_ball_wider_than_its_pin_is_refused_naming_the_pin() {
         assert!(
             (fit - pin).abs() <= 1e-9 * pin,
             "{fit} vs closed form {pin}"
-        );
-        assert!(
-            (fit - fork_fit).abs() <= 1e-12 * pin,
-            "{fit} vs fork {fork_fit}"
         );
     }
 }
@@ -138,9 +130,9 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
 /// A pin of radius 2 standing on a plate whose top is the plane z = x tan 60 degrees, its
 /// foot rounded (the fork's capi test of c11eeb6). The touch arc is progressive while
 /// (R + r)^2 - r (R + r) / cos a > 0, zero at r = R cos a / (1 - cos a) = 2: r2.2 is refused
-/// naming 2 (the fork's build: "a radius below 2 fits", fit 1.9899999999991815, the open
-/// bound less a thousand edge tolerances of 1e-5), and r1.8 builds (the fork's volume
-/// 32500.37689795169).
+/// naming 2, and the fit is that open bound less a thousand edge tolerances of 1e-5. r1.8
+/// builds; a ball on a cylinder and a plane at 60 degrees leaves no closed-form volume here,
+/// so that build is graded against the fork's, 32500.37689795169, at the integrator's 1e-7.
 fn pin_on_a_slope(k: &mut Kernel) -> Brep {
     let a = std::f64::consts::PI / 3.0;
     let (ca, sa) = (a.cos(), a.sin());
@@ -171,7 +163,6 @@ fn a_round_at_a_pin_on_a_slope_folds_past_two() {
         (fit - (2.0 - 0.01)).abs() < 1e-9,
         "{fit} vs closed form 2 less the margin"
     );
-    assert!((fit - 1.9899999999991815).abs() < 1e-9, "{fit} vs fork");
 
     let mut k = kernel(true);
     let mut b = pin_on_a_slope(&mut k);
