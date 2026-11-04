@@ -84,12 +84,12 @@
 //!   or past the end of the caller's array (undefined; [`SolidError::InvalidInput`]
 //!   here). Never-assigned locals that upstream reads in those cases (`Cv`, `Nv`, ...)
 //!   are [`Vec3::UNDEF`], as the default `SmVector3d`.
-//! - **Upstream bugs kept** (`plan/upstream-issues.md`): the third derivatives `Cuuv` and
-//!   `Cuvv` of the normal's numerator use the coefficient `3.0` for `Buuv x Buv` and
-//!   `Buvv x Buv` (the derivative of `Cuu` / `Cvv` gives `1` and `-1`); the outputs
-//!   `Duvv` and `Dvvv` add `Buuv` instead of `Buvv` / `Bvvv`. The four terms are
-//!   corrected unconditionally (WR-160, WR-161; PR #1914); orders 0..2
-//!   and `Duuu` are unchanged, and `WR-162` (the upper-half, unequal-order second-
+//! - **Third-derivative corrections.** `Cuuv` and `Cuvv` use coefficients `1` and `-1`
+//!   for `Buuv x Buv` and `Buvv x Buv`, not upstream's `3.0`; `Duvv` and `Dvvv`
+//!   add `Buvv` and `Bvvv`, not `Buuv` (WR-160, WR-161; PR #1914). These corrections
+//!   are unconditional. The arithmetic for orders 0..2 and `Duuu` is unchanged;
+//!   regression tests retain pre-fix bits at four samples.
+//! - **Other upstream bugs kept.** `WR-162` (the upper-half, unequal-order second-
 //!   derivative slot write) is still unfixed. `SplitAt` with an extended
 //!   surface splits the base surface a second time for the extended halves; `SwapUV`
 //!   with an extended surface negates the offset distance twice (kept unless

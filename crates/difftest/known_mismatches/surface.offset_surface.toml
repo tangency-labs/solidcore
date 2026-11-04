@@ -1,0 +1,5 @@
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "third_derivative_outputs"
+why = "Confirmed WR-160 mixed-normal coefficients and WR-161 Duvv/Dvvv base terms. All ten observed mismatches map to corrected Duvv or Dvvv slots; equal-order upper-half requests avoid the unequal-order slot alias. See plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution.md and the WR-160/161 addenda. No other case is covered."
+cpp_defect = "WR-161"
