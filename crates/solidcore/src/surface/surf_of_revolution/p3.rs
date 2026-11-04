@@ -92,6 +92,7 @@ use crate::kernel::Kernel;
 use crate::math::{min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{
     BSplineSurface, BoundingBoxRequest, IsoCurveOptions, SurfParamType,
 };
@@ -207,7 +208,7 @@ fn iso_point_inversion(
         &mut sol,
     );
     if let Err(e) = &r {
-        if e.is_unported() {
+        if e.is_unported_or_cancelled() {
             return Err(e.clone());
         }
     }
@@ -319,30 +320,36 @@ impl SurfOfRevolution {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
-        self.transform_at_depth(k, rotate_n_move, scale, 0)
+        self.transform_at_depth(k, rotate_n_move, scale, 0, &mut |_| Ok(()))
     }
 
+    /// [`Self::transform`] at geometry depth `depth`, with the edit notifications of
+    /// the NURB transform ([`BSplineSurface::transform_notifying`]) sent through
+    /// `notify`.
     pub(crate) fn transform_at_depth(
         &mut self,
         k: &Kernel,
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
         depth: usize,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
-        self.transform_using_at_depth(k, rotate_n_move, scale, &Self::own_sweep_iso, depth)
+        self.transform_using_at_depth(k, rotate_n_move, scale, &Self::own_sweep_iso, depth, notify)
     }
 
     /// [`Self::transform`] with the polar converter rebuilt from the sweep iso curves
     /// of `iso` (upstream's virtual `CreateIsoParametricCurve`: a derived class such
-    /// as `SmTorus` passes its override).
+    /// as `SmTorus` passes its override), and the edit notifications of the NURB
+    /// transform sent through `notify`.
     pub(crate) fn transform_using(
         &mut self,
         k: &Kernel,
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
         iso: SweepIsoFn<'_>,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
-        self.transform_using_at_depth(k, rotate_n_move, scale, iso, 0)
+        self.transform_using_at_depth(k, rotate_n_move, scale, iso, 0, notify)
     }
 
     fn transform_using_at_depth(
@@ -352,6 +359,7 @@ impl SurfOfRevolution {
         scale: Option<Vec3>,
         iso: SweepIsoFn<'_>,
         depth: usize,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
@@ -390,7 +398,8 @@ impl SurfOfRevolution {
 
         // apply transformation to underlying Nurb
         if self.base.nurb.is_some() {
-            self.base.transform(rotate_n_move, scale)?;
+            self.base
+                .transform_notifying(rotate_n_move, scale, notify)?;
         }
 
         // update PolarConverter
@@ -640,7 +649,7 @@ impl SurfOfRevolution {
         let gen = tmp.as_ref().unwrap_or(gen_own);
 
         // construct and init global solver
-        let mut gs: GlobalSolver<'_, O> = GlobalSolver::new();
+        let mut gs: GlobalSolver<'_, O> = GlobalSolver::new_with_kernel(k);
         gs.set_3d_tolerance(distance_tolerance);
         gs.set_solver_operation(operation);
         gs.set_solution_requested(SolutionRequested::All);

@@ -237,6 +237,7 @@ pub(super) fn ignore_soft<T>(r: Result<T>) -> Result<Option<T>> {
         Ok(v) => Ok(Some(v)),
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }),
         ) => Err(e),
@@ -1243,9 +1244,10 @@ pub struct ImprintOutcome<O> {
     pub deleted: Vec<O>,
     /// `eRetStat`: the first failing imprint or glue status.
     pub status: Result<()>,
-    /// Whether a failing imprint or glue may have edited a B-rep. False when every
-    /// failure was an edge definition that stopped before its first `MakeEdgeInFace`
-    /// (e.g. no final vertex), which leaves the B-reps as they were.
+    /// Whether a failing imprint may have edited a B-rep. False when every failure was
+    /// an edge definition that stopped before its first edit (no final vertex, or a
+    /// `MakeEdgeInFace` that finds no vertex sector), which leaves the B-reps as they
+    /// were, or a failing `GlueCoincidentBrepVertices`, which upstream goes on past.
     pub failure_edited: bool,
 }
 
@@ -1901,6 +1903,7 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
         // Resolve every ProtoVertex
         let pvs = mgr.proto_vertices().to_vec();
         for pv in pvs {
+            k.check_cancelled("boolean::topology_intersector::p1::resolve_intersections")?;
             // resolve ProtoVertex; a problem only warns
             ignore_soft(mgr.resolve_proto_vertex(k, brep, pv))?;
         }
@@ -1908,6 +1911,7 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
         // Resolve every ProtoEdge
         let pes = mgr.proto_edges().to_vec();
         for pe in pes {
+            k.check_cancelled("boolean::topology_intersector::p1::resolve_intersections")?;
             if let Some(d) = ignore_soft(mgr.resolve_proto_edge(k, brep, pe))? {
                 deleted.extend(d);
             }
@@ -2014,6 +2018,7 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
 
         let pvs = mgr.proto_vertices().to_vec();
         for pv in pvs {
+            k.check_cancelled("boolean::topology_intersector::p1::imprint_intersections")?;
             // Q: if a PV has more than one VD, do we connect them with a new Edge?
             // A: No: if they're meant to be connected, then there will be a ProtoEdge
             //    indicating that.
@@ -2039,6 +2044,7 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
                 .edge_definitions()
                 .get(jj)
             {
+                k.check_cancelled("boolean::topology_intersector::p1::imprint_intersections")?;
                 let (result, edited) = mgr.imprint_edge_definition_reporting_edits(k, brep, ed);
                 if record(result, ret)? {
                     jj += 1;
@@ -2104,6 +2110,25 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
             }
         }
 
+        // WR-619 (opt-in): a vertex whose collapsed speck definition was skipped at imprint
+        // stands in for that speck's span, so grow its tolerance to twice the gained gap
+        // (`AssertValid` tests 0-3 check half the vertex tolerance), covering any shift the
+        // WR-306 edge-interval fit above made.
+        if k.fixes.imprint_skips_collapsed_definition {
+            let gain = crate::geom::tol::gap_gain(k);
+            let skipped = mgr.skipped_speck_vertices().to_vec();
+            for (v, imprint_gap, p0, p1) in skipped {
+                if brep.vertex_brep(v)?.is_none() {
+                    continue;
+                }
+                let cur_gap = ClassGeometry::classification_vertex_point(&*brep, v)
+                    .map_or(0.0, |vp| max2(vp.distance(p0), vp.distance(p1)));
+                let gap = max2(imprint_gap, cur_gap);
+                let min_tol = zone_tol3d(k, 2.0 * gain * gap);
+                brep.set_topology_tolerance(k, v, min_tol, true, true)?;
+            }
+        }
+
         // At this point, there might be coincident Vertices and Edges in the Breps.
         // The rest of ManifoldBoolean() expects coincident Vertices to be glued
         // (although not coincident Edges).  So do that.  [Offset demo 2]
@@ -2119,8 +2144,11 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
         match glued {
             Ok(d) => deleted.extend(d),
             Err(e) => {
+                // A failing glue does not count as an edit that stops the boolean:
+                // upstream goes on, and at the failing glues the fixtures reach the
+                // port's B-reps are in the same state as upstream's (UB-242 addendum
+                // 2026-10-31, glue failure).
                 record(Err(e), ret)?;
-                *failure_edited = true;
             }
         }
 
@@ -4022,7 +4050,55 @@ where
     O: ClassObject + SolutionObject + Ord,
     G: IntersectorBrep<O> + ?Sized,
 {
-    with_face_caches(k, geometry, |objects| solve(objects))
+    with_face_caches(k, geometry, None, |objects| solve(objects))
+}
+
+/// [`solve_with_face_caches`] that afterwards also builds, for every face whose cache
+/// the solve built with `GetTree`, the trimmed cache the face's surface keeps
+/// ([`keep_face_cache_tree`]). Upstream's `GetTree` builds that kept cache
+/// (`SM_OC_TRIMSRF`), so a later `SmFace::PointClassify` of the surface takes its
+/// trimmed-cache fast path; the solve itself reads its own copies, as before.
+///
+/// # Errors
+///
+/// As [`solve_with_face_caches`]; [`SolidError::Unported`] and
+/// [`SolidError::InvalidInput`] of the kept builds (other failures of a kept build
+/// leave that cache as it was).
+pub(crate) fn solve_with_face_caches_keeping_trees<O, G, R>(
+    k: &Kernel,
+    geometry: &mut G,
+    mut solve: impl FnMut(&dyn TopologyObjects<O>) -> Result<R>,
+) -> Result<R>
+where
+    O: ClassObject + SolutionObject + Ord,
+    G: IntersectorBrep<O> + ?Sized,
+{
+    let mut built = Vec::new();
+    let result = with_face_caches(k, geometry, Some(&mut built), |objects| solve(objects));
+    for face in built {
+        ignore_soft(keep_face_cache_tree(k, geometry, face))?;
+    }
+    result
+}
+
+/// `GetTree` of the trimmed cache the surface of `face` keeps
+/// (`smsurf_GetSurfaceCache(pFace->GetSurface())->GetTree()`): the cache is made
+/// when the surface has none, and its tree is built with the face when it has none or
+/// lacks the face's boundary.
+fn keep_face_cache_tree<O, G>(k: &Kernel, geometry: &mut G, face: O) -> Result<()>
+where
+    O: ClassObject + SolutionObject + Ord,
+    G: IntersectorBrep<O> + ?Sized,
+{
+    let target = geometry.face_cache_target(face)?;
+    let mut lease = crate::query::face::p2::face_surface_cache(k, target.brep, target.face)?;
+    let built = if lease.trimmed {
+        crate::query::face::p2::face_cache_tree(k, target.brep, target.face, &mut lease.cache)
+    } else {
+        Ok(())
+    };
+    lease.release();
+    built
 }
 
 /// [`solve_with_face_caches`] for a surface solve outside the topology solver: `solve`
@@ -4041,7 +4117,9 @@ where
     O: ClassObject + SolutionObject + Ord,
     G: IntersectorBrep<O> + ?Sized,
 {
-    with_face_caches(k, geometry, |objects| solve(&mut FaceCacheContext(objects)))
+    with_face_caches(k, geometry, None, |objects| {
+        solve(&mut FaceCacheContext(objects))
+    })
 }
 
 /// The face owning the edge use of a UV trim request: among the faces the attempt's
@@ -4104,6 +4182,7 @@ fn trim_owner_face<O: Copy>(
 fn with_face_caches<O, G, R>(
     k: &Kernel,
     geometry: &mut G,
+    mut built_with_tree: Option<&mut Vec<O>>,
     mut solve: impl FnMut(&FaceCacheObjects<'_, O, G>) -> Result<R>,
 ) -> Result<R>
 where
@@ -4150,6 +4229,11 @@ where
                 OP_FACE_CACHES,
                 "face cache preparation made no progress",
             ));
+        }
+        if get_tree {
+            if let Some(list) = built_with_tree.as_deref_mut() {
+                list.push(face);
+            }
         }
         let cache = match geometry.face_cache_target(face) {
             Ok(t) if get_tree => {
@@ -4317,7 +4401,9 @@ pub fn intersect_wire_lamina_edges<O: ClassObject + SolutionObject + Ord>(
 
         // temporarily disable EditingEnabled bit; Intersect Edge->Curve with Brep
         let old_edit = geometry.set_editing_enabled(brep2, false)?;
-        let solved = solve_with_face_caches(k, geometry, |objects| {
+        // (upstream's GetTree inside this BrepCurveSolve builds each face surface's kept
+        // trimmed cache, with brep2's editing still off)
+        let solved = solve_with_face_caches_keeping_trees(k, geometry, |objects| {
             let curve_ref = CurveRef {
                 curve: objects.curve(curve)?,
                 handle: curve,

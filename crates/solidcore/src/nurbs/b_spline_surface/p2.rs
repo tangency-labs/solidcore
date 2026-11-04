@@ -73,7 +73,7 @@
 //! - **Edit notifications.** `SetCanonical`'s `SM_NO_PRE_EDIT` / `SM_NO_POST_EDIT`
 //!   (`this`, `SM_NO_GET_OWNER(this)` = null) need the wrapping [`Surface`]'s identity,
 //!   so the B-spline sends them through a caller hook
-//!   ([`BSplineSurface::set_canonical_notifying`], [`BSplineSurface::swap_uv_notifying`],
+//!   (`BSplineSurface::set_canonical_notifying`, `BSplineSurface::swap_uv_notifying`,
 //!   used by `Surface::swap_uv_notifying`); the plain entry points notify nobody.
 //! - **`SetCanonical`** passes no domain to `CreateCanonical` (as upstream), so the
 //!   [`CanonicalSurfaceData::uv_domain`] of its argument is ignored. As upstream, only
@@ -91,7 +91,7 @@ use crate::curve::curve::p2::CRV_ON_SURF_TYPE;
 use crate::curve::curve::Curve as SmCurve;
 use crate::curve::curve::CurveKind;
 use crate::curve::iso_curve::IsoCurve;
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{ignore_status, ignored, Result, SolidError, SM_ERR_INVALID_INPUT};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
@@ -128,6 +128,16 @@ pub(crate) type EditNotify<'a> = dyn FnMut(NotifyOperation) -> Result<()> + 'a;
 const OP_ISO: &str = "nurbs::b_spline_surface::p2::BSplineSurface::create_iso_parametric_curve";
 const OP_SPHERE: &str = "nurbs::b_spline_surface::p2::BSplineSurface::create_sphere_from_arcs";
 const OP_REV: &str = "nurbs::b_spline_surface::p2::BSplineSurface::create_surf_of_revolution";
+
+/// `CreateSurfOfRevolution`'s `SER(v.Unitize())` of a zero vector: the
+/// `SM_ERR_INVALID_INPUT` that `SmVector3d::Unitize` returns.
+const fn unitize_status() -> SolidError {
+    SolidError::Upstream {
+        operation: OP_REV,
+        code: SM_ERR_INVALID_INPUT,
+        entity: None,
+    }
+}
 const OP_PLANE: &str =
     "nurbs::b_spline_surface::p2::BSplineSurface::create_trimmed_plane_from_ruled";
 const OP_DEGEN: &str = "nurbs::b_spline_surface::p2::BSplineSurface::is_degenerate_point";
@@ -368,7 +378,7 @@ fn surface_is_closed(
 }
 
 /// Expands `ivl` relatively by 100 (degree 1), 1 (degree 2) or 0.5.
-fn expand_by_degree(ivl: &mut Extent1d, deg: usize) {
+pub(crate) fn expand_by_degree(ivl: &mut Extent1d, deg: usize) {
     if deg == 1 {
         ivl.expand_relative(100.0);
     } else if deg == 2 {
@@ -831,9 +841,11 @@ impl BSplineSurface {
     ///
     /// # Errors
     ///
-    /// `InvalidInput` for a zero axis or an angle outside `[-360, 360]`; `SM_ERR` when
-    /// every control point is on the axis or a circle or the surface cannot be built;
-    /// `InvalidInput` for a sweep curve that is not a circle.
+    /// `SM_ERR_INVALID_INPUT` for a zero axis or a sweep circle without Y axis (a
+    /// control point whose offset from the axis is parallel to it or overflows);
+    /// `InvalidInput` for an angle outside `[-360, 360]`; `SM_ERR` when every control
+    /// point is on the axis or a circle or the surface cannot be built; `InvalidInput`
+    /// for a sweep curve that is not a circle.
     pub fn create_surf_of_revolution(
         k: &Kernel,
         gen_curve: &BSplineCurve,
@@ -876,8 +888,8 @@ impl BSplineSurface {
         swap_uv: bool,
         opt_sweep_curve: Option<&SmCurve>,
     ) -> Result<Self> {
-        // unitized rotation axis
-        let axis_dir = axis_dir.unitize()?;
+        // unitized rotation axis (`SER(sAxisDir.Unitize())`: the exact status)
+        let axis_dir = axis_dir.unitize().map_err(|_| unitize_status())?;
 
         // GenCurve locals
         let crv_ivl = gen_curve.natural_interval();
@@ -1038,7 +1050,11 @@ impl BSplineSurface {
             } else {
                 // generate a sweep circle from scratch
                 x_vec /= radius; // Unitize.
-                let y_vec = axis_dir.cross(x_vec).unitize()?;
+                                 // (`SER(sYVec.Unitize())`: the exact status)
+                let y_vec = axis_dir
+                    .cross(x_vec)
+                    .unitize()
+                    .map_err(|_| unitize_status())?;
                 let ref_frame = Axis2Placement::new(center, x_vec, y_vec);
                 let cir = BSplineCurve::create_circle_segment(
                     3,
@@ -2339,6 +2355,20 @@ mod tests {
             None
         )
         .is_err());
+        // `SER(sAxisDir.Unitize())`: a zero axis is the exact `SM_ERR_INVALID_INPUT`
+        let r = BSplineSurface::create_surf_of_revolution(
+            &Kernel::default(),
+            &line,
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, -0.0),
+            90.0,
+            false,
+            None,
+        );
+        assert_eq!(
+            r.err().and_then(|e| e.sm_status()),
+            Some(SM_ERR_INVALID_INPUT)
+        );
     }
 
     #[test]

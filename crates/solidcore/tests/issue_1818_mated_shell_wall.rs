@@ -27,7 +27,7 @@ mod offset_fixture;
 use offset_fixture::{planar_faces_at, volume, Notifications};
 use solidcore::curve::curve::Curve;
 use solidcore::curve::ellipse::Ellipse;
-use solidcore::error::{SolidError, SM_ERR};
+use solidcore::error::SM_ERR;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::kernel::UpstreamFixes;
@@ -88,9 +88,9 @@ fn loft(k: &mut Kernel, square: bool) -> Brep {
 
 /// The loft shelled 1 inward open at its top (`SmApiShellBrepFull(b, -1, TRUE, TRUE,
 /// TRUE, [top])`), under `fixes`.
-fn shell(fixes: UpstreamFixes, square: bool) -> (Kernel, ShellOutcome) {
+fn shell(fixes: &UpstreamFixes, square: bool) -> (Kernel, ShellOutcome) {
     let mut k = Kernel::default();
-    k.fixes.clone_from(&fixes);
+    k.fixes.clone_from(fixes);
     let mut part = loft(&mut k, square);
     assert!(solidcore::topology::integrity::check(&part).is_ok());
     assert!(brep_is_manifold_solid(&part).unwrap());
@@ -123,11 +123,9 @@ fn mated() -> UpstreamFixes {
 
 fn assert_sm_err(result: solidcore::Result<Brep>, operation: &str, label: &str) {
     match result {
-        Err(SolidError::Upstream {
-            code, operation: o, ..
-        }) => {
-            assert_eq!(code, SM_ERR, "{label}");
-            assert_eq!(o, operation, "{label}");
+        Err(e) if e.sm_status().is_some() => {
+            assert_eq!(e.sm_status(), Some(SM_ERR), "{label}");
+            assert_eq!(e.operation(), operation, "{label}");
         }
         Err(other) => panic!("{label}: SM_ERR expected, got {other}"),
         Ok(mut wall) => {
@@ -144,7 +142,7 @@ fn assert_sm_err(result: solidcore::Result<Brep>, operation: &str, label: &str) 
 /// Upstream's refusal (the default path, at parity with the pinned C++).
 #[test]
 fn default_fixes_refuse_the_square_to_circle_shell() {
-    let (_, result) = shell(UpstreamFixes::default(), true);
+    let (_, result) = shell(&UpstreamFixes::default(), true);
     // The early merge refusal happens before shell_difference takes ownership.
     assert!(result.retained_input.is_some());
     assert!(!result.input_ownership_transferred());
@@ -158,7 +156,7 @@ fn default_fixes_refuse_the_square_to_circle_shell() {
 /// The flag alone: the difference's broken wall is refused, not returned.
 #[test]
 fn mated_offsets_alone_refuse_the_broken_wall() {
-    let (_, result) = shell(mated(), true);
+    let (_, result) = shell(&mated(), true);
     // The final-wall refusal must not return an input already consumed by the difference.
     assert!(result.retained_input.is_none());
     assert!(result.input_ownership_transferred());
@@ -174,7 +172,7 @@ fn mated_offsets_alone_refuse_the_broken_wall() {
 fn mated_offsets_with_loop_gaps_refuse_earlier() {
     let mut fixes = mated();
     fixes.offset_closes_loop_gaps = true;
-    let (_, result) = shell(fixes, true);
+    let (_, result) = shell(&fixes, true);
     assert_sm_err(
         result.result,
         "offset::offset_executive::step_gaps",
@@ -186,7 +184,7 @@ fn mated_offsets_with_loop_gaps_refuse_earlier() {
 /// `shell_empty_cavity_fails`, not WR-578's loop gaps) reached the same broken wall.
 #[test]
 fn solidcraft_fixes_refuse_the_broken_wall() {
-    let (_, result) = shell(solidcraft_fixes(), true);
+    let (_, result) = shell(&solidcraft_fixes(), true);
     assert_sm_err(
         result.result,
         "offset::offset_executive::p2::shell_brep",
@@ -200,7 +198,7 @@ fn solidcraft_fixes_refuse_the_broken_wall() {
 fn mated_offsets_shell_the_circle_control() {
     let analytic = std::f64::consts::PI * (15.0 * 15.0 * 60.0 - 14.0 * 14.0 * 59.0);
     for fixes in [UpstreamFixes::default(), mated()] {
-        let (k, result) = shell(fixes, false);
+        let (k, result) = shell(&fixes, false);
         let mut wall = result.result.unwrap();
         wall.refresh_cached_topology();
         assert!(solidcore::topology::integrity::check(&wall).is_ok());
@@ -358,7 +356,6 @@ fn solidcraft_fixes() -> UpstreamFixes {
     f.fillet_point_step_per_point = true;
     f.analytic_copy_keeps_parameterization = true;
     f.fillet_point_bigger_step_retry = true;
-    f.fillet_through_extended_rail_end = true;
     f.precise_properties_body_length_scale = true;
     f.offset_extension_from_base = true;
     f.corner_blend_stays_inside_neighbours = true;

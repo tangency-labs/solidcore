@@ -15,6 +15,8 @@
 //! | `extend_surface` (private)                            | `sm_ExtendSurface` (static)                      |
 //! | `extend_as_itself` (private)                          | the fork's `sm_ExtendAsItself` (static; WR-633, WR-650) |
 //! | `rot_turn`, `arc_spans`, `turn_about`, `radial` (private) | the fork's `sm_GetRotTurn`, `sm_ArcSpans`, `sm_TurnAbout`, `sm_Radial` (WR-650) |
+//! | [`OffsetSurface::continues_as_itself`], [`OffsetSurface::continue_as_itself`] | the fork's `ContinuesAsItself`, `ContinueAsItself` (tangency-labs/smlib@db4a655) |
+//! | `generator_is_circle`, `extends_as_itself` (private) | the fork's `sm_GeneratorIsCircle` (tangency-labs/smlib@43fd6b6), the `bAsItself` test of `sm_ExtendSurface` |
 //! | [`OffsetSurface::knots`]                              | `GetKnots`                                       |
 //! | [`OffsetSurface::evaluate_normal`], [`OffsetSurface::evaluate_normal_extending`] | `EvaluateNormal` |
 //! | [`OffsetSurface::evaluate_point`], [`OffsetSurface::evaluate_point_extending`] | `EvaluatePoint`    |
@@ -91,7 +93,8 @@
 //!   and `Duuu` are unchanged, and `WR-162` (the upper-half, unequal-order second-
 //!   derivative slot write) is still unfixed. `SplitAt` with an extended
 //!   surface splits the base surface a second time for the extended halves; `SwapUV`
-//!   with an extended surface negates the offset distance twice; `STEPInversion`
+//!   with an extended surface negates the offset distance twice (kept unless
+//!   `fixes.offset_swap_uv_extended_distance`, WR-164); `STEPInversion`
 //!   retries on the extended surface with the tolerance not widened by the offset.
 //! - **Recursion.** The pole step-off of `EvaluatePlainOrSimple` evaluates itself at
 //!   the step-off points; its depth is bounded by [`MAX_STEPOFF_DEPTH`] (upstream
@@ -368,6 +371,8 @@ fn is_b_spline_kind(surface: &Surface) -> bool {
             | SurfaceKind::Cone(_)
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
     )
 }
 
@@ -819,6 +824,65 @@ impl OffsetSurface {
             true,
             SS_UNKNOWN,
         )?))
+    }
+
+    /// The fork's `SmOffsetSurface::ContinuesAsItself` (tangency-labs/smlib@db4a655):
+    /// whether `surface` continues as itself past its domain ([`Self::continue_as_itself`]):
+    /// a cylinder, cone, sphere or torus.
+    #[must_use]
+    pub fn continues_as_itself(surface: &Surface) -> bool {
+        matches!(
+            surface.kind(),
+            SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_)
+        )
+    }
+
+    /// The fork's `SmOffsetSurface::ContinueAsItself` (tangency-labs/smlib@db4a655):
+    /// `surface` ([`Self::continues_as_itself`]) continued as itself over at least `lo` to
+    /// `hi`, as the fillet's offset surfaces continue their bases (`sm_ExtendAsItself`):
+    /// each end span's rational arc or straight line carried on, the same surface at the
+    /// same parameters over its own domain, its analytic kind given back
+    /// (`CopyAndAddAnalytics`). Round its axis it reaches no further than closing the
+    /// turn: asked for more, it closes it. Within its own domain the result is a copy.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` for a surface that does not continue as itself; those of the copy, the
+    /// turn and the extension.
+    pub fn continue_as_itself(
+        k: &Kernel,
+        surface: &Surface,
+        lo: Point2,
+        hi: Point2,
+    ) -> Result<Surface> {
+        if !Self::continues_as_itself(surface) {
+            return Err(SolidError::sm_err(OP_EXTEND));
+        }
+        let domain = surface.natural_uv_domain_with_nurb(k)?;
+        if domain.contains_point(lo, 0.0) && domain.contains_point(hi, 0.0) {
+            return surface.copy(k);
+        }
+        let turn = rot_turn(revolution_of(k, surface)?.0)?;
+        let mut lo = Point2::new(
+            smos_min(lo.x, domain.min().x),
+            smos_min(lo.y, domain.min().y),
+        );
+        let mut hi = Point2::new(
+            smos_max(hi.x, domain.max().x),
+            smos_max(hi.y, domain.max().y),
+        );
+        let (rot_lo, rot_hi) = if turn.rot == 0 {
+            (&mut lo.x, &mut hi.x)
+        } else {
+            (&mut lo.y, &mut hi.y)
+        };
+        let close = *rot_hi - *rot_lo >= turn.hi - turn.lo;
+        if close {
+            *rot_lo = turn.lo;
+            *rot_hi = turn.hi;
+        }
+        let extended = extend_as_itself(k, surface, lo, hi, close)?;
+        extended.copy_and_add_analytics(k)
     }
 
     /// Exact evaluation copy (no knot fix-up) that takes the current extension, pending
@@ -1832,7 +1896,7 @@ impl OffsetSurface {
         let mut result = base;
         let retry = match &result {
             Ok((_, location)) => *location == LocationType::Exterior,
-            Err(e) if e.is_unported() => return result,
+            Err(e) if e.is_unported_or_cancelled() => return result,
             Err(_) => true,
         };
         if retry {
@@ -1864,7 +1928,10 @@ impl OffsetSurface {
     }
 
     /// Swaps `u` and `v` of the extended and the owned base surface, negating the
-    /// distance for each (`SwapUV`).
+    /// distance for each (`SwapUV`). With
+    /// [`UpstreamFixes::offset_swap_uv_extended_distance`](crate::kernel::UpstreamFixes::offset_swap_uv_extended_distance)
+    /// set and an extension present, the base's swap keeps the extension's one
+    /// negation instead of negating again (WR-164).
     ///
     /// # Errors
     ///
@@ -1887,13 +1954,19 @@ impl OffsetSurface {
         notify: &mut crate::surface::surface::p2::SurfaceEditNotify<'_>,
     ) -> Result<()> {
         self.fold_pending_extension();
+        let mut swapped_extension = false;
         if let Some(e) = self.extended_surface.as_deref_mut() {
             e.swap_uv_notifying(k, notify)?;
             self.offset_distance.set(-self.offset_distance.get());
+            swapped_extension = true;
         }
         if self.owns_surface {
             self.surface.swap_uv_notifying(k, notify)?;
-            self.offset_distance.set(-self.offset_distance.get());
+            // WR-164: the extension's swap already negated the distance (the normal
+            // flipped); negating again for the base leaves it on the wrong side.
+            if !(swapped_extension && k.fixes.offset_swap_uv_extended_distance) {
+                self.offset_distance.set(-self.offset_distance.get());
+            }
         } else {
             // Can not swap UV if I do not own the surface
             return Err(SolidError::sm_err(OP_EDIT));
@@ -2188,6 +2261,10 @@ fn nurb_of(k: &Kernel, surface: &Surface) -> Result<crate::nurbs::srf_basic::Sur
         SurfaceKind::Cone(s) => s.rev().base().gw_nurb().cloned().ok_or_else(missing),
         SurfaceKind::Sphere(s) => s.base().base().gw_nurb().cloned().ok_or_else(missing),
         SurfaceKind::Torus(s) => s.base().base().gw_nurb().cloned().ok_or_else(missing),
+        // (the fork's SmProceduralBlend: its net's NURB)
+        SurfaceKind::ProceduralBlend(pb) => pb.net().gw_nurb().cloned().ok_or_else(missing),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(pb) => pb.net().gw_nurb().cloned().ok_or_else(missing),
         _ => Err(missing()),
     }
 }
@@ -2197,7 +2274,7 @@ fn extend_toward(k: &Kernel, surface: &Surface, uv: Point2) -> Result<Surface> {
     let sur = nurb_of(k, surface)?;
     let mut esur: Option<UnboundedExtension> = None;
     match eval_pt_derivs_unbounded(&sur, uv.x, uv.y, 0, ExtendContinuity::G1R, &mut esur) {
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Err(SolidError::sm_err(OP_EXTEND)),
         Ok(_) => {}
     }
@@ -2208,6 +2285,24 @@ fn extend_toward(k: &Kernel, surface: &Surface, uv: Point2) -> Result<Surface> {
         )
     })?;
     Ok(Surface::from(BSplineSurface::from_gw_nurb(&ext.surface)))
+}
+
+/// `smos_Min(a, b)`: `a < b ? a : b`.
+fn smos_min(a: f64, b: f64) -> f64 {
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
+
+/// `smos_Max(a, b)`: `a > b ? a : b`.
+fn smos_max(a: f64, b: f64) -> f64 {
+    if a > b {
+        a
+    } else {
+        b
+    }
 }
 
 /// `a > b` (false for a `NaN` operand), as the fork's `!(a > b)` tests read it.
@@ -2284,17 +2379,164 @@ struct RotTurn {
     hi: f64,
 }
 
-/// The surface of revolution of a cylinder, cone, sphere or torus (its NURB made), whether
-/// its generator is a circle (a sphere's or torus's), and a torus's major radius.
+/// How the generator of a surface [`extend_as_itself`] continues is carried on.
+#[derive(Debug, Clone, Copy)]
+enum Generator {
+    /// A cone's or cylinder's: a line.
+    Line,
+    /// A sphere's: a circle about the axis's origin.
+    Sphere,
+    /// A torus's: a circle about the tube's centre, `major` from the axis.
+    Torus {
+        /// The torus's major radius.
+        major: f64,
+    },
+    /// A surface of revolution's whose generator is an arc of one circle
+    /// ([`generator_is_circle`], the fork's tangency-labs/smlib@43fd6b6): about `centre`,
+    /// the arc `angle` radians.
+    Circle {
+        /// The circle's centre, in the first column's meridian plane.
+        centre: Point3,
+        /// The arc's angle, radians.
+        angle: f64,
+    },
+}
+
+/// The surface of revolution of a cylinder, cone, sphere or torus (its NURB made), or of a
+/// surface of revolution whose generator is a circle ([`generator_is_circle`]), and how
+/// its generator continues.
 fn revolution_of<'a>(
     k: &Kernel,
     surface: &'a Surface,
-) -> Result<(&'a SurfOfRevolution, bool, Option<f64>)> {
+) -> Result<(&'a SurfOfRevolution, Generator)> {
     match surface.kind_with_nurb(k)? {
-        SurfaceKind::Cone(c) => Ok((c.rev(), false, None)),
-        SurfaceKind::Sphere(s) => Ok((s.base(), true, None)),
-        SurfaceKind::Torus(t) => Ok((t.base(), true, Some(t.major_radius()))),
+        SurfaceKind::Cone(c) => Ok((c.rev(), Generator::Line)),
+        SurfaceKind::Sphere(s) => Ok((s.base(), Generator::Sphere)),
+        SurfaceKind::Torus(t) => Ok((
+            t.base(),
+            Generator::Torus {
+                major: t.major_radius(),
+            },
+        )),
+        SurfaceKind::SurfOfRevolution(r) => match generator_is_circle(r) {
+            Some((centre, angle)) => Ok((r, Generator::Circle { centre, angle })),
+            None => Err(SolidError::sm_err(OP_EXTEND)),
+        },
         _ => Err(SolidError::sm_err(OP_EXTEND)),
+    }
+}
+
+/// Whether `sm_ExtendSurface` extends `surface` as itself (`extend_as_itself`, its
+/// `bAsItself`): a cylinder, cone, sphere or torus, or (the fork's tangency-labs/smlib@43fd6b6) a surface of revolution whose
+/// generator is an arc of one circle. A NURB that cannot be made is not one.
+pub(crate) fn extends_as_itself(k: &Kernel, surface: &Surface) -> bool {
+    match surface.kind() {
+        SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_) => true,
+        SurfaceKind::SurfOfRevolution(_) => match surface.kind_with_nurb(k) {
+            Ok(SurfaceKind::SurfOfRevolution(r)) => generator_is_circle(r).is_some(),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// The fork's `sm_GeneratorIsCircle` (tangency-labs/smlib@43fd6b6): whether a surface of
+/// revolution's generator is an arc of one circle, and if so that circle's centre (in the
+/// first column's meridian plane) and the arc's angle. A circle's NURB spans are rational
+/// quadratic arcs: per span (interior knots of multiplicity 2), end points `P0`, `P2` and
+/// middle `P1` where the end tangents meet, `|P0 P1| = |P1 P2|`, and the middle weight over
+/// the ends' geometric mean the cosine of half the span's angle, which is also half the
+/// turn at `P1`. Every span on one circle: one centre and radius. (A round's cross section
+/// revolved round a boss's axis, the surface SMLib's concave round of an arc is.)
+fn generator_is_circle(rev: &SurfOfRevolution) -> Option<(Point3, f64)> {
+    let turn = rot_turn(rev).ok()?;
+    let l_gen = 1 - turn.rot;
+    let e_gen = if l_gen == 0 {
+        SurfParamType::U
+    } else {
+        SurfParamType::V
+    };
+    let b = rev.base();
+    if b.degree(e_gen) != 2 {
+        return None;
+    }
+    let net = b.control_point_net().ok()?;
+    let (num_u, num_v) = (net.u_count, net.v_count);
+    if net.points.len() != num_u * num_v
+        || (!net.weights.is_empty() && net.weights.len() != net.points.len())
+    {
+        return None;
+    }
+    let (knots, mults) = b.knots(e_gen, None).ok()?;
+    if knots.len() < 2 {
+        return None;
+    }
+    for m in mults.iter().take(mults.len().saturating_sub(1)).skip(1) {
+        if *m != 2 {
+            return None;
+        }
+    }
+    let spans = knots.len() - 1;
+    let num = if l_gen == 0 { num_u } else { num_v };
+    if num != 2 * spans + 1 {
+        return None;
+    }
+    // the first column along the generator
+    let at = |g: usize| -> Option<WeightedPoint> {
+        let (i, j) = if l_gen == 0 { (g, 0) } else { (0, g) };
+        let idx = i * num_v + j;
+        let p = net.points.get(idx).copied()?;
+        let w = if net.weights.is_empty() {
+            1.0
+        } else {
+            net.weights.get(idx).copied()?
+        };
+        Some(WeightedPoint { p, w })
+    };
+    let mut centre = Point3::default();
+    let mut angle = 0.0;
+    let mut radius = 0.0;
+    for sp in 0..spans {
+        let (a, m, b) = (at(2 * sp)?, at(2 * sp + 1)?, at(2 * sp + 2)?);
+        let la = (m.p - a.p).length();
+        let lb = (b.p - m.p).length();
+        let tol = 1.0e-9 * (1.0 + la + lb);
+        if !gt(a.w, 0.0) || !gt(b.w, 0.0) || !gt(m.w, 0.0) || !gt(la, tol) || (la - lb).abs() > tol
+        {
+            return None;
+        }
+        let cos = m.w / (a.w * b.w).sqrt();
+        if !gt(cos, 0.0) || !gt(1.0, cos) {
+            return None;
+        }
+        let ta = (m.p - a.p).unitize().ok()?;
+        let tb = (b.p - m.p).unitize().ok()?;
+        // half the turn of the tangent at P1 is half the span's angle
+        let d = ta.dot(tb);
+        let d = if 1.0 < d { 1.0 } else { d };
+        let d = if -1.0 > d { -1.0 } else { d };
+        let half = 0.5 * d.acos();
+        if (half.cos() - cos).abs() > 1.0e-9 {
+            return None;
+        }
+        // the centre: from P0 square to its tangent, toward P2, a radius |P0 P1| / tan(half) away
+        let inward = ((b.p - a.p) - ta * ta.dot(b.p - a.p)).unitize().ok()?;
+        let r = la / half.tan();
+        let c = a.p + inward * r;
+        if sp == 0 {
+            centre = c;
+            radius = r;
+        } else if c.distance(centre) > 1.0e-9 * (1.0 + radius)
+            || (r - radius).abs() > 1.0e-9 * (1.0 + radius)
+        {
+            return None;
+        }
+        angle += 2.0 * half;
+    }
+    if angle > 0.0 {
+        Some((centre, angle))
+    } else {
+        None
     }
 }
 
@@ -2440,7 +2682,8 @@ fn net_at(g: &[Vec<WeightedPoint>], r: usize, i: usize) -> Result<WeightedPoint>
 ///
 /// # Errors
 ///
-/// `SM_ERR` for a surface that is not a cylinder, cone, sphere or torus, a net or knot
+/// `SM_ERR` for a surface that is not a cylinder, cone, sphere or torus (nor a surface
+/// of revolution whose generator is a circle, [`generator_is_circle`]), a net or knot
 /// vector of an unexpected shape or degree, a degenerate axis or circle, a non-positive
 /// weight, or more than [`AS_ITSELF_MAX_SPANS`] spans at one end; those of the NURB
 /// queries and of [`BSplineSurface::create_canonical`].
@@ -2452,7 +2695,8 @@ fn extend_as_itself(
     close_turn: bool,
 ) -> Result<Surface> {
     let err = || SolidError::sm_err(OP_EXTEND);
-    let (rev, gen_circle, major_radius) = revolution_of(k, surface)?;
+    let (rev, generator) = revolution_of(k, surface)?;
+    let gen_circle = !matches!(generator, Generator::Line);
     let turn = rot_turn(rev)?;
     let l_rot = turn.rot;
     let b = rev.base();
@@ -2524,7 +2768,11 @@ fn extend_as_itself(
     let o = rev.position().origin();
     let z = rev.position().z_axis().unitize().map_err(|_| err())?;
     let deg_to_rad = PI / 180.0;
-    let gen_angle = rev.step_uv_domain().size().y * deg_to_rad;
+    // the fork's tangency-labs/smlib@43fd6b6: a revolved circle's arc is its generator's
+    let gen_angle = match generator {
+        Generator::Circle { angle, .. } => angle,
+        _ => rev.step_uv_domain().size().y * deg_to_rad,
+    };
     let (rot_lo, rot_hi, gen_lo, gen_hi) = if l_rot == 0 {
         (lo.x, hi.x, lo.y, hi.y)
     } else {
@@ -2565,9 +2813,14 @@ fn extend_as_itself(
             let end = net_at(&g, 0, i_end)?;
             let mut centre = o;
             let out = radial(end.p, o, z);
-            if let Some(major) = major_radius {
-                let out = out.unitize().map_err(|_| err())?;
-                centre = o + out * major;
+            match generator {
+                Generator::Torus { major } => {
+                    let out = out.unitize().map_err(|_| err())?;
+                    centre = o + out * major;
+                }
+                // the fork's tangency-labs/smlib@43fd6b6: about the revolved circle's centre
+                Generator::Circle { centre: c, .. } => centre = c,
+                Generator::Line | Generator::Sphere => {}
             }
             // turning outward: from the inner control point through the end
             let inner = net_at(&g, 0, i_in)?;
@@ -2765,11 +3018,10 @@ fn extend_from_base(
     // tangency-labs/smlib@de0a6b8): a cylinder, cone, sphere or torus continues as itself
     // (`sm_ExtendAsItself`): its NURB spans are rational arcs and straight lines, whose
     // polynomials carried on stay on the surface. A tangent extension (G1R) leaves it at once.
-    let as_itself = k.fixes.offset_extension_as_itself
-        && matches!(
-            base.kind(),
-            SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_)
-        );
+    // So does (the fork's tangency-labs/smlib@43fd6b6) a surface of revolution whose
+    // generator is a circle (a round's cross section revolved, as SMLib's concave round of an
+    // arc is): its generator carried on as its own circle.
+    let as_itself = k.fixes.offset_extension_as_itself && extends_as_itself(k, base);
     // WR-650 (the fork's tangency-labs/smlib@b298cc2): round the axis such a surface is a
     // circle, and its extension reaches no further than closing the turn (half the gap past
     // either end, `sm_RotTurn`); from there on that direction is periodic, its parameters
@@ -2957,13 +3209,13 @@ fn extend_surface(
     let mut esur: Option<UnboundedExtension> = None;
     let first = eval_pt_derivs_unbounded(&sur, s_uv.x, s_uv.y, 0, ExtendContinuity::G1R, &mut esur);
     if let Err(e) = first {
-        if e.is_unported() {
+        if e.is_unported_or_cancelled() {
             return Err(e);
         }
         let second =
             eval_pt_derivs_unbounded(&sur, uv.x, uv.y, 0, ExtendContinuity::G1R, &mut esur);
         match second {
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::sm_err(OP_EXTEND)),
             Ok(_) => {}
         }
@@ -3748,6 +4000,242 @@ mod tests {
         }
     }
 
+    /// The B-spline base of the `extension_sequence` fixture (WR-164): degree 3 x 3,
+    /// a 5 x 5 net of non-rational (`NOW`) control points and knots
+    /// `[0,0,0,0,.5,1,1,1,1]`, built through the public `from_data`.
+    fn wr_164_base() -> Surface {
+        use crate::nurbs::math::{CPoint, NOW};
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.11682550269259515, NOW),
+                CPoint::new(0.0, 0.375, 0.10643255794977993, NOW),
+                CPoint::new(0.0, 0.75, 0.0771028627866534, NOW),
+                CPoint::new(0.0, 1.125, 0.034054830890782935, NOW),
+                CPoint::new(0.0, 1.5, -0.015052322815247873, NOW),
+            ],
+            vec![
+                CPoint::new(0.5, 0.0, 0.23958622895964427, NOW),
+                CPoint::new(0.5, 0.375, 0.21827233446462932, NOW),
+                CPoint::new(0.5, 0.75, 0.15812287309950565, NOW),
+                CPoint::new(0.5, 1.125, 0.06983978945462085, NOW),
+                CPoint::new(0.5, 1.5, -0.030869366510477145, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.29781389731127655, NOW),
+                CPoint::new(1.0, 0.375, 0.2713199956625681, NOW),
+                CPoint::new(1.0, 0.75, 0.19655215283576333, NOW),
+                CPoint::new(1.0, 1.125, 0.08681325289519475, NOW),
+                CPoint::new(1.0, 1.5, -0.03837168099325073, NOW),
+            ],
+            vec![
+                CPoint::new(1.5, 0.0, 0.2758247620233231, NOW),
+                CPoint::new(1.5, 0.375, 0.2512870417110762, NOW),
+                CPoint::new(1.5, 0.75, 0.18203969415312937, NOW),
+                CPoint::new(1.5, 1.125, 0.08040338290613742, NOW),
+                CPoint::new(1.5, 1.5, -0.035538501977078495, NOW),
+            ],
+            vec![
+                CPoint::new(2.0, 0.0, 0.17954164323118696, NOW),
+                CPoint::new(2.0, 0.375, 0.16356939116182573, NOW),
+                CPoint::new(2.0, 0.75, 0.11849445851707789, NOW),
+                CPoint::new(2.0, 1.125, 0.05233669153712017, NOW),
+                CPoint::new(2.0, 1.5, -0.023132952227109788, NOW),
+            ],
+        ];
+        let knots = [0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
+        Surface::from(BSplineSurface::from_data(4, 4, 3, 3, 8, 8, &net, &knots, &knots).unwrap())
+    }
+
+    fn wr_164_offset(k: &Kernel, d: f64) -> OffsetSurface {
+        let mut o =
+            OffsetSurface::new(k, d, wr_164_base(), true, crate::geom::extent2d::SS_NONE).unwrap();
+        o.set_allow_extension(true);
+        o
+    }
+
+    /// The fixture's public out-of-domain point evaluations; they make the B-spline
+    /// extension upstream stores in `m_pExtendedSurface` (no private injection).
+    fn wr_164_extend(o: &OffsetSurface, k: &Kernel) {
+        for uv in [
+            Point2::new(1.4, 0.5),
+            Point2::new(2.6, 0.5),
+            Point2::new(1.2, 0.3),
+        ] {
+            o.evaluate_point(k, uv).unwrap();
+        }
+        assert!(
+            o.with_extended_base_surface(|e| e.is_some()),
+            "the public evaluations made an extension"
+        );
+    }
+
+    /// Pure relative 1e-9 agreement (no absolute floor; two exact zeros agree).
+    fn same_point(a: Point3, b: Point3) -> bool {
+        [(a.x, b.x), (a.y, b.y), (a.z, b.z)]
+            .iter()
+            .all(|(x, y)| (x - y).abs() <= 1e-9 * x.abs().max(y.abs()))
+    }
+
+    fn assert_same_point(a: Point3, b: Point3, ctx: &str) {
+        assert!(same_point(a, b), "{ctx}: {a:?} vs {b:?}");
+    }
+
+    /// WR-164: with a stored extension, `SwapUV` negates the distance for the extension
+    /// and again for the base. The pinned behaviour leaves the distance and puts the
+    /// offset on the other side; with the fix the base's swap keeps the extension's one
+    /// negation, so `Offset(uv)` after the swap is the pre-swap `Offset(vu)`, and a
+    /// second swap restores the distance and the evaluations. Measured here: the
+    /// distance, the stored extension's presence and public point evaluations at
+    /// asymmetric inside-domain parameters, for both signs of the distance.
+    #[test]
+    fn wr_164_swap_uv_with_an_extension_negates_once() {
+        const POINTS: [Point2; 3] = [
+            Point2::new(0.2, 0.7),
+            Point2::new(0.8, 0.15),
+            Point2::new(0.35, 0.55),
+        ];
+        let before_and_swapped = |off: &OffsetSurface, k: &Kernel| {
+            let before: Vec<Point3> = POINTS
+                .iter()
+                .map(|&uv| off.evaluate_point(k, uv).unwrap())
+                .collect();
+            let swapped: Vec<Point3> = POINTS
+                .iter()
+                .map(|&uv| off.evaluate_point(k, Point2::new(uv.y, uv.x)).unwrap())
+                .collect();
+            (before, swapped)
+        };
+
+        for d in [0.4, -0.3] {
+            // Pinned C++: the extension and the base each negate, so the distance comes
+            // back and the swapped offset does not evaluate as `Offset(vu)`.
+            let k = Kernel::default();
+            let mut off = wr_164_offset(&k, d);
+            wr_164_extend(&off, &k);
+            let (_, before_swapped) = before_and_swapped(&off, &k);
+            off.swap_uv(&k).unwrap();
+            assert_eq!(off.offset_distance(), d, "pinned d {d} comes back");
+            assert!(off.extended_base_surface().is_some());
+            let differs = POINTS.iter().enumerate().any(|(i, &uv)| {
+                !same_point(off.evaluate_point(&k, uv).unwrap(), before_swapped[i])
+            });
+            assert!(differs, "pinned swap maps uv to vu for d {d}");
+
+            // WR-164 fix: one negation, the swapped offset is the pre-swap one with
+            // its parameters exchanged, and a second swap restores both.
+            let mut k = Kernel::default();
+            k.fixes.offset_swap_uv_extended_distance = true;
+            let mut off = wr_164_offset(&k, d);
+            wr_164_extend(&off, &k);
+            let (before, before_swapped) = before_and_swapped(&off, &k);
+            off.swap_uv(&k).unwrap();
+            assert_eq!(off.offset_distance(), -d, "fixed d {d} is negated once");
+            assert!(off.extended_base_surface().is_some());
+            for (i, &uv) in POINTS.iter().enumerate() {
+                assert_same_point(
+                    off.evaluate_point(&k, uv).unwrap(),
+                    before_swapped[i],
+                    "fixed swap maps uv to vu",
+                );
+            }
+            off.swap_uv(&k).unwrap();
+            assert_eq!(off.offset_distance(), d, "double swap restores d {d}");
+            for (i, &uv) in POINTS.iter().enumerate() {
+                assert_same_point(
+                    off.evaluate_point(&k, uv).unwrap(),
+                    before[i],
+                    "double swap restores the evaluations",
+                );
+            }
+        }
+    }
+
+    /// WR-164 control: an owned offset with no extension negates once with the fix on
+    /// or off, as upstream (the second negation is not gated on the flag alone).
+    #[test]
+    fn wr_164_swap_uv_without_an_extension_negates_once_either_way() {
+        for fixed in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.offset_swap_uv_extended_distance = fixed;
+            let mut off = wr_164_offset(&k, 0.4);
+            assert!(off.extended_base_surface().is_none());
+            off.swap_uv(&k).unwrap();
+            assert_eq!(off.offset_distance(), -0.4, "fixed {fixed}");
+            assert!(off.extended_base_surface().is_none());
+        }
+    }
+
+    /// WR-164 partial state: a non-owned offset still swaps (and negates for) its
+    /// extension before refusing the base with `SM_ERR`; the fix does not hide that
+    /// error or the one negation already made. Measured: the error's operation, the
+    /// distance and the stored extension, not the whole edit.
+    #[test]
+    fn wr_164_swap_uv_non_owned_keeps_the_extension_negation_and_error() {
+        for fixed in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.offset_swap_uv_extended_distance = fixed;
+            let mut off = OffsetSurface::new(&k, 0.4, wr_164_base(), false, SS_UNKNOWN).unwrap();
+            off.set_allow_extension(true);
+            wr_164_extend(&off, &k);
+            let err = off.swap_uv(&k).unwrap_err();
+            assert_eq!(err.operation(), OP_EDIT);
+            assert_eq!(err, SolidError::sm_err(OP_EDIT), "fixed {fixed}");
+            assert_eq!(off.offset_distance(), -0.4, "fixed {fixed}");
+            assert!(off.extended_base_surface().is_some(), "fixed {fixed}");
+        }
+    }
+
+    /// WR-164 failure precedence: the extension is swapped and negated, then the base's
+    /// edit notification fails before the base is swapped, so the second negation does
+    /// not run. Measured: the notification order, the propagated error operation, the
+    /// distance, the stored extension and an unchanged base point.
+    #[test]
+    fn wr_164_swap_uv_failed_base_edit_keeps_the_extension_negation() {
+        use crate::geom::object::NotifyOperation;
+        for fixed in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.offset_swap_uv_extended_distance = fixed;
+            let mut off = wr_164_offset(&k, 0.4);
+            wr_164_extend(&off, &k);
+            let base_point = off
+                .base_surface()
+                .evaluate_point(&k, Point2::new(0.3, 0.7))
+                .unwrap();
+            let mut events = Vec::new();
+            let err = off
+                .swap_uv_notifying(&k, &mut |_, _, op| {
+                    events.push(op);
+                    if events.len() == 3 {
+                        return Err(SolidError::sm_err("test::wr164::notify"));
+                    }
+                    Ok(())
+                })
+                .unwrap_err();
+            assert_eq!(err.operation(), "test::wr164::notify");
+            assert_eq!(
+                err,
+                SolidError::sm_err("test::wr164::notify"),
+                "fixed {fixed}"
+            );
+            assert_eq!(
+                events,
+                [
+                    NotifyOperation::PreEdit,
+                    NotifyOperation::PostEdit,
+                    NotifyOperation::PreEdit
+                ],
+                "fixed {fixed}"
+            );
+            assert_eq!(off.offset_distance(), -0.4, "fixed {fixed}");
+            assert!(off.extended_base_surface().is_some(), "fixed {fixed}");
+            let base_after = off
+                .base_surface()
+                .evaluate_point(&k, Point2::new(0.3, 0.7))
+                .unwrap();
+            assert_same_point(base_after, base_point, "the base was not swapped");
+        }
+    }
+
     /// The farthest an offset (4) of a half cylinder (r 5, its axis the z axis) evaluated
     /// from 0.07 to 3 domains of turn past both ends of its arc lies from 9 off its axis
     /// (WR-633, the fork's tangency-labs/smlib@de0a6b8).
@@ -3959,9 +4447,19 @@ mod tests {
     /// (and past both sides at once) lies off the surface `off` measures, with both
     /// extension flags on (WR-650: a sphere's or torus's generator continues as a circle).
     fn wr650_off_surface(base: Surface, d: f64, off: impl Fn(Point3) -> f64) -> f64 {
+        wr650_off_surface_with(base, d, true, off)
+    }
+
+    /// [`wr650_off_surface`] with `offset_extension_as_itself` as given.
+    fn wr650_off_surface_with(
+        base: Surface,
+        d: f64,
+        as_itself: bool,
+        off: impl Fn(Point3) -> f64,
+    ) -> f64 {
         let mut k = Kernel::default();
         k.fixes.offset_extension_from_base = true;
-        k.fixes.offset_extension_as_itself = true;
+        k.fixes.offset_extension_as_itself = as_itself;
         let dom = base.natural_uv_domain_with_nurb(&k).unwrap();
         let (lo, hi, size) = (dom.min(), dom.max(), dom.size());
         let mut o = OffsetSurface::new(&k, d, base, true, crate::geom::extent2d::SS_NONE).unwrap();
@@ -4021,5 +4519,58 @@ mod tests {
         .unwrap();
         let off = wr650_off_surface(Surface::from(sphere), 2.0, |p| p.length() - 7.0);
         assert!(off < 1e-9, "the sphere's extension is {off} off radius 7");
+    }
+
+    /// A plain surface of revolution (not a torus) of a semicircle r 2 about (10, 0, 0) in
+    /// the x/z plane, two rational quadratic quarter arcs, revolved a quarter turn about z:
+    /// the concave round of a circular edge SMLib builds is such a surface.
+    fn revolved_semicircle() -> Surface {
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::crv_basic::Curve as NlCurve;
+        use crate::nurbs::math::CPoint;
+        use crate::surface::surf_of_revolution::SurfOfRevolution;
+        let k = Kernel::default();
+        let h = core::f64::consts::FRAC_1_SQRT_2;
+        let cp = |x: f64, z: f64, w: f64| CPoint::new(x * w, 0.0, z * w, w);
+        let pts = vec![
+            cp(10.0, -2.0, 1.0),
+            cp(12.0, -2.0, h),
+            cp(12.0, 0.0, 1.0),
+            cp(12.0, 2.0, h),
+            cp(10.0, 2.0, 1.0),
+        ];
+        let arc = NlCurve::new(pts, 2, vec![0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0]).unwrap();
+        let gen = Curve::from(BSplineCurve::from_nurb(arc, 3, false));
+        let d = Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0);
+        let mut rev =
+            SurfOfRevolution::new(&k, gen, Vec3::ZERO, Vec3::X, Vec3::Y, d, false).unwrap();
+        rev.make_nurb(&k).unwrap();
+        Surface::from(rev)
+    }
+
+    /// The fork's tangency-labs/smlib@43fd6b6 (`offset_extension_as_itself`, WR-633): a
+    /// surface of revolution whose generator is a circle continues it as its own circle, so
+    /// the offset 0.5 of the revolved semicircle r 2 stays on its tube r 2.5 past every end;
+    /// the tangent extension leaves it.
+    #[test]
+    fn wr633_43fd6b6_revolved_circle_continues_as_its_circle() {
+        let tube = |p: Point3| {
+            let r = (p.x * p.x + p.y * p.y).sqrt() - 10.0;
+            let d = (r * r + p.z * p.z).sqrt();
+            // the offset's side of the tube: r 2.5 outward, 1.5 inward
+            (d - 2.5).abs().min((d - 1.5).abs())
+        };
+        let mut k = Kernel::default();
+        let base = revolved_semicircle();
+        assert!(matches!(base.kind(), SurfaceKind::SurfOfRevolution(_)));
+        assert!(extends_as_itself(&k, &base));
+        k.fixes.offset_extension_as_itself = true;
+        let fixed = wr650_off_surface_with(base.clone(), 0.5, true, tube);
+        assert!(fixed < 1e-9, "the continuation is {fixed} off the tube");
+        let upstream = wr650_off_surface_with(base, 0.5, false, tube);
+        assert!(
+            upstream > 1e-3,
+            "the tangent extension stays on the tube: {upstream}"
+        );
     }
 }

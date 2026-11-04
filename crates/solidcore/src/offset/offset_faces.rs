@@ -21,7 +21,6 @@
 //! | `face_across` (private)               | `sm_FaceAcross`                                   |
 //! | [`OffsetFacesExecutive::move_faces`]  | `OffsetFaces` step 4 (the faces moved)            |
 //! | [`OffsetFacesExecutive::reblend`]     | `OffsetFaces` step 5 (the sharp edges blended again) |
-//! | `outer_faceuse` (private)             | `sm_OuterFaceuse`                                 |
 //! | [`OffsetFacesExecutive::take_off`]    | `OffsetFaces` step 3 (the blends taken off)       |
 //! | [`OffsetFacesExecutive::offset_faces`] | `OffsetFaces`                                    |
 //!
@@ -730,23 +729,6 @@ impl OffsetFacesExecutive {
 
 // ---- step 4: the faces moved ------------------------------------------------------------
 
-/// `sm_OuterFaceuse`: the face use of `f` on the outside of the solid (bounding its
-/// infinite region), or `None`.
-fn outer_faceuse(b: &Brep, f: FaceId) -> Result<Option<FaceuseId>> {
-    let Some(fu) = crate::topology::face::p2::upward_faceuse(b, f)? else {
-        return Ok(None);
-    };
-    let outside = match b.faceuse(fu)?.shell {
-        Some(shell) => b.shell(shell)?.region == b.infinite_region(),
-        None => false,
-    };
-    Ok(if outside {
-        Some(fu)
-    } else {
-        b.faceuse(fu)?.mate
-    })
-}
-
 /// The objects `FaceuseOffset` names: the B-rep's face uses, faces and face surfaces,
 /// and the surfaces and curves it makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -875,7 +857,7 @@ impl OffsetFacesExecutive {
         let mut faces = Vec::new();
         let mut surfaces = Vec::new();
         for f in moved {
-            let mut fu = outer_faceuse(b, f)?;
+            let mut fu = crate::topology::face::p2::outer_faceuse(b, f)?;
             if let (Some(x), true) = (fu, distance < 0.0) {
                 fu = b.faceuse(x)?.mate;
             }
@@ -1062,7 +1044,7 @@ impl OffsetFacesExecutive {
             (status, info.code, info.comment.clone())
         };
         if let Err(e) = status {
-            if e.is_unported() {
+            if e.is_unported_or_cancelled() {
                 return Err(e);
             }
             if code == FilletErrorType::NoRoom as i32 {
@@ -1131,7 +1113,7 @@ impl OffsetFacesExecutive {
                     b.refresh_cached_topology();
                     match r {
                         Ok(()) => Some(removal.sharp_edge()),
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => {
                             not_exact = not_exact || removal.not_exact();
                             None
@@ -1144,7 +1126,7 @@ impl OffsetFacesExecutive {
                     b.refresh_cached_topology();
                     match r {
                         Ok(()) => Some(removal.sharp_edge()),
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => {
                             not_exact = not_exact || removal.not_exact();
                             None

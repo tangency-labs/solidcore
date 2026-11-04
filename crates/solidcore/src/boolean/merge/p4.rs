@@ -375,7 +375,7 @@ fn required<T>(value: Option<T>) -> Result<T> {
 fn ignored<T>(result: Result<T>) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(error) if error.is_unported() => Err(error),
+        Err(error) if error.is_unported_or_cancelled() => Err(error),
         Err(_) => Ok(None),
     }
 }
@@ -1269,6 +1269,12 @@ fn is_oriented_sheet(kernels: &mut BooleanKernels<'_>, other: &Brep) -> Result<b
     crate::topology::brep::p2::is_oriented_sheet(k, other)
 }
 
+/// `m_pOther->OrientSheetSurfaces(face, same)` (`topology.brep_p9`), in the other
+/// B-rep's context. Its UV swaps notify on records and attributes local to the call,
+/// under the type code and arena index of each entity (`loopuse::notify_ref`, as the
+/// slit-loop removal below), and without a context: the boolean holds no notification
+/// state for the other B-rep, so its attributes and the context's callbacks see none
+/// of these edits (upstream's do).
 fn orient_sheet_surfaces(
     kernels: &mut BooleanKernels<'_>,
     other: &mut Brep,
@@ -1276,7 +1282,15 @@ fn orient_sheet_surfaces(
     same: bool,
 ) -> Result<()> {
     let k = kernels.other.as_deref_mut().unwrap_or(kernels.primary);
-    crate::topology::brep::p9::orient_sheet_surfaces(k, other, Some(face), same)
+    let mut records = crate::topology::topology::NotifyRecords::new();
+    let mut attributes = AttributeStore::default();
+    let mut env = edge::NotifyEnv {
+        records: &mut records,
+        attributes: &mut attributes,
+        context: None,
+        key_of: &crate::topology::loopuse::notify_ref,
+    };
+    crate::topology::brep::p9::orient_sheet_surfaces(k, other, Some(face), same, &mut env)
 }
 
 /// `new SmBrep(dSize, dRatio, pOptContextForStack)` for a component: the B-rep and its
@@ -1560,6 +1574,10 @@ fn manifold_boolean_transformed(
 ) -> Result<bool> {
     let a = required(primary.as_mut())?;
     let b = required(other.as_mut())?;
+    kernels.primary.check_cancelled(OP)?;
+    if let Some(other_kernel) = kernels.other.as_deref() {
+        other_kernel.check_cancelled(OP)?;
+    }
     let transform = p1::temporary_brep_transform(kernels.primary, kernels.other(), a, b)?.apply(
         a,
         b,
@@ -1609,6 +1627,10 @@ fn manifold_boolean_translated(
 ) -> Result<bool> {
     let a = required(primary.as_mut())?;
     let b = required(other.as_mut())?;
+    kernels.primary.check_cancelled(OP)?;
+    if let Some(other_kernel) = kernels.other.as_deref() {
+        other_kernel.check_cancelled(OP)?;
+    }
     if operation == BooleanOperation::Slice {
         if !is_sheet(kernels, b)? {
             return Err(SolidError::sm_err(OP));
@@ -1812,35 +1834,39 @@ mod tests {
 
     #[test]
     fn paired_mark_contexts_survive_a_failing_action() {
-        let mut first = Kernel::default();
-        let mut second = Kernel::default();
-        first.context.set_doing_boolean(true);
-        let mut kernels = BooleanKernels {
-            primary: &mut first,
-            other: Some(&mut second),
-        };
-        let mut lock = kernels
-            .mark_action(|contexts| MarkLock::new_pair(contexts, 0, 1))
-            .unwrap();
-        let marks = (lock.mark_type1(), lock.mark_type2());
-        let before = (
-            kernels.primary.context.current_mark(marks.0),
-            kernels.other().context.current_mark(marks.1),
-        );
-        let result: Result<()> = kernels.mark_action(|contexts| {
-            lock.new_mark(contexts)?;
-            Err(SolidError::sm_err("test"))
-        });
-        assert!(result.is_err());
-        assert!(kernels.primary.context.doing_boolean());
-        assert!(!kernels.other().context.doing_boolean());
-        assert_ne!(kernels.primary.context.current_mark(marks.0), before.0);
-        assert_ne!(kernels.other().context.current_mark(marks.1), before.1);
-        kernels
-            .mark_action(|contexts| lock.release(contexts))
-            .unwrap();
-        assert!(!kernels.primary.context.is_mark_locked(marks.0));
-        assert!(!kernels.other().context.is_mark_locked(marks.1));
+        for opt_in in [false, true] {
+            let mut first = Kernel::default();
+            let mut second = Kernel::default();
+            first.fixes.mark_lock_pair_advances_and_locks_second_context = opt_in;
+            first.context.set_doing_boolean(true);
+            let mut kernels = BooleanKernels {
+                primary: &mut first,
+                other: Some(&mut second),
+            };
+            let fixes = kernels.primary.fixes;
+            let mut lock = kernels
+                .mark_action(|contexts| MarkLock::new_pair_with_fixes(contexts, 0, 1, &fixes))
+                .unwrap();
+            let marks = (lock.mark_type1(), lock.mark_type2());
+            let before = (
+                kernels.primary.context.current_mark(marks.0),
+                kernels.other().context.current_mark(marks.1),
+            );
+            let result: Result<()> = kernels.mark_action(|contexts| {
+                lock.new_mark(contexts)?;
+                Err(SolidError::sm_err("test"))
+            });
+            assert!(result.is_err());
+            assert!(kernels.primary.context.doing_boolean());
+            assert!(!kernels.other().context.doing_boolean());
+            assert_ne!(kernels.primary.context.current_mark(marks.0), before.0);
+            assert_ne!(kernels.other().context.current_mark(marks.1), before.1);
+            kernels
+                .mark_action(|contexts| lock.release(contexts))
+                .unwrap();
+            assert!(!kernels.primary.context.is_mark_locked(marks.0));
+            assert!(!kernels.other().context.is_mark_locked(marks.1));
+        }
     }
 
     #[test]

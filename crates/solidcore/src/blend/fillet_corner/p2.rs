@@ -47,8 +47,10 @@
 //!   it returns `Ok(false)` instead (`plan/upstream-issues/WR-254--smfilletcorner-makeanalyticcornersurface-reports-its-ser-ner--dup2.md`). Its fits that fail softly upstream
 //!   (`if (SM_SUCCESS != fit(..)) return FALSE;`) are `false`; only
 //!   [`SolidError::Unported`] and [`SolidError::InvalidInput`] propagate from them.
-//!   The fillet solvers are the base [`FilletSolver`]s of [`CornerEnv::solvers`]: a
-//!   solver's `GetSolverType` is its [`FilletSolverOps::solver_type`].
+//!   The fillet solvers are the base [`FilletSolver`]s of [`CornerEnv::solvers`]; a
+//!   solver's `GetSolverType` (virtual upstream) is the store's
+//!   [`CornerSolverStore::solver_type`](crate::blend::fillet_corner::p3::CornerSolverStore::solver_type), the concrete solver's in a live session (a
+//!   variable-radius solver's `SM_FS_VARIABLE_RADIUS` makes the corner not analytic).
 //! - **`MakeVariableRadiusFillet`** builds its temporary `SmVariableRadiusFS`
 //!   ([`VariableRadiusFs::from_surfaces`]) with the identity one past
 //!   [`CornerEnv::solvers`]; the original surface is identified by its face, the
@@ -102,8 +104,9 @@ use crate::blend::fillet_geom::p1::{
 };
 use crate::blend::fillet_geom::p2::{srf_srf_intersection, SrfSrfOptions};
 use crate::blend::fillet_geom::p4::set_edge_curve;
+use crate::blend::fillet_section::section::{GnSectionFsg, GN_DEFAULT_THUMBWEIGHT};
 use crate::blend::fillet_solver::p1::{
-    FilletExecutiveRef, FilletSolver, FilletSolverOps, FilletSolverType, FilletSurfaceGenerator,
+    FilletExecutiveRef, FilletSolver, FilletSolverType, FilletSurfaceGenerator,
     FilletSurfaceGeneratorType,
 };
 use crate::blend::fillet_standard_solver::p1::{FilletLaw, VariableRadiusFs};
@@ -211,6 +214,12 @@ impl FilletCorner {
         fs: S,
         mut solver_of: impl FnMut(EdgeuseId) -> Option<S>,
     ) -> Result<Option<S>> {
+        // With `fillet_blend_corner` the edge meets itself at an angle (a G1 one is the blend
+        // corner's Join), so there is no tangent solver: the fork has no override here, and
+        // the base class answers NULL (WR-697; smlib#113 caa67d0)
+        if k.fixes.fillet_blend_corner {
+            return Ok(None);
+        }
         let solver_eus = self
             .solver_eus
             .as_deref()
@@ -422,8 +431,16 @@ impl FilletCorner {
             .curve
             .as_ref()
             .ok_or_else(|| null_deref("side edge without curve"))?;
-        let pnt1 = unchecked_point(side_edge_curve.evaluate_point(k, edge_param1))?;
-        let pnt2 = unchecked_point(side_edge_curve.evaluate_point(k, edge_param2))?;
+        // fork 66b02de passes these on (SER)
+        let pass_on = k.fixes.fillet_statuses_pass_on;
+        let pnt1 = unchecked_point(crate::error::passed_on(
+            side_edge_curve.evaluate_point(k, edge_param1),
+            pass_on,
+        )?)?;
+        let pnt2 = unchecked_point(crate::error::passed_on(
+            side_edge_curve.evaluate_point(k, edge_param2),
+            pass_on,
+        )?)?;
 
         // See if we have coincident geometry, i.e. two rails intersect at this vertex.
         let gap_dist = pnt1.distance(pnt2);
@@ -921,10 +938,15 @@ impl FilletCorner {
         // Check that the two filleted edges are tangent at this vertex.
         // (the statuses are ignored upstream: a failed evaluation leaves the derivative
         // default-constructed)
+        let pass_on = k.fixes.fillet_statuses_pass_on;
         let mut deriv = |t: f64| -> Result<Vec3> {
-            match eu3::normalized_evaluate(k, target, solver_eu, t, false, true, true) {
+            // fork 66b02de passes this on (SER)
+            match crate::error::passed_on(
+                eu3::normalized_evaluate(k, target, solver_eu, t, false, true, true),
+                pass_on,
+            )? {
                 Ok(ev) => Ok(ev.first_deriv.unwrap_or(Vec3::UNDEF)),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Ok(Vec3::UNDEF),
             }
         };
@@ -953,14 +975,17 @@ impl FilletCorner {
 
         let srf_domain = fillet_srf.natural_uv_domain_with_nurb(k)?;
         // u runs the long way, v goes across the fillet. (statuses ignored)
-        let srf_pt00 =
-            unchecked_point(fillet_srf.evaluate_point(k, srf_domain.evaluate(0.0, 0.0)))?;
-        let srf_pt10 =
-            unchecked_point(fillet_srf.evaluate_point(k, srf_domain.evaluate(1.0, 0.0)))?;
-        let srf_pt01 =
-            unchecked_point(fillet_srf.evaluate_point(k, srf_domain.evaluate(0.0, 1.0)))?;
-        let srf_pt11 =
-            unchecked_point(fillet_srf.evaluate_point(k, srf_domain.evaluate(1.0, 1.0)))?;
+        // fork 66b02de passes these on (SER)
+        let corner_pt = |u: f64, v: f64| -> Result<Point3> {
+            unchecked_point(crate::error::passed_on(
+                fillet_srf.evaluate_point(k, srf_domain.evaluate(u, v)),
+                pass_on,
+            )?)
+        };
+        let srf_pt00 = corner_pt(0.0, 0.0)?;
+        let srf_pt10 = corner_pt(1.0, 0.0)?;
+        let srf_pt01 = corner_pt(0.0, 1.0)?;
+        let srf_pt11 = corner_pt(1.0, 1.0)?;
 
         let dist0 = srf_pt00.distance(srf_pt10);
         let dist1 = srf_pt01.distance(srf_pt11);
@@ -973,12 +998,11 @@ impl FilletCorner {
         // Either it overlaps, or there is a gap. Drop the fillet surface end point to the
         // start point plus its u-derivative. (The status is ignored: a failure keeps the
         // point and leaves the derivative default-constructed.)
-        let (srf_pt00, su00) = match ignored(fillet_srf.evaluate_1st_derivatives(
-            k,
-            srf_domain.evaluate(0.0, 0.0),
-            true,
-            true,
-        ))? {
+        // fork 66b02de passes this on (SER)
+        let (srf_pt00, su00) = match ignored(crate::error::passed_on(
+            fillet_srf.evaluate_1st_derivatives(k, srf_domain.evaluate(0.0, 0.0), true, true),
+            pass_on,
+        )?)? {
             Some((p, su, _)) => (p, su),
             None => (srf_pt00, Vec3::UNDEF),
         };
@@ -1056,6 +1080,13 @@ impl FilletCorner {
         env: &mut TangentSplitEnv<'_>,
     ) -> Result<()> {
         const OP: &str = OP_NX1_TANGENT;
+        // With `fillet_blend_corner` the closed corner makes no tangent adjustment: the fork
+        // has no override here, and the base class's is a success. The adjustment acts only
+        // where the edge's end tangents are parallel within 2 degrees, which `create` made a
+        // Join at any tolerance of 2 degrees or more (WR-697; smlib#113 caa67d0)
+        if env.k.fixes.fillet_blend_corner {
+            return Ok(());
+        }
         let Some((orig_fg, this_fv_use)) =
             self.nx1_closed_tangent_split(env.k, env.target, env.pseudo)?
         else {
@@ -1091,7 +1122,7 @@ impl FilletCorner {
         // If failure, the whole fillet could still succeed, so don't SER.
         let new_fg = match split {
             Ok(g) => g,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Ok(()),
         };
 
@@ -1322,6 +1353,7 @@ impl FilletCorner {
             Ok(made) => Ok(made),
             Err(
                 e @ (SolidError::Unported { .. }
+                | SolidError::Cancelled { .. }
                 | SolidError::InvalidInput { .. }
                 | SolidError::PortInvariant { .. }),
             ) => Err(e),
@@ -1389,8 +1421,13 @@ impl FilletCorner {
                 // quit if any FilletEdge is a VariableRadius Fillet
                 let prim_eu = primary_eu(env.pseudo, fillet_edge, OP)?;
                 if let Some(fillet_geom) = edgeuse_or_mate_geom(env.pseudo, prim_eu, OP)? {
-                    let fs = solver_ref(env, fillet_geom, OP)?;
-                    if fs.solver_type()? == FilletSolverType::VariableRadius {
+                    // fs->GetSolverType() is virtual: the concrete solver's type
+                    let i = solver_of_geom(env, fillet_geom, OP)?;
+                    let solver_type = env
+                        .solvers
+                        .solver_type(i)
+                        .ok_or_else(|| invalid(OP, "fillet solver id not in the solver table"))??;
+                    if solver_type == FilletSolverType::VariableRadius {
                         return Ok(false);
                     }
                 }
@@ -1657,6 +1694,10 @@ impl FilletCorner {
         let mut fsg_type = FilletSurfaceGeneratorType::Unknown;
         let mut blend_scale = 1.0; // For use in SmBlendCurveCrossSectionFSG cases only
         let mut max_continuity = 0u32;
+        // the fork's SmGnSectionFSG (WR-685, fixes.fillet_gn_section_generator): its
+        // thumbweight, and its order as the continuity
+        let mut gn = false;
+        let mut thumbweight = GN_DEFAULT_THUMBWEIGHT;
         let mut start_axis = Vec3::UNDEF;
         let mut end_axis = Vec3::UNDEF;
         let mut start_arc_center = Point3::UNDEF;
@@ -1681,7 +1722,14 @@ impl FilletCorner {
 
             if ii == 0 {
                 fsg_type = fsg.fillet_surface_generator_type();
-                if fsg_type == FilletSurfaceGeneratorType::BlendCurve {
+                gn = matches!(fsg, FilletSurfaceGenerator::GnSection(_));
+                if fsg_type == FilletSurfaceGeneratorType::BlendCurve && gn {
+                    thumbweight = fsg.thumbweight().unwrap_or(thumbweight);
+                    let continuity = fsg.continuity().unwrap_or(0);
+                    if continuity > max_continuity {
+                        max_continuity = continuity;
+                    }
+                } else if fsg_type == FilletSurfaceGeneratorType::BlendCurve {
                     blend_scale = fsg.blend_scale().unwrap_or(blend_scale);
                     let continuity = fsg.continuity().unwrap_or(0);
                     if continuity > max_continuity {
@@ -1690,6 +1738,12 @@ impl FilletCorner {
                 }
             } else if fsg_type != fsg.fillet_surface_generator_type() {
                 return Err(sm_err()); // Unable to convert - two different types
+            } else if fsg_type == FilletSurfaceGeneratorType::BlendCurve && gn {
+                if (thumbweight - fsg.thumbweight().unwrap_or(f64::NAN)).abs() > EFF_ZERO
+                    || fsg.continuity() != Some(max_continuity)
+                {
+                    return Err(sm_err()); // Unable to convert
+                }
             } else if fsg_type == FilletSurfaceGeneratorType::BlendCurve {
                 let other_scale = fsg.blend_scale().unwrap_or(blend_scale);
                 if (blend_scale - other_scale).abs() > EFF_ZERO {
@@ -1961,6 +2015,16 @@ impl FilletCorner {
                 false,
             )),
             FilletSurfaceGeneratorType::Linear => Some(FilletSurfaceGenerator::Linear),
+            FilletSurfaceGeneratorType::BlendCurve if gn => {
+                Some(FilletSurfaceGenerator::GnSection(GnSectionFsg::new(
+                    if max_continuity > 1 {
+                        max_continuity as usize
+                    } else {
+                        2
+                    },
+                    thumbweight,
+                )))
+            }
             FilletSurfaceGeneratorType::BlendCurve => Some(FilletSurfaceGenerator::blend_curve(
                 blend_scale,
                 max_continuity,
@@ -2051,7 +2115,7 @@ impl FilletCorner {
             Some(&center_curve),
         ) {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(sm_err()), // Unable to convert
         }
 
@@ -2249,6 +2313,7 @@ fn soft<T>(r: Result<T>) -> Result<Option<T>> {
         Ok(v) => Ok(Some(v)),
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }),
         ) => Err(e),
@@ -2322,7 +2387,7 @@ fn rail_on_surface(
         });
         match gap {
             Ok(drop) if drop.success && drop.gap <= tol => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => return Ok(false),
         }
     }
@@ -2728,6 +2793,57 @@ mod tests {
         let (mut pseudo, mut c) = loop_corner(FilletCornerKind::NByOneClosed, 2);
         with_env(&mut pseudo, |env| c.adjust_tangent_corner(env)).unwrap();
         assert_eq!(c.edges.len(), 2);
+    }
+
+    /// A cylinder's top rim, a closed edge meeting itself G1 at its vertex, as the one
+    /// filleted edge use of a closed Nx1 corner there (tangency tolerance 10 degrees).
+    fn closed_g1_rim_corner(k: &mut Kernel) -> (Brep, FilletCorner) {
+        let b = crate::primitive::api_primitives::create_cylinder(
+            k,
+            Point3::new(0.0, 0.0, 0.0),
+            5.0,
+            8.0,
+        )
+        .unwrap();
+        let rim = crate::topology::brep::p1::edges(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&e| {
+                edge::is_closed(&b, e).unwrap()
+                    && vertex::point(&b, edge::vertex(&b, e).unwrap().unwrap())
+                        .unwrap()
+                        .z
+                        > 4.0
+            })
+            .unwrap();
+        let v = edge::vertex(&b, rim).unwrap();
+        let eu = edge::edgeuses(&b, rim, None, None).unwrap()[0];
+        let c = FilletCorner::new(
+            FilletCornerKind::NByOneClosed,
+            v,
+            Some(vec![eu]),
+            None,
+            1e-3,
+            10.0_f64.to_radians(),
+        );
+        (b, c)
+    }
+
+    /// `SmFilletNx1ClosedCorner::GetTangentFilletSolver`: at a closed edge meeting itself
+    /// G1 the corner's one solver continues itself; with `fillet_blend_corner` there is none.
+    #[test]
+    fn a_closed_g1_corner_s_tangent_solver_is_its_own() {
+        for blend in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.fillet_blend_corner = blend;
+            let (b, c) = closed_g1_rim_corner(&mut k);
+            let fs = c
+                .tangent_fillet_solver_nx1_closed_with_lookup(&k, &b, 7_u8, |_| Some(7))
+                .unwrap();
+            // with the flag the edge would have been the blend corner's Join, and the
+            // closed corner has no tangent solver (smlib#113 caa67d0)
+            assert_eq!(fs, (!blend).then_some(7), "fillet_blend_corner {blend}");
+        }
     }
 
     #[test]

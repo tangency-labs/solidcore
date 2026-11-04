@@ -1569,7 +1569,8 @@ impl<'c> Stitch<'c> {
     /// it, across manifold edges by their face uses and across lamina edges found
     /// within the stitch tolerance of `num_samples` points of each edge use (opposite
     /// tangents within 5 degrees, binormals more than 90 degrees apart). Flipped faces
-    /// are swapped ([`fp1::swap_uv`]) and returned in flip order. Increments an
+    /// are swapped ([`fp1::swap_uv_with_notifications`], each face's and surface's
+    /// edit notifications through `env`) and returned in flip order. Increments an
     /// unlocked mark value.
     ///
     /// # Errors
@@ -1583,6 +1584,7 @@ impl<'c> Stitch<'c> {
         b: &mut Brep,
         start_face: FaceId,
         num_samples: u64,
+        env: &mut edge::NotifyEnv<'_>,
     ) -> Result<Vec<FaceId>> {
         let stitch_tol_3d = self.tol_3d;
         with_mark_lock(k, ALL_MARKS, |k, mark| -> Result<Vec<FaceId>> {
@@ -1635,7 +1637,7 @@ impl<'c> Stitch<'c> {
                         }
                         if eu1::faceuse_orientation(b, fuse)? == OrientType::Opposite {
                             flipped.push(rad_f);
-                            fp1::swap_uv(k, b, rad_f)?;
+                            fp1::swap_uv_with_notifications(k, b, rad_f, env)?;
                         }
                         // Only oriented faces get onto stack and get marked
                         marks.mark(k, Entity::Face(rad_f), mark);
@@ -1735,7 +1737,7 @@ impl<'c> Stitch<'c> {
                                 .ok_or_else(|| deref("faceuse without face"))?;
                             if eu1::faceuse_orientation(b, prim_fu)? == OrientType::Opposite {
                                 flipped.push(f_other);
-                                fp1::swap_uv(k, b, f_other)?;
+                                fp1::swap_uv_with_notifications(k, b, f_other, env)?;
                             }
                             marks.mark(k, Entity::Face(f_other), mark);
                             f_stack.push(f_other);
@@ -1775,6 +1777,7 @@ impl<'c> Stitch<'c> {
             min_unstitched_vert_gap: BIG_DOUBLE,
         };
         let tol = self.tol_3d;
+        k.check_cancelled("heal::stitch::p1::Stitch::stitch_vertex_pairs")?;
 
         let n1 = list1.len();
         if n1 < 1 {
@@ -2110,6 +2113,7 @@ impl<'c> Stitch<'c> {
         };
 
         for &v in verts {
+            k.check_cancelled("heal::stitch::p1::Stitch::stitch_edges_of_vertices")?;
             let Some(v) = v else {
                 continue; // Can this happen? Don't really care.
             };
@@ -2469,8 +2473,11 @@ pub(crate) fn glue_edges_general(
     delete: EdgeId,
     inside_faceuses: Option<&[FaceuseId]>,
 ) -> Result<()> {
-    // (not upstream) with `b`'s own attributes, given back afterwards
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::with_attributes_of(b);
+    // (not upstream) with `b`'s own attributes, given back afterwards, and the kernel's
+    // reused record map (the same records a fresh state has)
+    let (tag, records) = take_arena_records(k, b);
+    let mut state =
+        crate::topology::brep::p2::ArenaNotifyState::with_attributes_of_reusing(records, b);
     let r = Context::with_notification_context(k, |k, context| {
         let mut env = state.env(Some(context));
         crate::topology::brep::p7::glue_edges_general(
@@ -2486,8 +2493,29 @@ pub(crate) fn glue_edges_general(
         )
     });
     let restored = state.restore_attributes(b);
+    k.arena_notify_records = (tag, state.into_records());
     r??;
     restored
+}
+
+/// The kernel's reused arena record map for `b` ([`Kernel::arena_notify_records`]) and
+/// `b`'s progress tag to keep it under: the map kept for this B-rep value, or an empty
+/// one when it was kept for another value (record keys are arena identities, which
+/// repeat across B-reps).
+fn take_arena_records(
+    k: &mut Kernel,
+    b: &mut Brep,
+) -> (
+    std::sync::Weak<()>,
+    crate::topology::topology::NotifyRecords,
+) {
+    let tag = std::sync::Arc::downgrade(&b.progress_tag());
+    let (bound, records) = std::mem::take(&mut k.arena_notify_records);
+    if bound.ptr_eq(&tag) {
+        (tag, records)
+    } else {
+        (tag, crate::topology::topology::NotifyRecords::new())
+    }
 }
 
 /// `SmBrep::SqueezeEdge(edge, keep)` (unit `topology.brep_p3`,
@@ -2525,8 +2553,11 @@ pub(crate) fn make_vertex_split_edge(
     e: EdgeId,
     t: f64,
 ) -> Result<(Option<EdgeId>, Option<EdgeId>, Option<VertexId>)> {
-    // a default record per object (upstream every object has its `SmTopology` part)
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::with_attributes_of(b);
+    // a default record per object (upstream every object has its `SmTopology` part), in
+    // the kernel's reused record map
+    let (tag, records) = take_arena_records(k, b);
+    let mut state =
+        crate::topology::brep::p2::ArenaNotifyState::with_attributes_of_reusing(records, b);
     // The kernel's context is the split's own `k`; no separate object context.
     let out = crate::topology::brep::p9::make_vertex_split_edge(
         k,
@@ -2537,6 +2568,7 @@ pub(crate) fn make_vertex_split_edge(
         &|edge, kind| local_identity(kind, edge.index()),
     );
     let restored = state.restore_attributes(b);
+    k.arena_notify_records = (tag, state.into_records());
     let out = out?;
     restored?;
     if !out.split {
@@ -2726,12 +2758,14 @@ pub fn api_stitch_into_shell(
 }
 
 /// `SmApiUnifyNormals`: [`Stitch::unify_normals`] with the default callback and the
-/// B-rep tolerance as stitch tolerance.
+/// B-rep tolerance as stitch tolerance, notifying through the kernel context's
+/// callbacks under the kernel's identities
+/// ([`crate::topology::brep::p3::with_kernel_callbacks`]).
 ///
 /// # Errors
 ///
-/// [`SolidError::InvalidInput`] for a null B-rep or start face; those of
-/// [`Stitch::unify_normals`].
+/// [`SolidError::InvalidInput`] for a null B-rep or start face, and (before anything
+/// changes) inside another kernel-callback edit; those of [`Stitch::unify_normals`].
 pub fn api_unify_normals(
     k: &mut Kernel,
     b: Option<&mut Brep>,
@@ -2747,7 +2781,9 @@ pub fn api_unify_normals(
     let tol = b.tolerance();
     let mut callback = DefaultStitchCallback::new();
     let mut stitch = Stitch::new(&mut callback, tol, true, true);
-    stitch.unify_normals(k, b, start_face, num_samples)
+    crate::topology::brep::p3::with_kernel_callbacks(k, b, |k, b, env| {
+        stitch.unify_normals(k, b, start_face, num_samples, env)
+    })
 }
 
 /// `SmApiSimpleFaceStitch`: [`Stitch::do_simple_face_stitch`] with the default
@@ -2820,6 +2856,38 @@ mod tests {
     use super::*;
     use crate::geom::object::NotifyOperation;
     use crate::topology::EdgeuseOwner;
+
+    /// The kernel's reused arena record map is bound to one B-rep value: a later edit of
+    /// the same value starts on a fresh seeding of it whatever the edit before changed,
+    /// and an edit of another value (here a box with the same arena layout, so the same
+    /// keys) starts on an empty map, never on the other's records.
+    #[test]
+    fn arena_records_are_bound_to_one_brep() {
+        use crate::primitive::api_primitives::create_box;
+        use crate::topology::brep::p2::ArenaNotifyState;
+        let mut k = Kernel::default();
+        let mut b1 = create_box(&mut k, Point3::ZERO, 1.0, 2.0, 3.0).unwrap();
+        let mut b2 = create_box(&mut k, Point3::ZERO, 4.0, 5.0, 6.0).unwrap();
+        let fresh = |b: &Brep| (*ArenaNotifyState::new(b).records).clone();
+        // an edit of b1 that changes a record
+        let edit = |k: &mut Kernel, b: &mut Brep, reused: bool| {
+            let (tag, records) = take_arena_records(k, b);
+            assert_eq!(records.is_empty(), !reused);
+            let mut state = ArenaNotifyState::with_attributes_of_reusing(records, b);
+            assert_eq!(*state.records, fresh(b));
+            let key = *state.records.keys().next().unwrap();
+            state.records.get_mut(&key).unwrap().set_user_index1(5);
+            state.restore_attributes(b).unwrap();
+            k.arena_notify_records = (tag, state.into_records());
+        };
+        edit(&mut k, &mut b1, false);
+        edit(&mut k, &mut b1, true);
+        edit(&mut k, &mut b2, false);
+        edit(&mut k, &mut b1, false);
+        // a copy is another value
+        let mut copy = b1.clone();
+        edit(&mut k, &mut copy, false);
+    }
 
     #[test]
     fn actual_stitch_split_keeps_curve_identity_and_refusal_prefix() {

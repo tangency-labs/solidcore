@@ -16,7 +16,9 @@
 //! | [`p7`]    | see the module                                                  |
 //! | [`planar_section`] | `CreatePlanarSectionCurves` (unit `topology.brep_planar_section`) |
 //! | [`p8`]    | making faces from surfaces and from loops of curves              |
+//! | [`vertex_fans`] | `SplitVertexByFans`, `JoinVertexFans` (the fork's, `4ecfbab`) |
 //! | [`p10`]   | `MakeTopologyFromData`, `ProjectAndTrim`, `RemoveAllTopology`, `TestClosureSplitRegion` (edge version) |
+//! | [`is_outward_solid`] | (not upstream) a valid closed solid facing out             |
 //!
 //! Deviations: the B-rep records are the arenas of [`crate::topology::Brep`].
 
@@ -35,3 +37,86 @@ pub mod p8;
 pub mod p9;
 pub mod planar_section;
 pub mod validation;
+pub mod vertex_fans;
+
+// Supported public paths; numbered modules are implementation partitions.
+pub use p1::{create_parallel_projection_curves, edges, faces, regions, ParallelProjectionOptions};
+pub use p10::{
+    make_topology_from_data, merge_curves_on_surface_through_surface, MakeTopologyOptions,
+    TopologyEnv, HEALER_VERSION,
+};
+pub use p2::{is_manifold_solid, is_sheet, shell_vertices, ArenaNotifyState};
+pub use p3::{
+    api_brep_copy, delete_face, new_brep, orient_trimmed_surfaces, topology_ref,
+    with_kernel_callbacks, DeleteFaceOptions,
+};
+pub use p4::stitch_faces;
+pub use p5::{
+    make_edge_in_face, remove_topological_edges_and_vertices, stitch_and_orient, EdgeInFace,
+    StitchAndOrientOptions,
+};
+pub use p7::copy_faces;
+pub use p8::{
+    create_face_from_surface, create_faces_with_curves, create_planar_face_with_3d_curves,
+    create_planar_faces_with_3d_curves, FaceBuildEnv,
+};
+pub use p9::{make_vertex_loop, orient_sheet_surfaces};
+
+/// The relative accuracy [`is_outward_solid`] measures the volume's sign at: the sign of a
+/// solid's volume is its whole volume away from zero.
+const SIGN_ACCURACY: f64 = 1e-3;
+
+/// Whether `b` is a valid closed solid facing out (not upstream): one closed manifold solid
+/// ([`is_manifold_solid`]), passed by the kernel's validity check (its pointer check and
+/// `AssertValid`, [`validation::check_brep`] at `Level0`), and its integrated volume positive.
+///
+/// The two guard the faceuse orientation together. A body with every face flipped
+/// (`FlipFaceOrientation`, which leaves a face invalid) is still manifold and keeps a
+/// positive volume (the integrator reads the loops and surfaces, not the uses' orientation):
+/// the pointer check is what refuses it. A valid body turned inside out (its loops and
+/// surfaces reversed with its uses) has a negative volume. The sign's margin is the whole
+/// volume, so it is measured at a relative accuracy of `1e-3`.
+///
+/// # Errors
+///
+/// Those of the manifold test, the validity check and the volume.
+pub fn is_outward_solid(
+    k: &mut crate::kernel::Kernel,
+    b: &mut crate::topology::Brep,
+) -> crate::Result<bool> {
+    if !is_manifold_solid(b)? {
+        return Ok(false);
+    }
+    let c = validation::check_brep(k, b, validation::CheckLevel::Level0)?;
+    if c.pointers_status != crate::error::SM_SUCCESS || c.assert_valid != Some(true) {
+        return Ok(false);
+    }
+    let volume = crate::mass::integrator::properties::brep_volume_default(k, b, SIGN_ACCURACY)?;
+    // (false for a NaN too)
+    Ok(volume > 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_outward_solid;
+    use crate::kernel::{Kernel, KernelOptions};
+    use crate::math::Vec3;
+    use crate::primitive::api_primitives::{create_box, create_plane};
+    use crate::topology::face::p1::flip_face_orientation;
+
+    /// A box faces out; the same box with every face flipped (still manifold, its volume still
+    /// positive) does not, nor does a sheet.
+    #[test]
+    fn a_box_faces_out_and_its_flip_does_not() {
+        let mut k = Kernel::new(&KernelOptions::default());
+        let mut b = create_box(&mut k, Vec3::ZERO, 20.0, 20.0, 20.0).unwrap();
+        assert!(is_outward_solid(&mut k, &mut b).unwrap());
+        for f in b.face_list().to_vec() {
+            flip_face_orientation(&mut b, f).unwrap();
+        }
+        assert!(crate::topology::brep::p2::is_manifold_solid(&b).unwrap());
+        assert!(!is_outward_solid(&mut k, &mut b).unwrap());
+        let mut sheet = create_plane(&mut k, Vec3::ZERO, 1.0, 1.0).unwrap();
+        assert!(!is_outward_solid(&mut k, &mut sheet).unwrap());
+    }
+}

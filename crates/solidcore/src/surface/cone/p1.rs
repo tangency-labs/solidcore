@@ -33,6 +33,7 @@
 //! | [`Cone::step_linear_param_extent`]                | `GetSTEPLinearParamExtent`                       |
 //! | [`Cone::max_analytic_domain`]                     | `GetMaxAnalyticDomain` (both classes)            |
 //! | [`Cone::step_inversion`], [`ConeStepInversion`]   | `STEPInversion` (with `SmSurfOfRevolution::STEPInversion`, co-ported) |
+//! | [`Cone::step_inversion_unbounded`]                | none (#2578: `STEPInversion` without the domain) |
 //! | [`Cone::positive_point`], [`PositivePoint`]       | `GetPositivePoint`                               |
 //! | [`Cone::transform`]                               | `Transform`                                      |
 //! | [`Cone::read_from_db`]                            | `ReadFromDB` (both classes)                      |
@@ -109,6 +110,15 @@
 //!   one through the `const` object. A bare cone's domain is then `[0, 0] x [0, 0]`;
 //!   a cone in a [`crate::surface::surface::Surface`] makes it and keeps it there
 //!   (`Surface::kind_with_nurb`, `Surface::natural_uv_domain_with_nurb`), as upstream.
+//! - **`CreateCanonical` argument handling (`WR-63`).** By default,
+//!   [`Cone::create_canonical_with_semi_angle`] with `Some(height)` passes `(false,
+//!   inside_out)` for `(inside_out, make_nurb_gen_curve)` to [`Cone::new_bounded`] as
+//!   upstream does (`SmCone.cpp:341-348`), and [`Cone::create_canonical`] with
+//!   `height <= 0.0` builds the infinite cone of [`Cone::new_unbounded`] with
+//!   `top_radius` as the semi-angle in degrees (`SmCone.cpp:392-400`). With
+//!   `Kernel::fixes.cone_create_canonical_preserves_inside_out_and_checks_height`, the
+//!   bounded semi-angle branch passes `(inside_out, false)` and the two-radius overload
+//!   rejects `height <= 0.0` with [`SolidError::InvalidInput`].
 //! - **Debug code.** The `SM_DEBUG_CODE` checks and drawing are omitted.
 
 use crate::curve::curve::p2::{CIRCLE_TYPE, LINE_TYPE};
@@ -126,6 +136,7 @@ use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{max3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, INFINITE_PARAMETER, PI, UNDEF_DOUBLE};
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{
     BSplineSurfaceForm, IsoCurveOptions, LocationType, SurfParamType,
 };
@@ -241,6 +252,24 @@ pub struct Cone {
     pub(crate) cylinder: bool,
 }
 
+/// With `Kernel::fixes.cone_unbounded_parameterized_as_nurb` (WR-713, #2313), whether an
+/// unbounded cone's height maps onto its NURB's linear interval as a bounded cone's does
+/// (reversed when inside out) instead of upstream's negation: when inside out and the
+/// negated STEP height interval is not the NURB's. An inside-out unbounded cone's NURB
+/// runs over the STEP heights reversed, so negation holds only for an interval symmetric
+/// about 0 (the infinite cylinder's), where it is kept.
+fn unbounded_maps_linearly(
+    k: &Kernel,
+    inside_out: bool,
+    step_ivl: &Extent1d,
+    nurb_ivl: &Extent1d,
+) -> bool {
+    k.fixes.cone_unbounded_parameterized_as_nurb
+        && inside_out
+        && (nurb_ivl.min().to_bits() != (-step_ivl.max()).to_bits()
+            || nurb_ivl.max().to_bits() != (-step_ivl.min()).to_bits())
+}
+
 /// The cone's `ConvertUVFromNURBSToSTEP` on its base parts (the virtual the
 /// inherited `UpdateAnalyticalDomain` calls); see [`Cone::convert_uv_from_nurbs_to_step`].
 pub(crate) fn cone_convert_uv_from_nurbs_to_step(
@@ -268,7 +297,8 @@ pub(crate) fn cone_convert_uv_from_nurbs_to_step(
     let (x, _exact) = rev.polar.convert_to_polar_parameter(k, circle, nurb_uv.x)?;
 
     // convert linear coordinate
-    let y = if rev.is_bounded()? {
+    // (WR-713: see `unbounded_maps_linearly`)
+    let y = if rev.is_bounded()? || unbounded_maps_linearly(k, inside_out, &step_ivl, &nurb_ivl) {
         if inside_out {
             step_ivl.min() + ((nurb_uv.y - nurb_ivl.max()) / -nurb_ivl.length() * step_ivl.length())
         } else {
@@ -334,12 +364,12 @@ pub(crate) fn cone_iso_curve(
     // Nurb Surface size - trimmed to optional domain
     let nurb_domain = rev.base.natural_uv_domain();
     let nurb_span_size = if surf_param == SurfParamType::U {
-        let min_y = domain.map_or(nurb_domain.min().y, |d| d.min().y);
-        let max_y = domain.map_or(nurb_domain.max().y, |d| d.max().y);
+        let min_y = domain.map_or_else(|| nurb_domain.min().y, |d| d.min().y);
+        let max_y = domain.map_or_else(|| nurb_domain.max().y, |d| d.max().y);
         max_y - min_y
     } else {
-        let min_x = domain.map_or(nurb_domain.min().x, |d| d.min().x);
-        let max_x = domain.map_or(nurb_domain.max().x, |d| d.max().x);
+        let min_x = domain.map_or_else(|| nurb_domain.min().x, |d| d.min().x);
+        let max_x = domain.map_or_else(|| nurb_domain.max().x, |d| d.max().x);
         max_x - min_x
     };
 
@@ -556,7 +586,14 @@ impl Cone {
         let mut line_vec = z_axis;
         let angle_rad = deg2rad(cone.semi_angle_deg);
         let scale = 1.0 / angle_rad.cos();
-        if angle_rad > EFF_ZERO {
+        // (WR-713: upstream rotates for a positive semi-angle only, leaving the generator
+        // of a negative one parallel to the axis)
+        let rotate = if k.fixes.cone_unbounded_parameterized_as_nurb {
+            angle_rad.abs() > EFF_ZERO
+        } else {
+            angle_rad > EFF_ZERO
+        };
+        if rotate {
             let pnt = origin + z_axis * scale;
             let mut rf = Axis2Placement::IDENTITY; // m_vPosition leads to bug
             rf.rotate_about_axis_at_point(angle_rad, origin, y_axis);
@@ -594,18 +631,20 @@ impl Cone {
 
         // infinite cylinders run between +/- infinity
         // infinite cones     run between apex and +infinity
+        // (WR-713: a negative semi-angle's cone runs from -infinity up to its apex)
         if !apex.is_cylinder {
-            let _ = cone.rev.anal_uv_domain.set_min_max_coords(
-                0.0,
-                apex.param,
-                360.0,
-                INFINITE_PARAMETER,
-            );
+            let (min, max) =
+                if k.fixes.cone_unbounded_parameterized_as_nurb && cone.semi_angle_deg < 0.0 {
+                    (-INFINITE_PARAMETER, apex.param)
+                } else {
+                    (apex.param, INFINITE_PARAMETER)
+                };
+            let _ = cone
+                .rev
+                .anal_uv_domain
+                .set_min_max_coords(0.0, min, 360.0, max);
             // adjust generator curve domain
-            cone.adjust_gen_line_with_owner(
-                k,
-                &Extent1d::from_min_max(apex.param, INFINITE_PARAMETER),
-            )?;
+            cone.adjust_gen_line_with_owner(k, &Extent1d::from_min_max(min, max))?;
         }
         Ok(cone)
     }
@@ -779,7 +818,7 @@ impl Cone {
     fn finish_canonical(mut self, k: &Kernel, operation: &'static str) -> Result<Self> {
         // Build NURB; fail cleanly if degenerate (single zero-radius apex is valid).
         match self.make_nurb(k) {
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::sm_err(operation)),
             Ok(()) => {}
         }
@@ -794,7 +833,9 @@ impl Cone {
     /// bSwapUV, bInsideOut)`): infinitely long without `height` ([`Self::new_unbounded`]),
     /// else bounded by the top circle at `height` ([`Self::new_bounded`] over `[0,
     /// 360]`; upstream passes `FALSE` as its `bInsideOut` and `inside_out` as its
-    /// `bMakeNurbGenCurve`), with its NURB.
+    /// `bMakeNurbGenCurve`, whereas
+    /// `Kernel::fixes.cone_create_canonical_preserves_inside_out_and_checks_height`
+    /// passes `inside_out` and `false` — `WR-63`), with its NURB.
     ///
     /// # Errors
     ///
@@ -822,6 +863,14 @@ impl Cone {
             )?,
             Some(h) => {
                 let top_radius = bot_radius + deg2rad(semi_angle_deg).tan() * h;
+                let (cone_inside_out, make_nurb_gen_curve) = if k
+                    .fixes
+                    .cone_create_canonical_preserves_inside_out_and_checks_height
+                {
+                    (inside_out, false)
+                } else {
+                    (false, inside_out)
+                };
                 Self::new_bounded(
                     origin.origin(),
                     origin.x_axis(),
@@ -832,8 +881,8 @@ impl Cone {
                     360.0,
                     h,
                     swap_uv,
-                    false,
-                    inside_out,
+                    cone_inside_out,
+                    make_nurb_gen_curve,
                 )
             }
         };
@@ -844,11 +893,15 @@ impl Cone {
     /// to the top circle of radius `top_radius` at `height` (`CreateCanonical(Origin,
     /// BotRadius, TopRadius, Height, bSwapUV, bInsideOut)`), over `[0, 360]`, with its
     /// NURB. For `height <= 0` upstream makes the infinite cone of
-    /// [`Self::new_unbounded`] with `top_radius` as the semi-angle in degrees.
+    /// [`Self::new_unbounded`] with `top_radius` as the semi-angle in degrees; with
+    /// `Kernel::fixes.cone_create_canonical_preserves_inside_out_and_checks_height`
+    /// (`WR-63`), `height <= 0` returns [`SolidError::InvalidInput`].
     ///
     /// # Errors
     ///
-    /// `SM_ERR` when the NURB cannot be made; those of [`Self::new_unbounded`].
+    /// [`SolidError::InvalidInput`] for `height <= 0` when
+    /// `Kernel::fixes.cone_create_canonical_preserves_inside_out_and_checks_height` is
+    /// enabled; `SM_ERR` when the NURB cannot be made; those of [`Self::new_unbounded`].
     pub fn create_canonical(
         k: &Kernel,
         origin: &Axis2Placement,
@@ -860,6 +913,14 @@ impl Cone {
     ) -> Result<Self> {
         // construct parameterized cone
         let cone = if height <= 0.0 {
+            if k.fixes
+                .cone_create_canonical_preserves_inside_out_and_checks_height
+            {
+                return Err(SolidError::invalid_input(
+                    OP_CANONICAL,
+                    "cone height must be positive",
+                ));
+            }
             Self::new_unbounded(
                 k,
                 origin.origin(),
@@ -1241,6 +1302,16 @@ impl Cone {
     /// or degenerate B-spline at the apex) through the cone point at that height in the
     /// point's direction (the X axis for a point on the axis).
     ///
+    /// With `Kernel::fixes.cone_iso_circle_at_axial_height` (WR-704) the function is the
+    /// SolidCraft fork's (tangency-labs/smlib 1279539, with the `SER` of 672a437 on the NURB
+    /// conversion): the circle's STEP point is the sweep start and the point's projection
+    /// onto the axis, clamped to the height interval, with no inversion, and a failed NURB
+    /// conversion is returned. A point within `tol_3d` past either end gives that end's
+    /// circle. Upstream inverts the point moved onto the cone at that height; past the apex
+    /// end of a cone with its apex at an end, that point is on the far nappe, the inversion
+    /// mirrors it through the apex and succeeds with a height outside the interval, and the
+    /// iso curve there fails with `SM_ERR`.
+    ///
     /// # Errors
     ///
     /// Those of [`Self::step_inversion`] that leave no parameters (status ignored
@@ -1264,37 +1335,55 @@ impl Cone {
             return Ok(None);
         }
 
-        // build Step Point on Surface for Point
-        let radius = self.radius(param);
-        let center = origin + param * z_axis;
-        let mut vec = reference_point - center;
-        if vec.length_squared() < 2.0 * EFF_ZERO_SQ {
-            // Given point is on our axis.
-            vec = self.rev.position.x_axis();
-        }
-        let vec = vec.unitize_or_z();
-        let point_on_surface = center + radius * vec;
-
-        // map Point to StepUV. Upstream ignores the status. When the generator drop finds no
-        // solution (a point beyond the end by up to `tol_3d`, #1067) the height of its
-        // StepUV is never written and the circle is built there (UB-87); the port uses the
-        // height of the point, clamped to the end, which is where the point lies within
-        // `tol_3d`. Every point whose inversion succeeds is unchanged.
-        let step_uv = match self.step_inversion(k, point_on_surface, tol_3d, None) {
-            Ok(inv) => inv.uv,
-            Err(SolidError::Upstream { code, .. }) if code == SM_ERR => Point2::new(
+        let step_uv = if k.fixes.cone_iso_circle_at_axial_height {
+            // the circle's StepV is its height (the cone's v is the distance along its
+            // axis, see GetRadius): a point within d3DTolerance beyond an end is on that
+            // end's circle (WR-704; tangency-labs/smlib 1279539)
+            Point2::new(
                 self.rev.anal_uv_domain.min().x,
                 height_step_ivl.clamp_value(param),
-            ),
-            Err(e) => return Err(e),
+            )
+        } else {
+            // build Step Point on Surface for Point
+            let radius = self.radius(param);
+            let center = origin + param * z_axis;
+            let mut vec = reference_point - center;
+            if vec.length_squared() < 2.0 * EFF_ZERO_SQ {
+                // Given point is on our axis.
+                vec = self.rev.position.x_axis();
+            }
+            let vec = vec.unitize_or_z();
+            let point_on_surface = center + radius * vec;
+
+            // map Point to StepUV. Upstream ignores the status. When the generator drop finds
+            // no solution (a point beyond the end by up to `tol_3d`, #1067) the height of its
+            // StepUV is never written and the circle is built there (UB-87); the port uses
+            // the height of the point, clamped to the end, which is where the point lies
+            // within `tol_3d`. Every point whose inversion succeeds is unchanged.
+            match self.step_inversion(k, point_on_surface, tol_3d, None) {
+                Ok(inv) => inv.uv,
+                Err(SolidError::Upstream { code, .. }) if code == SM_ERR => Point2::new(
+                    self.rev.anal_uv_domain.min().x,
+                    height_step_ivl.clamp_value(param),
+                ),
+                Err(e) => return Err(e),
+            }
         };
 
         // map StepUV to NurbUV (status ignored: after a failed polar conversion
-        // rNURBSUV.x holds what the converter wrote and rNURBSUV.y is unset)
+        // rNURBSUV.x holds what the converter wrote and rNURBSUV.y is unset; with the
+        // fork's rule the status is passed on, as the fork's SER does, tangency-labs/smlib
+        // 672a437)
         let (param_type, iso) = match self.convert_uv_from_step_to_nurbs(k, step_uv) {
             Ok(nurb_uv) if self.rev.swap_uv => (SurfParamType::U, nurb_uv.x),
             Ok(nurb_uv) => (SurfParamType::V, nurb_uv.y),
-            Err(e) if e.is_unported() || !self.rev.swap_uv => return Err(e),
+            Err(e)
+                if e.is_unported_or_cancelled()
+                    || !self.rev.swap_uv
+                    || k.fixes.cone_iso_circle_at_axial_height =>
+            {
+                return Err(e)
+            }
             Err(e) => match self.sweep_nurbs_param_written(k, step_uv.x)? {
                 Some(x) => (SurfParamType::U, x),
                 None => return Err(e),
@@ -1341,7 +1430,10 @@ impl Cone {
         };
 
         // convert linear coordinate
-        nurbs_uv.y = if self.rev.is_bounded()? {
+        // (WR-713: see `unbounded_maps_linearly`)
+        nurbs_uv.y = if self.rev.is_bounded()?
+            || unbounded_maps_linearly(k, self.inside_out, &step_ivl, &nurb_ivl)
+        {
             if self.inside_out {
                 nurb_ivl.max()
                     + ((step_uv.y - step_ivl.min()) / step_ivl.length() * -nurb_ivl.length())
@@ -1445,7 +1537,7 @@ impl Cone {
                     }
                     rows
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Err(SolidError::sm_err(OP_EVAL)),
             }
         } else {
@@ -1672,6 +1764,43 @@ impl Cone {
         Ok(inv)
     }
 
+    /// Not upstream (#2578): [`Self::step_inversion`] without the cone's domain
+    /// ([`SurfOfRevolution::step_inversion_unbounded`] on the base parts, the point
+    /// mirrored through the apex and back as there); a non-planar generator inverts
+    /// over the cone's maximum analytic domain.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`SurfOfRevolution::step_inversion_unbounded`], of the apex and, for a
+    /// non-planar generator, of [`Self::step_inversion`]'s general branch.
+    pub fn step_inversion_unbounded(
+        &self,
+        k: &Kernel,
+        point_on_surf: Point3,
+        tol_3d: f64,
+    ) -> Result<(Point2, LocationType)> {
+        let pos = self.positive_point(k, point_on_surf)?;
+        let (mut uv, location) = if self.rev.planar_generator {
+            self.rev.step_inversion_unbounded(k, pos.point, tol_3d)?
+        } else {
+            let domain = self.step_inversion_unbounded_domain(k)?;
+            let r = self.rev_step_inversion(k, &domain, pos.point, tol_3d, None)?;
+            (r.uv, r.location)
+        };
+        if pos.negated {
+            uv.y = 2.0 * pos.apex_param - uv.y;
+        }
+        Ok((uv, location))
+    }
+
+    /// The STEP domain [`Self::step_inversion_unbounded`] searches for a non-planar
+    /// generator: the cone's own [`Self::max_analytic_domain`], which stops at the apex
+    /// (the point is already mirrored onto that nappe), not the base surface of
+    /// revolution's, which runs on over the far one.
+    fn step_inversion_unbounded_domain(&self, k: &Kernel) -> Result<Extent2d> {
+        self.max_analytic_domain(k)
+    }
+
     /// `SmSurfOfRevolution::STEPInversion` on the cone's base parts
     /// ([`SurfOfRevolution::step_inversion_with_outputs`], unit
     /// `surface.surf_of_revolution_p2`), over the cone's STEP domain. A non-planar
@@ -1726,6 +1855,22 @@ impl Cone {
         rotate_n_move: &Axis2Placement,
         opt_scale: Option<Vec3>,
     ) -> Result<()> {
+        self.transform_notifying(k, rotate_n_move, opt_scale, &mut |_| Ok(()))
+    }
+
+    /// [`Cone::transform`] with the edit notifications of the base surface of revolution's NURB transform sent through
+    /// `notify`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Cone::transform`] and of `notify`.
+    pub(crate) fn transform_notifying(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        opt_scale: Option<Vec3>,
+        notify: &mut EditNotify<'_>,
+    ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
         // no work - identity transform
@@ -1749,12 +1894,13 @@ impl Cone {
         // polar-converter rebuild reaches the cone's iso curves (the virtual
         // CreateIsoParametricCurve)
         let inside_out = self.inside_out;
-        ignore_status(
-            self.rev
-                .transform_using(k, rotate_n_move, opt_scale, &|s, k, p, t| {
-                    Ok(cone_iso_curve(s, inside_out, k, p, t, None, false)?.curve)
-                }),
-        )?;
+        ignore_status(self.rev.transform_using(
+            k,
+            rotate_n_move,
+            opt_scale,
+            &|s, k, p, t| Ok(cone_iso_curve(s, inside_out, k, p, t, None, false)?.curve),
+            notify,
+        ))?;
 
         // update cone size
         self.base_radius *= scale;
@@ -2405,6 +2551,322 @@ mod tests {
                     assert!((a.uv - b.uv).length() < 1e-6, "{:?} {:?}", a.uv, b.uv);
                     assert_eq!(a.location, b.location);
                     assert!(b.inside);
+                }
+            }
+        }
+    }
+
+    /// tangency-labs/solidcore#2628 item 5: the unbounded inversion of a cone read with
+    /// its generator flagged non-planar searches the cone's own maximum analytic
+    /// domain ([`Cone::max_analytic_domain`]: the nappe of the current domain, from the
+    /// apex), not the base surface of revolution's, which runs on past the apex over
+    /// the far nappe that `positive_point` has already mirrored the point away from.
+    /// `cone123` (radius 1 at height 0, 2 at height 3) has its apex at height
+    /// `-1 * 3 / (2 - 1) = -3`: the domain is `[0, 360]` by `[-3, 1000]` (1000 the
+    /// line's maximum analytic extent), not `[-1000, 1000]`. The parameters found are
+    /// those of the planar branch, here at heights 1.5, 10 (past the current domain)
+    /// and -6 (the far nappe, mirrored).
+    #[test]
+    fn non_planar_unbounded_inversion_searches_the_cones_own_domain() {
+        let k = k();
+        let planar = cone123();
+        let mut non_planar = planar.clone();
+        non_planar.rev.planar_generator = false;
+        let d = non_planar.step_inversion_unbounded_domain(&k).unwrap();
+        assert_eq!(d, non_planar.max_analytic_domain(&k).unwrap());
+        assert!((d.v_min() + 3.0).abs() <= 1e-12, "{d:?}");
+        assert_eq!((d.u_min(), d.u_max(), d.v_max()), (0.0, 360.0, 1000.0));
+        for (u, v) in [(30.0_f64, 1.5), (200.0, 10.0), (120.0, -6.0)] {
+            // radius 1 + v / 3, negative past the apex (the point turned by 180 degrees)
+            let r = 1.0 + v / 3.0;
+            let p = Vec3::new(r * u.to_radians().cos(), r * u.to_radians().sin(), v);
+            let (uv, _) = non_planar.step_inversion_unbounded(&k, p, 1e-9).unwrap();
+            assert!(
+                (uv - Point2::new(u, v)).length() < 1e-9,
+                "({u}, {v}) -> {uv:?}"
+            );
+        }
+    }
+
+    /// `WR-63`: `SmCone::CreateCanonical` with a semi-angle and `Some(height)` drops
+    /// `inside_out` (`bInsideOut` passed as `bMakeNurbGenCurve` and `FALSE` passed for
+    /// `bInsideOut` at `SmCone.cpp:341-348`); the opt-in flag preserves `inside_out` and
+    /// sets `make_nurb_gen_curve` to `false`, matching the two-radius frustum overload.
+    #[test]
+    fn wr63_semi_angle_with_height_preserves_inside_out_under_opt_in() {
+        let k_def = k();
+        let mut k_opt = k();
+        k_opt
+            .fixes
+            .cone_create_canonical_preserves_inside_out_and_checks_height = true;
+
+        let bot = 1.0;
+        let semi_deg = 30.0;
+        let h = 2.0;
+        let expected_top = bot + deg2rad(semi_deg).tan() * h;
+
+        for swap_uv in [false, true] {
+            let def_cone = Cone::create_canonical_with_semi_angle(
+                &k_def,
+                &std_placement(),
+                bot,
+                semi_deg,
+                Some(h),
+                swap_uv,
+                true,
+            )
+            .unwrap();
+            let opt_cone = Cone::create_canonical_with_semi_angle(
+                &k_opt,
+                &std_placement(),
+                bot,
+                semi_deg,
+                Some(h),
+                swap_uv,
+                true,
+            )
+            .unwrap();
+            let two_radii = Cone::create_canonical(
+                &k_opt,
+                &std_placement(),
+                bot,
+                expected_top,
+                h,
+                swap_uv,
+                true,
+            )
+            .unwrap();
+
+            // Default matches pinned C++ (`canonical_semi_with_height_inside_is_mngc`).
+            assert!(!def_cone.inside_out(), "swap_uv = {swap_uv}");
+            assert!(!def_cone.canonical().inside_out, "swap_uv = {swap_uv}");
+            assert!(def_cone.rev().make_nurb_gen_curve(), "swap_uv = {swap_uv}");
+            let CurveKind::Line(def_gen) = def_cone.gen().unwrap().kind() else {
+                panic!("expected line generator");
+            };
+            assert!(!def_gen.inside_out(), "swap_uv = {swap_uv}");
+            assert!(!def_cone.approx_eq(&two_radii), "swap_uv = {swap_uv}");
+
+            // Opt-in preserves `inside_out` and matches the bounded two-radius frustum.
+            assert!(opt_cone.inside_out(), "swap_uv = {swap_uv}");
+            assert!(opt_cone.canonical().inside_out, "swap_uv = {swap_uv}");
+            assert!(!opt_cone.rev().make_nurb_gen_curve(), "swap_uv = {swap_uv}");
+            let CurveKind::Line(opt_gen) = opt_cone.gen().unwrap().kind() else {
+                panic!("expected line generator");
+            };
+            assert!(opt_gen.inside_out(), "swap_uv = {swap_uv}");
+            assert!(opt_cone.approx_eq(&two_radii), "swap_uv = {swap_uv}");
+
+            // NURBS domain start lies on the bottom circle under default (`inside_out ==
+            // false`) and on the top circle under opt-in (`inside_out == true`).
+            let def_dom = def_cone.rev().base().natural_uv_domain();
+            let opt_dom = opt_cone.rev().base().natural_uv_domain();
+            let def_start = def_cone.evaluate_point(&k_def, def_dom.min()).unwrap();
+            let opt_start = opt_cone.evaluate_point(&k_opt, opt_dom.min()).unwrap();
+            assert!(
+                close(def_start, Vec3::new(bot, 0.0, 0.0)),
+                "swap_uv = {swap_uv}: {def_start:?}"
+            );
+            assert!(
+                close(opt_start, Vec3::new(expected_top, 0.0, h)),
+                "swap_uv = {swap_uv}: {opt_start:?}"
+            );
+
+            // At the midpoint of the NURBS domain, both cones evaluate to the same 3D
+            // point with opposite unit surface normals.
+            let def_mid = Point2::new(def_dom.u_interval().mid(), def_dom.v_interval().mid());
+            let opt_mid = Point2::new(opt_dom.u_interval().mid(), opt_dom.v_interval().mid());
+            let def_rows = def_cone
+                .evaluate_rows(&k_def, def_mid, 1, 1, EvaluateFlags::default())
+                .unwrap();
+            let opt_rows = opt_cone
+                .evaluate_rows(&k_opt, opt_mid, 1, 1, EvaluateFlags::default())
+                .unwrap();
+            assert!(
+                close(def_rows[0][0], opt_rows[0][0]),
+                "swap_uv = {swap_uv}: {:?} vs {:?}",
+                def_rows[0][0],
+                opt_rows[0][0]
+            );
+            let def_n = def_rows[1][0].cross(def_rows[0][1]).unitize().unwrap();
+            let opt_n = opt_rows[1][0].cross(opt_rows[0][1]).unitize().unwrap();
+            assert!(
+                (def_n + opt_n).length() < 1e-12,
+                "swap_uv = {swap_uv}: {def_n:?} vs {opt_n:?}"
+            );
+
+            // STEP <-> NURBS parameter conversions and evaluations remain consistent.
+            for step in [Point2::new(42.0, 0.4), Point2::new(215.0, 1.6)] {
+                let nurb = opt_cone
+                    .convert_uv_from_step_to_nurbs(&k_opt, step)
+                    .unwrap();
+                let back = opt_cone
+                    .convert_uv_from_nurbs_to_step(&k_opt, nurb)
+                    .unwrap();
+                assert!((back - step).length() < 1e-9, "swap_uv = {swap_uv}");
+                let p_nurb = opt_cone.evaluate_point(&k_opt, nurb).unwrap();
+                let p_step = opt_cone.evaluate_step_point(step).unwrap();
+                assert!(p_nurb.distance(p_step) < 1e-9, "swap_uv = {swap_uv}");
+            }
+        }
+    }
+
+    /// `WR-63`: `SmCone::CreateCanonical` with two radii and `height <= 0` passes
+    /// `top_radius` as the semi-angle in degrees of an unbounded cone
+    /// (`SmCone.cpp:392-400`); the opt-in flag rejects `height <= 0` with
+    /// [`SolidError::InvalidInput`].
+    #[test]
+    fn wr63_two_radii_non_positive_height_rejected_under_opt_in() {
+        let k_def = k();
+        let mut k_opt = k();
+        k_opt
+            .fixes
+            .cone_create_canonical_preserves_inside_out_and_checks_height = true;
+
+        for (height, top_radius) in [(0.0, 30.0), (-0.0, 30.0), (-5.0, 30.0), (-1.0, -20.0)] {
+            for swap_uv in [false, true] {
+                for inside_out in [false, true] {
+                    // Default matches pinned C++ (`canonical_height_zero_top_is_semi`
+                    // and `canonical_height_negative_top_is_semi`).
+                    let def_cone = Cone::create_canonical(
+                        &k_def,
+                        &std_placement(),
+                        1.0,
+                        top_radius,
+                        height,
+                        swap_uv,
+                        inside_out,
+                    )
+                    .unwrap();
+                    assert_eq!(def_cone.top_height(), INFINITE_PARAMETER);
+                    assert!((def_cone.semi_angle_deg() - top_radius).abs() < 1e-12);
+                    assert_eq!(def_cone.inside_out(), inside_out);
+
+                    // Opt-in rejects non-positive height instead of reinterpreting
+                    // `top_radius` as `semi_angle_deg`.
+                    let err = Cone::create_canonical(
+                        &k_opt,
+                        &std_placement(),
+                        1.0,
+                        top_radius,
+                        height,
+                        swap_uv,
+                        inside_out,
+                    )
+                    .unwrap_err();
+                    assert!(
+                        matches!(
+                            err,
+                            SolidError::InvalidInput { operation, .. } if operation == OP_CANONICAL
+                        ),
+                        "height = {height}, top = {top_radius}: got {err:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `WR-63`: `UpstreamFixes` registers the flag, and valid cones (`None`-height or
+    /// `inside_out == false` in the semi-angle overload, and positive heights including
+    /// tiny positive heights in the two-radius overload) are identical across modes.
+    #[test]
+    fn wr63_valid_cones_and_flag_lookup_match_across_modes() {
+        use crate::kernel::UpstreamFixes;
+
+        let flag_name = "cone_create_canonical_preserves_inside_out_and_checks_height";
+        let k_def = k();
+        assert!(
+            !k_def
+                .fixes
+                .cone_create_canonical_preserves_inside_out_and_checks_height
+        );
+        assert!(UpstreamFixes::NAMES.contains(&flag_name));
+
+        let mut k_opt = k();
+        *k_opt.fixes.flag_mut(flag_name).unwrap() = true;
+        assert!(
+            k_opt
+                .fixes
+                .cone_create_canonical_preserves_inside_out_and_checks_height
+        );
+        assert!(k_opt.fixes.flags().any(|f| f == (flag_name, true)));
+
+        for swap_uv in [false, true] {
+            // Bounded semi-angle cone with `inside_out == false` is unchanged.
+            let def_bounded = Cone::create_canonical_with_semi_angle(
+                &k_def,
+                &std_placement(),
+                1.5,
+                25.0,
+                Some(3.0),
+                swap_uv,
+                false,
+            )
+            .unwrap();
+            let opt_bounded = Cone::create_canonical_with_semi_angle(
+                &k_opt,
+                &std_placement(),
+                1.5,
+                25.0,
+                Some(3.0),
+                swap_uv,
+                false,
+            )
+            .unwrap();
+            assert!(def_bounded.approx_eq(&opt_bounded));
+            assert!(!opt_bounded.inside_out());
+            assert!(!opt_bounded.rev().make_nurb_gen_curve());
+
+            for inside_out in [false, true] {
+                // Unbounded semi-angle cone (`height: None`) is unchanged.
+                let def_unbounded = Cone::create_canonical_with_semi_angle(
+                    &k_def,
+                    &std_placement(),
+                    1.5,
+                    25.0,
+                    None,
+                    swap_uv,
+                    inside_out,
+                )
+                .unwrap();
+                let opt_unbounded = Cone::create_canonical_with_semi_angle(
+                    &k_opt,
+                    &std_placement(),
+                    1.5,
+                    25.0,
+                    None,
+                    swap_uv,
+                    inside_out,
+                )
+                .unwrap();
+                assert!(def_unbounded.approx_eq(&opt_unbounded));
+                assert_eq!(opt_unbounded.inside_out(), inside_out);
+
+                // Two-radius cones with any `height > 0.0` (including tiny `1e-9`) are
+                // unchanged.
+                for height in [3.0, 1e-9] {
+                    let def_frustum = Cone::create_canonical(
+                        &k_def,
+                        &std_placement(),
+                        1.0,
+                        2.0,
+                        height,
+                        swap_uv,
+                        inside_out,
+                    )
+                    .unwrap();
+                    let opt_frustum = Cone::create_canonical(
+                        &k_opt,
+                        &std_placement(),
+                        1.0,
+                        2.0,
+                        height,
+                        swap_uv,
+                        inside_out,
+                    )
+                    .unwrap();
+                    assert!(def_frustum.approx_eq(&opt_frustum));
+                    assert_eq!(opt_frustum.inside_out(), inside_out);
                 }
             }
         }

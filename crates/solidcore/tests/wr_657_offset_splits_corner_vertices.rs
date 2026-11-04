@@ -20,10 +20,11 @@
 #[path = "support/offset_fixture.rs"]
 mod offset_fixture;
 
-use offset_fixture::{offset_full, planar_faces_at, report, shell};
+use offset_fixture::{offset_full, planar_faces_at, report, shell, Notifications};
 use solidcore::blend::fillet_executive::api::fillet_edges;
-use solidcore::error::{SolidError, SM_ERR};
-use solidcore::primitive::api_primitives::create_box;
+use solidcore::error::SM_ERR;
+use solidcore::offset::offset_executive::p2::{api_offset_brep_full, OffsetOptions};
+use solidcore::primitive::api_primitives::{create_box, create_sphere};
 use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::{Brep, FaceId, Kernel, Point3};
@@ -303,7 +304,53 @@ fn wr_657_fully_chamfered_box_inset_open_at_a_chamfer_is_refused() {
     let b = chamfered(&mut k, None);
     let open = face_at(&k, &b, [29.0, 10.0, 9.0]);
     match shell(&mut k, b, -1.0, &[open]) {
-        Err(SolidError::Upstream { code, .. }) => assert_eq!(code, SM_ERR),
+        Err(e) => assert_eq!(e.sm_status(), Some(SM_ERR)),
         other => panic!("SM_ERR expected: {other:?}"),
+    }
+}
+
+/// An offset asked not to merge leaves its overlapping faces (`OffsetBrep`, `bDoSelfInt`), so a
+/// result that is no closed solid is what was asked for: a 10 mm cube inset 1, convex edges
+/// not extended, comes back as with the flags off, as it does from the fork at d01d7b0.
+#[test]
+fn wr_657_unmerged_offset_is_not_refused() {
+    let faces = |fixed: bool| {
+        let mut k = kernel(fixed);
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+        let mut n = Notifications::new(&mut b);
+        let options = OffsetOptions {
+            distance: -1.0,
+            extend_convex_edges: false,
+            merge_results: false,
+        };
+        api_offset_brep_full(&mut k, Some(&mut b), options, &mut n.context())
+            .unwrap_or_else(|e| panic!("fixed {fixed}: {e:?}"))
+            .face_list()
+            .len()
+    };
+    let with_flags = faces(true);
+    assert!(with_flags > 0);
+    assert_eq!(with_flags, faces(false));
+}
+
+/// #2092: a sphere of radius 10 offset by -10 (convex edges not extended) leaves nothing.
+/// With both flags on, the empty body comes back as with either off: a result with no
+/// faces is not refused as a broken solid.
+#[test]
+fn issue_2092_sphere_offset_to_its_centre_is_empty() {
+    for flags in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut k = Kernel::default();
+        k.fixes.offset_closes_loop_gaps = flags.0;
+        k.fixes.offset_splits_corner_vertices = flags.1;
+        let mut ball = create_sphere(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0).unwrap();
+        let mut n = Notifications::new(&mut ball);
+        let options = OffsetOptions {
+            distance: -10.0,
+            extend_convex_edges: false,
+            merge_results: true,
+        };
+        let out = api_offset_brep_full(&mut k, Some(&mut ball), options, &mut n.context())
+            .unwrap_or_else(|e| panic!("flags {flags:?}: {e:?}"));
+        assert!(out.face_list().is_empty(), "flags {flags:?}: no faces");
     }
 }

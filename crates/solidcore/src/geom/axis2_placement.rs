@@ -11,7 +11,7 @@
 //! | [`Axis2Placement::new`]                       | `SmAxis2Placement(Origin, XAxis, YAxis)` (orient)     |
 //! | [`Axis2Placement::from_plane`]                | `SmAxis2Placement(const SmVector3d&, double)` (plane) |
 //! | [`Axis2Placement::from_to`]                   | `SmAxis2Placement(FromO, FromX, FromY, ToO, ToX, ToY)` (takes the two built systems) |
-//! | [`Axis2Placement::origin`]                    | `GetOrigin`, `GetOriginRef`                           |
+//! | [`Axis2Placement::origin`], [`Axis2Placement::set_origin`] | `GetOrigin`, `GetOriginRef`                           |
 //! | [`Axis2Placement::x_axis`]                    | `GetXAxis`, `GetXAxisRef`                             |
 //! | [`Axis2Placement::y_axis`]                    | `GetYAxis`, `GetYAxisRef`                             |
 //! | [`Axis2Placement::z_axis`]                    | `GetZAxis`                                            |
@@ -120,6 +120,17 @@ impl Axis2Placement {
         p
     }
 
+    /// The placement as stored, its axes taken as they are (not made canonical): a
+    /// placement read back from data it was written to.
+    #[must_use]
+    pub const fn from_stored(origin: Point3, x_axis: Vec3, y_axis: Vec3) -> Self {
+        Self {
+            origin,
+            x_axis,
+            y_axis,
+        }
+    }
+
     /// Plane constructor: the placement of the plane `normal · p + d = 0`, with origin
     /// the plane point closest to the global origin, Z along `normal` and X, Y from
     /// `MakeUnitOrthoVectors` (`SmAxis2Placement(const SmVector3d&, double)`).
@@ -218,6 +229,11 @@ impl Axis2Placement {
             self.y_axis = y;
         }
         Ok(())
+    }
+
+    /// Sets the origin (`GetOriginRef() = origin`).
+    pub fn set_origin(&mut self, origin: Point3) {
+        self.origin = origin;
     }
 
     /// Set origin, Z axis and the X reference direction, STEP style: X is the unit

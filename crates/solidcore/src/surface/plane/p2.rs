@@ -20,6 +20,10 @@
 //! | [`Plane::make_new_plane_ellipse`]          | `MakeNewPlaneEllipse`                             |
 //!
 //! Deviations:
+//! - **Plane first with a torus (opt-in, not upstream).** With
+//!   `fixes.plane_first_torus_section_exact` (WR-721, #2405) `GlobalSurfaceIntersect` takes a
+//!   torus's own plane section (`Torus::intersect_with_plane_owned_into`, its orders and UV
+//!   curves swapped as for a surface of revolution); upstream has no torus case and marches it.
 //! - **Arguments.** Out-params become return values; `SmContext` arguments are
 //!   dropped. `GlobalSurfaceIntersect`'s and `IntersectWithPlane`'s optional output
 //!   arrays are always filled ([`SurfaceIntersection`]; a plane/plane intersection has
@@ -83,6 +87,7 @@ use crate::kernel::Kernel;
 use crate::math::{max2, min2, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{BSplineSurface, BoundingBoxRequest};
 use crate::nurbs::knots::Side;
 use crate::surface::surf_of_revolution::SurfOfRevolution;
@@ -218,6 +223,22 @@ impl Plane {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
+        self.transform_notifying(k, rotate_n_move, scale, &mut |_| Ok(()))
+    }
+
+    /// [`Plane::transform`] with the edit notifications of its NURB transform
+    /// ([`BSplineSurface::transform_notifying`]) sent through `notify`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Plane::transform`] and of `notify`.
+    pub(crate) fn transform_notifying(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        notify: &mut EditNotify<'_>,
+    ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
         // no work - identity transform
@@ -228,7 +249,8 @@ impl Plane {
 
         // apply m_pNurb (SmBSplineSurface::Transform makes a missing NURB)
         self.ensure_nurb();
-        self.base.transform(rotate_n_move, scale)?;
+        self.base
+            .transform_notifying(rotate_n_move, scale, notify)?;
 
         // when scaling
         if let Some(s) = scale {
@@ -954,7 +976,7 @@ impl Plane {
         // for every solution
         for solution in solutions.as_slice() {
             // get curve interval from last boundary to start of this solution
-            let s_param = ends.last().copied().unwrap_or(ivl.min());
+            let s_param = ends.last().copied().unwrap_or_else(|| ivl.min());
             let e_param = solution.start.param(0)?;
 
             // skip zero length intervals at the curve start, curve end, and
@@ -985,7 +1007,7 @@ impl Plane {
         }
 
         // get interval from last solution end to curve end
-        let s_param = ends.last().copied().unwrap_or(ivl.min());
+        let s_param = ends.last().copied().unwrap_or_else(|| ivl.min());
         let e_param = ivl.max();
 
         // add non-zero length interval at the end of the curve
@@ -1554,9 +1576,25 @@ pub(crate) fn global_surface_intersect_into<O: SolutionObject + Copy + PartialEq
             need_nurb_intersection = x.needs_more_intersections;
             *out = SurfaceIntersection::from(x);
         }
-        // (an SmTorus has no special case: the default branch)
+        // Not upstream (WR-721, #2405, opt-in): the torus's own plane section, as for a
+        // surface of revolution (upstream has no SmTorus case: the default branch)
+        SurfaceKind::Torus(torus) if k.fixes.plane_first_torus_section_exact => {
+            // the plane's boxes take its face's tolerance
+            let need = torus.intersect_with_plane_owned_into(
+                k,
+                plane,
+                PlaneOwner::of(this)?,
+                uv_domain,
+                approx_tol_3d,
+                out,
+            );
+            core::mem::swap(&mut out.surface1_uv_curves, &mut out.surface2_uv_curves);
+            need_nurb_intersection = need?;
+        }
         SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_)

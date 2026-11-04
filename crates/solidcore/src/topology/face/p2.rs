@@ -12,6 +12,7 @@
 //! | [`surface`], [`uv_domain`], [`rectangular_trim`], [`tolerance`] | `SmFace::GetSurface`, `GetUVDomain`, `GetRectangularTrim`, `GetTolerance` (`SM_USE_OLDTOL`) |
 //! | [`set_uv_domain`], [`set_faceuse`]      | `SmFace::SetUVDomain`, `SetFaceuse`               |
 //! | [`faceuses`], [`upward_faceuse`]        | `SmFace::GetFaceuses`, `GetUpwardFaceuse`         |
+//! | [`outer_faceuse`]                       | `sm_OuterFaceuse` (static in the fork's `SmOffsetFaces.cpp`) |
 //! | [`loops`], [`outer_loops`]              | `SmFace::GetLoops`, `GetOuterLoops`               |
 //! | [`check_seam_crossing`]                 | `sm_CheckSeamCrossing` (static)                   |
 //! | [`calculate_an_internal_point`]         | `SmFace::CalculateAnInternalPoint`                |
@@ -46,8 +47,9 @@
 //!   [`SolidError::Upstream`] (`SM_ERR`) or the callee's error.
 //! - **`sm_CheckSeamCrossing`** returns `SM_SUCCESS` (`1000`, true as an
 //!   `SmBoolean`) for a surface closed in neither direction; [`check_seam_crossing`]
-//!   returns `true` there (`plan/upstream-issues.md`). The unused surface argument is
-//!   dropped.
+//!   returns `true` there by default (`plan/upstream-issues.md`), and `false` with
+//!   the opt-in fix [`UpstreamFixes::check_seam_crossing_unclosed`](crate::kernel::UpstreamFixes::check_seam_crossing_unclosed).
+//!   The unused surface argument is dropped.
 //! - **`SmPrecisePropertyLayout`** indices are `usize`; `0` still means "not selected".
 //!   The evaluators take the derivative array as a slice and return
 //!   [`SolidError::InvalidInput`] for an index outside it (upstream writes out of
@@ -60,6 +62,9 @@
 //!   leaves the caller's default point ([`Point2::UNDEF`]); a failed `DropPoint` is
 //!   no drop point; a failed evaluation keeps the previous value (initially
 //!   [`Vec3::UNDEF`]).
+//!   With the opt-in `Kernel::fixes.query_statuses_pass_on` (WR-663) `sm_AreConnected`
+//!   shows ends whose UV points cannot be computed not connected, as the fork
+//!   (tangency-labs/smlib 6997962).
 //! - **`sm_FixUVTrimCurves` opt-in fix** (WR-255, tangency-labs/solidcore#959/#570, the
 //!   fork's tangency-labs/smlib@5af7070). Upstream drops the vertex's UV point onto
 //!   each of the two curves, `Trim`s the curve there and `EditParameterization`s it back
@@ -210,6 +215,13 @@ pub const fn is_kind_of(t: i64) -> bool {
     }
 }
 
+/// A status SMLib drops and the fork passes on (`SER`, tangency-labs/smlib 6997962):
+/// returned with the opt-in [`crate::kernel::UpstreamFixes::query_statuses_pass_on`],
+/// handed on to the site's own ignore otherwise.
+fn pass<T>(k: &Kernel, r: Result<T>) -> Result<Result<T>> {
+    crate::error::passed_on(r, k.fixes.query_statuses_pass_on)
+}
+
 fn null(reason: &'static str) -> SolidError {
     SolidError::invalid_input(OP, reason)
 }
@@ -218,7 +230,7 @@ fn null(reason: &'static str) -> SolidError {
 fn ignored<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -295,6 +307,28 @@ pub fn set_faceuse(b: &mut Brep, f: FaceId, new_fu: Option<FaceuseId>) -> Result
 /// [`SolidError::NotFound`] for a dangling id.
 pub fn upward_faceuse(b: &Brep, f: FaceId) -> Result<Option<FaceuseId>> {
     Ok(b.face(f)?.faceuse)
+}
+
+/// `sm_OuterFaceuse` (the fork's offset faces, and SolidCraft's `outer_faceuse`): the face
+/// use of `f` on the outside of its body, the one bounding the infinite region (the upward
+/// one when it does, else its mate); `None` without face use.
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling id.
+pub fn outer_faceuse(b: &Brep, f: FaceId) -> Result<Option<FaceuseId>> {
+    let Some(fu) = upward_faceuse(b, f)? else {
+        return Ok(None);
+    };
+    let outside = match b.faceuse(fu)?.shell {
+        Some(shell) => b.shell(shell)?.region == b.infinite_region(),
+        None => false,
+    };
+    Ok(if outside {
+        Some(fu)
+    } else {
+        b.faceuse(fu)?.mate
+    })
 }
 
 /// `GetFaceuses`: the primary face use and its mate (both `None` without face use).
@@ -901,7 +935,7 @@ pub(crate) fn classify_interval_on_face(
         true,
     );
     if let Err(error) = result {
-        if error.is_unported() {
+        if error.is_unported_or_cancelled() {
             return Err(error);
         }
     }
@@ -909,6 +943,79 @@ pub(crate) fn classify_interval_on_face(
         .intervals()
         .iter()
         .map(|i| i.mid.point_class())
+        .collect())
+}
+
+/// One interval of [`classify_free_curve_on_face`]: its parameter interval, the class of
+/// its interior, and the class of each end with the edge it lies on (`None` off an edge).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FaceCurveRun {
+    /// `m_vInterval`.
+    pub interval: Extent1d,
+    /// `m_vStart`'s class and edge.
+    pub start: (PointClassType, Option<EdgeId>),
+    /// `m_vMid`'s class.
+    pub mid: PointClassType,
+    /// `m_vEnd`'s class and edge.
+    pub end: (PointClassType, Option<EdgeId>),
+}
+
+/// `SmCurveClassification sClass(&crCurve, interval, NULL, dTol)` followed by
+/// `SER(face.CurveOnClassify(TRUE, sClass, bHasBigGaps))`, on the caller's B-rep in place
+/// ([`curve_on_classify_mut`]: the UV trim curves, gap caches and trimmed surface cache the
+/// classification makes stay on `b`, as upstream's `const` call leaves them): the
+/// intervals, each end with the edge it lies on.
+///
+/// # Errors
+///
+/// Those of [`curve_on_classify_mut`].
+pub(crate) fn classify_free_curve_on_face(
+    k: &Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    curve: &Curve,
+    interval: Extent1d,
+    tol: f64,
+    has_big_gaps: bool,
+) -> Result<Vec<FaceCurveRun>> {
+    let mut objects = FaceClassify { brep: b, curve };
+    let init = ClassificationInit {
+        curve: Some(ClassHandle::Curve),
+        interval,
+        uv_curve: None,
+        src_zone_tol_3d: zone_tol3d(k, tol),
+        opt_data_size: 0,
+        is_curve_owned: false,
+        is_curve_current: true,
+        surface1: None,
+        surface2: None,
+        uv_curve2: None,
+        ti: None,
+    };
+    let mut classification = CurveClassification::with_curve(k, &init)?;
+    curve_on_classify_mut(
+        k,
+        f,
+        &mut objects,
+        true,
+        &mut classification,
+        has_big_gaps,
+        false,
+        true,
+    )?;
+    let edge_of = |o: Option<ClassHandle>| match o {
+        Some(ClassHandle::Edge(e)) => Some(e),
+        _ => None,
+    };
+    Ok(classification
+        .intervals()
+        .iter()
+        .map(|i| FaceCurveRun {
+            interval: i.interval,
+            start: (i.start.point_class(), edge_of(i.start.object())),
+            mid: i.mid.point_class(),
+            end: (i.end.point_class(), edge_of(i.end.object())),
+        })
         .collect())
 }
 
@@ -932,7 +1039,8 @@ fn normalized_evaluate_uv(k: &Kernel, b: &mut Brep, eu: EdgeuseId, t: f64) -> Re
 /// `pEU->GetOrCreateUVTrimCurve(rpUVCurve)` (its status is ignored; the curve is then
 /// dereferenced).
 fn get_or_create_uv_trim_curve(k: &Kernel, b: &mut Brep, eu: EdgeuseId) -> Result<Curve> {
-    let _ = eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+    let fetch = eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+    let _ = pass(k, fetch.status)?;
     eu1::uv_trim_curve(b, eu)?
         .0
         .cloned()
@@ -954,13 +1062,16 @@ fn is_singularity(
         | SurfaceKind::Sphere(_)
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::SrfInVolume(_)
         | SurfaceKind::OffsetSurface(_) => {
-            let r = surface.is_singularity(k, uv, tol, false)?;
+            // bPtTestOnly = TRUE, as upstream passes it
+            let r = surface.is_singularity(k, uv, tol, true)?;
             Ok((r.singular, r.direction))
         }
     }
@@ -976,6 +1087,7 @@ fn offset_evaluate_simple(
     surface: &Surface,
     offset: f64,
     uv: Point2,
+    flags: EvaluateFlags,
 ) -> Result<Vec<Vec<Vec3>>> {
     let off = OffsetSurface::new(
         k,
@@ -984,7 +1096,7 @@ fn offset_evaluate_simple(
         false,
         SS_UNKNOWN,
     )?;
-    off.evaluate_simple(k, uv, 1, 1, simple_flags())
+    off.evaluate_simple(k, uv, 1, 1, flags)
 }
 
 /// `EvaluateSimple(.., TRUE, TRUE, TRUE, ..)`: from the left, upper half.
@@ -1020,6 +1132,7 @@ fn runge_kutta_ode_integrate(
     y_scale: &[f64],
 ) -> Result<()> {
     let mut scratch = vec![0.0; y.len() + 1];
+    let mut eval_calls = 0u64;
     crate::mass::integrator::OdeIntegrator::default().integrate(
         y,
         x1,
@@ -1031,6 +1144,10 @@ fn runge_kutta_ode_integrate(
             scale: Some(y_scale),
         },
         |t, _, dy| {
+            eval_calls += 1;
+            if (eval_calls & 63) == 1 {
+                eval.kernel.check_cancelled(OP)?;
+            }
             eval.evaluate(t, &mut scratch)?;
             for (d, v) in dy.iter_mut().zip(scratch.iter().skip(1)) {
                 *d = *v;
@@ -1046,9 +1163,12 @@ fn runge_kutta_ode_integrate(
 /// `sm_CheckSeamCrossing`: when the step from `uv1` to `uv2` jumps more than 90% of a
 /// closed direction's period of `domain`, moves `uv1` into `uv2`'s period and adds the
 /// period (with the sign of the jump's opposite) to `param_shift`. Returns whether a
-/// seam was crossed; `true` for a surface closed in neither direction (upstream
-/// returns `SM_SUCCESS` there).
+/// seam was crossed; `true` for a surface closed in neither direction by default
+/// (upstream returns `SM_SUCCESS` there; WR-87). With the opt-in fix
+/// [`UpstreamFixes::check_seam_crossing_unclosed`](crate::kernel::UpstreamFixes::check_seam_crossing_unclosed),
+/// returns `false` when closed in neither direction.
 pub fn check_seam_crossing(
+    k: &Kernel,
     uv1: &mut Point2,
     uv2: Point2,
     domain: &Extent2d,
@@ -1059,8 +1179,9 @@ pub fn check_seam_crossing(
     let mut ret = false;
 
     if !closed_u && !closed_v {
-        // SM_SUCCESS as an SmBoolean
-        return true;
+        // SM_SUCCESS as an SmBoolean upstream (WR-87).
+        // With the opt-in fix `k.fixes.check_seam_crossing_unclosed`, returns `false`.
+        return !k.fixes.check_seam_crossing_unclosed;
     }
 
     if closed_u {
@@ -1147,9 +1268,19 @@ pub fn are_connected(
     let vu2 =
         eu1::vertexuse(b, eu2)?.ok_or_else(|| null("AreConnected: edge use without vertex use"))?;
 
-    // FALSE = don't make UVTrimCurve, if missing use GlobalSolve (statuses ignored)
-    let uv1 = ignored(vu1::compute_uv_point(k, b, vu1, false))?.unwrap_or(Point2::UNDEF);
-    let uv2 = ignored(vu1::compute_uv_point(k, b, vu2, false))?.unwrap_or(Point2::UNDEF);
+    // FALSE = don't make UVTrimCurve, if missing use GlobalSolve (statuses ignored; with
+    // the opt-in fix ends whose UV points cannot be computed are not shown connected,
+    // tangency-labs/smlib 6997962)
+    let uv1 = ignored(vu1::compute_uv_point(k, b, vu1, false))?;
+    if uv1.is_none() && k.fixes.query_statuses_pass_on {
+        return Ok(out);
+    }
+    let uv2 = ignored(vu1::compute_uv_point(k, b, vu2, false))?;
+    if uv2.is_none() && k.fixes.query_statuses_pass_on {
+        return Ok(out);
+    }
+    let uv1 = uv1.unwrap_or(Point2::UNDEF);
+    let uv2 = uv2.unwrap_or(Point2::UNDEF);
     let gap_u = (uv2.x - uv1.x).abs();
     let gap_v = (uv2.y - uv1.y).abs();
 
@@ -1439,16 +1570,20 @@ fn internal_point<B: QueryBrep>(k: &Kernel, b: B, f: FaceId) -> Result<Point3> {
                 (Point2::new(u, v_min), Point2::new(u, v_max))
             };
 
-            // classify the target UVLine (status ignored)
-            ignore_status(B::classify_uv_line(
+            // classify the target UVLine (status ignored; passed on with the opt-in fix,
+            // tangency-labs/smlib 6997962)
+            ignore_status(pass(
                 k,
-                f,
-                &mut uv_objects,
-                start,
-                end,
-                src_zone_tol_3d,
-                &mut classification,
-            ))?;
+                B::classify_uv_line(
+                    k,
+                    f,
+                    &mut uv_objects,
+                    start,
+                    end,
+                    src_zone_tol_3d,
+                    &mut classification,
+                ),
+            )?)?;
 
             // when intervals were found in the face
             for ivl in classification.intervals() {
@@ -1599,18 +1734,17 @@ pub fn points_in_face(
         // set search range to face boundary domain
         // (status ignored upstream: on a failure the output is still the face's UV
         // domain, which CalculateUVDomainFromUVTrimCurves sets first)
-        let trim_uv_domain = match calculate_uv_domain_from_uv_trim_curves(k, b, f) {
+        let trim_uv_domain = match pass(k, calculate_uv_domain_from_uv_trim_curves(k, b, f))? {
             Ok(d) => d,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => b.face(f)?.uv_domain,
         };
         let srf_dom = surf.natural_uv_domain_with_nurb(k)?;
         // (SmExtent2d::Intersect leaves the output unchanged when disjoint)
-        let uv_dom = srf_dom
-            .intersect(&trim_uv_domain)
-            .unwrap_or_else(|_| Extent2d::new());
+        let uv_dom =
+            pass(k, srf_dom.intersect(&trim_uv_domain))?.unwrap_or_else(|_| Extent2d::new());
         // SetMinMax status ignored
-        let _ = u_interval.set_min_max(uv_dom.min().x, uv_dom.max().x);
+        let _ = pass(k, u_interval.set_min_max(uv_dom.min().x, uv_dom.max().x))?;
 
         // create isoParameter UVTrimCurve - we'll keep reusing it until done
         let uv_start = dom.evaluate(u_inc, 0.0);
@@ -1681,8 +1815,7 @@ pub fn points_in_face(
                     let v_dither = if point_count > 1 { rand_dither(k) } else { 0.0 };
                     let v_norm = ((kk + 1) as f64 + v_dither) / ((smp_cnt + 1) as f64);
                     // status ignored: the point keeps its default value
-                    let uv_point = crv
-                        .evaluate_point(k, ivl.interval.evaluate(v_norm))
+                    let uv_point = pass(k, crv.evaluate_point(k, ivl.interval.evaluate(v_norm)))?
                         .unwrap_or(Vec3::UNDEF);
                     out.uv.push(Point2::new(*u_param, uv_point.y));
                 }
@@ -1694,10 +1827,13 @@ pub fn points_in_face(
     let mut pnt = Vec3::UNDEF;
     let mut nrm = Vec3::UNDEF;
     for &uv in &out.uv {
-        if let Some(p) = ignored(surf.evaluate_point(k, uv))? {
+        if let Some(p) = ignored(pass(k, surf.evaluate_point(k, uv))?)? {
             pnt = p;
         }
-        if let Some(n) = ignored(surf.evaluate_normal(k, uv, Side::Left, Side::Left))? {
+        if let Some(n) = ignored(pass(
+            k,
+            surf.evaluate_normal(k, uv, Side::Left, Side::Left),
+        )?)? {
             nrm = n;
         }
         out.pv.push(pnt);
@@ -1814,6 +1950,10 @@ pub struct OdeIsoCurveLength<'a> {
     origin: Point3,
     face_thickness: f64,
     layout: &'a PrecisePropertyLayout,
+    /// The v evaluated from the lower knot span (`bVFromLeft = FALSE`) rather than
+    /// upstream's upper one: the end of a span-wise piece under
+    /// `precise_properties_span_end_from_below` (WR-670); `None` upstream.
+    v_from_below: Option<f64>,
 }
 
 impl<'a> OdeIsoCurveLength<'a> {
@@ -1835,7 +1975,18 @@ impl<'a> OdeIsoCurveLength<'a> {
             origin,
             face_thickness,
             layout,
+            v_from_below: None,
         }
+    }
+
+    /// The same integrand, evaluated at `v = end` from the knot span below `end`
+    /// (`bVFromLeft = FALSE`), every other v as upstream (`TRUE`, the span above): the
+    /// end of a piece that stops at a v knot of the surface lies in the piece's own
+    /// span (WR-670, [`UpstreamFixes::precise_properties_span_end_from_below`](crate::kernel::UpstreamFixes::precise_properties_span_end_from_below)).
+    #[must_use]
+    pub const fn with_v_end_from_below(mut self, end: f64) -> Self {
+        self.v_from_below = Some(end);
+        self
     }
 
     /// `Evaluate`: fills `dydx` (all entries zeroed first) at `v = t`.
@@ -1862,20 +2013,22 @@ impl<'a> OdeIsoCurveLength<'a> {
             }
 
             let uv = Point2::new(self.u_iso_value, t);
+            let mut flags = simple_flags();
+            // (exact: the end is the piece's own break value)
+            if self.v_from_below == Some(t) {
+                flags.v_side = Side::Right;
+            }
 
             if self.face_thickness < EFF_ZERO {
-                self.surface.evaluate_simple_first_into(
-                    self.kernel,
-                    uv,
-                    simple_flags(),
-                    &mut pv,
-                )?;
+                self.surface
+                    .evaluate_simple_first_into(self.kernel, uv, flags, &mut pv)?;
             } else if i == 0 {
                 let r = offset_evaluate_simple(
                     self.kernel,
                     self.surface,
                     self.face_thickness / 2.0,
                     uv,
+                    flags,
                 )?;
                 copy_block(&mut pv, &r);
             } else {
@@ -1887,6 +2040,7 @@ impl<'a> OdeIsoCurveLength<'a> {
                     self.surface,
                     -self.face_thickness / 2.0,
                     uv,
+                    flags,
                 )?;
                 copy_block(&mut pv, &r);
             }
@@ -2158,9 +2312,19 @@ impl OdeArea<'_> {
                         continue;
                     };
                     piece_y.fill(0.0);
+                    // With `fixes.precise_properties_span_end_from_below` (WR-670,
+                    // #2091) each piece's end (a v knot, or the trim point) is evaluated
+                    // in the piece's own span: upstream's `TRUE` takes the span above,
+                    // so the integrand jumped at the piece's last point and the steps
+                    // shrank toward every knot (about 5x the evaluations a piece).
+                    let piece_eval = if k.fixes.precise_properties_span_end_from_below && b > a {
+                        eval.with_v_end_from_below(b)
+                    } else {
+                        eval
+                    };
                     // A failed inner integration is not a zero-area contribution.
                     runge_kutta_ode_integrate(
-                        &eval,
+                        &piece_eval,
                         &mut piece_y,
                         a,
                         b,
@@ -2878,8 +3042,8 @@ pub fn fix_uv_trim_curves(
 
 /// [`fix_uv_trim_curves`] whose curve edits notify through `env`: each
 /// `EditEndPoint` sends `SM_NO_PRE_EDIT` and `SM_NO_POST_EDIT` with the edited UV trim
-/// curve as caller and first data object ([`notified_end_point_edit`]), and so does each
-/// `Trim` and `EditParameterization` that does work ([`notified_curve_edit`]). Without `env`
+/// curve as caller and first data object (`notified_end_point_edit`), and so does each
+/// `Trim` and `EditParameterization` that does work (`notified_curve_edit`). Without `env`
 /// (or without its context) the edits notify nobody.
 ///
 /// # Errors
@@ -2944,24 +3108,33 @@ pub fn fix_uv_trim_curves_notified(
         .ok_or_else(|| null("FixUVTrimCurves: edge use without vertex use"))?;
     let uv_vertex = match vu1::vertex_face_gap(k, b, vu, false)? {
         Some(gap) => gap.face_uv,
-        None => ignored(vu1::compute_uv_point(k, b, vu, true))?.unwrap_or(Point2::UNDEF),
+        None => ignored(pass(k, vu1::compute_uv_point(k, b, vu, true))?)?.unwrap_or(Point2::UNDEF),
     };
     let uv_vertex_3d = Point3::new(uv_vertex.x, uv_vertex.y, 0.0);
 
     // project Vertex drop point to 3d through surface (statuses ignored)
     let surf = surface_deref(b, curr_face)?;
-    let surf_vertex = ignored(surf.evaluate_point(k, uv_vertex))?.unwrap_or(Vec3::UNDEF);
-    let _ = ignored(surf.evaluate_normal(k, uv_vertex, Side::Left, Side::Left))?;
+    let surf_vertex = ignored(pass(k, surf.evaluate_point(k, uv_vertex))?)?.unwrap_or(Vec3::UNDEF);
+    let _ = ignored(pass(
+        k,
+        surf.evaluate_normal(k, uv_vertex, Side::Left, Side::Left),
+    )?)?;
 
     // UVGap sizes
     let uv_curr_edge_gap = uv_vertex_3d.distance(uv_curr);
     let uv_prev_edge_gap = uv_vertex_3d.distance(uv_prev);
 
     // edge end points (statuses ignored)
-    let curr_edge_point =
-        ignored(edge_curve(b, curr_edge)?.evaluate_point(k, t_curr))?.unwrap_or(Vec3::UNDEF);
-    let prev_edge_point =
-        ignored(edge_curve(b, prev_edge)?.evaluate_point(k, t_prev))?.unwrap_or(Vec3::UNDEF);
+    let curr_edge_point = ignored(pass(
+        k,
+        edge_curve(b, curr_edge)?.evaluate_point(k, t_curr),
+    )?)?
+    .unwrap_or(Vec3::UNDEF);
+    let prev_edge_point = ignored(pass(
+        k,
+        edge_curve(b, prev_edge)?.evaluate_point(k, t_prev),
+    )?)?
+    .unwrap_or(Vec3::UNDEF);
 
     // Vertex/SurfVertex and EdgeEnd/SurfVertex gaps (the out-of-tolerance branch only
     // warns upstream)
@@ -2973,32 +3146,38 @@ pub fn fix_uv_trim_curves_notified(
     // drop sUVVertex to each UVTrimCurve, trim there and stretch back (upstream). The
     // opt-in WR-255 fix (#959/#570) skips this and only moves the end points below.
     if !k.fixes.uv_trim_corner_end_points_only {
-        let curr_drop = ignored(held_curve(b, curr_holder)?.drop_point(
+        let curr_drop = ignored(pass(
             k,
-            &curr_ivl,
-            uv_vertex_3d,
-            None,
-            1.1 * (EFF_ZERO + uv_curr_edge_gap),
-            Some(t_curr),
-            SolverOperation::Intersect,
-        ))?;
-        let prev_drop = ignored(held_curve(b, prev_holder)?.drop_point(
+            held_curve(b, curr_holder)?.drop_point(
+                k,
+                &curr_ivl,
+                uv_vertex_3d,
+                None,
+                1.1 * (EFF_ZERO + uv_curr_edge_gap),
+                Some(t_curr),
+                SolverOperation::Intersect,
+            ),
+        )?)?;
+        let prev_drop = ignored(pass(
             k,
-            &prev_ivl,
-            uv_vertex_3d,
-            None,
-            1.1 * (EFF_ZERO + uv_prev_edge_gap),
-            Some(t_prev),
-            SolverOperation::Intersect,
-        ))?;
+            held_curve(b, prev_holder)?.drop_point(
+                k,
+                &prev_ivl,
+                uv_vertex_3d,
+                None,
+                1.1 * (EFF_ZERO + uv_prev_edge_gap),
+                Some(t_prev),
+                SolverOperation::Intersect,
+            ),
+        )?)?;
         if let Some(d) = curr_drop.filter(|d| d.success) {
             let t_curr_new = d.parameter;
             if !are_same(t_curr, t_curr_new) {
                 let mut trim_ivl = Extent1d::new();
                 if eu1::orientation(b, eu_current)? == OrientType::Same {
-                    let _ = trim_ivl.set_min_max(t_curr_new, curr_ivl.max());
+                    let _ = pass(k, trim_ivl.set_min_max(t_curr_new, curr_ivl.max()))?;
                 } else {
-                    let _ = trim_ivl.set_min_max(curr_ivl.min(), t_curr_new);
+                    let _ = pass(k, trim_ivl.set_min_max(curr_ivl.min(), t_curr_new))?;
                 }
                 if !are_same(trim_ivl.min(), trim_ivl.max()) {
                     // SmTol::GetZoneTol3d(curve) follows its actual holder's edge.
@@ -3024,9 +3203,9 @@ pub fn fix_uv_trim_curves_notified(
             if !are_same(t_prev, t_prev_new) {
                 let mut trim_ivl = Extent1d::new();
                 if eu1::orientation(b, eu_previous)? == OrientType::Same {
-                    let _ = trim_ivl.set_min_max(prev_ivl.min(), t_prev_new);
+                    let _ = pass(k, trim_ivl.set_min_max(prev_ivl.min(), t_prev_new))?;
                 } else {
-                    let _ = trim_ivl.set_min_max(t_prev_new, prev_ivl.max());
+                    let _ = pass(k, trim_ivl.set_min_max(t_prev_new, prev_ivl.max()))?;
                 }
                 if !are_same(trim_ivl.min(), trim_ivl.max()) {
                     // The previous curve can likewise be held by another edge use.
@@ -3408,10 +3587,12 @@ mod tests {
 
     #[test]
     fn seam_crossing() {
+        let k = Kernel::default();
         let dom = Extent2d::from_bounds(0.0, 0.0, 2.0, 4.0);
         let mut uv1 = Point2::new(1.95, 1.0);
         let mut shift = Vec2::new(0.0, 0.0);
         assert!(check_seam_crossing(
+            &k,
             &mut uv1,
             Point2::new(0.05, 1.0),
             &dom,
@@ -3423,6 +3604,7 @@ mod tests {
         assert!((uv1.x - -0.05).abs() < 1e-15);
         let mut uv1 = Point2::new(1.0, 0.1);
         assert!(check_seam_crossing(
+            &k,
             &mut uv1,
             Point2::new(1.0, 3.9),
             &dom,
@@ -3432,6 +3614,7 @@ mod tests {
         ));
         assert_eq!(shift, Vec2::new(2.0, -4.0));
         assert!(!check_seam_crossing(
+            &k,
             &mut uv1,
             Point2::new(1.0, 4.0),
             &dom,
@@ -3439,8 +3622,9 @@ mod tests {
             true,
             &mut shift
         ));
-        // closed in neither direction: SM_SUCCESS (true)
+        // closed in neither direction: default returns SM_SUCCESS (true) for C++ parity
         assert!(check_seam_crossing(
+            &k,
             &mut uv1,
             Point2::new(9.0, 9.0),
             &dom,
@@ -3448,6 +3632,43 @@ mod tests {
             false,
             &mut shift
         ));
+    }
+
+    #[test]
+    fn seam_crossing_opt_in_unclosed_returns_false() {
+        let mut k = Kernel::default();
+        k.fixes.check_seam_crossing_unclosed = true;
+        let dom = Extent2d::from_bounds(0.0, 0.0, 2.0, 4.0);
+        let mut uv1 = Point2::new(1.0, 1.0);
+        let mut shift = Vec2::new(0.0, 0.0);
+
+        // When closed in neither direction, returns false and applies no shift
+        assert!(!check_seam_crossing(
+            &k,
+            &mut uv1,
+            Point2::new(9.0, 9.0),
+            &dom,
+            false,
+            false,
+            &mut shift
+        ));
+        assert_eq!(shift, Vec2::new(0.0, 0.0));
+        assert_eq!(uv1, Point2::new(1.0, 1.0));
+
+        // When closed in U, seam crossing detection is unaffected by the flag
+        let mut uv1_u = Point2::new(1.95, 1.0);
+        let mut shift_u = Vec2::new(0.0, 0.0);
+        assert!(check_seam_crossing(
+            &k,
+            &mut uv1_u,
+            Point2::new(0.05, 1.0),
+            &dom,
+            true,
+            false,
+            &mut shift_u
+        ));
+        assert_eq!(shift_u, Vec2::new(2.0, 0.0));
+        assert!((uv1_u.x - -0.05).abs() < 1e-15);
     }
 
     #[test]
@@ -3668,8 +3889,13 @@ mod tests {
                 type_code: TYPE,
                 key: ObjectKey(1),
             }));
+        // the surface carries the face tolerance, as every owner rebind of a B-rep
+        // face gives it
+        b.sync_face_surface_tolerance(f).unwrap();
         // no loops: no line interval classifies into the face (the line statuses are
-        // ignored), so the final SM_ERR
+        // ignored; the trimmed cache of a face domain no edge use grew cannot be built,
+        // and the classification falls back to the plain cache, as upstream's
+        // smsurf_GetSurfaceCache does), so the final SM_ERR
         assert!(matches!(
             calculate_an_internal_point(&k, &mut b, f),
             Err(SolidError::Upstream { .. })

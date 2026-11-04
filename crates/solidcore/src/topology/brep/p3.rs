@@ -26,6 +26,7 @@
 //! | [`edge_curve_identity`]         | (the `m_pCurve` object's address in the notifications) |
 //! | [`face_surface_identity`]       | (the `m_pSurface` object's address in the notifications) |
 //! | [`with_kernel_callbacks`]       | (for callers without notification state: the B-rep context's callbacks) |
+//! | [`edit_brep`], [`EditScope`]    | (not upstream: one scope for composing topology operations: editing flag, notifications, marks, cached topology) |
 //! | `Brep::remove_from_*_list` (crate) | `SmOwningTopology::Remove` on the B-rep's list heads (and `~SmTopology`) |
 //!
 //! Deviations: out-params become return values; `rpNewEdge`/`rpNewVertex` are only
@@ -181,6 +182,7 @@ fn ignore_soft<T>(r: Result<T>) -> Result<()> {
     match r {
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }
             | SolidError::NotFound { .. }),
@@ -713,7 +715,7 @@ pub fn copy_brep(
             reverse_map,
             add_analytics,
         ) {
-            if e.is_unported() {
+            if e.is_unported_or_cancelled() {
                 return Err(e);
             }
         }
@@ -778,21 +780,10 @@ fn reseed_records(
         keys.sort_unstable();
     }
     keys.dedup();
-    // (both ascending: `retain` visits the records in key order)
-    let mut next = 0;
-    records.retain(|key, record| {
-        while keys.get(next).is_some_and(|k| k < key) {
-            next += 1;
-        }
-        let keep = keys.get(next) == Some(key);
-        *record = topo::Topology::default();
-        keep
-    });
-    if records.len() != keys.len() {
-        for key in keys {
-            records.or_default(key);
-        }
-    }
+    // (not upstream) only the records the last edits changed are reset and only the
+    // difference in keys is removed or added, so a stitch's many edits do not each
+    // rebuild the whole map
+    records.reset_to_keys(&keys);
 }
 
 /// The kinds of topology keys with their class type codes (`GetType`), by kind number:
@@ -1307,13 +1298,100 @@ pub(crate) fn kernel_named_edit<R>(
         };
         edit(k, b, &mut env)
     });
+    // (not upstream: upstream's owners are pointers) the geometry the edit bound under
+    // its kernel identities is owned by the B-rep's own once it ends, whatever the
+    // result, so a B-rep whose scheme names its entities (`Notify`, `Arena`) keeps its
+    // owners where `Brep::owner_identity` and the B-rep check look
+    // (tangency-labs/solidcore#2115). A `Caller` B-rep keeps the keys its producer
+    // recorded, and an `Unknown` one leaves naming to its caller.
+    let naming = b.naming();
+    let rebound = if matches!(
+        naming,
+        crate::topology::NamingScheme::Notify | crate::topology::NamingScheme::Arena
+    ) {
+        rebind_geometry_owners(b, key_of, |e| {
+            crate::topology::scheme_owner_identity(naming, e)
+        })
+    } else {
+        Ok(())
+    };
     b.set_key(label);
     k.notify_records = records;
     let restored =
         p2::restore_decoded_attributes(b, attributes, &|key| topology_entity(serial, key));
     let r = r?;
     restored?;
+    rebound?;
     Ok(r)
+}
+
+/// Rebinds the geometry `b`'s edges (their curves), edge uses (their UV trim curves) and
+/// faces (their surfaces) own under one identity of the same entity (`from`) to another
+/// (`to`), recording the new key (not upstream: upstream's owners are pointers, so an
+/// owner has one identity). Geometry owned under any other identity is untouched.
+///
+/// # Errors
+///
+/// None in practice: the ids walked are `b`'s own.
+pub(crate) fn rebind_geometry_owners(
+    b: &mut Brep,
+    session: impl Fn(EntityRef) -> ObjectRef,
+    to: impl Fn(EntityRef) -> ObjectRef,
+) -> Result<()> {
+    let edges: Vec<EdgeId> = b.edges().ids().collect();
+    for edge in edges {
+        let e = EntityRef::Edge(edge);
+        let from = session(e);
+        let new_owner = to(e);
+        let rebound = b.edge_mut(edge)?.curve.as_mut().is_some_and(|curve| {
+            let matched = curve.owner() == Some(from);
+            if matched {
+                curve.set_owner(Some(new_owner), None);
+            }
+            matched
+        });
+        if rebound {
+            b.set_geometry_owner_key(e, Some(new_owner));
+        }
+    }
+    let edgeuses: Vec<EdgeuseId> = b.edgeuses().ids().collect();
+    for eu in edgeuses {
+        let e = EntityRef::Edgeuse(eu);
+        let from = session(e);
+        let new_owner = to(e);
+        let rebound = b
+            .edgeuse_mut(eu)?
+            .uv_trim_curve
+            .as_mut()
+            .is_some_and(|curve| {
+                let matched = curve.owner() == Some(from);
+                if matched {
+                    curve.set_owner(Some(new_owner), None);
+                }
+                matched
+            });
+        if rebound {
+            b.set_geometry_owner_key(e, Some(new_owner));
+        }
+    }
+    let faces: Vec<FaceId> = b.faces().ids().collect();
+    for face in faces {
+        let e = EntityRef::Face(face);
+        let from = session(e);
+        let new_owner = to(e);
+        let rebound = b.face_mut(face)?.surface.as_mut().is_some_and(|surface| {
+            let matched = surface.owner() == Some(from);
+            if matched {
+                surface.set_owner(Some(new_owner));
+            }
+            matched
+        });
+        if rebound {
+            b.set_geometry_owner_key(e, Some(new_owner));
+            b.sync_face_surface_tolerance(face)?;
+        }
+    }
+    Ok(())
 }
 
 /// Runs `edit` for a caller that keeps no notification state of its own (upstream's
@@ -1334,6 +1412,57 @@ pub fn with_kernel_callbacks<R>(
     edit: impl FnOnce(&mut Kernel, &mut Brep, &mut NotifyEnv<'_>) -> Result<R>,
 ) -> Result<R> {
     with_lent_context(k, |k, ctx| kernel_named_edit(k, ctx, b, edit))?
+}
+
+/// What [`edit_brep`] lends its edit: the notification environment and the traversal
+/// marks that the lower-level topology operations take (`delete_face`,
+/// `make_edge_in_face`, `stitch_faces`, ...). One set of marks serves the whole edit,
+/// as marks are kept across calls under one context.
+pub struct EditScope<'s, 'e> {
+    /// The notification environment ([`with_kernel_callbacks`]'): the kernel's
+    /// identities for the B-rep's objects, its context's callbacks and the B-rep's own
+    /// attributes, given back when the edit ends.
+    pub env: &'s mut NotifyEnv<'e>,
+    /// The traversal marks.
+    pub marks: Marks,
+}
+
+/// Runs `edit`, a composition of lower-level topology operations on `b`, in one scope
+/// (not upstream: upstream's objects carry what a Rust caller must otherwise set up and
+/// restore by hand):
+///
+/// - B-rep editing is enabled ([`Brep::set_editing_enabled`]) for the edit, and the
+///   previous flag is restored afterwards;
+/// - the notifications run as [`with_kernel_callbacks`] runs them, with `b`'s own
+///   attributes carried through the edit and given back;
+/// - [`EditScope::marks`] are made once for the edit;
+/// - the cached topology fields are refreshed ([`Brep::refresh_cached_topology`])
+///   before it returns, so they are true for the caller, as after a public operation.
+///
+/// All of this also happens when `edit` returns an error. Not nestable, as
+/// [`with_kernel_callbacks`]: inside `edit`, pass the scope's `env` and `marks` on.
+///
+/// # Errors
+///
+/// Those of `edit`; those of [`with_kernel_callbacks`] (a nested call is refused before
+/// anything changes).
+pub fn edit_brep<R>(
+    k: &mut Kernel,
+    b: &mut Brep,
+    edit: impl FnOnce(&mut Kernel, &mut Brep, &mut EditScope<'_, '_>) -> Result<R>,
+) -> Result<R> {
+    let editing = b.editing_enabled();
+    b.set_editing_enabled(true);
+    let r = with_kernel_callbacks(k, b, |k, b, env| {
+        let mut scope = EditScope {
+            env,
+            marks: Marks::default(),
+        };
+        edit(k, b, &mut scope)
+    });
+    b.set_editing_enabled(editing);
+    b.refresh_cached_topology();
+    r
 }
 
 /// `SmApiBrepCopy`: a copy of `brep` that preserves its surface types (the copy
@@ -3282,7 +3411,7 @@ pub fn remove_slit_loops_where_solids_touch(
 /// reached through the shell from the first face use's face's first vertex stay; the
 /// rest move to a new face-use shell, in the infinite region or in a region of its
 /// own (with the old region's void flag), which is split in its turn. At most
-/// [`MAX_SHELL_SPLITS`] splits of each shell.
+/// `MAX_SHELL_SPLITS` splits of each shell.
 ///
 /// # Errors
 ///
@@ -3942,6 +4071,10 @@ pub(crate) fn with_nurb<'a>(k: &Kernel, s: &'a Surface) -> Result<Option<Cow<'a,
     }
     Ok(match s.kind() {
         SurfaceKind::BSpline(x) => Some(Cow::Borrowed(x)),
+        // (the fork's SmProceduralBlend: `new SmBSplineSurface(*pBSS)` slices it to its net)
+        SurfaceKind::ProceduralBlend(x) => Some(Cow::Borrowed(x.net())),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(x) => Some(Cow::Borrowed(x.net())),
         SurfaceKind::Plane(x) => Some(x.base_for_query()),
         SurfaceKind::SurfOfExtrusion(x) => {
             if x.base().gw_nurb().is_some() {
@@ -3949,7 +4082,7 @@ pub(crate) fn with_nurb<'a>(k: &Kernel, s: &'a Surface) -> Result<Option<Cow<'a,
             } else {
                 let mut tmp = x.as_ref().clone();
                 match tmp.make_nurb(k) {
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Ok(()) | Err(_) => {}
                 }
                 Some(Cow::Owned(tmp.base().clone()))
@@ -3968,6 +4101,9 @@ fn as_bspline_surface(s: &Surface) -> Option<&BSplineSurface> {
         SurfaceKind::Cone(x) => Some(x.rev().base()),
         SurfaceKind::Torus(x) => Some(x.base().base()),
         SurfaceKind::Sphere(x) => Some(x.base().base()),
+        SurfaceKind::ProceduralBlend(x) => Some(x.net()),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(x) => Some(x.net()),
         _ => None,
     }
 }
@@ -4070,7 +4206,7 @@ fn turn_to_nurbs_in(
                 OffsetParamType::ChordLength,
             ) {
                 Ok(x) => x,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 // SE(SM_ERR_INVALID_INPUT); continue
                 Err(_) => continue,
             };
@@ -4086,7 +4222,7 @@ fn turn_to_nurbs_in(
             let srf_bbox =
                 match new_surface.calculate_bounding_box(k, &domain, [true, false, false], true) {
                     Ok(boxes) => boxes.normal_box.unwrap_or_else(Extent3d::new),
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     // (fork 60a8a51 passes this status on: `SER`)
                     Err(e) if k.fixes.brep_edit_statuses_pass_on => return Err(e),
                     Err(_) => Extent3d::new(),
@@ -4158,7 +4294,7 @@ fn turn_to_nurbs_in(
                 false,
             ) {
                 Ok(l) => bsc = Some(l.curve),
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => {}
             }
         }
@@ -4167,13 +4303,13 @@ fn turn_to_nurbs_in(
         if bsc.is_none() {
             let (knots, _) = match curve.knots(k, None) {
                 Ok(x) => x,
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => (Vec::new(), Vec::new()),
             };
             let opts = crate::curve::curve::p1::ApproximateCurveOptions::default();
             match curve.approximate_curve(k, &knots, approx_tol, &opts) {
                 Ok(a) => bsc = Some(a.curve),
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => {}
             }
         }

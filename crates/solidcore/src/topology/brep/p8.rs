@@ -154,7 +154,7 @@ fn with_editing<R>(b: &mut Brep, f: impl FnOnce(&mut Brep) -> Result<R>) -> Resu
 
 /// `SER(SM_ERR)` after a failed call: [`SolidError::Unported`] goes through.
 fn as_sm_err(e: SolidError) -> SolidError {
-    if e.is_unported() {
+    if e.is_unported_or_cancelled() {
         e
     } else {
         SolidError::sm_err(OP)
@@ -209,7 +209,7 @@ pub fn create_face_in_region_from_surface(
     let surface = surface.ok_or_else(|| SolidError::null_pointer(OP))?;
 
     // Check for region default.
-    let region = region.or(b.infinite_region());
+    let region = region.or_else(|| b.infinite_region());
 
     // check input - crUVDomain contained within the pSurface->GetNaturalUVDomain()
     if !uv_domain.is_contained_by(&surface.natural_uv_domain_with_nurb(k)?, EFF_ZERO) {
@@ -384,7 +384,7 @@ pub fn create_planar_face_with_3d_curves(
     fenv: &mut FaceBuildEnv<'_, '_>,
 ) -> Result<Option<FaceId>> {
     // Check for region default.
-    let region = region.or(b.infinite_region());
+    let region = region.or_else(|| b.infinite_region());
 
     // create the plane - returns an error for open, degenerate, or nonCoplanar curves
     let plane = Surface::create_plane_with_3d_curves(k, curves, tol_3d).map_err(plane_failed)?;
@@ -462,7 +462,7 @@ pub fn create_planar_faces_with_3d_curves(
     let _ = tol_3d; // SM_REF1(d3DToleranceArg)
 
     // Check for region default.
-    let region = region.or(b.infinite_region());
+    let region = region.or_else(|| b.infinite_region());
     let tol = b.tolerance();
 
     // create the plane - fails for non-planar curves, degenerate curves, open loops,
@@ -517,7 +517,7 @@ pub fn create_faces_with_curves(
     fenv: &mut FaceBuildEnv<'_, '_>,
 ) -> Result<NewFaces> {
     // Check for region default.
-    let region = region.or(b.infinite_region());
+    let region = region.or_else(|| b.infinite_region());
 
     with_editing(b, |b| {
         let mut out = NewFaces::default();
@@ -750,7 +750,7 @@ pub fn make_faces_with_curves(
     let mut out = NewFaces::default();
 
     // set input region (NULL = infinite region)
-    let region = region.or(b.infinite_region());
+    let region = region.or_else(|| b.infinite_region());
 
     // Check continuity of the surface
     let (u_knots, v_knots) = surface.find_knots_by_max_continuity(k, ContinuityType::C0, false)?;
@@ -1050,7 +1050,7 @@ pub fn make_faces_with_curves(
                     // Exiting a usable segment of the iso curve
                     let (enter, leave) = match loops.find_entering_and_leaving(indx1, indx2) {
                         Ok(x) => x,
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => break 'pair,
                     };
                     seg.end_enter = enter;
@@ -1075,7 +1075,7 @@ pub fn make_faces_with_curves(
                     // Entering a usable segment of the iso curve
                     let (enter, leave) = match loops.find_entering_and_leaving(indx1, indx2) {
                         Ok(x) => x,
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => break 'pair,
                     };
                     seg.start_enter = enter;
@@ -1309,7 +1309,7 @@ pub fn make_faces_with_curves(
                         }
                     }
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {}
             }
 

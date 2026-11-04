@@ -158,7 +158,6 @@ fn sc_fixes(k: &mut Kernel) {
     k.fixes.analytic_copy_keeps_parameterization = true;
     k.fixes.fillet_point_bigger_step_retry = true;
     k.fixes.fillet_tangent_point_one_sided_step = true;
-    k.fixes.fillet_through_extended_rail_end = true;
     k.fixes.precise_properties_body_length_scale = true;
     k.fixes.precise_properties_split_at_surface_knots = true;
     k.fixes.brep_area_between_solid_and_void = true;
@@ -319,6 +318,10 @@ fn step4_round_matches_the_fork_and_checks_clean() {
 }
 
 /// Without it (upstream's `SolveIt`): the rail's UV trim keeps its short span (test #15).
+/// With SolidCraft's tangent end (WR-600's flag, the fork's tangency-labs/smlib@856b54e)
+/// the end rib on the boss is no longer marched into its tangential start, and the
+/// upstream solve leaves a near cusp in a 2D curve instead (test #13): the body is still
+/// refused.
 #[test]
 fn step4_round_upstream_solve_keeps_short_trim_span() {
     let (_, _, _, _, lines) = run(false);
@@ -326,7 +329,7 @@ fn step4_round_upstream_solve_keeps_short_trim_span() {
     assert!(
         lines
             .iter()
-            .any(|l| l.contains("#15") || l.contains("Repeated CPts")),
+            .any(|l| l.contains("#15") || l.contains("Repeated CPts") || l.contains("#13")),
         "{lines:#?}"
     );
 }

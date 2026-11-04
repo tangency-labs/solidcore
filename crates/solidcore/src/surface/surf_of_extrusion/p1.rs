@@ -144,6 +144,7 @@ use crate::kernel::Kernel;
 use crate::math::{EFF_ZERO, EFF_ZERO_RAD, EFF_ZERO_SQ, EFF_ZERO_SQRT, INFINITE_PARAMETER, PI};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{
     BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData, LocationType, SurfParamType,
 };
@@ -781,7 +782,7 @@ impl SurfOfExtrusion {
     pub(crate) fn base_with_nurb_or_base(&self, k: &Kernel) -> Result<Cow<'_, BSplineSurface>> {
         match self.base_with_nurb(k) {
             Ok(b) => Ok(b),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(Cow::Borrowed(&self.base)),
         }
     }
@@ -1798,16 +1799,19 @@ impl SurfOfExtrusion {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
-        self.transform_at_depth(k, rotate_n_move, scale, 0)
+        self.transform_at_depth(k, rotate_n_move, scale, 0, &mut |_| Ok(()))
     }
 
-    /// Carries the caller's whole-geometry depth into the generator transform.
+    /// Carries the caller's whole-geometry depth into the generator transform, and
+    /// sends the edit notifications of the NURB transform
+    /// ([`BSplineSurface::transform_notifying`]) through `notify`.
     pub(crate) fn transform_at_depth(
         &mut self,
         k: &Kernel,
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
         depth: usize,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
@@ -1834,7 +1838,8 @@ impl SurfOfExtrusion {
         if self.base.gw_nurb().is_none() {
             ignore_status(self.make_nurb(k))?;
         }
-        self.base.transform(rotate_n_move, scale)?;
+        self.base
+            .transform_notifying(rotate_n_move, scale, notify)?;
 
         // transform the rest of the 3d data (status ignored)
         if let Some(gen) = self.gen_curve.as_mut() {
@@ -2508,8 +2513,11 @@ mod tests {
         assert_eq!(ders.len(), 9);
         assert_eq!(ders[1], Vec3::new(0.0, 0.0, 2.0));
         assert!(s.evaluate_step(&k, Point2::new(0.5, 1.0), 6, 6).is_err());
-        // order 5 of a B-spline generator: upstream overruns NL_MAXDER (UB-80)
-        assert!(s.evaluate_step(&k, Point2::new(0.5, 1.0), 5, 5).is_err());
+        // order 5 of a B-spline generator: upstream overruns sm_CrvDerivs' rows (UB-80,
+        // UB-33); the port evaluates it
+        let d5 = s.evaluate_step(&k, Point2::new(0.5, 1.0), 5, 5).unwrap();
+        assert_eq!(d5.len(), 36);
+        assert_eq!(d5[1], Vec3::new(0.0, 0.0, 2.0));
     }
 
     /// WR-61: the unit X line swept along Z, with the analytic domain `domain`.

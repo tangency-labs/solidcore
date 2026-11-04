@@ -109,7 +109,13 @@ fn ner<T>(v: Option<T>) -> Result<T> {
 /// A status upstream turns into `SER(SM_ERR)` whatever it was: any failure but an
 /// unported callee becomes `SM_ERR`.
 fn or_sm_err<T>(r: Result<T>) -> Result<T> {
-    r.map_err(|e| if e.is_unported() { e } else { sm_err() })
+    r.map_err(|e| {
+        if e.is_unported_or_cancelled() {
+            e
+        } else {
+            sm_err()
+        }
+    })
 }
 
 /// One corner of the fillet face (`SmFilletCornerInfo`): its vertex, the vertex's UV
@@ -596,7 +602,7 @@ impl FilletRemoval {
             k, &end_dom, &tan0, &tan_dom0, &tan1, &tan_dom1, uv_end, uv_tan0, uv_tan1,
         ) {
             Ok(Some(sol)) => sol,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Ok(None) | Err(_) => return Err(sm_err()),
         };
 
@@ -683,7 +689,7 @@ impl FilletRemoval {
                     crv_param = d.parameter;
                     crv_dist = d.distance;
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {}
             }
         }
@@ -743,7 +749,7 @@ impl FilletRemoval {
                     crv_param = d.parameter;
                     crv_dist = d.distance;
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 // the corner is off the side edge's line
                 _ => return Err(sm_err()),
             }
@@ -1528,6 +1534,11 @@ fn expand_boundary_span(
         SurfaceKind::Sphere(s) => s.base_mut().base_mut(),
         SurfaceKind::Torus(s) => s.base_mut().base_mut(),
         SurfaceKind::SurfOfExtrusion(s) => s.base_mut(),
+        // (the fork's SmProceduralBlend is an SmBSplineSurface: its net's span, the
+        // definition and its map untouched, as ExpandBoundarySpan is not overridden)
+        SurfaceKind::ProceduralBlend(pb) => pb.net_mut(),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(pb) => pb.net_mut(),
         _ => return Err(SolidError::null_pointer(OP)),
     };
     base.expand_boundary_span(param, dir)

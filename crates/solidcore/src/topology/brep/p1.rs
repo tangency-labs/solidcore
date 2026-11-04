@@ -522,6 +522,7 @@ pub fn tessellate_boundaries(
             "angle tolerance must be finite and positive",
         ));
     }
+    k.check_cancelled(OP)?;
 
     let mut out = BoundaryTessellation {
         edges: edges(b, None)?,
@@ -529,13 +530,16 @@ pub fn tessellate_boundaries(
         ..BoundaryTessellation::default()
     };
     for &e in &out.edges {
+        k.check_cancelled(OP)?;
         let edge = b.edge(e)?;
         let points = match edge.curve.as_ref() {
             None => None,
             Some(curve) => match curve.tessellate(k, &edge.interval, 0.0, angle_tol_deg, 1) {
                 Ok(t) if !t.points.is_empty() => Some(t.points),
                 Err(
-                    err @ (SolidError::Unported { .. } | SolidError::PreparationRequired { .. }),
+                    err @ (SolidError::Unported { .. }
+                    | SolidError::Cancelled { .. }
+                    | SolidError::PreparationRequired { .. }),
                 ) => return Err(err),
                 Ok(_) | Err(_) => None,
             },
@@ -1379,7 +1383,9 @@ fn mark_loops_to_delete_bounded(
 
 /// `sm_SwapFaceUV`: flips the face's normal (`SmFace::SwapUV`) unless its `mark` is
 /// set, and sets the mark. `SwapUV`'s failing status is ignored (upstream's release
-/// `SE`), so the face is marked whatever the swap did.
+/// `SE`), so the face is marked whatever the swap did. The face's and its surface's
+/// edit notifications go through `env`
+/// ([`face1::swap_uv_with_notifications`]).
 ///
 /// # Errors
 ///
@@ -1392,6 +1398,7 @@ pub fn swap_face_uv(
     marks: &mut Marks,
     face: FaceId,
     mark: MarkType,
+    env: &mut edge::NotifyEnv<'_>,
 ) -> Result<()> {
     b.face(face)?;
     // skip faces already marked
@@ -1401,7 +1408,7 @@ pub fn swap_face_uv(
     // swap and mark the face (SE: the status is ignored). The port's InvalidInput marks
     // a null pointer upstream's SwapUV dereferences (undefined there, not a status): it
     // propagates, as this unit's own null dereferences.
-    match face1::swap_uv(k, b, face) {
+    match face1::swap_uv_with_notifications(k, b, face, env) {
         // face_p1's own InvalidInput is its null-dereference marker; a callee's
         // InvalidInput is that callee's SM_ERR_INVALID_INPUT status, ignored as SE
         Err(SolidError::InvalidInput {
@@ -1703,7 +1710,7 @@ fn evaluate_binormal_status_ignored(
     }
     match evaluate_binormal(k, b, eu, parameter, true) {
         Ok(eval) => Ok(eval),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(
             e @ SolidError::InvalidInput {
                 operation: "topology::edgeuse::p3",
@@ -1878,7 +1885,7 @@ pub fn find_sector_of_face(
             } else {
                 match crate::query::face::p2::face_surface_cache(k, b, face) {
                     Ok(lease) => Some(lease),
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => return Err(SolidError::null_pointer(OP)),
                 }
             };
@@ -2360,7 +2367,7 @@ pub(crate) fn is_first_nonseparating_seam(
 ) -> Result<bool> {
     // upstream's statuses inside this SmBoolean function are FALSE answers
     let no = |r: Result<bool>| match r {
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(false),
         ok => ok,
     };
@@ -2516,7 +2523,7 @@ fn first_nonseparating_seam(
             true,
         ) {
             Ok(OrientType::Opposite) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => return Ok(false),
         }
 

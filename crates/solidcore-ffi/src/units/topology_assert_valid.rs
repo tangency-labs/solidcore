@@ -34,19 +34,24 @@ fn primitive_len(kind: f64) -> Option<usize> {
 /// 2: `sm_AssertTestFace32/33/38` per face, `sm_AssertTestEdge13` per edge,
 /// `sm_AssertTestVertex1` per vertex) or the capi sequence on the body's
 /// `SmApiBrepCopy` (op 3, without mutation) or on the result of an operation on that
-/// copy (op 4, `args[2]` its kind 1-4: union with a box, union with a box's copy,
-/// `SmApiFilletEdges`, `SmApiShellBrepFull`) of the B-rep built from `block` (a
+/// copy (op 4, `args[2]` its kind 1-5: union with a box, union with a box's copy,
+/// `SmApiFilletEdges`, `SmApiShellBrepFull`, `SmApiOffsetBrepFull`) of the B-rep built from `block` (a
 /// `sc_edgeuse_graph.h` source or a primitive), after mutation `args[2]` (kinds 1-10 of
 /// `topology_brep_validation`). Arguments: level (0-4), walk, mutation kind, index,
-/// value. Op 2 refuses the null-pointer mutations 8-10: the tests dereference the face
-/// surface, edge curve and edge use links without the `ValidatePointers` guard
-/// `AssertValid` runs first.
+/// value. Op 2 refuses the null-pointer mutations 8 and 9: the tests dereference the face
+/// surface and edge curve without the `ValidatePointers` guard `AssertValid` runs first
+/// (UB-281, `SmEdgeuse::CalcMaxEdgeFaceGap`); a null edge use link (mutation 10) is
+/// defined there. Op 5 runs `SmBrep::ValidateAndUpdateTolerances(FALSE)` after the
+/// mutation, then the capi sequence; it takes levels 0-2 and mutations 0-7 (the null
+/// surface, curve and link mutations 8-10 are dereferenced by the gap computations).
 pub fn eval(op: u8, path: &str, block: &[f64], args: [f64; 5]) -> Result<Vec<f64>, FfiError> {
     let bad = || FfiError::InvalidArgument("invalid AssertValid arguments".into());
-    if op > 4
-        || (op == 2 && args[2] >= 8.0)
+    if op > 5
+        || (op == 5 && args[2] > 7.0)
+        || (op == 5 && args[0] > 2.0)
+        || (op == 2 && (args[2] == 8.0 || args[2] == 9.0))
         || (op == 3 && args[2] != 0.0)
-        || (op == 4 && !(1.0..=4.0).contains(&args[2]))
+        || (op == 4 && !(1.0..=5.0).contains(&args[2]))
         || (op == 4 && args[2] >= 3.0 && args[4] == 0.0)
         || !args.iter().all(|x| x.is_finite())
         || args[0].fract() != 0.0
