@@ -625,7 +625,8 @@ fn dispatch_unit_report(
     dir: &Path,
     result: &difftest::runner::UnitResult,
 ) -> Option<Result<PathBuf, difftest::HarnessError>> {
-    (!args.no_report && !args.perturb).then(|| report::write_unit_report(dir, result))
+    (!args.no_report && !args.perturb && (args.heap_pads.is_empty() || args.report_dir.is_some()))
+        .then(|| report::write_unit_report(dir, result))
 }
 
 /// Selection constraints are not case-level waivers. An unsupported oracle cannot

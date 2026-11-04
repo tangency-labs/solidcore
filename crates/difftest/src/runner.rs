@@ -416,17 +416,30 @@ fn heap_dependence(
         let this_padded = padded_children() != before;
         padded += usize::from(this_padded);
         let flag = match again {
-            Ok(o) => compare(base, &o, unit.abs_floors())
-                .mismatches
-                .first()
-                .map(|m| {
-                    let note = format!("pad={pad}: {}: {} vs {}", m.field, m.cpp, m.rust);
-                    if this_padded {
-                        HeapFlag::AddressDependent(note)
-                    } else {
-                        HeapFlag::Unstable(note)
-                    }
-                }),
+            Ok(o) => {
+                if let Some(reason) = &o.rejected {
+                    Some(HeapFlag::RerunError(format!(
+                        "pad={pad}: rejected: {reason}"
+                    )))
+                } else if let Some(deferred) = &o.deferred {
+                    Some(HeapFlag::RerunError(format!(
+                        "pad={pad}: deferred: {} ({})",
+                        deferred.unit, deferred.symbol
+                    )))
+                } else {
+                    compare(base, &o, unit.abs_floors())
+                        .mismatches
+                        .first()
+                        .map(|m| {
+                            let note = format!("pad={pad}: {}: {} vs {}", m.field, m.cpp, m.rust);
+                            if this_padded {
+                                HeapFlag::AddressDependent(note)
+                            } else {
+                                HeapFlag::Unstable(note)
+                            }
+                        })
+                }
+            }
             Err(e) => Some(HeapFlag::RerunError(format!("pad={pad}: {e}"))),
         };
         if flag.is_some() {
@@ -1547,33 +1560,109 @@ mod tests {
     #[test]
     fn heap_reruns_reject_incomplete_outputs() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        struct Incomplete { calls: AtomicUsize, values: bool, deferred: bool }
+        struct Incomplete {
+            calls: AtomicUsize,
+            values: bool,
+            deferred: bool,
+        }
         impl UnitDiff for Incomplete {
-            fn id(&self) -> &'static str { "test.incomplete" }
+            fn id(&self) -> &'static str {
+                "test.incomplete"
+            }
             fn cases(&self, _: &CaseContext) -> Result<Vec<Case>, HarnessError> {
-                Ok(vec![Case { unit: self.id().into(), name: "case".into(), source: CaseSource::Inline, inputs: Value::Null }])
+                Ok(vec![Case {
+                    unit: self.id().into(),
+                    name: "case".into(),
+                    source: CaseSource::Inline,
+                    inputs: Value::Null,
+                }])
             }
             fn run_cpp(&self, _: &Case) -> Result<Output, HarnessError> {
                 if self.calls.fetch_add(1, Ordering::Relaxed) == 0 {
-                    Ok(if self.values { Output::new().values("v", vec![1.0]) } else { Output::new() })
-                } else if self.deferred { Ok(Output::deferred("unit", "symbol")) }
-                else { Ok(Output::rejected("fixture")) }
+                    Ok(if self.values {
+                        Output::new().values("v", vec![1.0])
+                    } else {
+                        Output::new()
+                    })
+                } else if self.deferred {
+                    Ok(Output::deferred("unit", "symbol"))
+                } else {
+                    Ok(Output::rejected("fixture"))
+                }
             }
             fn run_rust(&self, _: &Case) -> Result<Output, HarnessError> {
-                Ok(if self.values { Output::new().values("v", vec![1.0]) } else { Output::new() })
+                Ok(if self.values {
+                    Output::new().values("v", vec![1.0])
+                } else {
+                    Output::new()
+                })
             }
         }
         for values in [false, true] {
             for deferred in [false, true] {
-                let unit = Incomplete { calls: AtomicUsize::new(0), values, deferred };
-                let ctx = CaseContext { root: std::path::PathBuf::new(), seeds: 0 };
-                let r = run_unit(&unit, &ctx, &RunOptions { heap_pads: (1..=10).collect(), ..RunOptions::default() });
-                assert_eq!(r.heap_check.rerun_errors.len(), 1, "values={values} deferred={deferred}");
+                let unit = Incomplete {
+                    calls: AtomicUsize::new(0),
+                    values,
+                    deferred,
+                };
+                let ctx = CaseContext {
+                    root: std::path::PathBuf::new(),
+                    seeds: 0,
+                };
+                let r = run_unit(
+                    &unit,
+                    &ctx,
+                    &RunOptions {
+                        heap_pads: (1..=10).collect(),
+                        ..RunOptions::default()
+                    },
+                );
+                assert_eq!(
+                    r.heap_check.rerun_errors.len(),
+                    1,
+                    "values={values} deferred={deferred}"
+                );
                 let o = &r.heap_check.observations[0];
                 assert_eq!(o.observed, 1);
                 assert!(o.divergence.is_some());
+                let report = crate::report::unit_report(&r);
+                let observation = &report["heap_qualification"]["cases"][0];
+                assert_eq!(observation["observed"], 1);
+                let reason = observation["divergence"].as_str().unwrap();
+                assert!(reason.contains(if deferred { "deferred" } else { "rejected" }));
             }
         }
+    }
+
+    #[test]
+    fn completed_heap_reruns_keep_all_ten_observations() {
+        let unit = Drifting {
+            drift_runs: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let pads = vec![1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+        let result = run_unit(
+            &unit,
+            &CaseContext {
+                root: std::path::PathBuf::new(),
+                seeds: 0,
+            },
+            &RunOptions {
+                heap_pads: pads.clone(),
+                ..RunOptions::default()
+            },
+        );
+        assert_eq!(result.heap_check.pads, pads);
+        assert!(result.heap_check.rerun_errors.is_empty());
+        let stable = result
+            .heap_check
+            .observations
+            .iter()
+            .find(|o| o.case == "stable")
+            .unwrap();
+        assert_eq!(stable.observed, 10);
+        assert!(stable.divergence.is_none());
+        // This controlled in-process unit does not claim a real padded child.
+        assert_eq!(stable.padded, 0);
     }
 
     /// Fake unit for `--heap-pads`: the C++ side of `drift` returns how often it has
