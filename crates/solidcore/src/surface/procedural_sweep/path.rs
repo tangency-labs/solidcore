@@ -321,9 +321,17 @@ impl PathMotion {
         &self.nodes
     }
 
-    /// The path's `t` at the net's parameter `v` (clamped to the nodes) and `dt / dv`.
+    /// The path's `t` at the net's parameter `v` (clamped to the nodes) and `dt / dv`, at a
+    /// node the segment that starts there.
     #[must_use]
     pub fn path_parameter(&self, v: f64) -> (f64, f64) {
+        self.path_parameter_side(v, false)
+    }
+
+    /// [`PathMotion::path_parameter`], at a node the segment that ends there when `left` (a face
+    /// ending at a joint is read with its own side).
+    #[must_use]
+    pub fn path_parameter_side(&self, v: f64, left: bool) -> (f64, f64) {
         let (Some(&(v0, t0)), Some(&(v1, t1))) = (self.nodes.first(), self.nodes.last()) else {
             return (v, 1.0);
         };
@@ -331,7 +339,7 @@ impl PathMotion {
         let last = self.nodes.len().saturating_sub(2);
         let i = if v > v0 {
             self.nodes
-                .partition_point(|&(x, _)| x <= v)
+                .partition_point(|&(x, _)| if left { x < v } else { x <= v })
                 .saturating_sub(1)
                 .min(last)
         } else {
@@ -369,11 +377,21 @@ impl PathMotion {
     ///
     /// `InvalidInput` where the path's tangent vanishes; those of evaluating the path.
     pub fn frame(&self, t: f64) -> Result<Frame> {
+        self.frame_side(t, false)
+    }
+
+    /// [`PathMotion::frame`], at a joint the span that ends there when `left` (a face ending
+    /// at the joint is read with its own side).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`PathMotion::frame`].
+    pub fn frame_side(&self, t: f64, left: bool) -> Result<Frame> {
         // `from_left = true` is the curve's `Side::Left`, which at a knot gives the derivatives of
         // the span that starts there (at `t = 1` of a line then an arc: the arc's; the test
-        // `the_definitions_partials_at_the_joints_are_right_sided` holds this), and at the
-        // domain's end those of the last span
-        let d = self.path.evaluate(t, 2, true, false)?;
+        // `the_definitions_partials_at_the_joints_are_right_sided` holds this), `false` those of
+        // the span that ends there, and at the domain's end those of the last span
+        let d = self.path.evaluate(t, 2, !left, false)?;
         let (Some(&point), Some(&t1), Some(&t2)) = (d.first(), d.get(1), d.get(2)) else {
             return Err(SolidError::invalid_input(
                 OP_EVAL,
@@ -389,10 +407,14 @@ impl PathMotion {
         }
         let x = t1 * (1.0 / speed);
         let dx = (t2 - x * t2.dot(x)) * (1.0 / speed);
-        let j = self
-            .spans
-            .partition_point(|s| s.from <= t)
-            .saturating_sub(1);
+        let j = if left {
+            self.spans.partition_point(|s| s.to < t)
+        } else {
+            self.spans
+                .partition_point(|s| s.from <= t)
+                .saturating_sub(1)
+        }
+        .min(self.spans.len().saturating_sub(1));
         let span = self
             .spans
             .get(j)

@@ -623,6 +623,24 @@ impl ProceduralSweep {
         highest_u_deriv: usize,
         highest_v_deriv: usize,
     ) -> Result<Vec<Vec<Vec3>>> {
+        self.evaluate_definition_side(uv, highest_u_deriv, highest_v_deriv, false)
+    }
+
+    /// [`ProceduralSweep::evaluate_definition`] at a joint of the path (a node of the map):
+    /// the segment that starts there, or the one that ends there when `left`, as a face that
+    /// ends at the joint reads it ([`SweepRef`] asks for it at the face's end). A screw has
+    /// no joint.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`ProceduralSweep::evaluate_definition`].
+    pub fn evaluate_definition_side(
+        &self,
+        uv: Point2,
+        highest_u_deriv: usize,
+        highest_v_deriv: usize,
+        left: bool,
+    ) -> Result<Vec<Vec<Vec3>>> {
         if highest_u_deriv > 1 || highest_v_deriv > 1 {
             return Err(SolidError::invalid_input(
                 OP_EVAL,
@@ -633,7 +651,7 @@ impl ProceduralSweep {
         let first = highest_u_deriv + highest_v_deriv > 0;
         let (s, s_w, s_t, s_wt) = match &self.motion {
             Motion::Screw(m) => self.screw_partials(m, wt, first)?,
-            Motion::Path(m) => self.path_partials(m, wt, first)?,
+            Motion::Path(m) => self.path_partials(m, wt, first, left)?,
         };
         Ok(self.assemble(s, s_w, s_t, s_wt, highest_u_deriv, highest_v_deriv))
     }
@@ -676,14 +694,15 @@ impl ProceduralSweep {
         m: &PathMotion,
         wt: Point2,
         first: bool,
+        left: bool,
     ) -> Result<(Vec3, Vec3, Vec3, Vec3)> {
         let p = self
             .profile
             .evaluate(wt.x, usize::from(first), false, false)?;
         let point = p.first().copied().unwrap_or(Vec3::ZERO);
         let tangent = p.get(1).copied().unwrap_or(Vec3::ZERO);
-        let (t, slope) = m.path_parameter(wt.y);
-        let frame = m.frame(t)?;
+        let (t, slope) = m.path_parameter_side(wt.y, left);
+        let frame = m.frame_side(t, left)?;
         let s = frame.place(point);
         let s_w = frame.turn(tangent);
         let s_t = frame.rate(point) * slope;
@@ -1028,6 +1047,18 @@ pub struct SweepRef<'a> {
 }
 
 impl<'a> SweepRef<'a> {
+    /// Whether `uv` is on the far end of the face's parameter across the sweep, where a path
+    /// definition takes the segment that ends at a joint.
+    fn at_face_end(&self, uv: Point2) -> bool {
+        let dom = self.net.natural_uv_domain();
+        let (x, iv) = if self.sweep.map.swapped {
+            (uv.x, dom.u_interval())
+        } else {
+            (uv.y, dom.v_interval())
+        };
+        x > iv.min() && x >= iv.max() - 1e-12 * (1.0 + iv.max().abs())
+    }
+
     /// The definition.
     #[must_use]
     pub const fn definition(&self) -> &'a ProceduralSweep {
@@ -1080,8 +1111,12 @@ impl<'a> SweepRef<'a> {
                 EvaluateFlags::default(),
             );
         }
-        self.sweep
-            .evaluate_definition(uv, highest_u_deriv, highest_v_deriv)
+        self.sweep.evaluate_definition_side(
+            uv,
+            highest_u_deriv,
+            highest_v_deriv,
+            self.at_face_end(uv),
+        )
     }
 }
 
