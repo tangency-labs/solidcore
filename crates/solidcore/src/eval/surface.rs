@@ -7,7 +7,7 @@
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // NaN-refusing tests
 
-use super::geometry::{Curve2, Frame, Surface};
+use super::geometry::{Curve, Curve2, Frame, Surface};
 use super::spline::{
     tabulate, trig_derivative, EvalCurve, EvalSurface, Partials, MAX_EVAL_KNOTS, MAX_EVAL_POINTS,
     MAX_SPLINE_DEGREE,
@@ -198,6 +198,13 @@ impl SurfaceEval {
                 matrix,
                 forward,
             } => {
+                // An intersection profile is refused on the record, before descending into it:
+                // its surfaces may be revolutions of intersections in turn, nested without end.
+                if matches!(**profile, Curve::SurfaceIntersection { .. }) {
+                    return Err(unsupported(
+                        "a revolution of a conic, polyline or intersection profile",
+                    ));
+                }
                 let profile = match CurveEval::new(profile)? {
                     CurveEval::Spline(c) => c,
                     CurveEval::Line { start, end } => EvalCurve::new(

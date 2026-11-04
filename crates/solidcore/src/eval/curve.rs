@@ -95,10 +95,15 @@ impl CurveEval {
             Curve::SurfaceIntersection {
                 surfaces, leader, ..
             } => {
-                let leader = CurveEval::new(leader)?;
-                if !matches!(leader, CurveEval::Polyline(_) | CurveEval::Spline(_)) {
+                // The leader's kind is decided on the record, before descending into it: an
+                // intersection nested in a leader is refused here, however deep the nest.
+                if !matches!(
+                    **leader,
+                    Curve::Polyline { .. } | Curve::Spline { .. } | Curve::RationalSpline { .. }
+                ) {
                     return Err(EvalError::Invalid("intersection leader".into()));
                 }
+                let leader = CurveEval::new(leader)?;
                 CurveEval::Intersection(Box::new(Intersection {
                     surfaces: [
                         SurfaceEval::new(&surfaces[0])?,
