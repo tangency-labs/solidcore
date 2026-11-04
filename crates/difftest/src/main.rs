@@ -589,8 +589,8 @@ fn main() -> ExitCode {
         } else if res.status() == UnitStatus::SkippedPlatform {
             skipped += 1;
         }
-        if !args.no_report && !args.perturb {
-            match report::write_unit_report(&report_dir, &res) {
+        if let Some(result) = dispatch_unit_report(&args, &report_dir, &res) {
+            match result {
                 Ok(p) => println!(
                     "  report: {}",
                     p.strip_prefix(&root).unwrap_or(&p).display()
@@ -618,6 +618,14 @@ fn main() -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn dispatch_unit_report(
+    args: &Args,
+    dir: &Path,
+    result: &difftest::runner::UnitResult,
+) -> Option<Result<PathBuf, difftest::HarnessError>> {
+    (!args.no_report && !args.perturb).then(|| report::write_unit_report(dir, result))
 }
 
 /// Selection constraints are not case-level waivers. An unsupported oracle cannot
@@ -933,6 +941,68 @@ fn print_heap_check(id: &str, pads: &[usize], check: &difftest::runner::HeapChec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heap_diagnostic_requires_explicit_report_directory() {
+        use difftest::runner::{HeapCheck, HeapObservation, UnitResult, UnitTiming};
+
+        let root = std::env::temp_dir().join(format!("difftest-cli-report-{}", std::process::id()));
+        let default_dir = root.join("default");
+        let explicit_dir = root.join("explicit");
+        let full = UnitResult {
+            unit: "example".into(),
+            cases: Vec::new(),
+            harness_error: None,
+            skipped_platform: None,
+            abs_floors: Vec::new(),
+            seeds: 16,
+            timing: UnitTiming::default(),
+            heap_check: HeapCheck::default(),
+        };
+        let mut filtered = full.clone();
+        filtered.heap_check = HeapCheck {
+            pads: vec![1],
+            checked: 1,
+            padded: 1,
+            observations: vec![HeapObservation {
+                case: "filtered-case".into(),
+                observed: 1,
+                padded: 1,
+                divergence: None,
+            }],
+            ..HeapCheck::default()
+        };
+        let plain = Args::default();
+        let path = dispatch_unit_report(&plain, &default_dir, &full)
+            .unwrap()
+            .unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let mut diagnostic = Args {
+            heap_pads: vec![1],
+            filter: Some("filtered-case".into()),
+            ..Args::default()
+        };
+        assert!(dispatch_unit_report(&diagnostic, &default_dir, &filtered).is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        diagnostic.report_dir = Some(explicit_dir.clone());
+        let explicit = dispatch_unit_report(&diagnostic, &explicit_dir, &filtered)
+            .unwrap()
+            .unwrap();
+        let contents = std::fs::read_to_string(&explicit).unwrap();
+        assert!(contents.contains("heap_qualification"));
+        assert!(contents.contains("filtered-case"));
+        for (no_report, perturb) in [(true, false), (false, true)] {
+            diagnostic.no_report = no_report;
+            diagnostic.perturb = perturb;
+            assert!(dispatch_unit_report(&diagnostic, &explicit_dir, &full).is_none());
+            assert_eq!(std::fs::read_to_string(&explicit).unwrap(), contents);
+        }
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(explicit).unwrap();
+        std::fs::remove_dir(default_dir).unwrap();
+        std::fs::remove_dir(explicit_dir).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn platform_skips_are_not_exact_base_comparisons() {
