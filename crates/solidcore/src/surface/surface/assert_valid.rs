@@ -1593,6 +1593,15 @@ fn generator_scale_tolerance(line_scale: f64, half_angle: f64) -> f64 {
     (1.0 + line_scale) * EFF_ZERO + conditioning * angle_rounding
 }
 
+/// Whether the stored half angle still fixes `1/cos` to half the digits of a double. The angle
+/// carries a relative rounding of `4 eps |angle|`, which moves `1/cos` by `tan * that`
+/// relative; above `sqrt(eps)` the scale is undetermined (the angle may have rounded to 90
+/// degrees), the propagated tolerance would exceed the scale itself, and no line scale can be
+/// compared against it, so test 5 must refuse instead of accepting anything.
+fn angle_fixes_generator_scale(half_angle: f64) -> bool {
+    half_angle.tan().abs() * 4.0 * f64::EPSILON * half_angle.abs() <= f64::EPSILON.sqrt()
+}
+
 fn cone_of(s: &Surface) -> Result<&Cone> {
     match s.kind() {
         SurfaceKind::Cone(c) => Ok(c),
@@ -2251,7 +2260,7 @@ fn cone_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) -> Result<bo
             CLASS,
             5,
             0,
-            are_same_to_tol(line_scale, cone_scale, tol),
+            angle_fixes_generator_scale(half_angle) && are_same_to_tol(line_scale, cone_scale, tol),
             tol,
             line_scale - cone_scale,
         )?;
@@ -3130,6 +3139,26 @@ mod tests {
             ));
             assert_clean(&s);
         }
+    }
+
+    /// Radial width 2.65e10 over height 1e-6: the line scale is 2.65e16 but the half angle rounds
+    /// to 90 degrees (1/cos 1.6e16), so the angle cannot represent the cone and test 5 refuses.
+    #[test]
+    fn cone_whose_angle_rounds_to_flat_is_refused() {
+        let s = Surface::from(Cone::new_bounded(
+            O,
+            X,
+            Y,
+            1.0,
+            1.0 + 2.65e10,
+            0.0,
+            360.0,
+            1e-6,
+            false,
+            false,
+            false,
+        ));
+        assert!(!failures(&s, 0).0, "accepted");
     }
 
     #[test]
