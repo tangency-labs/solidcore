@@ -1714,6 +1714,56 @@ mod tests {
         assert_window(&w, [0.0, 2.0], [0.0, 1.0]);
     }
 
+    /// A quartic Bezier on the XY plane, `x = t` and
+    /// `y = -K (t^4 / 4 - s1 t^3 / 3 + s2 t^2 / 2 - s3 t)`, so that
+    /// `y' = -K (t - a) (t - b) (t - c)` with a = 0.53, b = 0.57, c = 0.602: a narrow
+    /// bump whose top (a) and the dip after it (b) lie in one of the ten sampled
+    /// brackets of a quartic span (`[0.5, 0.6]`, the rate positive at both ends), with
+    /// a lower second top at c. The top at a is the highest point of the edge:
+    /// v = [min(y(0), y(1)), y(a)], u = [0, 1].
+    #[test]
+    fn two_stationary_points_close_together_on_a_spline() {
+        let k = k();
+        let s = Surface::from(Plane::create_canonical(&Axis2Placement::IDENTITY).unwrap());
+        let (a, b, c, big) = (0.53, 0.57, 0.602, 1000.0);
+        let (s1, s2, s3) = (a + b + c, a * b + b * c + c * a, a * b * c);
+        let power = [0.0, big * s3, -big * s2 / 2.0, big * s1 / 3.0, -big / 4.0];
+        let y = |t: f64| power.iter().rev().fold(0.0, |acc, q| acc * t + q);
+        // the Bernstein coefficients of the power form
+        let choose =
+            |n: usize, r: usize| (0..r).fold(1.0, |acc, i| acc * (n - i) as f64 / (i + 1) as f64);
+        let bernstein: Vec<f64> = (0..=4)
+            .map(|i| {
+                (0..=i)
+                    .map(|j| choose(i, j) / choose(4, j) * power[j])
+                    .sum()
+            })
+            .collect();
+        let points: Vec<Point3> = bernstein
+            .iter()
+            .enumerate()
+            .map(|(i, &yi)| p(i as f64 / 4.0, yi, 0.0))
+            .collect();
+        let bump = Curve::from(
+            BSplineCurve::create_canonical(&CanonicalData {
+                dim: 3,
+                degree: 4,
+                control_points: &points,
+                form: BSplineCurveForm::PolylineForm,
+                knot_multiplicities: &[5, 5],
+                knots: &[0.0, 1.0],
+                knot_type: KnotType::Unspecified,
+                weights: None,
+                trim: None,
+            })
+            .unwrap(),
+        );
+        assert!(y(a) > y(c) && y(a) > y(0.0) && y(a) > y(1.0));
+        let chord = segment(p(1.0, y(1.0), 0.0), p(0.0, 0.0, 0.0));
+        let w = window(&k, &s, &[vec![edge(&bump, 0.0, 1.0, true), along(&chord)]]);
+        assert_window(&w, [0.0, 1.0], [y(0.0).min(y(1.0)), y(a)]);
+    }
+
     /// `circle` as its rational B-spline (the kernel's NURB of it), over its natural
     /// interval.
     fn as_spline(c: &Curve) -> (Curve, Extent1d) {
