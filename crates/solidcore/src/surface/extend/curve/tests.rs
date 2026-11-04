@@ -112,13 +112,24 @@ fn a_circle_continued_stays_on_its_circle_by_the_arc_length() {
         let p = at(&e.curve, if end == CurveEnd::End { hi } else { lo });
         // on the circle of radius 2, at the arc d / 2 past the quarter's end
         assert!((p.length() - 2.0).abs() <= 1e-13, "{p:?}");
+        // its arc past the quarter's end, in closed form, lies in the certified enclosure of
+        // the length (to the rounding of atan2), and that is within its contract of d:
+        // max(1e-9 d, the enclosure's truncation and rounding parts)
         let angle = p.y.atan2(p.x);
-        let want = if end == CurveEnd::End {
-            FRAC_PI_2 + d / 2.0
+        let arc = 2.0 * if end == CurveEnd::End {
+            angle - FRAC_PI_2
         } else {
-            -d / 2.0
+            -angle
         };
-        assert!((angle - want).abs() <= 1e-9, "{angle} {want}");
+        let b = e.across.enclosure;
+        assert!(
+            b.lower - 1e-14 <= arc && arc <= b.upper + 1e-14,
+            "{arc} not in [{}, {}]",
+            b.lower,
+            b.upper
+        );
+        let parts = e.across.truncation + e.across.rounding;
+        assert!((arc - d).abs() <= (1e-9 * d).max(parts), "{arc} {d} {parts}");
         // and the curve between too: a point inside the extension
         let mid = at(
             &e.curve,
@@ -205,4 +216,27 @@ fn a_bad_distance_or_an_unclamped_end_is_refused() {
     assert!(BSplineCurve::new(3)
         .extended_by_distance(CurveEnd::End, Continuity::Natural, 1.0)
         .is_err());
+}
+
+#[test]
+fn a_short_segment_runs_on_far_past_its_length_as_its_line() {
+    // a cutting line of a planar-path sweep: 0.2828 long, extended by 50 at either end
+    let seg = curve(
+        &[[0.0, 5.0, 0.0, 1.0], [-0.2, 5.2, 0.0, 1.0]],
+        1,
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    let dir = Vec3::new(-1.0, 1.0, 0.0) * FRAC_1_SQRT_2;
+    for how in [Continuity::Natural, Continuity::Tangent, Continuity::Curvature] {
+        let e = seg.extended_by_distance(CurveEnd::End, how, 50.0).unwrap();
+        let (_, hi) = bounds(&e.curve);
+        let want = Vec3::new(-0.2, 5.2, 0.0) + dir * 50.0;
+        assert!((at(&e.curve, hi) - want).length() <= 1e-12, "{how:?}");
+        kept(&seg, &e.curve, true);
+        let s = seg.extended_by_distance(CurveEnd::Start, how, 50.0).unwrap();
+        let (lo, _) = bounds(&s.curve);
+        let want = Vec3::new(0.0, 5.0, 0.0) - dir * 50.0;
+        assert!((at(&s.curve, lo) - want).length() <= 1e-12, "{how:?}");
+    }
 }

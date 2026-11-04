@@ -46,6 +46,9 @@
 //! whose length does meet it (by bisection on the extension parameter: that need not be
 //! monotone either, so it is a long workable distance, not proved the longest).
 //!
+//! **Degree 1.** A row of degree 1 across the side continues as its last segment's line for
+//! every continuity: a line is its own mirror and its own C2 continuation.
+//!
 //! **Analytic kinds.** Natural on a plane, cone, sphere or torus is the same analytic widened
 //! ([`Surface::continued`]). So is Tangent or Curvature across a side whose B-spline form is of
 //! degree 1 across it (a plane; a cone or cylinder along its rulings): a straight row's mirror
@@ -344,7 +347,38 @@ fn widened(
     side: BoxSide,
     distance: f64,
 ) -> Result<Extended> {
-    let grown = s.continued(k, dom, side, distance)?;
+    let mut grown = s.continued(k, dom, side, distance)?;
+    let corners = |g: &Surface| -> Result<(Point2, Point2)> {
+        let map = |uv: Point2| -> Result<Point2> {
+            g.convert_uv_from_step_to_nurbs(k, s.convert_uv_from_nurbs_to_step(k, uv)?)
+        };
+        Ok((map(dom.min())?, map(dom.max())?))
+    };
+    // the continuation is made on the wider STEP domain, and its NURBS form may scale or shift
+    // its parameters: mapped back, in each direction the map is affine, so the result is
+    // reparametrised (its shape unchanged) to put the face box back on the source's own
+    // parameters, which the callers' trims are in
+    let (a, b) = corners(&grown)?;
+    let n = grown.natural_uv_domain_with_nurb(k)?;
+    let same = |x: f64, y: f64| x == y;
+    let forward = a.x < b.x && a.y < b.y;
+    if forward
+        && !(same(a.x, dom.min().x)
+            && same(a.y, dom.min().y)
+            && same(b.x, dom.max().x)
+            && same(b.y, dom.max().y))
+    {
+        let back = |t: f64, lo: f64, hi: f64, to_lo: f64, to_hi: f64| {
+            to_lo + (t - lo) * (to_hi - to_lo) / (hi - lo)
+        };
+        let to = Extent2d::from_bounds(
+            back(n.min().x, a.x, b.x, dom.min().x, dom.max().x),
+            back(n.min().y, a.y, b.y, dom.min().y, dom.max().y),
+            back(n.max().x, a.x, b.x, dom.min().x, dom.max().x),
+            back(n.max().y, a.y, b.y, dom.min().y, dom.max().y),
+        );
+        grown.reparameterize(k, &to)?;
+    }
     let map = |uv: Point2| -> Result<Point2> {
         grown.convert_uv_from_step_to_nurbs(k, s.convert_uv_from_nurbs_to_step(k, uv)?)
     };
@@ -999,6 +1033,16 @@ impl Local {
                 "the extension is not positive",
             ));
         }
+        // a row of degree 1 continues as its last segment's line: that is its tangent and its
+        // curvature continuation too (a line's mirror in the plane normal to it, and its C2
+        // condition, are the line), where mirroring the whole piece would carry the row's
+        // earlier corners past the end and, step after step over a long ask, the mirror's
+        // rounding with them
+        let how = if self.p == 1 {
+            Continuity::Natural
+        } else {
+            how
+        };
         let grown = match how {
             Continuity::Natural => self.natural(e)?,
             Continuity::Tangent | Continuity::Curvature => {

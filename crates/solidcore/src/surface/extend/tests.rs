@@ -885,3 +885,37 @@ fn a_cone_extends_as_itself_along_up_to_its_apex_and_is_left_round_its_axis() {
         assert!(short < 2f64.sqrt() && short > 2f64.sqrt() - 1e-6, "{short}");
     }
 }
+
+/// #2730: callers keep their trims in the source's parameters, so an analytic widened keeps
+/// them: a cylinder whose NURBS form was reparametrised (as a face read from a file is) is
+/// widened on its own parameters, the source's points at the source's parameters.
+#[test]
+fn an_analytic_widened_keeps_the_sources_parameters() {
+    let kk = k();
+    let pl = Axis2Placement::new(Vec3::new(1.0, 2.0, 3.0), Vec3::X, Vec3::Y);
+    let mut c = Cone::create_canonical(&kk, &pl, 1.5, 1.5, 1.0, false, false).unwrap();
+    c.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 360.0, 8.0))
+        .unwrap();
+    let mut s = Surface::from(c);
+    s.reparameterize(&kk, &Extent2d::from_bounds(0.0, 0.0, 9.0, 8.0))
+        .unwrap();
+    let d = dom(&s);
+    for side in [BoxSide::VMin, BoxSide::VMax] {
+        let e = s
+            .extended_by_distance(&kk, &d, side, Continuity::Natural, 7.5)
+            .unwrap();
+        assert!(matches!(e.surface.kind(), SurfaceKind::Cone(_)));
+        for (a, b) in [(e.dom.min(), d.min()), (e.dom.max(), d.max())] {
+            assert!((a - b).length() <= 1e-12, "{side:?}: {a:?} {b:?}");
+        }
+        for (u, v) in [(0.0, 0.0), (4.5, 4.0), (9.0, 8.0), (1.0, 7.0)] {
+            let uv = Point2::new(u, v);
+            let (p, q) = (
+                s.evaluate_point(&kk, uv).unwrap(),
+                e.surface.evaluate_point(&kk, uv).unwrap(),
+            );
+            assert!((p - q).length() <= 1e-12, "{side:?} {uv:?}: {p:?} {q:?}");
+        }
+        meets(&e, 7.5);
+    }
+}
