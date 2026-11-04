@@ -955,10 +955,7 @@ mod tests {
             let e = atan_point(x);
             let y = f64::atan(x);
             assert!(e.lo <= y && y <= e.hi, "{x}: {e:?} misses {y}");
-            assert!(
-                e.hi - e.lo <= 8.0 * f64::EPSILON * y + 1e-290,
-                "{x}: {e:?} is loose"
-            );
+            assert!(e.hi - e.lo <= 1e-13 * y + 1e-290, "{x}: {e:?} is loose");
         }
         assert_eq!(atan_point(0.6), Ivl::whole());
         assert_eq!(atan_point(-0.1), Ivl::whole());

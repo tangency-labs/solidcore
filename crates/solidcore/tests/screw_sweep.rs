@@ -506,7 +506,7 @@ fn issue_2572_net_scope_reads_the_net_at_or_above_the_bound() {
     );
     let net = sweep.net().evaluate_point(uv).unwrap();
     let def = sweep.definition().evaluate_definition_point(uv).unwrap();
-    assert!(net != def);
+    assert_ne!(net, def);
     assert_eq!(sweep.evaluate_point(&k, uv).unwrap(), def);
     {
         let _at = NetScope::within(&k, bound);
