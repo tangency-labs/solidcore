@@ -1,6 +1,7 @@
 //! Runner for unit `blend.fillet_corner_p3`: the fillet corner classification
 //! (`SmFilletCorner::Create`) and the corner operations (`CalcCornerGeom`, the virtual
-//! `CreateCornerPatch`, `AdjustTopology` and `AdjustTangentCorner`).
+//! `CreateCornerPatch`, `AdjustTopology` and `AdjustTangentCorner`). The cases on corners of
+//! the 1x1 and 2x2 classes, deleted with #2400, are retired ([`retired`]).
 //!
 //! C++: `solidcore_ffi::units::blend_fillet_corner_p3` (upstream
 //! `source/SMLib/src/SmFilletCorner.cpp`). Rust: `solidcore::blend::fillet_corner::p3`.
@@ -275,19 +276,45 @@ enum Inputs {
     BigRad(BigRadIn),
 }
 
-const KINDS: [FilletCornerKind; 11] = [
-    FilletCornerKind::OneByOne,
-    FilletCornerKind::TwoByTwo,
-    FilletCornerKind::NByOneClosed,
-    FilletCornerKind::NByOne,
-    FilletCornerKind::Degenerate,
-    FilletCornerKind::Open,
-    FilletCornerKind::ThreeByTwoMixed,
-    FilletCornerKind::NByTwo,
-    FilletCornerKind::FourByThree,
-    FilletCornerKind::ConvexNByN,
-    FilletCornerKind::ConcaveNByN,
+/// The derived classes by the shim's index. `SmFillet1x1Corner` and `SmFillet2x2Corner`
+/// (indices 0 and 1) have no Rust class: the blend corner's Join replaced them and they
+/// were deleted (#2400), so their cases are retired ([`retired`]).
+const KINDS: [Option<FilletCornerKind>; 11] = [
+    None,
+    None,
+    Some(FilletCornerKind::NByOneClosed),
+    Some(FilletCornerKind::NByOne),
+    Some(FilletCornerKind::Degenerate),
+    Some(FilletCornerKind::Open),
+    Some(FilletCornerKind::ThreeByTwoMixed),
+    Some(FilletCornerKind::NByTwo),
+    Some(FilletCornerKind::FourByThree),
+    Some(FilletCornerKind::ConvexNByN),
+    Some(FilletCornerKind::ConcaveNByN),
 ];
+
+/// Whether the shim's class index `i` is a class deleted with #2400 (1x1, 2x2).
+pub(super) fn deleted_kind(i: usize) -> bool {
+    KINDS.get(i).is_some_and(Option::is_none)
+}
+
+/// The Rust class of the shim's class index `i`.
+fn kind_of(i: usize) -> Result<FilletCornerKind, HarnessError> {
+    KINDS
+        .get(i)
+        .copied()
+        .flatten()
+        .ok_or_else(|| harness("corner class index without a Rust class (1x1 and 2x2 deleted, #2400)"))
+}
+
+/// A case on a corner of the deleted `SmFillet1x1Corner` or `SmFillet2x2Corner` (#2400):
+/// not run, no Rust class is left to compare (plan/difftest-waivers.toml).
+fn retired(case: &Case) -> bool {
+    matches!(
+        case.parse::<Inputs>(),
+        Ok(Inputs::Corner { corner, .. }) if KINDS.get(corner.kind).is_some_and(Option::is_none)
+    )
+}
 
 // ---- create ----------------------------------------------------------------------------
 
@@ -856,7 +883,7 @@ fn corner_rust_status_gs(
             Some(FilletSolverId(u32::try_from(solvers.len()).map_err(|_| harness("index"))?));
         solvers.push(fs);
     }
-    let kind = *KINDS.get(ci.kind).ok_or_else(|| harness("kind"))?;
+    let kind = kind_of(ci.kind)?;
     let target_eu = |rm: &RustModel, [e, w]: EuSel| -> Result<EdgeuseId, HarnessError> {
         let edge = *rm
             .target_edges
@@ -1245,7 +1272,7 @@ fn big_rad_rust(k: &Kernel, b: &BigRadIn) -> Result<Output, HarnessError> {
     let fg = rm.geom(b.fg)?;
     let mut exec = FilletExecutiveData::default();
     for (ci, c) in b.corners.iter().enumerate() {
-        let kind = *KINDS.get(c.kind).ok_or_else(|| harness("kind"))?;
+        let kind = kind_of(c.kind)?;
         let vert = match usize::try_from(c.v_edge) {
             Ok(e) => {
                 let edge = *rm
@@ -2396,6 +2423,7 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         let mut out = default_cases(self, &ctx)?;
+        out.retain(|case| !retired(case));
         out.extend(big_rad_cases()?);
         Ok(out)
     }

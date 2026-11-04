@@ -6360,7 +6360,7 @@ impl SessionObjects<'_> {
         }
         Ok(())
     }
-    /// `MakeCornerTopology` of a 1x1, 2x2, 4x3, open or degenerate corner, with the
+    /// `MakeCornerTopology` of a 4x3, open or degenerate corner, with the
     /// solvers of its edge uses (`GetFilletSolverOfEdgeuse`) resolved first.
     fn make_end_corner_topology(
         &mut self,
@@ -6412,12 +6412,10 @@ impl SessionObjects<'_> {
             all_eu_solvers,
         };
         match corner.kind.corner_type() {
-            FilletCornerType::OneByOne => corner.make_1x1_corner_topology(env),
-            FilletCornerType::TwoByTwo => corner.make_2x2_corner_topology(env),
             FilletCornerType::FourByThree => corner.make_4x3_corner_topology(env),
             FilletCornerType::Open => corner.make_open_corner_topology(env),
             FilletCornerType::Degenerate => corner.make_degenerate_corner_topology(env),
-            _ => Err(invalid("not a 1x1, 2x2, 4x3, open or degenerate corner")),
+            _ => Err(invalid("not a 4x3, open or degenerate corner")),
         }
     }
     fn make_3x2_mixed_corner_topology(
@@ -6612,15 +6610,15 @@ impl CornerVertexAccess<FilletObject> for SessionObjects<'_> {
             FilletCornerType::ThreeByTwoMixed => {
                 self.make_3x2_mixed_corner_topology(k, id, executive)
             }
-            FilletCornerType::OneByOne
-            | FilletCornerType::TwoByTwo
-            | FilletCornerType::FourByThree
+            FilletCornerType::FourByThree
             | FilletCornerType::Open
             | FilletCornerType::Degenerate => self.make_end_corner_topology(k, id, executive),
-            // Abstract upstream (pure virtual): no corner object has these types.
-            FilletCornerType::Unknown | FilletCornerType::NByN => {
-                Err(invalid("abstract corner type has no MakeCornerTopology"))
-            }
+            // Abstract upstream (pure virtual): no corner object has these types; nor the 1x1
+            // and 2x2 corners', whose classes the blend corner's Join replaced (#2400).
+            FilletCornerType::Unknown
+            | FilletCornerType::NByN
+            | FilletCornerType::OneByOne
+            | FilletCornerType::TwoByTwo => Err(invalid("no corner object has this type")),
         }
     }
     fn vertices_error_info(

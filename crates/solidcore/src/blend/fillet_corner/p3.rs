@@ -7,7 +7,6 @@
 //! | Rust                                               | Upstream                                              |
 //! |----------------------------------------------------|-------------------------------------------------------|
 //! | [`FilletCorner`], [`FilletCornerKind`], [`FilletCorner::new`] | `SmFilletCorner` members and constructor, the derived classes and their constructors (CO-PORTED from `blend.fillet_corner_p1` / `_p2`, see below) |
-//! | [`FilletCorner::new`] with [`FilletCornerKind::TwoByTwo`] | `SmFillet2x2Corner::SmFillet2x2Corner`          |
 //! | [`FilletCorner::new`] with [`FilletCornerKind::ConcaveNByN`] | `SmFilletConcaveNxNCorner::SmFilletConcaveNxNCorner` |
 //! | [`FilletCorner::new`] with [`FilletCornerKind::ConvexNByN`] | `SmFilletConvexNxNCorner::SmFilletConvexNxNCorner` |
 //! | [`FilletCorner::new`] with [`FilletCornerKind::FourByThree`] | `SmFillet4x3Corner::SmFillet4x3Corner`        |
@@ -42,7 +41,7 @@
 //!   new fillet vertices and edges) is [`CornerEnv::corner`]. The context is [`Kernel`].
 //! - **Constructors.** `SmFilletCorner(...)` (unit `blend.fillet_corner_p1`) and the
 //!   constructors of the derived classes owned by `blend.fillet_corner_p2`
-//!   (`SmFillet1x1Corner`, `SmFilletNx1ClosedCorner`, `SmFilletNx1Corner`,
+//!   (`SmFilletNx1ClosedCorner`, `SmFilletNx1Corner`,
 //!   `SmFillet3x2MixedConvexityCorner`, `SmFilletNx2Corner`, `SmFilletNxNCorner`) only
 //!   initialise members: they are CO-PORTED here as [`FilletCorner::new`] so
 //!   [`FilletCorner::create`] can build every kind. `m_eStatus` (never initialised
@@ -139,10 +138,6 @@ const SM_BIG_DOUBLE: f64 = BIG_DOUBLE;
 /// The derived class of a fillet corner (`SmFilletCorner` is abstract upstream).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilletCornerKind {
-    /// `SmFillet1x1Corner`.
-    OneByOne,
-    /// `SmFillet2x2Corner` (derives from `SmFillet1x1Corner`).
-    TwoByTwo,
     /// `SmFilletNx1ClosedCorner`.
     NByOneClosed,
     /// `SmFilletNx1Corner`.
@@ -168,8 +163,6 @@ impl FilletCornerKind {
     #[must_use]
     pub const fn corner_type(self) -> FilletCornerType {
         match self {
-            Self::OneByOne => FilletCornerType::OneByOne,
-            Self::TwoByTwo => FilletCornerType::TwoByTwo,
             Self::NByOneClosed => FilletCornerType::NByOneClosed,
             Self::NByOne => FilletCornerType::NByOne,
             Self::Degenerate => FilletCornerType::Degenerate,
@@ -186,8 +179,6 @@ impl FilletCornerKind {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            Self::OneByOne => "SmFillet1x1Corner",
-            Self::TwoByTwo => "SmFillet2x2Corner",
             Self::NByOneClosed => "SmFilletNx1ClosedCorner",
             Self::NByOne => "SmFilletNx1Corner",
             Self::Degenerate => "SmFilletDegenerateCorner",
@@ -1432,7 +1423,7 @@ impl FilletCorner {
                     None // MSG: Corner Case Not Implemented
                 } else {
                     match total_eus {
-                        // 2x2: we can handle this only if it's a tangent fillet
+                        // two edges: we can handle this only if they continue each other
                         2 => {
                             let e0 = edge_of(b, eu0)?;
                             let e1 = edge_of(b, eu1_)?;

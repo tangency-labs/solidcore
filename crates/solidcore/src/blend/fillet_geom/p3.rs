@@ -1716,9 +1716,7 @@ impl FilletBrep {
                 continue;
             }
             // the fork's `|| IsClosedJoin()` in place of the 1x1 corner (543d25a; WR-697)
-            if (corner_type == FilletCornerType::NByOneClosed
-                || corner_type == FilletCornerType::OneByOne
-                || closed_join)
+            if (corner_type == FilletCornerType::NByOneClosed || closed_join)
                 && Some(eu) == primary_edgeuse(self.brep(), e)?
             {
                 continue;
@@ -2268,7 +2266,7 @@ mod tests {
         let mut fb = FilletBrep::new();
         let a = vertex(&mut fb, &k, Point3::new(0.0, 0.0, 0.0));
         let b = vertex(&mut fb, &k, Point3::new(1.0, 0.0, 0.0));
-        let corner = FilletCorner::new(FilletCornerKind::TwoByTwo, None, None, None, 1e-6, 0.01);
+        let corner = FilletCorner::new(FilletCornerKind::FourByThree, None, None, None, 1e-6, 0.01);
 
         // without the executive's record the note goes to a scratch record
         record_fillet_error(&corner, None, FilletGeomId(0), FilletGeomId(1), a, b);
@@ -2297,7 +2295,7 @@ mod tests {
                 Some(ExecutiveErrorObject::FilletVertex(b)),
             ]
         );
-        assert_eq!(error_info.entity_name, "SmFillet2x2Corner");
+        assert_eq!(error_info.entity_name, "SmFillet4x3Corner");
     }
 
     /// A non-rational curve of dimension `dim` (`NOW` weights; `NOZ` z for 2D).
