@@ -2015,13 +2015,16 @@ pub fn test_for_iso_circles(
         if out.common_axis {
             // not upstream (WR-739): planes whose normals are within the angle tolerance are
             // parallel, so the line upstream gets from them (off the axis by rounding / angle) is
-            // rounding. Within tol_3d of each other they are one plane, beyond it two planes,
+            // rounding. Within tol_3d of each other over the whole circle (centre offset + radius * tilt) they are one plane, beyond it two,
             // whatever `intersect_two_planes` judges on its own coordinate-scaled tolerance; a
             // line it still finds is kept. Other planes are intersected as usual.
-            let near_parallel = z_axis.cross(this_ref_frame.z_axis()).length() < ang_tol_rad;
-            let planes = if near_parallel
-                && (this_ref_frame.origin() - ref_origin).dot(z_axis).abs() <= tol_3d
-            {
+            let tilt = z_axis.cross(this_ref_frame.z_axis()).length();
+            let near_parallel = tilt < ang_tol_rad;
+            // two planes tilted by `tilt` drift apart by up to `rad * tilt` over the circle
+            let center_plane_offset = (this_ref_frame.origin() - ref_origin)
+                .dot(this_ref_frame.z_axis())
+                .abs();
+            let planes = if near_parallel && center_plane_offset + rad * tilt <= tol_3d {
                 Ok(PlanesIntersection::Parallel { coincident: true })
             } else {
                 intersect_two_planes(
