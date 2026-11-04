@@ -1047,3 +1047,49 @@ fn a_moved_ball_s_patch_is_certified_again() {
         assert_eq!(q.radius(), want);
     }
 }
+
+/// Far from the origin the certificate is as tight as at it: its tolerance is the sphere's
+/// own size plus the rounding of computing the coefficients, not `(R + |C|)^2`. The ball
+/// corner moved to (1e5, -7e4, 3e4) still certifies, through its record too; a loop curve,
+/// the net or the radius 1e-7 off its sphere there is still refused.
+#[test]
+fn a_ball_s_patch_far_from_the_origin_is_certified_as_tightly() {
+    let (k, s) = ball_face_with(true);
+    let far = Point3::new(1e5, -7e4, 3e4);
+    let mut place = Axis2Placement::default();
+    place.translate(far - CENTRE);
+    let mut m = s.copy(&k).unwrap();
+    m.transform(&k, &place, None).unwrap();
+    assert!(patch(&m).centre().distance(far) <= 1e-10);
+    assert_eq!(m.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
+    let rec = ball_record(&k, &m);
+    let back = corner_rebuild(&k, &CornerRecord::Ball(rec.clone())).unwrap();
+    assert!(same_bits(patch(&back), patch(&m)));
+    let why = |r: solidcore::surface::procedural_blend::record::BallCornerRecord| {
+        corner_rebuild(&k, &CornerRecord::Ball(r))
+            .unwrap_err()
+            .to_string()
+    };
+    for i in 0..rec.boundary.len() {
+        let mut off = rec.clone();
+        let w = off.boundary[i].weights.clone().unwrap();
+        for (p, wi) in off.boundary[i].points.iter_mut().zip(&w) {
+            for x in p.iter_mut() {
+                *x += 1e-7 * wi;
+            }
+        }
+        let msg = why(off);
+        assert!(msg.contains("loop"), "{i}: {msg}");
+    }
+    let mut off = rec.clone();
+    let w = off.net.weights.clone().unwrap();
+    for (p, wi) in off.net.points.iter_mut().zip(&w) {
+        for x in p.iter_mut() {
+            *x += 1e-7 * wi;
+        }
+    }
+    assert!(why(off).contains("sphere"));
+    let mut off = rec;
+    off.radius += 1e-7;
+    assert!(why(off).contains("sphere"));
+}
