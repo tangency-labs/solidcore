@@ -9,7 +9,9 @@
 //! Apache-2.0), which samples each edge; here each edge's extremes are its
 //! stationary points. The computations are the kernel's own: a point's parameters
 //! are [`Surface::step_inversion_unbounded`]'s, the rates [`Surface::evaluate_step`]'s
-//! where they have no closed form, the edges' pieces their exact NURB Bezier segments
+//! where they have no closed form (on a copy that evaluates outside the surface's
+//! current domain, as the inversion reads it), the edges' pieces their exact NURB
+//! Bezier segments
 //! ([`create_bez_segments`]) or their lines and conic arcs, and the stationary points
 //! without a closed form are certified roots solved by
 //! [`LocalSolve1d::solve_by_bisection`].
@@ -39,6 +41,7 @@ use crate::nurbs::crv_basic::Curve as NurbCurve;
 use crate::nurbs::math::{CPoint, NOW};
 use crate::nurbs::nurbs_crv::create_bez_segments;
 use crate::surface::surface::{Surface, SurfaceKind};
+use crate::surface::surface_point_solve::p2::with_out_of_bounds_enabled;
 
 const OP: &str = "surface::step_window::face_window";
 
@@ -174,8 +177,8 @@ pub struct WindowMargin {
 /// points (a B-spline surface, an extrusion of a profile not across its direction), an
 /// edge curve without an exact NURB, and a root isolation past
 /// [`MAX_ISOLATION_BRACKETS`]. Those of [`Surface::step_inversion_unbounded`],
-/// [`Surface::evaluate_step`], [`Surface::max_analytic_domain`] and the curves'
-/// evaluations.
+/// [`Surface::evaluate_step`], [`Surface::max_analytic_domain`], the surface's copy
+/// for evaluation and the curves' evaluations.
 pub fn face_window(
     k: &Kernel,
     surface: &Surface,
@@ -196,7 +199,7 @@ pub fn face_window(
             "margin negative or not finite",
         ));
     }
-    let map = Map::of(surface, tol);
+    let map = Map::of(surface, tol)?;
     if loops.is_empty() {
         return map.whole();
     }
@@ -474,12 +477,16 @@ enum Shape {
 /// The surface, the tolerance of its boundary and its shape.
 struct Map<'a> {
     surface: &'a Surface,
+    /// A copy of the surface that evaluates outside its current domain instead of
+    /// clamping to it, when the surface clamps: a boundary is read wherever it lies on
+    /// the surface, as its points' parameters are.
+    unclamped: Option<Surface>,
     tol: f64,
     shape: Shape,
 }
 
 impl<'a> Map<'a> {
-    fn of(surface: &'a Surface, tol: f64) -> Self {
+    fn of(surface: &'a Surface, tol: f64) -> Result<Self> {
         let shape = match surface.kind() {
             SurfaceKind::Plane(s) => Shape::Plane {
                 frame: Frame::of(s.position()),
@@ -522,11 +529,12 @@ impl<'a> Map<'a> {
             }
             _ => Shape::Other,
         };
-        Self {
+        Ok(Self {
             surface,
+            unclamped: with_out_of_bounds_enabled(surface)?,
             tol,
             shape,
-        }
+        })
     }
 
     const fn periodic(&self, d: usize) -> bool {
@@ -686,12 +694,15 @@ impl<'a> Map<'a> {
     }
 
     /// The rates of the kernel's STEP parameters along `dp`: the least-squares
-    /// `(Su, Sv) . r = dp` with the STEP derivatives at `q`.
+    /// `(Su, Sv) . r = dp` with the STEP derivatives at `q`, wherever `q` lies (on
+    /// the surface's unclamped copy).
     fn chain(&self, k: &Kernel, dp: Vec3, q: &Params) -> Result<[f64; 2]> {
         let none = || SolidError::invalid_input(OP, "no surface derivative");
         let uv = Point2::new(q.u.unwrap_or(0.0), q.v);
         let d = self
-            .surface
+            .unclamped
+            .as_ref()
+            .unwrap_or(self.surface)
             .evaluate_step(k, uv, 1, 1, EvaluateFlags::default())?;
         let su = d.get(1).and_then(|r| r.first()).copied().ok_or_else(none)?;
         let sv = d.first().and_then(|r| r.get(1)).copied().ok_or_else(none)?;
@@ -2276,7 +2287,7 @@ mod tests {
         ];
         for (i, s) in surfaces.iter().enumerate() {
             let dom = s.step_uv_domain();
-            let map = Map::of(s, TOL);
+            let map = Map::of(s, TOL).unwrap();
             for (fu, fv) in [(0.1, 0.2), (0.45, 0.5), (0.7, 0.9), (0.95, 0.3)] {
                 let u = dom.u_min().max(-1e3) + fu * (dom.u_max().min(1e3) - dom.u_min().max(-1e3));
                 let v = dom.v_min().max(-1e3) + fv * (dom.v_max().min(1e3) - dom.v_min().max(-1e3));
@@ -2385,7 +2396,7 @@ mod tests {
     fn rates_outside_the_domain_are_the_surfaces_own() {
         let k = k();
         let s = quarter_revolution_of_a_circle(&k);
-        let map = Map::of(&s, TOL);
+        let map = Map::of(&s, TOL).unwrap();
         let (u, v) = (200.0, 90.0);
         let radial = Vec3::new(rad(u).cos(), rad(u).sin(), 0.0);
         let along = Vec3::new(-rad(u).sin(), rad(u).cos(), 0.0);
