@@ -30,6 +30,17 @@
 //! It also lists the entities where a check the record no longer makes (a direction shorter than
 //! 1e-12, unit factors equal within 1e-12) would have decided otherwise. It fails when a file
 //! does not parse; refusals are counted, not failed.
+//!
+//! `corpus_topology` (ignored too, same variable, `corpus_topology` as the filter) maps every
+//! solid item and loose face of each file with `step::topology::read_solids` and checks it
+//! against the file's own census, counted from its entities without the reader as #2593 counts
+//! it: one body per `MANIFOLD_SOLID_BREP`, `BREP_WITH_VOIDS`, `FACETED_BREP` and
+//! `SHELL_BASED_SURFACE_MODEL`, its faces the lengths of its shells' face lists. Every body is
+//! read or refused with its reason; a body read has as many faces as its shells list; and no file
+//! maps more distinct faces, edges or vertices than it has `ADVANCED_FACE`/`FACE_SURFACE`,
+//! `EDGE_CURVE` and `VERTEX_POINT` entities. It prints one line per file, the totals, the reasons
+//! for refusals and the files whose distinct counts differ from the file's. It fails when a file
+//! does not parse or a check fails; refusals are counted, not failed.
 
 #![allow(
     clippy::unwrap_used,
@@ -545,4 +556,239 @@ fn corpus_geometry() {
         "files that did not parse:\n{}",
         failures.join("\n")
     );
+}
+
+/// The solid items #2593 counts as bodies.
+const BODIES: [&str; 4] = [
+    "MANIFOLD_SOLID_BREP",
+    "BREP_WITH_VOIDS",
+    "FACETED_BREP",
+    "SHELL_BASED_SURFACE_MODEL",
+];
+
+/// A body's faces as its entities list them, without the topology reader: the length of each
+/// shell's face list (an oriented shell's inner shell), summed over the shells it holds.
+fn census_faces(ex: &p21::Exchange, body: &p21::Entity) -> usize {
+    let p = body.params();
+    let one = |i: usize| p.get(i).and_then(p21::Param::as_ref_id).into_iter();
+    let many = |i: usize| {
+        p.get(i)
+            .and_then(p21::Param::as_list)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(p21::Param::as_ref_id)
+    };
+    let shells: Vec<u64> = match body.name() {
+        "BREP_WITH_VOIDS" => one(1).chain(many(2)).collect(),
+        "SHELL_BASED_SURFACE_MODEL" => many(1).collect(),
+        _ => one(1).collect(),
+    };
+    let mut n = 0;
+    for s in shells {
+        let Some(mut e) = ex.get(s) else { continue };
+        if e.name().starts_with("ORIENTED_")
+            && let Some(inner) = e
+                .params()
+                .get(2)
+                .and_then(p21::Param::as_ref_id)
+                .and_then(|i| ex.get(i))
+        {
+            e = inner;
+        }
+        n += e
+            .params()
+            .get(1)
+            .and_then(p21::Param::as_list)
+            .map_or(0, <[p21::Param]>::len);
+    }
+    n
+}
+
+#[test]
+#[ignore = "needs a STEP corpus in SOLIDCORE_STEP_CORPUS"]
+fn corpus_topology() {
+    use solidcore_record::step::topology::{self, SolidKind};
+    use std::collections::BTreeSet;
+    let Some(dir) = std::env::var_os("SOLIDCORE_STEP_CORPUS") else {
+        eprintln!("SOLIDCORE_STEP_CORPUS is not set");
+        return;
+    };
+    let root = Path::new(&dir);
+    let mut paths = Vec::new();
+    files(root, &mut paths);
+    assert!(!paths.is_empty(), "no STEP files under {dir:?}");
+    let mut failures = Vec::new();
+    let mut refused: BTreeMap<String, usize> = BTreeMap::new();
+    let mut loose_refused: BTreeMap<String, usize> = BTreeMap::new();
+    // Census bodies, bodies read, bodies refused, loose faces read and refused; listed and
+    // mapped faces of the bodies read; mapped and file faces, edges and vertices.
+    let mut total = [0usize; 13];
+    let mut open_solids = Vec::new();
+    let mut differ = Vec::new();
+    for path in &paths {
+        let name = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let ex = match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| p21::parse(&String::from_utf8_lossy(&b)))
+        {
+            Ok(ex) => ex,
+            Err(e) => {
+                println!("{name}: ERROR {e}");
+                failures.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        let r = topology::read_solids(&ex);
+        let count = |names: &[&str]| {
+            ex.entities
+                .values()
+                .filter(|e| !e.is_complex() && names.contains(&e.name()))
+                .count()
+        };
+        let bodies: Vec<u64> = ex
+            .entities
+            .iter()
+            .filter(|(_, e)| !e.is_complex() && BODIES.contains(&e.name()))
+            .map(|(id, _)| *id)
+            .collect();
+        let read: BTreeMap<u64, &topology::StepSolid> =
+            r.solids.iter().map(|s| (s.item, s)).collect();
+        let failed: BTreeSet<u64> = r.failures.iter().map(|f| f.item).collect();
+        let (mut body_read, mut body_refused, mut census, mut mapped) = (0, 0, 0, 0);
+        for &b in &bodies {
+            let pieces = topology::items(&ex, b);
+            if pieces.iter().all(|p| read.contains_key(p)) {
+                body_read += 1;
+                let c = census_faces(&ex, ex.get(b).unwrap());
+                let m: usize = pieces.iter().map(|p| read[p].faces.len()).sum();
+                census += c;
+                mapped += m;
+                if c != m {
+                    failures.push(format!("{name}: body #{b}: {m} faces mapped, {c} listed"));
+                }
+            } else {
+                body_refused += 1;
+                assert!(
+                    pieces.iter().any(|p| failed.contains(p)),
+                    "{name}: body #{b} neither read nor refused"
+                );
+            }
+        }
+        let loose: BTreeSet<u64> = topology::loose_faces(&ex).into_iter().collect();
+        let mut loose_failed = 0;
+        for f in &r.failures {
+            let tally = if loose.contains(&f.item) {
+                loose_failed += 1;
+                &mut loose_refused
+            } else {
+                &mut refused
+            };
+            *tally.entry(reason(&f.message)).or_default() += 1;
+            println!("{name}: #{} refused: {}", f.item, f.message);
+        }
+        let loose_read = r
+            .solids
+            .iter()
+            .filter(|s| s.kind == SolidKind::LooseFace)
+            .count();
+        for s in &r.solids {
+            if s.kind != SolidKind::LooseFace
+                && s.shells
+                    .iter()
+                    .chain(&s.voids)
+                    .any(|sh| sh.declared_closed && !sh.closed)
+            {
+                open_solids.push(format!("{name}: #{}", s.item));
+            }
+        }
+        let mut faces = BTreeSet::new();
+        let mut edges = BTreeSet::new();
+        let mut vertices = BTreeSet::new();
+        for s in &r.solids {
+            faces.extend(s.faces.iter().map(|f| f.entity));
+            edges.extend(s.edges.iter().map(|e| e.entity));
+            vertices.extend(s.vertices.iter().map(|v| v.entity));
+        }
+        let file = [
+            count(&["ADVANCED_FACE", "FACE_SURFACE"]),
+            count(&["EDGE_CURVE"]),
+            count(&["VERTEX_POINT"]),
+        ];
+        let got = [faces.len(), edges.len(), vertices.len()];
+        for (k, what) in ["faces", "edges", "vertices"].iter().enumerate() {
+            if got[k] > file[k] {
+                failures.push(format!(
+                    "{name}: {} {what} mapped, {} in the file",
+                    got[k], file[k]
+                ));
+            }
+        }
+        if got != file {
+            differ.push(format!(
+                "{name}: faces {}/{}, edges {}/{}, vertices {}/{} (mapped/file); {} bodies refused",
+                got[0], file[0], got[1], file[1], got[2], file[2], body_refused
+            ));
+        }
+        println!(
+            "{name}: bodies {} (read {body_read}, refused {body_refused}), loose faces {loose_read} read \
+             {loose_failed} refused; faces {mapped}/{census} (mapped/listed, bodies read); \
+             faces {}/{}, edges {}/{}, vertices {}/{} (mapped/file)",
+            bodies.len(),
+            got[0],
+            file[0],
+            got[1],
+            file[1],
+            got[2],
+            file[2]
+        );
+        let add = [
+            bodies.len(),
+            body_read,
+            body_refused,
+            loose_read,
+            loose_failed,
+            census,
+            mapped,
+            got[0],
+            file[0],
+            got[1],
+            file[1],
+            got[2],
+            file[2],
+        ];
+        for (t, a) in total.iter_mut().zip(add) {
+            *t += a;
+        }
+    }
+    println!("files: {}", paths.len());
+    println!(
+        "bodies: {} in the census, {} read, {} refused; loose faces: {} read, {} refused",
+        total[0], total[1], total[2], total[3], total[4]
+    );
+    println!(
+        "faces of the bodies read: {} mapped, {} listed",
+        total[6], total[5]
+    );
+    println!(
+        "distinct entities mapped / in the file: faces {}/{}, edges {}/{}, vertices {}/{}",
+        total[7], total[8], total[9], total[10], total[11], total[12]
+    );
+    println!(
+        "bodies read with a shell the file calls closed whose edges are not all used twice: {}",
+        open_solids.len()
+    );
+    for o in &open_solids {
+        println!("  {o}");
+    }
+    println!("bodies refused, by reason: {refused:?}");
+    println!("loose faces refused, by reason: {loose_refused:?}");
+    println!("files whose mapped faces, edges or vertices differ from the file's count:");
+    for d in &differ {
+        println!("  {d}");
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
