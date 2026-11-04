@@ -185,7 +185,8 @@ jobs:
           workspaces: ". -> bin"
       - name: Kernel rig
         env:
-          KERNEL_CASES_REPORT: reports/kernel-rig/table.md
+          # the test runs in its crate's directory, so the report path is absolute
+          KERNEL_CASES_REPORT: ${{ github.workspace }}/reports/kernel-rig/table.md
         run: |
           mkdir -p reports/kernel-rig
           cargo test --profile difftest -p solidcore-ops --test kernel_cases -- --ignored --nocapture
