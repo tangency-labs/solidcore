@@ -236,7 +236,7 @@ crates/solidcore/src/blend/fillet_executive/session/keep_features.rs	FilletSessi
 crates/solidcore/src/blend/fillet_executive/session/keep_features.rs	FilletSession::keep_features_on	with_capacity	4	open	Vec::with_capacity(blended_edges.len())	
 crates/solidcore/src/blend/fillet_executive/session/outline_rims.rs	FilletSession::end_round_on_outline	with_capacity	1	proven	Vec::with_capacity(2)	constant capacity
 crates/solidcore/src/blend/fillet_executive/session/surface.rs	SessionObjects::allocate_surface_surface_solver	with_capacity	1	proven	Vec::with_capacity(2)	constant capacity
-crates/solidcore/src/blend/fillet_executive/session/two_offsets.rs	FilletSession::prepare_chamfers	f64::clamp	1	proven	clamp(-1.0, 1.0)	constant bounds, min <= max
+crates/solidcore/src/blend/fillet_executive/session/two_offsets.rs	FilletSession::prepare_chamfers_along	f64::clamp	1	proven	clamp(-1.0, 1.0)	constant bounds, min <= max
 crates/solidcore/src/blend/fillet_geom/p2.rs	FilletBrep::calc_rail_rail_interpolation_with_solvers	int-rem	1	open	(index + 2) % total_edges	
 crates/solidcore/src/blend/fillet_geom/p2.rs	FilletBrep::calc_rail_rail_interpolation_with_solvers	step_by	1	proven	step_by(2)	constant non-zero step
 crates/solidcore/src/blend/fillet_geom/p2.rs	FilletBrep::calc_rail_rail_interpolation_with_solvers	step_by	2	proven	step_by(2)	constant non-zero step
@@ -313,10 +313,15 @@ crates/solidcore/src/blend/fillet_solver/p4.rs	c2_sort_points	Vec::insert	2	open
 crates/solidcore/src/blend/fillet_solver/p4.rs	c2_trace_to_edge_ends	Vec::insert	1	proven	insert(0, r)	index 0 is never past the end
 crates/solidcore/src/blend/fillet_solver/p4.rs	c4_cusp_recovery	Vec::insert	1	proven	insert(0, new_pnt)	index 0 is never past the end
 crates/solidcore/src/blend/fillet_solver/p4.rs	c4_trace	Vec::drain	1	open	drain(..ii)	
+crates/solidcore/src/blend/fillet_standard_solver/p2.rs	CircularCrossSectionFsg::piece_definitions	windows	1	proven	windows(2)	constant non-zero size
+crates/solidcore/src/blend/fillet_standard_solver/p2.rs	CircularCrossSectionFsg::piecewise_surface	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/blend/fillet_standard_solver/p2.rs	LinearCrossSectionFsg::definition_surface	f64::clamp	1	proven	clamp(-1.0, 1.0)	constant bounds, min <= max
 crates/solidcore/src/blend/fillet_standard_solver/p2.rs	VariableRadiusFs::re_calc_fillet_geom	Vec::insert	1	open	insert(index_of_insert, t)	
 crates/solidcore/src/blend/fillet_standard_solver/p2.rs	VariableRadiusFs::re_calc_fillet_geom	Vec::insert	2	open	insert(index_of_insert, vu)	
 crates/solidcore/src/blend/hcr.rs	-	int-div	1	proven	usize::MAX / 2	constant non-zero divisor
+crates/solidcore/src/blend/law_corners.rs	LawCornerPieces::classify	windows	1	proven	windows(2)	constant non-zero size
+crates/solidcore/src/blend/law_corners.rs	sphere_zone	with_capacity	1	proven	Vec::with_capacity(9)	constant capacity
+crates/solidcore/src/blend/law_corners.rs	sphere_zone	with_capacity	2	proven	Vec::with_capacity(9)	constant capacity
 crates/solidcore/src/boolean/merge/p2.rs	MergeState::merge_added_body	Vec::remove	1	open	remove(i)	
 crates/solidcore/src/boolean/merge/p4.rs	classify_edge_faces	step_by	1	proven	step_by(2)	constant non-zero step
 crates/solidcore/src/boolean/topology_intersector/p1.rs	TopologyIntersector::face_face_intersect	Vec::insert	1	open	insert((jj + 1).min(faces2.len()), new_face)	
