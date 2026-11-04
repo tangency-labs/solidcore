@@ -43,8 +43,8 @@ pub mod stitch;
 pub mod sweep;
 
 pub use blend::{
-    blend, chamfer_sides, edge_faces_along, fillet_variable, tangent_chain, Blend, Blended,
-    ChamferSecond, Corners, Hole, HoleEdge, SetBack,
+    band_room, blend, chamfer_sides, edge_faces_along, fillet_variable, tangent_chain, BandRoom,
+    Blend, Blended, ChamferSecond, Corners, EndRoom, Hole, HoleEdge, Room, SetBack,
 };
 pub use body::{make_box, make_cone, make_cylinder, make_sphere, make_torus, Body};
 pub use boolean::BooleanOp;

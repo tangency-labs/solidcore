@@ -21,16 +21,17 @@
 
 use std::collections::{HashMap, HashSet};
 
+use solidcore::blend::band_room::law_fits_band;
 use solidcore::blend::blend_corner::BlendCornerEvent;
 use solidcore::blend::blend_refusal::{BlendRefusal, NotBlendable};
 use solidcore::blend::chamfer_side::faces_along;
-use solidcore::blend::round_room::rounds_cross;
 use solidcore::blend::fillet_executive::p3::{ErrorInfo, FitKind as KernelFit, NoRoomReason};
 use solidcore::blend::fillet_executive::session::{FilletObject, FilletSession};
 use solidcore::blend::fillet_executive::FilletLaw;
 use solidcore::blend::fillet_geom::p1::{FilletCornerType, FilletErrorType};
 use solidcore::blend::fillet_section::section::GN_THUMBWEIGHT_EQUAL_AREA;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
+use solidcore::blend::round_room::rounds_cross;
 use solidcore::geom::attribute::{ids, Attribute, AttributeHandle, AttributeHandlers, Behavior};
 use solidcore::mass::integrator::properties::edge_length;
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
@@ -51,9 +52,14 @@ use crate::session::{answer, measure_body, with_body};
 use crate::{Error, FitKind, Result, RoomReason, Unblendable};
 
 mod room;
+pub use room::{band_room, BandRoom, EndRoom, Room};
 
 /// The largest size, setback or radius the operations take.
 pub const MAX_SIZE: f64 = 1e6;
+
+/// The stations, less one, at which [`fillet_variable`] has the kernel check a law against
+/// its band's room.
+const LAW_STATIONS: usize = 32;
 
 /// The most control radii a radius law takes.
 pub const MAX_LAW_RADII: usize = 100;
@@ -1397,8 +1403,9 @@ fn law_pinches(degree: usize, knots: &[f64], radii: &[f64]) -> bool {
 /// `start` that is not a vertex of the edge; [`Error::Unsupported`] for a law whose radius is
 /// zero inside the edge, or one with a corner (the kernel's
 /// [`FilletLaw::corner_parameters`]: the round's faces would be split there, which the kernel
-/// has not ported); [`Error::NoRoom`] for a law whose balls fold over one another; the
-/// refusals of [`blend`]; those of [`finish`].
+/// has not ported); [`Error::RoomRunsOut`] on a straight edge between planes for a law larger
+/// than its band's room at a station (the kernel's `law_fits_band`); [`Error::NoRoom`] for a
+/// law whose balls fold over one another; the refusals of [`blend`]; those of [`finish`].
 pub fn fillet_variable(
     body: &Body,
     edge: usize,
@@ -1419,12 +1426,21 @@ pub fn fillet_variable(
         let (Some(&e), Some(&v)) = (b.edge_list().get(edge), b.vertex_list().get(start)) else {
             return Ok(Err(Error::Argument));
         };
-        let reversed = match edge::start_end_vertices(b, e)? {
-            (Some(s), _) if s == v => false,
-            (_, Some(t)) if t == v => true,
-            _ => return Ok(Err(Error::Argument)),
+        let Some(reversed) = room::runs_back(b, e, v)? else {
+            return Ok(Err(Error::Argument));
         };
         let law = FilletLaw::of_radii(degree, knots, radii, reversed)?;
+        // the band's room along a straight edge between planes, at evenly spaced stations
+        let stations: Vec<f64> = (0..=LAW_STATIONS)
+            .map(|i| i as f64 / LAW_STATIONS as f64)
+            .collect();
+        match law_fits_band(k, b, e, &stations, &law) {
+            Ok(()) => {}
+            Err(e @ SolidError::RoundRefused { .. }) => {
+                return Ok(Err(room::refusal(b, e, reversed)))
+            }
+            Err(e) => return Err(e),
+        }
         let interval = b.edge(e)?.interval;
         if !law.corner_parameters(&interval, false)?.is_empty() {
             return Ok(Err(Error::Unsupported(
@@ -1453,8 +1469,10 @@ pub fn fillet_variable(
 }
 
 #[cfg(test)]
-mod tests;
+mod crossing_tests;
 #[cfg(test)]
 mod hollow_tests;
 #[cfg(test)]
-mod crossing_tests;
+mod room_tests;
+#[cfg(test)]
+mod tests;

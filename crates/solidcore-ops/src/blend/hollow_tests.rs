@@ -48,7 +48,10 @@ fn u_shell() -> Body {
         [3.0, -1.0, -1.0],
         [57.0, 21.0, 47.0],
     );
-    let inside = [edge_at(&b, [3.0, 10.0, 47.0]), edge_at(&b, [57.0, 10.0, 47.0])];
+    let inside = [
+        edge_at(&b, [3.0, 10.0, 47.0]),
+        edge_at(&b, [57.0, 10.0, 47.0]),
+    ];
     blend(&b, Blend::Round, &inside, &[15.0], &[], Corners::Filled).unwrap();
     b
 }
@@ -103,7 +106,10 @@ fn a_round_through_a_thin_wall_is_refused_as_breaking_through() {
     let limit = 4.0 + 2.0 * std::f64::consts::SQRT_2;
     breaks_through(round(&wall, &[top], &[7.0]), limit, [0.0, 32.0, 42.0]);
     for r in [5.0, 6.8] {
-        close(round(&wall, &[top], &[r]).unwrap(), 39552.0 - QUARTER * r * r * 104.0);
+        close(
+            round(&wall, &[top], &[r]).unwrap(),
+            39552.0 - QUARTER * r * r * 104.0,
+        );
     }
     close(
         round(&wall, &[top, inside], &[5.0]).unwrap(),
@@ -122,7 +128,10 @@ fn a_round_past_an_inside_round_is_refused_as_breaking_through() {
     let u = u_shell();
     let base = 60.0 * 20.0 * 50.0 - 54.0 * 20.0 * 47.0 + 2.0 * QUARTER * 225.0 * 20.0;
     close(volume(&u), base);
-    let outer = [edge_at(&u, [0.0, 10.0, 50.0]), edge_at(&u, [60.0, 10.0, 50.0])];
+    let outer = [
+        edge_at(&u, [0.0, 10.0, 50.0]),
+        edge_at(&u, [60.0, 10.0, 50.0]),
+    ];
     let s2 = std::f64::consts::SQRT_2;
     let limit = (18.0 * s2 - 15.0) / (s2 - 1.0);
     match round(&u, &outer, &[30.0]) {
@@ -134,7 +143,10 @@ fn a_round_past_an_inside_round_is_refused_as_breaking_through() {
         other => panic!("{other:?}"),
     }
     for r in [18.0, 25.0] {
-        close(round(&u, &outer, &[r]).unwrap(), base - 2.0 * QUARTER * r * r * 20.0);
+        close(
+            round(&u, &outer, &[r]).unwrap(),
+            base - 2.0 * QUARTER * r * r * 20.0,
+        );
     }
 }
 
@@ -151,6 +163,9 @@ fn an_inside_round_holds_the_wall_an_outer_round_runs_over() {
     let wall = thin_walled();
     let top = edge_at(&wall, [0.0, 32.0, 42.0]);
     let inside = edge_at(&wall, [0.0, 30.0, 40.0]);
-    close(round(&wall, &[top, inside], &[7.0]).unwrap(), 39509.938_040_025_9);
+    close(
+        round(&wall, &[top, inside], &[7.0]).unwrap(),
+        39509.938_040_025_9,
+    );
     assert!(round(&wall, &[top, inside], &[13.8, 7.0]).is_ok());
 }
