@@ -116,11 +116,12 @@ fn a_circle_continued_stays_on_its_circle_by_the_arc_length() {
         // the length (to the rounding of atan2), and that is within its contract of d:
         // max(1e-9 d, the enclosure's truncation and rounding parts)
         let angle = p.y.atan2(p.x);
-        let arc = 2.0 * if end == CurveEnd::End {
-            angle - FRAC_PI_2
-        } else {
-            -angle
-        };
+        let arc = 2.0
+            * if end == CurveEnd::End {
+                angle - FRAC_PI_2
+            } else {
+                -angle
+            };
         let b = e.across.enclosure;
         assert!(
             b.lower - 1e-14 <= arc && arc <= b.upper + 1e-14,
@@ -129,7 +130,10 @@ fn a_circle_continued_stays_on_its_circle_by_the_arc_length() {
             b.upper
         );
         let parts = e.across.truncation + e.across.rounding;
-        assert!((arc - d).abs() <= (1e-9 * d).max(parts), "{arc} {d} {parts}");
+        assert!(
+            (arc - d).abs() <= (1e-9 * d).max(parts),
+            "{arc} {d} {parts}"
+        );
         // and the curve between too: a point inside the extension
         let mid = at(
             &e.curve,
@@ -228,13 +232,19 @@ fn a_short_segment_runs_on_far_past_its_length_as_its_line() {
         false,
     );
     let dir = Vec3::new(-1.0, 1.0, 0.0) * FRAC_1_SQRT_2;
-    for how in [Continuity::Natural, Continuity::Tangent, Continuity::Curvature] {
+    for how in [
+        Continuity::Natural,
+        Continuity::Tangent,
+        Continuity::Curvature,
+    ] {
         let e = seg.extended_by_distance(CurveEnd::End, how, 50.0).unwrap();
         let (_, hi) = bounds(&e.curve);
         let want = Vec3::new(-0.2, 5.2, 0.0) + dir * 50.0;
         assert!((at(&e.curve, hi) - want).length() <= 1e-12, "{how:?}");
         kept(&seg, &e.curve, true);
-        let s = seg.extended_by_distance(CurveEnd::Start, how, 50.0).unwrap();
+        let s = seg
+            .extended_by_distance(CurveEnd::Start, how, 50.0)
+            .unwrap();
         let (lo, _) = bounds(&s.curve);
         let want = Vec3::new(0.0, 5.0, 0.0) - dir * 50.0;
         assert!((at(&s.curve, lo) - want).length() <= 1e-12, "{how:?}");

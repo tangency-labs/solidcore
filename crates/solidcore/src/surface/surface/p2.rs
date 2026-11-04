@@ -4907,7 +4907,6 @@ pub const fn base_adjust_step_uv_domain() -> Result<()> {
     Err(base_err())
 }
 
-
 /// `SmSurface::DropPointFast`: `SM_ERR`.
 pub const fn base_drop_point_fast<O>() -> Result<SolutionArray<O>> {
     Err(base_err())

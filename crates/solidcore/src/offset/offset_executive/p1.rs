@@ -204,9 +204,15 @@ fn extend_cone_as_itself(
     use crate::surface::extend::Continuity;
     use crate::surface::side::BoxSide;
     let (around, along) = if cone.rev().swap_uv() {
-        ([BoxSide::VMin, BoxSide::VMax], [BoxSide::UMin, BoxSide::UMax])
+        (
+            [BoxSide::VMin, BoxSide::VMax],
+            [BoxSide::UMin, BoxSide::UMax],
+        )
     } else {
-        ([BoxSide::UMin, BoxSide::UMax], [BoxSide::VMin, BoxSide::VMax])
+        (
+            [BoxSide::UMin, BoxSide::UMax],
+            [BoxSide::VMin, BoxSide::VMax],
+        )
     };
     let along_srf = surface
         .extended_sides(kernel, &along, Continuity::Natural, dist)?
@@ -223,13 +229,8 @@ fn extend_cone_as_itself(
     // each side on its own: the second on the side the first left it on
     let dom = along_srf.natural_uv_domain_with_nurb(kernel)?;
     let [first, second] = around;
-    let one = along_srf.extended_by_distance(
-        kernel,
-        &dom,
-        first,
-        Continuity::Natural,
-        around_dist,
-    )?;
+    let one =
+        along_srf.extended_by_distance(kernel, &dom, first, Continuity::Natural, around_dist)?;
     let both = one.surface.extended_by_distance(
         kernel,
         &one.surface.natural_uv_domain_with_nurb(kernel)?,

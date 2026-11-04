@@ -111,7 +111,14 @@ pub fn as_b_spline(k: &Kernel, s: &Surface) -> Result<BSplineSurface> {
 ///
 /// Those of `Surface::extended_by_distance`; `InvalidInput` for a continuity flag it has no
 /// counterpart of.
-pub fn net(k: &Kernel, n: &Net, dist: f64, dir: Direction, end: CurveEnd, flag: i32) -> Result<Net> {
+pub fn net(
+    k: &Kernel,
+    n: &Net,
+    dist: f64,
+    dir: Direction,
+    end: CurveEnd,
+    flag: i32,
+) -> Result<Net> {
     let how = continuity_of_flag(flag)
         .ok_or_else(|| SolidError::invalid_input(OP, "the continuity flag"))?;
     let side = match (dir == Direction::U, end) {
@@ -154,5 +161,8 @@ pub fn nlib_curve(
         dist
     };
     let e = BSplineCurve::from_gw_nurb(3, c).extended_by_distance(end, how, dist)?;
-    e.curve.gw_nurb().cloned().ok_or_else(|| SolidError::sm_err(OP))
+    e.curve
+        .gw_nurb()
+        .cloned()
+        .ok_or_else(|| SolidError::sm_err(OP))
 }

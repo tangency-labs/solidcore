@@ -2593,7 +2593,11 @@ impl FilletSolver {
         } else {
             let adj = adj_surface.ok_or_else(nul)?;
             // the exact extension, tangent continuous (upstream's `SM_CT_G1`), #2730
-            let new_surface = adj.extended_every_side(k, crate::surface::extend::Continuity::Tangent, extension_dist)?;
+            let new_surface = adj.extended_every_side(
+                k,
+                crate::surface::extend::Continuity::Tangent,
+                extension_dist,
+            )?;
             // Copy pNewSurface, when possible as an analytic surface
             let copy = new_surface.copy_and_add_analytics(k)?;
             pseudo

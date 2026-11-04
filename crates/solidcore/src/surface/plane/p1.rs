@@ -2726,9 +2726,9 @@ mod tests {
 
     #[test]
     fn a_plane_extended_is_the_same_plane_widened() {
+        use crate::kernel::Kernel;
         use crate::surface::extend::Continuity;
         use crate::surface::side::BoxSide;
-        use crate::kernel::Kernel;
         use crate::surface::surface::{Surface, SurfaceKind};
         let k = Kernel::default();
         let p = Surface::from(Plane::new(
@@ -2738,7 +2738,11 @@ mod tests {
             Vec2::new(1.0, 1.0),
             &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
         ));
-        for how in [Continuity::Natural, Continuity::Tangent, Continuity::Curvature] {
+        for how in [
+            Continuity::Natural,
+            Continuity::Tangent,
+            Continuity::Curvature,
+        ] {
             let e = p.extended_sides(&k, &BoxSide::ALL, how, 0.5).unwrap();
             // the same analytic, exactly: a plane, its box 0.5 wider on every side
             assert!(matches!(e.surface.kind(), SurfaceKind::Plane(_)), "{how:?}");

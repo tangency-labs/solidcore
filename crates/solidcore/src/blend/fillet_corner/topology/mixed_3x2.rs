@@ -361,7 +361,11 @@ impl FilletCorner {
             .as_ref()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
         // the exact extension, tangent continuous (upstream's `SM_CT_G1`), #2730
-        let new_surface = surface.extended_every_side(k, crate::surface::extend::Continuity::Tangent, ext_dist)?;
+        let new_surface = surface.extended_every_side(
+            k,
+            crate::surface::extend::Continuity::Tangent,
+            ext_dist,
+        )?;
 
         // Copy pNewSurface, when possible as an analytic surface
         let new_analytic_surface = new_surface.copy_and_add_analytics(k)?;

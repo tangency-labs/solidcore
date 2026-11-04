@@ -1623,7 +1623,8 @@ fn ext_surface_rebuild(
                 .surface
                 .clone()
                 .ok_or_else(|| SolidError::null_pointer(OP))?;
-            let new_surf = surface.extended_every_side(k, crate::surface::extend::Continuity::Tangent, ext)?;
+            let new_surf =
+                surface.extended_every_side(k, crate::surface::extend::Continuity::Tangent, ext)?;
 
             // Make a face from pSurface
             keep_unported(

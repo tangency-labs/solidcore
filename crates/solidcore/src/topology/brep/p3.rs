@@ -4274,16 +4274,7 @@ fn turn_to_nurbs_in(
                 .extended_sides(k, &BoxSide::ALL, Continuity::Tangent, extend_distance)?
                 .surface;
             let face_ref = (env.key_of)(EntityRef::Face(f));
-            p2::replace_surface(
-                k,
-                b,
-                env,
-                f,
-                ext,
-                face_ref,
-                OldSurface::Delete,
-                true,
-            )?;
+            p2::replace_surface(k, b, env, f, ext, face_ref, OldSurface::Delete, true)?;
             continue;
         };
         if surface.type_code() == BSplineSurface::TYPE {

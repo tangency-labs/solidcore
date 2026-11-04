@@ -211,7 +211,7 @@ impl Rounding {
             wmax = wmax.max(w);
         }
         let (mut kmax, mut smin) = (0.0_f64, f64::INFINITY);
-        for kv in knots.iter().copied() {
+        for &kv in knots {
             for (&a, &b) in kv.iter().zip(kv.iter().skip(1)) {
                 kmax = kmax.max(a.abs()).max(b.abs());
                 if b > a {

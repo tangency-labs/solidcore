@@ -95,7 +95,9 @@ impl Surface {
         how: Continuity,
         distance: f64,
     ) -> Result<Surface> {
-        Ok(self.extended_sides(k, &BoxSide::ALL, how, distance)?.surface)
+        Ok(self
+            .extended_sides(k, &BoxSide::ALL, how, distance)?
+            .surface)
     }
 
     /// The surface extended `distance` past each side of its natural box in `asked`, as
