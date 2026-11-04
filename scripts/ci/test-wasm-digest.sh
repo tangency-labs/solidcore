@@ -32,7 +32,7 @@ run_digest() {
   shift 2
   set +e
   CARGO_TARGET_DIR=$rig/target \
-    FAKE_EXPECT_ROOT=$rig FAKE_EXPECT_UP=$rig/real-upstream \
+    FAKE_EXPECT_ROOT=$rig FAKE_EXPECT_UP=${RUN_EXPECT_UP:-$rig/real-upstream} \
     FAKE_EXPECT_OUT=${RUN_EXPECT_OUT:-$rig/out} \
     FAKE_REAL_XARGS=$real_xargs \
     PATH=$rig/fakebin:$PATH \
@@ -109,6 +109,7 @@ case ${1:-} in
     ;;
   run)
     shift
+    [ "$PWD" = "$FAKE_EXPECT_ROOT" ] || { echo "fake wasmtime: cwd '$PWD'" >&2; exit 2; }
     digest= unit= root_dir= up_dir= out_dir= preload=
     while [ $# -gt 0 ]; do
       case $1 in
@@ -139,6 +140,7 @@ case ${1:-} in
       exit 7
     fi
     [ -n "$digest" ] && [ -n "$unit" ] || { echo "fake wasmtime: run without --unit/--digest-dir" >&2; exit 2; }
+    [ -f "$FAKE_EXPECT_OUT/native/$unit.digest" ] || { echo "fake wasmtime: unexpected unit '$unit'" >&2; exit 2; }
     mkdir -p "$digest"
     if [ "${FAKE_WASM_DIFF_UNIT:-}" = "$unit" ]; then
       printf 'case-a\t999\ncase-b\t200\n' >"$digest/$unit.digest"
@@ -349,6 +351,53 @@ if [ "$status" -eq 1 ] \
 else
   no 'failure: a differing case is listed with both digests and fails the run' \
     "exit $status, mismatches: $(cat "$rig/out/mismatches.txt" 2>/dev/null || echo -) $(tail -n 1 "$rig/run.log")"
+fi
+
+# --- 10. literal xargs replacement markers in static paths -----------------
+for variant in root upstream out combined; do
+  case $variant in
+    root|combined) rig=$(make_rig "brace-{}-$variant") ;;
+    *) rig=$(make_rig "brace-$variant") ;;
+  esac
+  up=$rig/real-upstream
+  out=$rig/out
+  case $variant in
+    upstream|combined)
+      up=$rig/'real-{}-upstream'
+      mkdir -p "$up"
+      unlink "$rig/upstream"
+      ln -s "$up" "$rig/upstream" ;;
+  esac
+  case $variant in out|combined) out=$rig/'out-{}' ;; esac
+  export RUN_EXPECT_UP=$up RUN_EXPECT_OUT=$out
+  status=$(run_digest "$rig" "$rig/run.log" --jobs 2 --out "$out" --unit unit.one --unit unit.two)
+  unset RUN_EXPECT_UP RUN_EXPECT_OUT
+  if [ "$status" -eq 0 ] \
+    && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 4 compared' "$rig/run.log" \
+    && [ -f "$out/wasm/unit.one.digest" ] && [ -f "$out/wasm/unit.two.digest" ]; then
+    ok "literal braces: $variant paths and unit reach the helper unchanged"
+  else
+    no "literal braces: $variant paths and unit reach the helper unchanged" \
+      "exit $status: $(tail -n 1 "$rig/run.log") $(cat "$out/log/"*.txt 2>/dev/null || :)"
+  fi
+done
+
+# --- 11. empty selection must not launch a unit helper ----------------------
+rig=$(make_rig empty)
+cat >"$rig/fakebin/xargs" <<'SH'
+#!/bin/sh
+echo 'xargs must not run for an empty selection' >&2
+exit 90
+SH
+chmod +x "$rig/fakebin/xargs"
+export FAKE_WASMTIME_LOG=$rig/wasmtime.log
+status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out")
+unset FAKE_WASMTIME_LOG
+if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 0 unit(s), 0 case(s)' "$rig/run.log" \
+  && ! grep -q '^run ' "$rig/wasmtime.log" && [ ! -s "$rig/out/units.txt" ]; then
+  ok 'empty selection: no unit helper runs'
+else
+  no 'empty selection: no unit helper runs' "exit $status: $(tail -n 1 "$rig/run.log")"
 fi
 
 if [ "$fail" -ne 0 ]; then
