@@ -722,6 +722,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn face_queries_run_without_native_reference() {
+        for query in [0, 7] {
+            let case = Case {
+                unit: "mass.integrator".into(),
+                name: format!("independent_face_query_{query}"),
+                source: crate::case::CaseSource::Inline,
+                inputs: serde_json::json!({"geometry": {
+                    "op": "face", "kind": 0,
+                    "parameters": [0.0, 0.0, 0.0, 2.0, 3.0, 0.0, 0.0, 1.0, 1.0,
+                                   0.0, 0.0, 0.0, 1e-6, 0.0, 0.0, 63.0],
+                    "query": query
+                }}),
+            };
+            let result = Runner.run_rust(&case).unwrap();
+            assert!(result.deferred.is_none(), "query {query}: {result:?}");
+            assert_eq!(result.ints["status"], [0], "query {query}: {result:?}");
+            assert!((result.values["out"][0] - 6.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
     fn nonfinite_values_unused_or_supported_by_upstream() {
         for (accuracy, floor) in [(1e-6, f64::INFINITY), (f64::INFINITY, 1.0)] {
             let controls = [0.0, 1.0, accuracy, 0.1, 0.0, 1e-24, 0.0];
