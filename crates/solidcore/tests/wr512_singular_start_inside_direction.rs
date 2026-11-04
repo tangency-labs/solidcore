@@ -179,10 +179,15 @@ fn every_other_fix_still_refuses_the_arc_round() {
     assert_refused(r);
 }
 
-/// Every fix with the blend corner End: the arc round ends at a smooth vertex and builds
-/// without the WR-512 line, to the fork's volume (smlib#124, [`BOTH_ROUNDS_FORK`]), to 1e-8.
+/// Every fix with the blend corner End: the arc round's end on the front round, where the
+/// arc wall's top edge runs on tangentially into the front round's end arc on the wall, is
+/// no End at a smooth vertex (tangency-labs/solidcore#2656: the end arc turns into the wall
+/// away from the top edge continued, so the round run on leaves the part). It runs on as
+/// before smlib#124: without the WR-512 line it is refused as the pinned C++ refuses it,
+/// with it it builds the pinned C++'s body with that line, [`BOTH_ROUNDS`], to 1e-8 (the
+/// fork's End caps it there instead, [`BOTH_ROUNDS_FORK`], 0.99 more).
 #[test]
-fn the_blend_corner_end_builds_the_arc_round_as_the_fork() {
+fn the_blend_corner_runs_the_arc_round_on_as_the_pinned_with_wr512() {
     for wr512 in [false, true] {
         let mut fixes = UpstreamFixes::all();
         fixes.ssi_singular_start_inside_direction = wr512;
@@ -191,7 +196,11 @@ fn the_blend_corner_end_builds_the_arc_round_as_the_fork() {
             ..Kernel::default()
         };
         let (mut b, r) = both_rounds(&mut k);
-        assert_built_to(&mut k, &mut b, r, 1e-8, BOTH_ROUNDS_FORK);
+        if wr512 {
+            assert_built_to(&mut k, &mut b, r, 1e-8, BOTH_ROUNDS);
+        } else {
+            assert_refused(r);
+        }
     }
 }
 

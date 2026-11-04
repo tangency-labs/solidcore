@@ -236,13 +236,14 @@ pub fn end_at_smooth_vertex(
 /// past a curved E (a rounded corner arc running on into a straight side,
 /// tangency-labs/solidcore#2176), E' along E continued, or one face round V (#453's rim).
 ///
-/// The two curves are compared in A's binormal `d` into A at V (unit, square to the edge):
-/// each as the height `h(x) = c2 x^2 + c3 x^3` along `d` over the distance `x` past V along
-/// the tangent, from its derivatives at V (E's run on past V). E' turns away where its height
-/// exceeds E's by more than A's zone tolerance at `x` the shorter of the two edges' chords
-/// from V: the second order decides where the edges' curvatures differ, the third where they
-/// nearly agree (an edge of a curvature-continuous round, which leaves its face with little
-/// or no curvature and then turns).
+/// The two curves are compared in A's binormal `d` into A at V (unit, square to the edge),
+/// each as its height `c2 x^2 + c3 x^3` along `d` over the distance `x` past V along the
+/// tangent, from its derivatives at V (E's run on past V), at `x` the shorter of the two
+/// edges' chords from V, against A's zone tolerance. Where the second orders' difference
+/// there exceeds both third orders, it decides: E' turns away where its height exceeds E's
+/// continued. Otherwise the curvatures nearly agree (an edge of a curvature-continuous round,
+/// which leaves its face with little curvature and turns as it goes), and E' turns away only
+/// where its own third order does: E's says how E turns into itself, away from V, not past it.
 ///
 /// # Errors
 /// `SM_ERR_NULL_POINTER` for an edge use without face, radial or edge, or an edge without
@@ -331,8 +332,12 @@ fn run_on_leaves_the_part(
     if !(span > 0.0 && span < BIG_DOUBLE) {
         return Ok(false);
     }
-    let apart = (o2 - e2) * span * span + (o3 - e3) * span * span * span;
-    Ok(apart > zone_tol3d(k, target.face(face_of(target, eu_a)?)?.tolerance))
+    let tol = zone_tol3d(k, target.face(face_of(target, eu_a)?)?.tolerance);
+    let second = (o2 - e2) * span * span;
+    if second.abs() > (o3.abs() + e3.abs()) * span * span * span {
+        return Ok(second > tol);
+    }
+    Ok(o3 * span * span * span > tol)
 }
 
 /// The fork's `SmBlendCorner::BallTouchingAt` (54a4ee7; 41a39ec's
