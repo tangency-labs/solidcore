@@ -27,7 +27,7 @@ mod offset_fixture;
 #[path = "support/panic_fuzz.rs"]
 mod panic_fuzz;
 
-use panic_fuzz::{assert_no_findings, fuzz, parse_repro, Family, Rng, Settings};
+use panic_fuzz::{assert_no_findings, fuzz, parse_env_u64, parse_repro, Family, Rng, Settings};
 use solidcore::blend::fillet_executive::api as fillet;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep as boolean;
@@ -48,7 +48,7 @@ use solidcore::sweep::api_surfaces;
 use solidcore::topology::api_files::{read_brep_from_file, write_brep_to_file};
 use solidcore::topology::brep::mirror::mirror;
 use solidcore::topology::brep::p10::TopologyEnv;
-use solidcore::topology::brep::p3::topology_ref;
+use solidcore::topology::brep::p3::{brep_copy, topology_ref};
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::brep_data_write::FromBrepEnv;
 use solidcore::topology::proto_topology::p1::api_transform::{
@@ -1183,29 +1183,47 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
             Step::Prim(p) => run_prim(k, p).ok(),
             Step::Sweep(s) => run_sweep(k, s).ok().flatten(),
             Step::Boolean { op, a, b } if n > 0 => {
-                let (x, y) = (bodies[a % n].clone(), bodies[b % n].clone());
+                let (Ok(x), Ok(y)) = (brep_copy(k, &bodies[a % n]), brep_copy(k, &bodies[b % n]))
+                else {
+                    continue;
+                };
                 boolean::boolean(k, x, y, boolean_op(*op))
                     .ok()
                     .map(|o| o.result)
             }
             Step::Boolean2d { op, a, b } if n > 0 => {
-                let (x, y) = (bodies[a % n].clone(), bodies[b % n].clone());
+                let (Ok(x), Ok(y)) = (brep_copy(k, &bodies[a % n]), brep_copy(k, &bodies[b % n]))
+                else {
+                    continue;
+                };
                 match boolean::boolean_2d(k, x, y, boolean_2d(*op)) {
                     Ok(boolean::Boolean2dOutcome::Result(b)) => Some(b),
                     _ => None,
                 }
             }
             Step::MergeBreps { op, bodies: which } if n > 0 => {
-                let mut list: Vec<Brep> = which.iter().map(|i| bodies[i % n].clone()).collect();
+                let Ok(mut list) = which
+                    .iter()
+                    .map(|i| brep_copy(k, &bodies[i % n]))
+                    .collect::<solidcore::Result<Vec<Brep>>>()
+                else {
+                    continue;
+                };
                 boolean::merge_breps(k, &mut list, boolean_op(*op)).ok()
             }
             Step::PiecewiseMerge { a, b, split } if n > 0 => {
-                let (x, y) = (bodies[a % n].clone(), bodies[b % n].clone());
+                let (Ok(x), Ok(y)) = (brep_copy(k, &bodies[a % n]), brep_copy(k, &bodies[b % n]))
+                else {
+                    continue;
+                };
                 let _ = boolean::piecewise_merge(k, x, y, *split);
                 None
             }
             Step::BooleanWithCurves { op, a, b } if n > 0 => {
-                let (x, y) = (bodies[a % n].clone(), bodies[b % n].clone());
+                let (Ok(x), Ok(y)) = (brep_copy(k, &bodies[a % n]), brep_copy(k, &bodies[b % n]))
+                else {
+                    continue;
+                };
                 boolean::boolean_with_curves(k, x, y, boolean_op(*op))
                     .ok()
                     .map(|o| o.outcome.result)
@@ -1218,7 +1236,9 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 continuity,
                 thumb,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let e = picked_edges(&b, edges);
                 fillet::fillet_edges(k, &mut b, &e, *radius, *xsect, *continuity, *thumb)
                     .ok()
@@ -1230,7 +1250,9 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 radii,
                 linear,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let e = picked_edges(&b, edges);
                 let types: Vec<FilletSurfaceGeneratorType> = linear
                     .iter()
@@ -1253,18 +1275,24 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 r1,
                 xsect,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let e = picked_edges(&b, edges);
                 fillet::variable_radius_fillet(k, &mut b, &e, *r0, *r1, *xsect, 1)
                     .ok()
                     .map(|()| b)
             }
             Step::CircularFillet { body, radius } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 fillet::circular_fillet(k, &mut b, *radius).ok().map(|()| b)
             }
             Step::ChamferFillet { body, distance } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 fillet::chamfer_fillet(k, &mut b, *distance)
                     .ok()
                     .map(|()| b)
@@ -1275,7 +1303,9 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 radius,
                 vertices,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let e = picked_edges(&b, edges);
                 let all: Vec<_> = b.vertices().ids().collect();
                 let v: Vec<_> = vertices.iter().filter_map(|&i| nth(&all, i)).collect();
@@ -1288,13 +1318,17 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 edges,
                 radius,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let e = picked_edges(&b, edges);
                 let _ = fillet::fillet_preview(k, &mut b, &e, *radius);
                 None
             }
             Step::Offset { body, distance } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 offset_fixture::offset_full(k, &mut b, *distance).ok()
             }
             Step::Shell {
@@ -1303,7 +1337,9 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 open,
                 solid,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let faces = picked_faces(&b, open);
                 offset_fixture::api_shell(
                     k,
@@ -1322,14 +1358,18 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 .ok()
             }
             Step::Transform { body, origin, x, y } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let placement = Axis2Placement::new(pt(*origin), pt(*x), pt(*y));
                 api_transform(k, Some(TransformObject::Brep(&mut b)), &placement)
                     .ok()
                     .map(|()| b)
             }
             Step::Scale { body, scale, about } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let r = match about {
                     None => api_scale(k, Some(TransformObject::Brep(&mut b)), pt(*scale)),
                     Some(o) => {
@@ -1339,12 +1379,16 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 r.ok().map(|()| b)
             }
             Step::Mirror { body, origin, x, y } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 let placement = Axis2Placement::new(pt(*origin), pt(*x), pt(*y));
                 mirror(k, &mut b, &placement).ok().map(|()| b)
             }
             Step::Check { body, level } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = bodies[body % n].clone_standing_for_self() else {
+                    continue;
+                };
                 let level = [CheckLevel::Level0, CheckLevel::Level1, CheckLevel::Level2]
                     [usize::from(*level) % 3];
                 let _ = check_brep(k, &mut b, level);
@@ -1356,12 +1400,16 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 density,
                 origin,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = bodies[body % n].clone_standing_for_self() else {
+                    continue;
+                };
                 let _ = brep_mass_properties_default(k, &mut b, *accuracy, *density, pt(*origin));
                 None
             }
             Step::Volume { body, accuracy } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = bodies[body % n].clone_standing_for_self() else {
+                    continue;
+                };
                 let _ = brep_volume_default(k, &mut b, *accuracy);
                 None
             }
@@ -1376,12 +1424,16 @@ fn execute(steps: &[Step], cancel: &CancelToken) {
                 uv,
                 pick,
             } if n > 0 => {
-                let mut b = bodies[body % n].clone();
+                let Ok(mut b) = bodies[body % n].clone_standing_for_self() else {
+                    continue;
+                };
                 queries(k, &mut b, *point, *param, *uv, *pick);
                 None
             }
             Step::FileRoundTrip { body, ascii, edits } if n > 0 => {
-                let b = bodies[body % n].clone();
+                let Ok(b) = brep_copy(k, &bodies[body % n]) else {
+                    continue;
+                };
                 file_round_trip(k, &b, *ascii, edits);
                 None
             }
@@ -1484,4 +1536,37 @@ fn repro_spec_with_a_bad_seed_is_rejected() {
 #[should_panic(expected = "expected `<family>:<u64 seed>`")]
 fn repro_spec_without_a_family_is_rejected() {
     parse_repro(":12");
+}
+
+/// The `u64` settings (`SOLIDCORE_PANIC_FUZZ_CASES`, `_SEED`, `_HANG_SECS`) take decimal
+/// digits only; any other form is an error naming the variable and the value, rather
+/// than a run that silently falls back to the default.
+#[test]
+fn u64_setting_parses() {
+    assert_eq!(parse_env_u64("SOLIDCORE_PANIC_FUZZ_CASES", "10000"), 10_000);
+    assert_eq!(parse_env_u64("SOLIDCORE_PANIC_FUZZ_CASES", " 7 "), 7);
+}
+
+#[test]
+#[should_panic(expected = "SOLIDCORE_PANIC_FUZZ_CASES=\"10_000\": expected a u64")]
+fn u64_setting_with_underscores_is_rejected() {
+    parse_env_u64("SOLIDCORE_PANIC_FUZZ_CASES", "10_000");
+}
+
+#[test]
+#[should_panic(expected = "SOLIDCORE_PANIC_FUZZ_CASES=\"1e4\": expected a u64")]
+fn u64_setting_in_exponent_form_is_rejected() {
+    parse_env_u64("SOLIDCORE_PANIC_FUZZ_CASES", "1e4");
+}
+
+#[test]
+#[should_panic(expected = "SOLIDCORE_PANIC_FUZZ_CASES=\"10k\": expected a u64")]
+fn u64_setting_with_a_suffix_is_rejected() {
+    parse_env_u64("SOLIDCORE_PANIC_FUZZ_CASES", "10k");
+}
+
+#[test]
+#[should_panic(expected = "SOLIDCORE_PANIC_FUZZ_SEED=\"\": expected a u64")]
+fn empty_u64_setting_is_rejected() {
+    parse_env_u64("SOLIDCORE_PANIC_FUZZ_SEED", "");
 }

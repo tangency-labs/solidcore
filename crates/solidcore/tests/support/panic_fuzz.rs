@@ -116,8 +116,22 @@ pub fn case_seed(base: u64, index: u64) -> u64 {
     Rng(base ^ index.wrapping_mul(0xd1b5_4a32_d192_ed03)).next_u64()
 }
 
+/// The environment variable `name` as a `u64`: `None` when it is unset; panics when it
+/// is set to anything else (`10_000`, `1e4`, `10k`, empty, not UTF-8), which would
+/// otherwise run the default silently.
 fn env_u64(name: &str) -> Option<u64> {
-    std::env::var(name).ok().and_then(|v| v.trim().parse().ok())
+    // not UTF-8: the lossy form keeps a replacement character, so it fails to parse too
+    let raw = std::env::var_os(name)?;
+    Some(parse_env_u64(name, &raw.to_string_lossy()))
+}
+
+/// `value` of the environment variable `name` as a `u64` (surrounding whitespace
+/// ignored); panics, naming the variable and the value, on any other form.
+pub fn parse_env_u64(name: &str, value: &str) -> u64 {
+    value
+        .trim()
+        .parse()
+        .unwrap_or_else(|e| panic!("{name}={value:?}: expected a u64, e.g. `10000` ({e})"))
 }
 
 /// `SOLIDCORE_PANIC_FUZZ_REPRO`'s `<family>:<u64 seed>`, split; panics on any other form
