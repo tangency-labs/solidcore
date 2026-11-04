@@ -316,7 +316,6 @@ crates/solidcore/src/blend/fillet_solver/p4.rs	c4_trace	Vec::drain	1	open	drain(
 crates/solidcore/src/blend/fillet_standard_solver/p2.rs	LinearCrossSectionFsg::definition_surface	f64::clamp	1	proven	clamp(-1.0, 1.0)	constant bounds, min <= max
 crates/solidcore/src/blend/fillet_standard_solver/p2.rs	VariableRadiusFs::re_calc_fillet_geom	Vec::insert	1	open	insert(index_of_insert, t)	
 crates/solidcore/src/blend/fillet_standard_solver/p2.rs	VariableRadiusFs::re_calc_fillet_geom	Vec::insert	2	open	insert(index_of_insert, vu)	
-crates/solidcore/src/blend/fillet_standard_solver/touch_circle.rs	balls_fold	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/blend/hcr.rs	-	int-div	1	proven	usize::MAX / 2	constant non-zero divisor
 crates/solidcore/src/boolean/merge/p2.rs	MergeState::merge_added_body	Vec::remove	1	open	remove(i)	
 crates/solidcore/src/boolean/merge/p4.rs	classify_edge_faces	step_by	1	proven	step_by(2)	constant non-zero step
@@ -549,6 +548,7 @@ crates/solidcore/src/intersect/topology_solver/p2.rs	swap_curve_surface_paramete
 crates/solidcore/src/intersect/topology_solver/p2.rs	swap_curve_surface_parameters	rotate	2	open	rotate_left(1)	
 crates/solidcore/src/mass/integrator.rs	OdeIntegrator::integrate	copy_from_slice	1	open	copy_from_slice(&y)	
 crates/solidcore/src/mass/integrator/properties.rs	boundary_properties	windows	1	proven	windows(2)	constant non-zero size
+crates/solidcore/src/nurbs/b_spline_curve/analysis.rs	pairs	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/nurbs/b_spline_curve/p1.rs	BSplineCurve::control_polygon	with_capacity	1	open	Vec::with_capacity(pw.len())	
 crates/solidcore/src/nurbs/b_spline_curve/p1.rs	BSplineCurve::from_data	copy_from_slice	1	open	copy_from_slice(src_u)	
 crates/solidcore/src/nurbs/b_spline_curve/p1.rs	BSplineCurve::from_data	copy_from_slice	2	open	copy_from_slice(src_pw)	
