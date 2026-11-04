@@ -48,7 +48,7 @@
 //! | [`FilletCorner::adjust_vertex_law_intervals`], [`LawIntervalSolvers`] | the law-interval half of `SmFilletCorner::CalcCornerVertGeom` |
 //! | [`FilletCorner::insert_intersection_topology_with_context`] | `InsertIntersectionTopology` |
 //! | `PlainConstantRadiusFs` (private)            | the `SmConstantRadiusFS` virtuals (not the assisted solver's) |
-//! | `p3::FilletCorner::adjust_topology` / `adjust_tangent_corner` (`_` arms) | `SmFilletCorner::AdjustTopology`, `SmFillet4x3Corner::AdjustTopology`, `SmFilletNxNCorner::AdjustTopology`, `SmFilletCorner::AdjustTangentCorner` (all `return SM_SUCCESS`) |
+//! | `p3::FilletCorner::adjust_topology` (`_` arm), the executive's tangent step | `SmFilletCorner::AdjustTopology`, `SmFillet4x3Corner::AdjustTopology`, `SmFilletNxNCorner::AdjustTopology`, `SmFilletCorner::AdjustTangentCorner` (all `return SM_SUCCESS`) |
 //!
 //! Deviations:
 //! - **Exact arcs.** With `Kernel::fixes.fillet_exact_arc_sections` (WR-708, the fork's
