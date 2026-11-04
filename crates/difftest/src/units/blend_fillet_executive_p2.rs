@@ -733,7 +733,7 @@ impl ExecutiveAccess<Handle> for Access {
             return missing();
         };
         let c = self.corners.get_mut(cid).ok_or_else(missing_error)?;
-        c.adjust_tangent_corner_with(&mut (), |_, ()| missing(), |_, ()| missing())
+        c.adjust_tangent_corner_with(&mut (), |_, ()| missing())
     }
     fn calc_fillet_geom(
         &mut self,

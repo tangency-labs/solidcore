@@ -550,14 +550,13 @@ impl FilletBrep {
             FilletEdgeType::RailRailInterpolation => {
                 self.calc_rail_rail_interpolation(k, e, Some(corner), corners, solvers, target)
             }
-            FilletEdgeType::OnEdge if k.fixes.fillet_blend_corner => {
+            FilletEdgeType::OnEdge => {
                 // the fork's 63c7962: the edge along a side edge continued across seams'
                 // vertices
                 let c = corners.corner(corner)?;
                 let (vertex, tol) = (c.filleted_vertex(), c.tangency_tol_radians);
                 self.calc_edge_on_edge_at_corner(k, e, target, vertex, tol)
             }
-            FilletEdgeType::OnEdge => self.calc_edge_on_edge(k, e, target),
             FilletEdgeType::OnExtendEdge => {
                 self.calc_edge_on_extended_edge(k, e, Some(corner), corners, target)
             }
@@ -638,14 +637,13 @@ impl FilletBrep {
                     target,
                     error_info,
                 ),
-            FilletEdgeType::OnEdge if k.fixes.fillet_blend_corner => {
+            FilletEdgeType::OnEdge => {
                 // the fork's 63c7962: the edge along a side edge continued across seams'
                 // vertices
                 let c = corners.corner(corner)?;
                 let (vertex, tol) = (c.filleted_vertex(), c.tangency_tol_radians);
                 self.calc_edge_on_edge_at_corner(k, e, target, vertex, tol)
             }
-            FilletEdgeType::OnEdge => self.calc_edge_on_edge(k, e, target),
             FilletEdgeType::RailRailInterpolation => self
                 .calc_rail_rail_interpolation_with_context(
                     k,
@@ -1004,7 +1002,7 @@ impl FilletBrep {
 
     /// [`FilletBrep::re_calc_fillet_geom`] through `ends` as well: sections the
     /// geometry runs through before its first rail-end point (`ends[0]`) and after its
-    /// last (`ends[1]`). Not upstream (#2406, `fixes.fillet_blend_corner`): a rail end on
+    /// last (`ends[1]`). Not upstream (#2406): a rail end on
     /// an End's plane (an extended-edge-use end) gives the trace no point, as upstream,
     /// so a geometry traced again up to such an End runs through the End's section
     /// there.

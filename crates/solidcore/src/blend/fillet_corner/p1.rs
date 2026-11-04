@@ -865,17 +865,15 @@ impl FilletCorner {
     /// `GetTangentFilletSolver(pFS)` (virtual): the solver of the other filleted edge
     /// use of a 2x2 corner, the solver itself for a 1x1 corner, `None` (`SM_ASSERT_ERR`)
     /// when the corner has another number of filleted edge uses or `fs` is not one of
-    /// their solvers; `None` for the base class (`SM_REF1(pFS)`). The closed Nx1 and Nx2
-    /// overrides (unit `blend.fillet_corner_p2`) also test `sm_TestG1Continuity` on the
-    /// filleted edges of `b`, the B-rep being filleted, which the base and the 1x1 / 2x2
-    /// overrides do not read.
+    /// their solvers; `None` for the base class (`SM_REF1(pFS)`) and the closed Nx1 corner
+    /// (the fork's smlib#113 caa67d0). The Nx2 override (unit `blend.fillet_corner_p2`)
+    /// also tests `sm_TestG1Continuity` on the filleted edges of `b`, the B-rep being
+    /// filleted, which the base and the 1x1 / 2x2 overrides do not read.
     ///
     /// # Errors
     ///
-    /// [`SolidError::InvalidInput`] for a 1x1, 2x2, closed Nx1 or Nx2 corner without
-    /// `m_pSolverEUs` (upstream dereferences it); those of
-    /// [`FilletCorner::tangent_fillet_solver_nx1_closed`] and
-    /// [`FilletCorner::tangent_fillet_solver_nx2`].
+    /// [`SolidError::InvalidInput`] for a 1x1, 2x2 or Nx2 corner without `m_pSolverEUs`
+    /// (upstream dereferences it); those of [`FilletCorner::tangent_fillet_solver_nx2`].
     pub fn tangent_fillet_solver(
         &self,
         k: &Kernel,
@@ -891,10 +889,8 @@ impl FilletCorner {
     ///
     /// # Errors
     ///
-    /// [`SolidError::InvalidInput`] for a 1x1, 2x2, closed Nx1 or Nx2 corner without
-    /// `m_pSolverEUs`; those of
-    /// [`FilletCorner::tangent_fillet_solver_nx1_closed_with_lookup`] and
-    /// [`FilletCorner::tangent_fillet_solver_nx2_with_lookup`].
+    /// [`SolidError::InvalidInput`] for a 1x1, 2x2 or Nx2 corner without `m_pSolverEUs`;
+    /// those of [`FilletCorner::tangent_fillet_solver_nx2_with_lookup`].
     pub fn tangent_fillet_solver_with_lookup<S: Copy + Eq>(
         &self,
         k: &Kernel,
@@ -935,9 +931,6 @@ impl FilletCorner {
                     return Ok(fs1);
                 }
                 Ok(None)
-            }
-            FilletCornerKind::NByOneClosed => {
-                self.tangent_fillet_solver_nx1_closed_with_lookup(k, b, fs, solver_of)
             }
             // the fork's SmBlendCorner::GetTangentFilletSolver: a closed Join's one blend
             // continues itself (543d25a; WR-697)

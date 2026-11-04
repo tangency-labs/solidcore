@@ -34,7 +34,7 @@ use solidcore::query::api_queries::{brep_is_manifold_solid, edge_closest_point};
 use solidcore::topology::brep::p1::regions;
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::{Brep, EdgeId};
-use solidcore::{Kernel, SolidError};
+use solidcore::Kernel;
 
 /// The plate's length, where the arc wall starts: 62 1/6 - 21.
 const PLATE: f64 = 41.0 + 1.0 / 6.0;
@@ -47,14 +47,11 @@ const FRONT: [f64; 3] = [20.583333333333332, -21.0, 10.0];
 /// The fork's capi pick on the arc wall's top edge.
 const ARC: [f64; 3] = [48.045114044109852, -5.4635486396119797, 10.0];
 
-/// The pinned C++ with the fork's line: the part after both rounds.
-const BOTH_ROUNDS: f64 = 9531.3100142533;
-
 /// The fork's part after both rounds (tangency-labs/smlib@18e96f1, `SmApiFilletEdges` at
 /// `SmApiBrepComputeVolume` 1e-8): the arc round ends on the front round where both are
 /// tangent to the top face, a smooth vertex, which the fork's blend corner End builds
-/// (smlib#124, 41a39ec); the pinned C++ with only the WR-512 line stops short of it at
-/// [`BOTH_ROUNDS`]. Measured with the same plate, wall and picks as here: 9532.2987121741.
+/// (smlib#124, 41a39ec); the pinned C++ with only the WR-512 line stopped short of it at
+/// 9531.3100142533. Measured with the same plate, wall and picks as here: 9532.2987121741.
 const BOTH_ROUNDS_FORK: f64 = 9532.2987121741;
 
 /// The plate joined with the corner box less the cylinder, as the fork's capi test builds it.
@@ -105,21 +102,8 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     brep_volume(k, b, 1e-8, &attrs).unwrap()
 }
 
-/// The arc round fails as upstream does: `SmFilletExecutive` status 1001.
-fn assert_refused(r: solidcore::Result<()>) {
-    match r {
-        Err(SolidError::Upstream { code: 1001, .. }) => {}
-        other => panic!("expected status 1001, got {other:?}"),
-    }
-}
-
-/// The arc round built one manifold solid that checks clean, of the C++ volume within `tol`
-/// relative.
-fn assert_built(k: &mut Kernel, b: &mut Brep, r: solidcore::Result<()>, tol: f64) {
-    assert_built_to(k, b, r, tol, BOTH_ROUNDS);
-}
-
-/// [`assert_built`] against the volume `want`.
+/// The arc round built one manifold solid that checks clean, of the volume `want` within
+/// `tol` relative.
 fn assert_built_to(k: &mut Kernel, b: &mut Brep, r: solidcore::Result<()>, tol: f64, want: f64) {
     r.unwrap();
     let infinite = b.infinite_region();
@@ -140,46 +124,7 @@ fn assert_built_to(k: &mut Kernel, b: &mut Brep, r: solidcore::Result<()>, tol: 
     );
 }
 
-/// The kernel with every fix but `fillet_blend_corner` (the fork's blend corner End, which
-/// builds this round by itself; see [`BOTH_ROUNDS_FORK`]), and the WR-512 fix as given.
-fn every_fix(wr512: bool) -> Kernel {
-    let mut fixes = UpstreamFixes::all();
-    fixes.fillet_blend_corner = false;
-    fixes.ssi_singular_start_inside_direction = wr512;
-    Kernel {
-        fixes,
-        ..Kernel::default()
-    }
-}
-
-#[test]
-fn default_kernel_refuses_the_arc_round() {
-    let mut k = Kernel::default();
-    assert!(!k.fixes.ssi_singular_start_inside_direction);
-    let (_, r) = both_rounds(&mut k);
-    assert_refused(r);
-}
-
-/// The default kernel with the flag: the C++ body with the fork's line, to 1e-9 (the gate's
-/// tolerance; the same construction and integration on both sides).
-#[test]
-fn the_flag_builds_the_arc_round() {
-    let mut k = Kernel::default();
-    k.fixes.ssi_singular_start_inside_direction = true;
-    let (mut b, r) = both_rounds(&mut k);
-    assert_built(&mut k, &mut b, r, 1e-9);
-}
-
-/// Every other fix (but the blend corner End, which the fork has) does not reach the start
-/// point: without WR-512 the round still fails.
-#[test]
-fn every_other_fix_still_refuses_the_arc_round() {
-    let mut k = every_fix(false);
-    let (_, r) = both_rounds(&mut k);
-    assert_refused(r);
-}
-
-/// Every fix with the blend corner End: the arc round ends at a smooth vertex and builds
+/// Every fix: the blend corner's End, the arc round ending at a smooth vertex and builds
 /// without the WR-512 line, to the fork's volume (smlib#124, [`BOTH_ROUNDS_FORK`]), to 1e-8.
 #[test]
 fn the_blend_corner_end_builds_the_arc_round_as_the_fork() {
@@ -193,15 +138,4 @@ fn the_blend_corner_end_builds_the_arc_round_as_the_fork() {
         let (mut b, r) = both_rounds(&mut k);
         assert_built_to(&mut k, &mut b, r, 1e-8, BOTH_ROUNDS_FORK);
     }
-}
-
-/// Every fix but the blend corner End: the other fixes build the rounds' faces their own way (the definition rounds of
-/// `fillet_gn_section_generator` and others), so the volume is held to 1e-8, the integration's
-/// accuracy. A round whose end came out a point, or a lost face, is off by far more: the arc
-/// round removes 24.74 mm^3, 2.6e-3 of the part.
-#[test]
-fn every_fix_builds_the_arc_round() {
-    let mut k = every_fix(true);
-    let (mut b, r) = both_rounds(&mut k);
-    assert_built(&mut k, &mut b, r, 1e-8);
 }

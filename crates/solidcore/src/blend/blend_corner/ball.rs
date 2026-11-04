@@ -39,8 +39,8 @@
 //! [`crate::surface::ball_patch::BallPatch`] (`SmBallPatch`): the rational patch carrying
 //! its sphere as its definition (its own type, exact offset and database IO). The patch
 //! and its loop are kept in [`BallCorner`] from the edge geometry until the patch takes them. The fork's
-//! `SmFilletExecutive::IsSetBackVertex` is the caller's `set_back` argument. Opt-in:
-//! `Kernel::fixes.fillet_blend_corner` (WR-697). No recursion; the certified root's Newton
+//! `SmFilletExecutive::IsSetBackVertex` is the caller's `set_back` argument (WR-697). No
+//! recursion; the certified root's Newton
 //! loop is bounded at 50 steps, as the fork's.
 
 use crate::blend::blend_corner::BlendCornerEvent;
