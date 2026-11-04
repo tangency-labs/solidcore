@@ -3733,23 +3733,17 @@ fn c6_compute_point_values(
         )?;
         let mut found_forw = flags.found_answer;
 
-        // :3619 bigger step in the small-step case; upstream passes `dStep` again, not
-        // `dBigStep` (ported as written, WR-456), into the same `sStepForw`. With
-        // `fixes.fillet_point_bigger_step_retry` the retry solves with the bigger step.
+        // :3619 bigger step in the small-step case, into the same `sStepForw`; upstream
+        // passes `dStep` again, not `dBigStep`, and so repeats the failed solve (WR-456)
         if !found_forw && step < 1.0e-4 {
             let big_step = 1.0e-3;
             let mut big = big_step;
-            let retry_step = if k.fixes.fillet_point_bigger_step_retry {
-                &mut big
-            } else {
-                &mut step
-            };
             step_solve(
                 ops,
                 k,
                 brep.as_deref_mut(),
                 point,
-                retry_step,
+                &mut big,
                 uv_domain1,
                 uv_domain2,
                 &mut flags,
