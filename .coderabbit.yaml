@@ -1,31 +1,6 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-# CodeRabbit for solidcore: reviews stay on; the generated summaries and
-# status edits that repeat what the PR already says are turned off.
-language: en-US
+# CodeRabbit for solidcore: what reviews should look for, beyond correctness.
 reviews:
-  profile: chill
-  # Quieter pull requests: no summary written into the description, no
-  # status, effort, related-item or reviewer sections in the walkthrough.
-  high_level_summary: false
-  review_status: false
-  review_info: false
-  in_progress_fortune: false
-  poem: false
-  sequence_diagrams: false
-  changed_files_summary: false
-  estimate_code_review_effort: false
-  related_issues: false
-  related_prs: false
-  suggested_labels: false
-  suggested_reviewers: false
-  pre_merge_checks:
-    docstrings:
-      mode: "off"
-  finishing_touches:
-    docstrings:
-      enabled: false
-    unit_tests:
-      enabled: false
   path_instructions:
     - path: "**"
       instructions: |
