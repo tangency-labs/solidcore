@@ -884,8 +884,7 @@ fn assert_definitions_or_listed(name: &str, k: &Kernel, b: &Brep) {
 
 /// One law-cornered round of [`a_law_cornered_round_is_its_balls_union`]: its name, the
 /// box, the edge's ends (the law's start at the first), the law's degree, knots and control
-/// radii, the edge, the law as radii at points along the edge, its corners' kinds, and
-/// whether its sides are rounds by their definitions.
+/// radii, the edge, the law as radii at points along the edge, and its corners' kinds.
 struct LawCase {
     name: &'static str,
     size: [f64; 3],
@@ -897,7 +896,6 @@ struct LawCase {
     edge: LawEdge,
     law: &'static [(f64, f64)],
     corners: &'static [LawCornerKind],
-    definitions: bool,
 }
 
 /// The round built at its law's corners (`BuildLawCorners`, the fork's 7babe17 with
@@ -918,9 +916,9 @@ struct LawCase {
 ///   two, over twice the angle between parallel vectors;
 /// - the body is clean at check level 2, with one face per side and one per dip;
 /// - every face the round made is a definition or listed in the ledger (#2505): each side
-///   its round by its definition, the law trimmed to the side, except where the trace's
-///   stations past the edge's end take the law through zero (the dip then peak's last side,
-///   whose round is then skinned, as a whole round's would be).
+///   its round by its definition, the law trimmed to the side, over the stations where the
+///   law stays positive (the dip then peak's last side, whose law the trace's stations past
+///   the edge's end take through zero, ends at the edge's end, where the end face cuts it).
 #[test]
 fn a_law_cornered_round_is_its_balls_union() {
     const A: Point3 = Point3::new(0.0, 20.0, 20.0);
@@ -938,7 +936,6 @@ fn a_law_cornered_round_is_its_balls_union() {
         edge: LawEdge::Cube,
         law: DIP,
         corners: &[LawCornerKind::Dip],
-        definitions: true,
     };
     let cases = [
         dip("dip", A, B),
@@ -961,7 +958,6 @@ fn a_law_cornered_round_is_its_balls_union() {
             edge: LawEdge::Block,
             law: &[(0.0, 2.0), (10.0, 3.0), (20.0, 2.0)],
             corners: &[LawCornerKind::Peak],
-            definitions: true,
         },
         LawCase {
             name: "dip then peak",
@@ -969,11 +965,8 @@ fn a_law_cornered_round_is_its_balls_union() {
             radii: &[4.0, 2.0, 4.0, 2.0],
             law: &[(0.0, 4.0), (5.0, 2.0), (15.0, 4.0), (20.0, 2.0)],
             corners: &[LawCornerKind::Dip, LawCornerKind::Peak],
-            // Its last side's law, 4 -> 2 over the last quarter, carried on past the edge's
-            // end as the trace's stations run (10 past it), falls through zero at 25: the
-            // definition has no ball there (the gate of a variable round's definition,
-            // 0d43b4c), so the sides are skinned.
-            definitions: false,
+            // (its last side's law, 4 -> 2 over the last quarter, carried on past the edge's
+            // end as the trace's stations run, 10 past it, falls through zero at 25)
             ..dip("", A, B)
         },
     ];
@@ -1139,18 +1132,7 @@ fn a_law_cornered_round_is_its_balls_union() {
                 f.index()
             );
         }
-        if case.definitions {
-            assert_definitions_or_listed(name, &k, &body);
-        } else {
-            for (f, _, _) in rounds.iter().filter(|(f, _, _)| !zones.contains(f)) {
-                let s = body.face(*f).unwrap().surface.clone().unwrap();
-                assert!(
-                    matches!(s.kind(), SurfaceKind::BSpline(_)),
-                    "{name}: face {} is not a skin",
-                    f.index()
-                );
-            }
-        }
+        assert_definitions_or_listed(name, &k, &body);
     }
 }
 
