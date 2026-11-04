@@ -69,11 +69,12 @@ The commits are tangency-labs/smlib's.
   Without that, blend.fillet_executive_p3, blend.fillet_intersector and blend.fillet_solver_p4
   stopped with a harness error before their first case.
 
-## Crashes and a hang against the fork (not investigated further)
+## Crashes and a hang against the fork
 
-With the shims above, every unit builds and runs against the fork. Ten units then stop in
+With the shims above, every unit builds and runs against the fork. Ten units then stopped in
 the fork's C++, none of which do against v1.0.1. The sites, from a SIGSEGV backtrace (frames
-resolved with `addr2line`, no line information):
+resolved with `addr2line` against the libraries built with `-g`), and what #2512 does about
+each:
 
 - **surface.cone_p1, surface.cone_p3, surface.surface_p2** (the last through cone_p1's
   cases): a null dereference in `SmSurfOfRevolution::RebuildPolarConverter`, from
@@ -81,7 +82,8 @@ resolved with `addr2line`, no line information):
   `CreateIsoParametricCurve` returns with only an `SM_ASSERT` on the status. Any bounded cone or
   cylinder whose rotation range runs backwards does it (v1.0.1 builds them): reported as
   tangency-labs/smlib#132. The cone runners reject those inputs until it is fixed.
-- **surface.surface_assert_valid:** a null read in `N_SrfEvalPt`, from `SmSurface::IsClosed`.
+- **surface.surface_assert_valid:** a null read in `N_SrfEvalPt`, from `SmSurface::IsClosed`,
+  on a malformed input without a NURBS net; the shim refuses such an input before the check.
 - **heal.face_props:** `SmCurveClassification::GetLoopTouches`, from
   `SmFaceProps::SetProps_Stage3`. In case `gen0241` the fork's `sms_FindAndClassifyLoopBisector`
   fails (status 1001, measured with a library copy that prints it), `SmFace::ClassifyLoops` checks
@@ -90,7 +92,9 @@ resolved with `addr2line`, no line information):
   rejects a case whose child crashes.
 - **topology.proto_topology_p2, topology.proto_topology_p3:** in proto_topology_p1's shim
   while their fixtures are built; p3's is `SmCurveInterval::GetCurve` on a null interval
-  (address `0x18`), from `sm_EdgeCrossingSine` in `FindOrCreateProtoEdge`.
+  (address `0x18`), from `sm_EdgeCrossingSine` in `FindOrCreateProtoEdge`. Shim mismatches:
+  the shim now passes `FindOrCreateProtoEdge` its classification and resolves proto edges
+  with the fork's degenerate-length rule (03e7bf1).
 - **primitive.primitive_creation_p2:** a failed `CreateTaperExtrude` (status 1005, where
   v1.0.1 succeeds) leaves the input curves held by the half-built B-rep's edges while they stay
   in the caller's array; the shim's delete (v1.0.1's contract) then crashes in `SmEdge::~SmEdge`.
@@ -98,10 +102,11 @@ resolved with `addr2line`, no line information):
   added to the issue) deleting only the curves without an owner crashes as well, so the shim no
   longer deletes any of them after a failure.
 - **blend.fillet_solver_p2:** `SmFilletSolver::RailEdgeuseIntersect` (address `0x20`).
-- **blend.fillet_geom_p2** does not crash: case generation is still in
-  `sm_SurfacePlaneCurve`, from `sm_SrfSrfIntersection`, after 30 minutes.
+- **blend.fillet_geom_p2** does not crash: case generation was still in
+  `sm_SurfacePlaneCurve`, from `sm_SrfSrfIntersection`, after 30 minutes. At
+  `e9f0627` it reports (1151 cases, one `cpp_unlinked`); the cause of the change is unmeasured.
 
-The last two are in units blocked above, so they are not in `--green`. The others are; they
-fail without a report in the sweep, which still ends and keeps the other reports.
+The last two are in units blocked above, so they are not in `--green`. For the others the
+shims and runners above settle each site, and every `--green` unit reports at `e9f0627`.
 
 Measured in #2512 (WSL, the fork's libraries built with the harness flags).
