@@ -408,6 +408,7 @@ fn merge_copy_faces(
     faces: &[FaceId],
     relations: &mut Relations,
     copy: &mut TopologyCopy<'_>,
+    mut copies: Option<&mut FaceCopies>,
 ) -> Result<Vec<FaceId>> {
     let mut new_faces = Vec::new();
     for &f in faces {
@@ -434,6 +435,9 @@ fn merge_copy_faces(
             .context
             .set_doing_boolean(doing_boolean);
         ignored(made)?;
+        if let Some(copies) = copies.as_deref_mut() {
+            copies.extend(list.iter().map(|&made| (f, made)));
+        }
         new_faces.extend(list);
     }
     Ok(new_faces)
@@ -2117,6 +2121,17 @@ pub fn glue_edges_general(
 /// is not copied); those of the B-rep construction, `SetTolerance`, `CopyFaces` and
 /// `RemoveFaces`.
 pub fn unstitch(k: &mut Kernel, b: &mut Brep, faces: Option<&[FaceId]>) -> Result<()> {
+    unstitch_with(k, b, faces, copy_faces_carrying)
+}
+
+// Kept at the transfer boundary so tests can simulate a copy that splits one source
+// and skips another without introducing a public hook or global test state.
+fn unstitch_with(
+    k: &mut Kernel,
+    b: &mut Brep,
+    faces: Option<&[FaceId]>,
+    mut copy: impl FnMut(&mut Kernel, &mut Brep, &[FaceId], &mut Brep) -> Result<FaceCopies>,
+) -> Result<()> {
     // copy faces one at a time into the second B-rep
     let mut second = super::p3::new_brep(k, -1.0, -1.0)?;
     brep_set_tolerance(k, &mut second, b.tolerance(), true, true)?;
@@ -2127,7 +2142,7 @@ pub fn unstitch(k: &mut Kernel, b: &mut Brep, faces: Option<&[FaceId]>) -> Resul
     for &face in &faces {
         // you have to copy them individually to make them separate
         let before = p1::faces(&second, None)?.len();
-        copy_faces_carrying(k, b, &[face], &mut second)?;
+        let _copies = copy(k, b, &[face], &mut second)?;
         // (not the fork's: the merge passes over a face it fails to make, so each face
         // must have added one copy before any original is removed)
         if p1::faces(&second, None)?.len() != before + 1 {
@@ -2141,7 +2156,7 @@ pub fn unstitch(k: &mut Kernel, b: &mut Brep, faces: Option<&[FaceId]>) -> Resul
     removed?;
     let back = p1::faces(&second, None)?;
     let before = p1::faces(b, None)?.len();
-    copy_faces_carrying(k, &mut second, &back, b)?;
+    let _copies = copy(k, &mut second, &back, b)?;
     // (and every copy must have come back)
     if p1::faces(b, None)?.len() != before + back.len() {
         return Err(SolidError::sm_err(OP_UNSTITCH));
@@ -2151,6 +2166,10 @@ pub fn unstitch(k: &mut Kernel, b: &mut Brep, faces: Option<&[FaceId]>) -> Resul
 
 const OP_UNSTITCH: &str = "topology::brep::p7::unstitch";
 
+// One entry for each output, recorded while its source is still known. A skipped
+// source has no entry; a split source has multiple entries.
+type FaceCopies = Vec<(FaceId, FaceId)>;
+
 /// `CopyFaces(crFaces, pDest)` with its defaults (the merge) between two B-reps' own
 /// attribute stores (`p2::CopyNotifyState`), `SM_ERR` where a face is not copied (the
 /// fork's `SER`).
@@ -2159,24 +2178,27 @@ fn copy_faces_carrying(
     src: &mut Brep,
     faces: &[FaceId],
     dest: &mut Brep,
-) -> Result<()> {
+) -> Result<FaceCopies> {
     let mut state = p2::CopyNotifyState::with_attributes_of(src, dest)?;
     let face_ref = |f: FaceId| crate::topology::loopuse::notify_ref(EntityRef::Face(f));
-    let copied = copy_faces_between_stores(
+    let mut copies = Vec::new();
+    let copied = copy_faces_from_with(
         k,
         src,
         faces,
         dest,
         true,
+        false,
         &p2::copy_source_ref,
         &face_ref,
         &mut state.env(None),
+        Some(&mut copies),
     );
     let restored = state.restore_attributes(src, dest);
     let (_, all) = copied?;
     restored?;
     if all {
-        Ok(())
+        Ok(copies)
     } else {
         Err(SolidError::sm_err(OP_UNSTITCH))
     }
@@ -2248,7 +2270,7 @@ pub fn copy_faces_from(
     env: &mut ed::NotifyEnv<'_>,
 ) -> Result<(Vec<FaceId>, bool)> {
     copy_faces_from_with(
-        k, src, faces, dest, use_merge, true, source_key, this_face, env,
+        k, src, faces, dest, use_merge, true, source_key, this_face, env, None,
     )
 }
 
@@ -2275,7 +2297,7 @@ pub fn copy_faces_between_stores(
     env: &mut ed::NotifyEnv<'_>,
 ) -> Result<(Vec<FaceId>, bool)> {
     copy_faces_from_with(
-        k, src, faces, dest, use_merge, false, source_key, this_face, env,
+        k, src, faces, dest, use_merge, false, source_key, this_face, env, None,
     )
 }
 
@@ -2291,6 +2313,7 @@ fn copy_faces_from_with(
     source_key: &dyn Fn(EntityRef) -> ObjectRef,
     this_face: &dyn Fn(FaceId) -> ObjectRef,
     env: &mut ed::NotifyEnv<'_>,
+    copies: Option<&mut FaceCopies>,
 ) -> Result<(Vec<FaceId>, bool)> {
     // (not upstream) the copies' names (`env.key_of`, `this_face` for faces) against
     // the source's: where they coincide on the source's objects, a copy would take the
@@ -2313,6 +2336,7 @@ fn copy_faces_from_with(
             source_key,
             this_face,
             env,
+            copies,
         );
     };
     // a source object's list on a key the copies' naming also gives out would be a
@@ -2365,6 +2389,7 @@ fn copy_faces_from_with(
         &shifted,
         this_face,
         env,
+        copies,
     );
     for (key, h) in lent {
         env.attributes.remove_attribute(key, h, true)?;
@@ -2387,6 +2412,7 @@ fn copy_faces_named(
     source_key: &dyn Fn(EntityRef) -> ObjectRef,
     this_face: &dyn Fn(FaceId) -> ObjectRef,
     env: &mut ed::NotifyEnv<'_>,
+    copies: Option<&mut FaceCopies>,
 ) -> Result<(Vec<FaceId>, bool)> {
     // pDestinationBrep->SetTolerance(GetTolerance()) = (tol, TRUE, TRUE): grow only
     brep_set_tolerance(k, dest, src.tolerance(), true, true)?;
@@ -2432,6 +2458,7 @@ fn copy_faces_named(
             faces,
             &mut Relations::default(),
             &mut copy,
+            copies,
         ))? {
             new_faces = made;
         }
@@ -2549,7 +2576,7 @@ pub fn copy_faces_with_merge(
         20.0 * PI / 180.0,
         None,
     )?;
-    merge_copy_faces(context, src, dest, faces, relations, copy)
+    merge_copy_faces(context, src, dest, faces, relations, copy, None)
 }
 
 // ---- MergeSelfIntersectionCurves ------------------------------------------------------------
@@ -2710,6 +2737,51 @@ mod tests {
             in_brep: true,
             ..Region::default()
         }
+    }
+
+    #[test]
+    fn unstitch_refuses_a_skipped_face_hidden_by_another_faces_two_copies() {
+        use crate::primitive::api_primitives::create_box;
+
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Vec3::ZERO, 20.0, 20.0, 20.0).unwrap();
+        let original = p1::faces(&b, None).unwrap();
+        let mut injected = false;
+        let result = unstitch_with(&mut k, &mut b, None, |k, src, faces, dest| {
+            let before = p1::faces(dest, None)?.len();
+            let mut copies = copy_faces_carrying(k, src, faces, dest)
+                .expect("normal face copy must reach the fault injection");
+            if faces.len() > 1 {
+                // The return trip copies the whole batch. Remove the first output
+                // and make a second copy of the next source: the face count still
+                // looks right, but the first source has no surviving copy.
+                let (skipped, removed) = copies[0];
+                let duplicated = copies[1].0;
+                let editing = dest.editing_enabled();
+                dest.set_editing_enabled(true);
+                super::super::p5::remove_faces(k, dest, true, &[removed])
+                    .expect("fault injection must remove one output");
+                dest.set_editing_enabled(editing);
+                copies.retain(|&(source, _)| source != skipped);
+                copies.extend(
+                    copy_faces_carrying(k, src, &[duplicated], dest)
+                        .expect("fault injection must make a second output"),
+                );
+                assert_eq!(p1::faces(dest, None)?.len(), before + faces.len());
+                assert_eq!(copies.len(), faces.len());
+                injected = true;
+            }
+            Ok(copies)
+        });
+        assert!(injected, "did not reach the return trip: {result:?}");
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(p1::faces(&b, None).unwrap(), original);
+        assert_eq!(p1::edges(&b, None).unwrap().len(), 12);
+        assert_eq!(p1::vertices(&b, None).unwrap().len(), 8);
+        assert!(p1::edges(&b, None)
+            .unwrap()
+            .into_iter()
+            .all(|e| { crate::topology::edge::faces(&b, e, None).unwrap().len() == 2 }));
     }
 
     #[test]
