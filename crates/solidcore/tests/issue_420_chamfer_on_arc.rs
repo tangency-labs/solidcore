@@ -338,3 +338,23 @@ fn issue_2546_chamfers_within_the_resolution_of_the_rounds_are_refused_naming_th
     // just below the limit it builds
     assert_builds(limit - 1e-7);
 }
+
+/// #2546 (WR-739): past the rounds' radius the cones' apexes are above the bottom face and
+/// the corner arcs' radius 5 - d is negative: each rail runs on the far side of its round's
+/// axis, the section through the axis. That is no chamfer of the corner, whether the part
+/// resolves the arc or not (just past 5, within the resolution; at 5.1, beyond it, where a
+/// body of more volume than at 5 was built). Refused, naming 5, the largest size on the
+/// edge's side of the axis, which builds.
+#[test]
+fn issue_2546_chamfers_past_the_rounds_radius_are_refused_naming_it() {
+    for d in [5.0001, 5.0002, 5.1] {
+        let (_, _, r) = chamfered_rounded_cube(d, true);
+        let err = r.unwrap_err();
+        let SolidError::FilletRefused { reason, fit, .. } = err else {
+            panic!("d {d}: {err:?}");
+        };
+        assert_eq!(reason, Some(NoRoomReason::RailPastAxis), "d {d}");
+        assert_eq!(fit.kind, FitKind::Radius, "d {d}");
+        assert!((fit.size - 5.0).abs() < 1e-12, "d {d}: {}", fit.size);
+    }
+}

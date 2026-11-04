@@ -192,6 +192,12 @@ pub enum NoRoomReason {
     /// arcs on the bottom face shorter than the part resolves (not the fork's, #2546;
     /// `fixes.fillet_refuse_rails_below_resolution`, WR-739).
     RailBelowResolution,
+    /// A rail of a constant ball's round or chamfer along an arc would lie on the far side
+    /// of the arc's axis from the edge: its section runs through the axis (a chamfer wider
+    /// than the round it runs round). The size at which the rail closes to a point on the
+    /// axis builds (not the fork's, #2546; `fixes.fillet_refuse_rails_below_resolution`,
+    /// WR-739).
+    RailPastAxis,
 }
 
 /// The initialized error-info members p3 reads or writes. Corner kinds use the
