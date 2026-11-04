@@ -451,3 +451,140 @@ fn a_malformed_record_is_carried_over_for_the_kernel_to_refuse() {
     };
     assert!(g.origin[0].is_nan());
 }
+
+// These builders and destructors never recurse, including for rejected borrowed inputs.
+// The same shapes are built independently on both sides of the conversion boundary.
+macro_rules! depth_fixtures {
+    ($module:ident, $types:ident) => {
+        mod $module {
+            use super::$types::{Curve, Surface};
+
+            fn line() -> Curve {
+                Curve::Line { start: [0.0; 3], end: [1.0; 3] }
+            }
+            fn plane() -> Surface {
+                Surface::Plane { origin: [0.0; 3], u_axis: [1.0, 0.0, 0.0], v_axis: [0.0, 1.0, 0.0] }
+            }
+            fn intersection(leader: Curve, first: Surface) -> Curve {
+                Curve::SurfaceIntersection {
+                    surfaces: [Box::new(first), Box::new(plane())],
+                    leader: Box::new(leader), tolerance: 1e-6,
+                }
+            }
+            fn revolution(profile: Curve) -> Surface {
+                Surface::PlacedRevolution {
+                    profile: Box::new(profile), origin: [0.0; 3], axis: [0.0, 0.0, 1.0],
+                    matrix: super::M, forward: true,
+                }
+            }
+            // Exactly `depth` edges from root to deepest leaf. Profile chains alternate
+            // intersection surface and revolution profile; leader chains stay in curves.
+            pub fn curve(depth: usize, profiles: bool) -> Curve {
+                if !profiles {
+                    let mut c = line();
+                    for _ in 0..depth { c = intersection(c, plane()); }
+                    return c;
+                }
+                if depth % 2 == 0 {
+                    let mut c = line();
+                    for _ in 0..depth / 2 { c = intersection(line(), revolution(c)); }
+                    c
+                } else {
+                    let mut s = plane();
+                    for _ in 0..depth / 2 { s = revolution(intersection(line(), s)); }
+                    intersection(line(), s)
+                }
+            }
+            pub fn surface(depth: usize, profiles: bool) -> Surface {
+                if depth == 0 { plane() } else { revolution(curve(depth - 1, profiles)) }
+            }
+            enum Node { Curve(Curve), Surface(Surface) }
+            fn dismantle(root: Node) {
+                let mut pending = vec![root];
+                while let Some(node) = pending.pop() {
+                    match node {
+                        Node::Curve(Curve::SurfaceIntersection { surfaces: [a, b], leader, .. }) => {
+                            pending.push(Node::Curve(*leader));
+                            pending.push(Node::Surface(*a));
+                            pending.push(Node::Surface(*b));
+                        }
+                        Node::Surface(Surface::PlacedRevolution { profile, .. }) => {
+                            pending.push(Node::Curve(*profile));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            pub fn drop_curve(c: Curve) { dismantle(Node::Curve(c)); }
+            pub fn drop_surface(s: Surface) { dismantle(Node::Surface(s)); }
+        }
+    };
+}
+
+use solidcore_record::brep as r;
+depth_fixtures!(record_depth, r);
+depth_fixtures!(kernel_depth, k);
+
+// Temporary old-API witness: at depth 17 an infallible conversion returns a value,
+// so the assertion fails. After the API becomes fallible, assert its error instead.
+fn depth_case(case: &str, depth: usize) {
+    let profiles = case.ends_with("profile");
+    match case {
+        "curve-to-kernel-leader" | "curve-to-kernel-profile" => {
+            let input = record_depth::curve(depth, profiles);
+            let output = curve(&input);
+            record_depth::drop_curve(input);
+            kernel_depth::drop_curve(output);
+        }
+        "surface-to-kernel-leader" | "surface-to-kernel-profile" => {
+            let input = record_depth::surface(depth, profiles);
+            let output = surface(&input);
+            record_depth::drop_surface(input);
+            kernel_depth::drop_surface(output);
+        }
+        "curve-to-record-leader" | "curve-to-record-profile" => {
+            let input = kernel_depth::curve(depth, profiles);
+            let output = record_curve(input);
+            record_depth::drop_curve(output);
+        }
+        "surface-to-record-leader" | "surface-to-record-profile" => {
+            let input = kernel_depth::surface(depth, profiles);
+            let output = record_surface(input);
+            record_depth::drop_surface(output);
+        }
+        _ => panic!("unknown case {case}"),
+    }
+    assert!(depth <= 16, "conversion returned a value beyond the depth limit");
+}
+
+#[test]
+fn geometry_depth_is_bounded() {
+    const CHILD: &str = "SOLIDCORE_CONVERT_DEPTH_CHILD";
+    if let Ok(spec) = std::env::var(CHILD) {
+        let (case, depth) = spec.split_once(':').unwrap();
+        let case = case.to_owned();
+        let depth = depth.parse().unwrap();
+        std::thread::Builder::new().stack_size(256 * 1024)
+            .spawn(move || depth_case(&case, depth)).unwrap().join().unwrap();
+        return;
+    }
+    let executable = std::env::current_exe().unwrap();
+    let mut failures = Vec::new();
+    for case in [
+        "curve-to-kernel-leader", "curve-to-kernel-profile",
+        "surface-to-kernel-leader", "surface-to-kernel-profile",
+        "curve-to-record-leader", "curve-to-record-profile",
+        "surface-to-record-leader", "surface-to-record-profile",
+    ] {
+        for depth in [16, 17, 100_000] {
+            let status = std::process::Command::new(&executable)
+                .args(["--exact", "geometry_depth_is_bounded", "--nocapture"])
+                .env(CHILD, format!("{case}:{depth}"))
+                .status().unwrap();
+            if !status.success() {
+                failures.push(format!("{case} depth {depth}: child {status}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
