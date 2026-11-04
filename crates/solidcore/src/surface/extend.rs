@@ -65,6 +65,7 @@ use crate::nurbs::math::{CPoint, NOW};
 use crate::nurbs::srf_basic::{Direction, Surface as Net};
 use crate::nurbs::srf_tool::p1::insert_knot;
 use crate::surface::implicit::AnalyticSupport;
+use crate::surface::offset_surface::{OffsetSurface, SS_UNKNOWN};
 use crate::surface::side::{Across, BoxSide};
 use crate::surface::surface::{Surface, SurfaceKind};
 
@@ -191,7 +192,8 @@ impl Surface {
     /// - `InvalidInput`: a distance not finite and positive; a side not the form's end; a
     ///   form moved off its analytic label; a form not clamped at the side;
     /// - `Unsupported`: a kind with no exact B-spline form here (a procedural blend, a curve
-    ///   bounded, STEP, offset or in-volume surface);
+    ///   bounded, STEP or in-volume surface); an offset surface is the offset of its base
+    ///   extended (`offset_extended`), with its base's errors;
     /// - [`SolidError::ExtendRefused`]: a weight would not be positive, with a distance whose
     ///   weights are ([`ExtendRefusal::WeightVanishes`]); the length at the distance not
     ///   measurable to the stop, with the longest distance found that is
@@ -211,6 +213,9 @@ impl Surface {
                 OP,
                 "the distance is not finite and positive",
             ));
+        }
+        if let SurfaceKind::OffsetSurface(o) = self.kind() {
+            return offset_extended(k, o, dom, side, how, distance);
         }
         if matches!(self.kind(), SurfaceKind::ProceduralBlend(_)) {
             return Err(SolidError::Unsupported {
@@ -300,6 +305,34 @@ impl Surface {
             sides: BoxSide::ALL,
         })
     }
+}
+
+/// An offset surface extended: the offset, by the same distance, of its base extended past
+/// the same side by the same rule ([`Surface::extended_by_distance`] on the base, over the
+/// same parameters: an offset surface is parametrised by its base). Exact by construction:
+/// the result is the offset surface of that base, so its bounds are the base's: (a) 0 over
+/// the source's box, the extension's construction bound, and the length across the side
+/// measured on the base (the offset's own length across differs from it by the offset's
+/// curvature term, which this does not measure).
+fn offset_extended(
+    k: &Kernel,
+    o: &OffsetSurface,
+    dom: &Extent2d,
+    side: BoxSide,
+    how: Continuity,
+    distance: f64,
+) -> Result<Extended> {
+    let base = o
+        .base_surface()
+        .extended_by_distance(k, dom, side, how, distance)?;
+    let surface = Surface::from(OffsetSurface::new(
+        k,
+        o.offset_distance(),
+        base.surface,
+        true,
+        SS_UNKNOWN,
+    )?);
+    Ok(Extended { surface, ..base })
 }
 
 /// Natural on an analytic: the same surface widened, its face box on its own parameters and
@@ -1212,6 +1245,9 @@ fn keeps(net: &Net, out: &Net, side: BoxSide) -> Result<bool> {
     };
     Ok(points_kept && a.len() <= b.len())
 }
+
+mod sides;
+pub use sides::{ExtendedSides, SideExtension};
 
 #[cfg(test)]
 mod tests;

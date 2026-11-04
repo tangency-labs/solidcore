@@ -690,3 +690,127 @@ fn mirrors_on_a_rational_row_past_every_side() {
         }
     }
 }
+
+/// The offset by `h` of the quarter cylinder of radius 2 about z.
+fn offset_quarter(h: f64) -> Surface {
+    let kk = k();
+    Surface::from(OffsetSurface::new(&kk, h, quarter(), true, SS_UNKNOWN).unwrap())
+}
+
+#[test]
+fn an_offset_surface_is_the_offset_of_its_base_extended() {
+    let kk = k();
+    let h = 0.5;
+    let s = offset_quarter(h);
+    // the offset's radius, off the source's box
+    let radius = |p: Vec3| p.x.hypot(p.y);
+    let r = radius(s.evaluate_point(&kk, Vec2::new(0.5, 0.5)).unwrap());
+    assert!((r - 2.0).abs() > 0.4, "{r}");
+    for (how, side) in [
+        (Continuity::Natural, BoxSide::UMax),
+        (Continuity::Natural, BoxSide::UMin),
+        (Continuity::Tangent, BoxSide::VMax),
+    ] {
+        let e = s
+            .extended_by_distance(&kk, &dom(&s), side, how, 1.0)
+            .unwrap();
+        let SurfaceKind::OffsetSurface(o) = e.surface.kind() else {
+            panic!("{side:?}: not an offset surface");
+        };
+        assert_eq!(o.offset_distance(), h);
+        // the length across is measured on the base, which is the quarter extended
+        meets(&e, 1.0);
+        // the source's box: the source's offset; past it, Natural round the axis stays on
+        // the offset cylinder (the base continued on its circle)
+        let d = dom(&e.surface);
+        for i in 0..=8 {
+            let t = f64::from(i) / 8.0;
+            let inside = Vec2::new(t, 0.5);
+            let a = e.surface.evaluate_point(&kk, inside).unwrap();
+            let b = s.evaluate_point(&kk, inside).unwrap();
+            assert!(a.distance(b) <= 1e-12, "{side:?} {a:?} {b:?}");
+            if side.is_u() {
+                let u = if side.is_high() {
+                    1.0 + t * (d.max().x - 1.0)
+                } else {
+                    d.min().x * t
+                };
+                let p = e.surface.evaluate_point(&kk, Vec2::new(u, 0.5)).unwrap();
+                assert!(
+                    (radius(p) - r).abs() <= 1e-12,
+                    "{side:?} {u}: {}",
+                    radius(p)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_side_extends_in_turn_and_closed_or_collapsed_sides_are_left() {
+    let kk = k();
+    let s = quarter();
+    let e = s
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Natural, 1.0)
+        .unwrap();
+    for (side, done) in BoxSide::ALL.iter().zip(e.sides) {
+        let SideExtension::Extended(a) = done else {
+            panic!("{side:?}: {done:?}");
+        };
+        let tol = (1e-9_f64).max(a.truncation + a.rounding);
+        assert!((a.enclosure.mid() - 1.0).abs() <= tol, "{side:?}: {a:?}");
+    }
+    // every side ran along the earlier ones: the box grew on all four
+    let (d0, d1) = (dom(&s), dom(&e.surface));
+    assert!(d1.min().x < d0.min().x && d1.max().x > d0.max().x);
+    assert!(d1.min().y < d0.min().y && d1.max().y > d0.max().y);
+    // only the asked sides
+    let one = s
+        .extended_sides(&kk, &[BoxSide::VMax], Continuity::Tangent, 1.0)
+        .unwrap();
+    assert!(matches!(one.sides[0], SideExtension::NotAsked));
+    assert!(matches!(one.sides[3], SideExtension::Extended(_)));
+    // a full turn closes round the axis: those sides are left, the rulings extended
+    let pl = Axis2Placement::new(Vec3::ZERO, Vec3::Z, Vec3::X);
+    let mut c = Cone::create_canonical(&kk, &pl, 2.0, 2.0, 1.0, false, false).unwrap();
+    c.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 360.0, 3.0))
+        .unwrap();
+    let c = Surface::from(c);
+    let e = c
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Natural, 1.0)
+        .unwrap();
+    let closed = e
+        .sides
+        .iter()
+        .filter(|x| matches!(x, SideExtension::Closed))
+        .count();
+    let grown = e
+        .sides
+        .iter()
+        .filter(|x| matches!(x, SideExtension::Extended(_)))
+        .count();
+    assert_eq!((closed, grown), (2, 2), "{:?}", e.sides);
+    // a side collapsed to a point (a pole) is left: the triangle with its corner at u = 0
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y + x, 0.0, 1.0]];
+    let t = spline(
+        &[row(0.0, 0.0), row(1.0, 0.0), row(2.0, 0.0)],
+        2,
+        1,
+        &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    let e = t
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Natural, 0.5)
+        .unwrap();
+    assert!(
+        matches!(e.sides[0], SideExtension::Collapsed),
+        "{:?}",
+        e.sides
+    );
+    assert!(
+        matches!(e.sides[1], SideExtension::Extended(_)),
+        "{:?}",
+        e.sides
+    );
+}
