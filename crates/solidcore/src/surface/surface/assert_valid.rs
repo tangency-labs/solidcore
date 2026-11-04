@@ -807,7 +807,7 @@ fn b_spline_surface_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) 
             // the same tolerance tests 2 and 3 recognise coincident points by; upstream's
             // monotonicity pass skips a step only below an absolute SM_EFF_ZERO, although
             // it is given dTol * 1000 as the distance its points are distinct at
-            // (WR-732, #2560)
+            // (WR-733, #2560)
             grid_has_non_monotonic_points_with_tol(
                 &net.points,
                 net.v_count,
@@ -1123,7 +1123,7 @@ pub fn grid_has_non_monotonic_points(
 /// monotonicity pass ignores it, testing an absolute `SM_EFF_ZERO` instead. One ulp of a
 /// coordinate is above 1e-12 past about 8192 mm from the origin, so a collapsed or
 /// repeated row that carries one-ulp noise there reads as a zigzag reversing at every
-/// point, where the whole row is one point to any tolerance the check uses (WR-732,
+/// point, where the whole row is one point to any tolerance the check uses (WR-733,
 /// #2560).
 ///
 /// Upstream replaces the last difference with the skipped one, which costs nothing at an
