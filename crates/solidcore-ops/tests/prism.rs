@@ -853,3 +853,12 @@ fn a_drilled_box_moved_is_the_prism_it_was() {
         "not along z once turned"
     );
 }
+
+#[test]
+fn loop_holds_a_point_on_an_edge_line_off_the_loop() {
+    let sq = Loop2::polygon(&[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)]);
+    assert_eq!(loop_holds(&sq, v(-1.0, 0.0)), Some(false));
+    assert_eq!(loop_holds(&sq, v(11.0, 10.0)), Some(false));
+    assert_eq!(loop_holds(&sq, v(5.0, 5.0)), Some(true));
+    assert_eq!(loop_holds(&sq, v(5.0, 0.0)), None);
+}

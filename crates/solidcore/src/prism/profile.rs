@@ -579,25 +579,36 @@ impl Loop2 {
                 .all(|(a, b)| a.end().distance(b.start()) <= tol)
     }
 
-    /// Whether the loop holds `p` by the even–odd rule, decided exactly: the crossings of the
-    /// ray from `p` along +x with each segment, a segment's Bézier spans split until each is
-    /// proved off the ray, left of `p`, or right of it and crossing its level at most once (the
-    /// sign changes of `(y_i - p.y) w_i` bound the crossings, variation diminishing). `None`
-    /// when a span cannot be decided (`p` on or within rounding of the loop).
+    /// Whether the loop holds `p` by the even–odd rule, decided exactly with the half-open
+    /// crossing rule: a point is above the ray from `p` along +x when its `y > p.y`, and below
+    /// it otherwise, so a stretch of the loop lying along the ray's line counts as below it and
+    /// crosses nothing. Each segment's Bézier spans, and a straight join wherever a span ends
+    /// away from where the next starts, are split until each is proved above, below, left of
+    /// `p`, or right of it; a span right of `p` crosses the ray an odd number of times exactly
+    /// when its ends lie on opposite sides (it is connected and stays right of `p`). `None` when
+    /// a span cannot be decided (`p` on or within rounding of the loop).
     #[must_use]
     pub fn holds(&self, p: Point2) -> Option<bool> {
-        let mut odd = false;
+        let mut spans: Vec<Vec<H2>> = Vec::new();
         for s in &self.segs {
-            for span in s.spans()? {
-                odd ^= crossings_odd(span, p)?;
+            spans.extend(s.spans()?);
+        }
+        let ends = |c: &[H2]| Some((point_of(*c.first()?), point_of(*c.last()?)));
+        let mut odd = false;
+        for (here, next) in spans.iter().zip(spans.iter().cycle().skip(1)) {
+            odd ^= crossings_odd(here.clone(), p)?;
+            let (_, end) = ends(here)?;
+            let (start, _) = ends(next)?;
+            if end != start {
+                odd ^= crossings_odd(vec![[end.x, end.y, 1.0], [start.x, start.y, 1.0]], p)?;
             }
         }
         Some(odd)
     }
 }
 
-/// Whether the ray from `p` along +x crosses `span` an odd number of times, counting a crossing
-/// where the span goes from `y <= p.y` to `y > p.y` or back (the half-open rule at its ends).
+/// Whether the ray from `p` along +x crosses `span` an odd number of times by the half-open
+/// rule ([`Loop2::holds`]): a point is above the ray when its `y > p.y`.
 fn crossings_odd(span: Vec<H2>, p: Point2) -> Option<bool> {
     let mut odd = false;
     let mut todo = vec![(span, 0u32)];
@@ -612,25 +623,21 @@ fn crossings_odd(span: Vec<H2>, p: Point2) -> Option<bool> {
         let scale = pts.iter().fold(p.x.abs().max(p.y.abs()), |m, q| {
             m.max(q.x.abs()).max(q.y.abs())
         });
+        // the rounding of the control points and of the hull they bound the span by
         let margin = gamma(32) * scale;
-        let above = |q: &Point2| q.y > p.y + margin;
-        let below = |q: &Point2| q.y < p.y - margin;
-        // off the ray's line, or wholly left of p: no crossing on the ray
-        if pts.iter().all(above) || pts.iter().all(below) || pts.iter().all(|q| q.x < p.x - margin)
+        // proved off the ray's line, or wholly left of p: no crossing on the ray
+        if pts.iter().all(|q| q.y > p.y + margin)
+            || pts.iter().all(|q| q.y < p.y - margin)
+            || pts.iter().all(|q| q.x < p.x - margin)
         {
             continue;
         }
-        // wholly right of p with its y - p.y changing sign at most once: one crossing exactly
-        // when its ends lie on opposite sides
-        let right = pts.iter().all(|q| q.x > p.x + margin);
-        let changes = pts
-            .iter()
-            .zip(pts.iter().skip(1))
-            .filter(|(a, b)| (a.y > p.y) != (b.y > p.y))
-            .count();
-        let ends_off = (above(&first) || below(&first)) && (above(&last) || below(&last));
-        if right && changes <= 1 && ends_off {
-            odd ^= above(&first) != above(&last);
+        // wholly right of p: the span is connected and never meets the line x = p.x, so its
+        // crossings of the ray are its passages between above and below, odd exactly when its
+        // ends are on opposite sides. The ends are the points the neighbouring spans and joins
+        // share, so a level shared end is classified once and the count telescopes round the loop.
+        if pts.iter().all(|q| q.x > p.x + margin) {
+            odd ^= (first.y > p.y) != (last.y > p.y);
             continue;
         }
         if depth >= 48 {

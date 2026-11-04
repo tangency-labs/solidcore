@@ -214,6 +214,29 @@ fn holds_decides_exactly_or_refuses_on_the_boundary() {
 }
 
 #[test]
+fn holds_decides_a_point_off_the_loop_on_an_edge_line_by_the_half_open_rule() {
+    let sq = polygon(&[p(0.0, 0.0), p(10.0, 0.0), p(10.0, 10.0), p(0.0, 10.0)]);
+    // on the line of a horizontal edge, either side of the square
+    assert_eq!(sq.holds(p(-1.0, 0.0)), Some(false));
+    assert_eq!(sq.holds(p(11.0, 0.0)), Some(false));
+    assert_eq!(sq.holds(p(-1.0, 10.0)), Some(false));
+    // on the line of a vertical edge, the ray through both of its corners
+    assert_eq!(sq.holds(p(5.0, -1.0)), Some(false));
+    assert_eq!(sq.holds(p(-1e-3, 10.0)), Some(false));
+    // level with a vertex the ray passes through, inside and outside
+    let diamond = polygon(&[p(0.0, -5.0), p(5.0, 0.0), p(0.0, 5.0), p(-5.0, 0.0)]);
+    assert_eq!(diamond.holds(p(0.0, 0.0)), Some(true));
+    assert_eq!(diamond.holds(p(-6.0, 0.0)), Some(false));
+    // on the loop: refused
+    assert_eq!(sq.holds(p(0.0, 0.0)), None);
+    assert_eq!(sq.holds(p(10.0, 5.0)), None);
+    // a hole's level edges seen from inside the plate
+    let hole = polygon(&[p(2.0, 2.0), p(2.0, 8.0), p(8.0, 8.0), p(8.0, 2.0)]);
+    assert_eq!(hole.holds(p(1.0, 2.0)), Some(false));
+    assert_eq!(hole.holds(p(5.0, 2.0 + 1e-9)), Some(true));
+}
+
+#[test]
 fn hostile_profiles_are_refused_by_kind() {
     let plate = rectangle(p(0.0, 0.0), p(10.0, 10.0));
     let mut bad = plate.clone();
