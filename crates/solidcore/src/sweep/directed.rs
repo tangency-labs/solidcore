@@ -116,7 +116,7 @@ mod tests {
     use super::*;
 
     fn refused_here(r: &Result<impl Sized>) -> bool {
-        matches!(r, Err(SolidError::InvalidInput { operation, .. }) if operation == OP)
+        matches!(r, Err(SolidError::InvalidInput { operation, .. }) if *operation == OP)
     }
 
     /// A segment of length 5 (3-4-0) is made with ends where given; ends 1e-10 apart, the
