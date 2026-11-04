@@ -418,7 +418,7 @@ impl CurveEvaluate for HermiteCurve {
         _from_left: bool,
         non_zero_tangents: bool,
     ) -> Result<Vec<Vec3>> {
-        Ok(Self::evaluate(self, t, num_derivs, non_zero_tangents))
+        Self::evaluate(self, t, num_derivs, non_zero_tangents)
     }
 
     fn evaluate_point(&self, _k: &Kernel, t: f64) -> Result<Point3> {
@@ -636,6 +636,19 @@ impl Clone for Curve {
 }
 
 impl Curve {
+    /// This curve as a B-rep's [`Snapshot`](crate::topology::Snapshot) keeps it: the exact
+    /// evaluation copy (its kind, owner and edge tolerance, the memo of its cache shared)
+    /// under this object's notification identity.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` for geometry nested deeper than `MAX_GEOMETRY_NESTING`.
+    pub(crate) fn snapshot_copy(&self) -> Result<Self> {
+        let mut copy = self.clone_for_evaluation_depth(0)?;
+        copy.notify_identity = self.notify_identity.duplicate_for_snapshot();
+        Ok(copy)
+    }
+
     /// Exact recursive copy after the caller validates the complete geometry graph.
     pub(crate) fn clone_exact_bounded(&self) -> Self {
         let kind = match &self.kind {
@@ -1347,9 +1360,9 @@ impl Curve {
             CurveKind::Composite(_) => Err(base_err()),
             CurveKind::BSpline(c) => c.evaluate(t, num_derivs, from_left, non_zero_tangents),
             CurveKind::Hermite(c) => {
-                // The Hermite evaluator is infallible: bound its output size here.
+                // Preserve the dispatcher operation in errors for excessive orders.
                 crate::curve::check_eval_derivs(num_derivs, OP_EVAL)?;
-                Ok(c.evaluate(t, num_derivs, non_zero_tangents))
+                c.evaluate(t, num_derivs, non_zero_tangents)
             }
             CurveKind::Hyperbola(c) => {
                 c.base()
