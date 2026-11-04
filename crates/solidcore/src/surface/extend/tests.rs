@@ -850,7 +850,7 @@ fn an_infinite_planes_sides_are_unbounded_and_a_finite_planes_extend() {
 }
 
 #[test]
-fn a_cone_extends_as_itself_along_up_to_its_apex_and_is_left_round_its_axis() {
+fn a_cone_extends_as_itself_up_to_its_apex_and_round_its_axis_within_the_open_turn() {
     let kk = k();
     // radius 2 at the bottom, 1 at height 1: the apex at height 2, sqrt 2 slant past the top
     let pl = Axis2Placement::new(Vec3::ZERO, Vec3::Z, Vec3::X);
@@ -858,18 +858,26 @@ fn a_cone_extends_as_itself_along_up_to_its_apex_and_is_left_round_its_axis() {
     c.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0))
         .unwrap();
     let c = Surface::from(c);
+    // round the axis (the u sides): a quarter of the 270 degrees left open, at the radius of
+    // the side's middle (1.5, at height 0.5)
+    let quarter = 67.5_f64.to_radians() * 1.5;
     for how in [Continuity::Tangent, Continuity::Natural] {
         let e = c.extended_sides(&kk, &BoxSide::ALL, how, 5.0).unwrap();
         assert!(matches!(e.surface.kind(), SurfaceKind::Cone(_)), "{how:?}");
-        let around = e
-            .sides
-            .iter()
-            .filter(|x| matches!(x, SideExtension::AroundAxis))
-            .count();
-        assert_eq!(around, 2, "{:?}", e.sides);
+        for s in &e.sides[..2] {
+            let SideExtension::UpToLimit(a) = s else {
+                panic!("{:?}", e.sides);
+            };
+            assert!((a.enclosure.mid() - quarter).abs() <= 1e-8, "{a:?}");
+        }
+        // the sweep grown to 225 degrees: the surface does not close
+        let SurfaceKind::Cone(g) = e.surface.kind() else {
+            unreachable!()
+        };
+        let sweep = g.rev().step_uv_domain().u_interval().length();
+        assert!((sweep - 225.0).abs() <= 1e-9, "{sweep}");
         // one side along runs the whole 5, the other stops short of the apex
-        let mut lengths: Vec<(bool, f64)> = e
-            .sides
+        let mut lengths: Vec<(bool, f64)> = e.sides[2..]
             .iter()
             .filter_map(|x| match x {
                 SideExtension::Extended(a) => Some((false, a.enclosure.mid())),
