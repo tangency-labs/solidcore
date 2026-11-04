@@ -113,7 +113,7 @@ fn default_sphere_precise_properties_fail_at_tight_accuracy() {
                 matches!(
                     result,
                     Err(SolidError::Upstream {
-                        operation: "mass::integrator",
+                        operation: "mass::integrator::step_control",
                         code: solidcore::error::SM_ERR,
                         ..
                     })
