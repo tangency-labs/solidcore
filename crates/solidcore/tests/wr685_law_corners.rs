@@ -256,7 +256,7 @@ fn law_corner_pieces(k: &Kernel, r: [f64; 3]) -> (LawCornerPieces, BSplineSurfac
                 &mut r2,
             )
             .unwrap();
-        surfaces.push(piece.clone());
+        surfaces.push(Surface::from(piece.clone()));
         joined = Some(match joined {
             None => piece,
             Some(mut j) => j.join_surface(&mut piece, SurfParamType::U, 0.0).unwrap(),
@@ -264,6 +264,7 @@ fn law_corner_pieces(k: &Kernel, r: [f64; 3]) -> (LawCornerPieces, BSplineSurfac
         joined_ends.push(joined.as_ref().unwrap().natural_uv_domain().max().x);
     }
     let kept = LawCornerPieces::classify(
+        k,
         &center_line,
         &rail1,
         &[0.0, 10.0, 20.0],
@@ -303,11 +304,11 @@ fn a_law_that_dips_has_the_corner_ball_s_zone_between_its_sides() {
         (before, true, Vec3::new(1.0, 0.2, 0.2), 0.4),
         (after, false, Vec3::new(1.0, -0.2, -0.2), -0.4),
     ] {
-        let d = side.natural_uv_domain();
+        let d = side.natural_uv_domain_with_nurb(&k).unwrap();
         let u = if at_max { d.max().x } else { d.min().x };
         for j in 0..=8 {
             let v = d.min().y + (d.max().y - d.min().y) * f64::from(j) / 8.0;
-            let x = side.evaluate_point(Point2::new(u, v)).unwrap();
+            let x = side.evaluate_point(&k, Point2::new(u, v)).unwrap();
             assert!(((x - CENTRE).length() - 2.0).abs() < 1e-9, "{x:?}");
             assert!(((x - CENTRE).dot(plane) - rhs).abs() < 1e-9, "{x:?}");
         }
@@ -344,6 +345,7 @@ fn approximated_arcs_widen_the_pieces_accuracy() {
     let (kept, _) = law_corner_pieces(&k, [4.0, 2.0, 4.0]);
     let ([center_line, rail1, _], _) = law_curves([4.0, 2.0, 4.0]);
     let approx = LawCornerPieces::classify(
+        &k,
         &center_line,
         &rail1,
         &[0.0, 10.0, 20.0],
@@ -384,7 +386,7 @@ fn a_rounds_pieces_are_found_by_its_corners_once() {
     );
     // a surface that does not turn there has none
     let mut fresh = vec![law_corner_pieces(&k, [4.0, 2.0, 4.0]).0];
-    let smooth = Surface::from(fresh[0].pieces[0].clone());
+    let smooth = fresh[0].pieces[0].clone();
     assert_eq!(
         find_law_corner_pieces(&k, &mut fresh, &smooth).unwrap(),
         None
@@ -408,7 +410,7 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
         store: &store,
         key_of: &|_| ObjectKey(0),
     };
-    brep_volume(k, b, 1e-8, &attrs).unwrap()
+    brep_volume(k, b, 1e-7, &attrs).unwrap()
 }
 
 /// The edge from `p` to `q`, and whether it runs from `q` to `p`.
@@ -592,7 +594,7 @@ fn law_pieces(
     to: Point3,
     knots: &[f64],
     radii: &[f64],
-) -> (Vec<BSplineSurface>, f64) {
+) -> (Kernel, Vec<Surface>, f64) {
     use solidcore::blend::fillet_geom::p1::FilletSolverId;
     let mut k = Kernel::default();
     k.fixes.clone_from(&UpstreamFixes::all());
@@ -613,10 +615,11 @@ fn law_pieces(
         };
         tol = tol.max(s.base().approx_tol_3d);
         for kept in &s.base().law_corner_pieces {
-            pieces.extend(kept.pieces.iter().map(BSplineSurface::copy));
+            pieces.extend(kept.pieces.iter().cloned());
         }
     }
-    (pieces, tol)
+    drop(session);
+    (k, pieces, tol)
 }
 
 /// The worst of [`off_the_balls`] over a 21 x 11 grid of each of `pieces`' natural
@@ -624,7 +627,8 @@ fn law_pieces(
 /// whose middle is before `corner` along the edge (`along`), else over `[corner, t1]`, at
 /// its points over that side.
 fn worst_piece_off_the_balls(
-    pieces: &[BSplineSurface],
+    k: &Kernel,
+    pieces: &[Surface],
     t0: f64,
     corner: f64,
     t1: f64,
@@ -634,8 +638,8 @@ fn worst_piece_off_the_balls(
     let mut worst = 0.0_f64;
     let mut points = 0;
     for piece in pieces {
-        let d = piece.natural_uv_domain();
-        let middle = along(piece.evaluate_point(d.evaluate(0.5, 0.5)).unwrap());
+        let d = piece.natural_uv_domain_with_nurb(k).unwrap();
+        let middle = along(piece.evaluate_point(k, d.evaluate(0.5, 0.5)).unwrap());
         let (t0, t1) = if middle < corner {
             (t0, corner)
         } else {
@@ -644,7 +648,7 @@ fn worst_piece_off_the_balls(
         for i in 0..=20 {
             for j in 0..=10 {
                 let uv = d.evaluate(f64::from(i) / 20.0, f64::from(j) / 10.0);
-                let p = piece.evaluate_point(uv).unwrap();
+                let p = piece.evaluate_point(k, uv).unwrap();
                 if !(t0..=t1).contains(&along(p)) {
                     continue;
                 }
@@ -681,7 +685,7 @@ fn a_law_cornered_rounds_pieces_are_its_balls_envelope() {
     };
     let (a, b) = (Point3::new(0.0, 20.0, 20.0), Point3::new(20.0, 20.0, 20.0));
     for (from, to) in [(a, b), (b, a)] {
-        let (pieces, tol) = law_pieces(
+        let (k, pieces, tol) = law_pieces(
             [20.0; 3],
             from,
             to,
@@ -692,13 +696,14 @@ fn a_law_cornered_rounds_pieces_are_its_balls_envelope() {
             let r = lin(4.0, 2.0, 4.0, x);
             (Point3::new(x, 20.0 - r, 20.0 - r), r)
         };
-        let (worst, points) = worst_piece_off_the_balls(&pieces, 0.0, 10.0, 20.0, |p| p.x, ball);
+        let (worst, points) =
+            worst_piece_off_the_balls(&k, &pieces, 0.0, 10.0, 20.0, |p| p.x, ball);
         eprintln!("dip from {from:?}: {} pieces, {points} points, worst {worst:.3e} off the balls, tol {tol:e}", pieces.len());
         assert_eq!(pieces.len(), 2);
         assert!(points > 100, "{points}");
         assert!(worst <= tol, "{worst}");
     }
-    let (pieces, tol) = law_pieces(
+    let (k, pieces, tol) = law_pieces(
         [10.0, 20.0, 30.0],
         Point3::new(10.0, 0.0, 30.0),
         Point3::new(10.0, 20.0, 30.0),
@@ -709,7 +714,7 @@ fn a_law_cornered_rounds_pieces_are_its_balls_envelope() {
         let r = lin(2.0, 3.0, 2.0, y);
         (Point3::new(10.0 - r, y, 30.0 - r), r)
     };
-    let (worst, points) = worst_piece_off_the_balls(&pieces, 0.0, 10.0, 20.0, |p| p.y, ball);
+    let (worst, points) = worst_piece_off_the_balls(&k, &pieces, 0.0, 10.0, 20.0, |p| p.y, ball);
     eprintln!(
         "peak: {} pieces, {points} points, worst {worst:.3e} off the balls, tol {tol:e}",
         pieces.len()
@@ -879,7 +884,8 @@ fn assert_definitions_or_listed(name: &str, k: &Kernel, b: &Brep) {
 
 /// One law-cornered round of [`a_law_cornered_round_is_its_balls_union`]: its name, the
 /// box, the edge's ends (the law's start at the first), the law's degree, knots and control
-/// radii, the edge, the law as radii at points along the edge, and its corners' kinds.
+/// radii, the edge, the law as radii at points along the edge, its corners' kinds, and
+/// whether its sides are rounds by their definitions.
 struct LawCase {
     name: &'static str,
     size: [f64; 3],
@@ -891,6 +897,7 @@ struct LawCase {
     edge: LawEdge,
     law: &'static [(f64, f64)],
     corners: &'static [LawCornerKind],
+    definitions: bool,
 }
 
 /// The round built at its law's corners (`BuildLawCorners`, the fork's 7babe17 with
@@ -910,7 +917,10 @@ struct LawCase {
 ///   through `p`), to that angle, so the crease angle is the angle between those
 ///   two, over twice the angle between parallel vectors;
 /// - the body is clean at check level 2, with one face per side and one per dip;
-/// - every face the round made is a definition or listed in the ledger (#2505).
+/// - every face the round made is a definition or listed in the ledger (#2505): each side
+///   its round by its definition, the law trimmed to the side, except where the trace's
+///   stations past the edge's end take the law through zero (the dip then peak's last side,
+///   whose round is then skinned, as a whole round's would be).
 #[test]
 fn a_law_cornered_round_is_its_balls_union() {
     const A: Point3 = Point3::new(0.0, 20.0, 20.0);
@@ -928,6 +938,7 @@ fn a_law_cornered_round_is_its_balls_union() {
         edge: LawEdge::Cube,
         law: DIP,
         corners: &[LawCornerKind::Dip],
+        definitions: true,
     };
     let cases = [
         dip("dip", A, B),
@@ -950,6 +961,7 @@ fn a_law_cornered_round_is_its_balls_union() {
             edge: LawEdge::Block,
             law: &[(0.0, 2.0), (10.0, 3.0), (20.0, 2.0)],
             corners: &[LawCornerKind::Peak],
+            definitions: true,
         },
         LawCase {
             name: "dip then peak",
@@ -957,6 +969,11 @@ fn a_law_cornered_round_is_its_balls_union() {
             radii: &[4.0, 2.0, 4.0, 2.0],
             law: &[(0.0, 4.0), (5.0, 2.0), (15.0, 4.0), (20.0, 2.0)],
             corners: &[LawCornerKind::Dip, LawCornerKind::Peak],
+            // Its last side's law, 4 -> 2 over the last quarter, carried on past the edge's
+            // end as the trace's stations run (10 past it), falls through zero at 25: the
+            // definition has no ball there (the gate of a variable round's definition,
+            // 0d43b4c), so the sides are skinned.
+            definitions: false,
             ..dip("", A, B)
         },
     ];
@@ -1122,7 +1139,18 @@ fn a_law_cornered_round_is_its_balls_union() {
                 f.index()
             );
         }
-        assert_definitions_or_listed(name, &k, &body);
+        if case.definitions {
+            assert_definitions_or_listed(name, &k, &body);
+        } else {
+            for (f, _, _) in rounds.iter().filter(|(f, _, _)| !zones.contains(f)) {
+                let s = body.face(*f).unwrap().surface.clone().unwrap();
+                assert!(
+                    matches!(s.kind(), SurfaceKind::BSpline(_)),
+                    "{name}: face {} is not a skin",
+                    f.index()
+                );
+            }
+        }
     }
 }
 
