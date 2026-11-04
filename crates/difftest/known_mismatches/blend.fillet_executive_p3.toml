@@ -3,7 +3,7 @@
 
 # Known mismatches of blend.fillet_executive_p3 (format: crates/difftest/src/known.rs).
 
-# The default kernel's blend corner (#2400; plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md): 176 cases.
+# The default kernel's blend corner (#2400; plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md): 158 cases.
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "big-rad-filleted_box-r2.0-top-edges"
@@ -80,16 +80,6 @@ why = "old corner code deleted, #2400: the blend corner is the default now; main
 unit = "blend.fillet_executive_p3"
 case = "law-cube20-e0-deg2-smooth-g2"
 why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.mass_properties[0]: cpp=2.364585839284445e3 rust=2.364585829344723e3)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "corner3x2-union-overhang-corner-edges6-12-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "corner3x2-union-overhang-corner-edges6-13-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
@@ -413,21 +403,6 @@ why = "old corner code deleted, #2400: the blend corner is the default now; main
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge13-r1.0"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge14-r1.0"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge16-r1.0"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
 case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge9-r0.5"
 why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.result_geometry[395]: cpp=0e0 rust=2e0)"
 
@@ -438,21 +413,6 @@ why = "old corner code deleted, #2400: the blend corner is the default now; main
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge13-r0.5"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.49999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge14-r0.5"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.49999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge16-r0.5"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.49999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
 case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge9-r2.0"
 why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.result_geometry[395]: cpp=0e0 rust=2e0)"
 
@@ -460,56 +420,6 @@ why = "old corner code deleted, #2400: the blend corner is the default now; main
 unit = "blend.fillet_executive_p3"
 case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge12-r2.0"
 why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.result_geometry[431]: cpp=0e0 rust=2e0)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge13-r2.0"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 1.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge14-r2.0"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 1.9999899999990904)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-overhang-union-nx1-multi-neighbour-end-face-edge16-r2.0"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 1.9999899999990904)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-union-overhang-front-edges14-15-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-union-overhang-front-edges14-22-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-union-overhang-front-edges15-16-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-union-overhang-corner-edges12-13-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-union-overhang-corner-edges14-15-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-union-overhang-corner-edges14-22-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "stubs3-union-overhang-corner-edges15-22-r1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (rust: blend::fillet_executive::session::finish: upstream status 1001: refused; the largest size that builds is 0.99999)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
