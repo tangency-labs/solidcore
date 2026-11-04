@@ -80,9 +80,9 @@ impl Cone {
             });
             if past {
                 // the slant length from the side to where the radius meets twice its rounding,
-                // the radius shrinking by sin(theta) per unit of slant
+                // the radius shrinking by |sin(theta)| per unit of slant (theta < 0 narrows upward)
                 let end = if high { old[1] } else { old[0] };
-                let room = (self.radius(end) - 2.0 * rounding(end)) / theta.sin();
+                let room = (self.radius(end) - 2.0 * rounding(end)) / theta.sin().abs();
                 return Err(SolidError::ExtendRefused {
                     operation: OP,
                     refusal: ExtendRefusal::PastApex,
