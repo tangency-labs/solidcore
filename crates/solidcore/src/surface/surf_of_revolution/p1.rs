@@ -505,7 +505,10 @@ impl SurfOfRevolution {
     /// The surface of one full revolution of `swept_curve` about the axis through
     /// `axis_point` along `axis_direction` (`CreateCanonical`, co-ported from unit
     /// `surface.surf_of_revolution_p2`): the X axis points from the axis point to the
-    /// curve's STEP start point (or, when that is on the axis, its point at 45%), the
+    /// curve's STEP start point (with
+    /// [`UpstreamFixes::revolution_frame_from_profile_origin`](crate::kernel::UpstreamFixes::revolution_frame_from_profile_origin),
+    /// its point at parameter 0 when the STEP interval holds it, WR-738; or, when that
+    /// is on the axis, its point at 45%), the
     /// domain is `[0, 360]` by the curve's STEP interval; the NURB is made by
     /// [`Self::make_nurb`]. A zero axis (squared length below `SM_EFF_ZERO_SQ`) is
     /// taken as `(0, 0, 1)`, as upstream's unchecked `Unitize`.
@@ -527,8 +530,17 @@ impl SurfOfRevolution {
         // locals
         let crv_ivl = gen_step_interval(&swept_curve)?;
 
-        // SweptCurve start point
-        let mut pnt = first(&gen_evaluate_step(k, &swept_curve, crv_ivl.min(), 0)?)?;
+        // SweptCurve start point; with the fix (WR-738) the point at its parameter origin
+        // when the interval holds it: the point the profile is defined from, where an
+        // unbounded profile's start is SM_INFINITE_PARAMETER away (past the axis for a
+        // line crossing it, so the frame would face the other nappe)
+        let ref_param =
+            if k.fixes.revolution_frame_from_profile_origin && crv_ivl.contains_value(0.0, 0.0) {
+                0.0
+            } else {
+                crv_ivl.min()
+            };
+        let mut pnt = first(&gen_evaluate_step(k, &swept_curve, ref_param, 0)?)?;
 
         // Vector from SweptCurve Start to RotAxis point
         let mut x_vec = pnt - axis_point;
