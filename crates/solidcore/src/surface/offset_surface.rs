@@ -87,9 +87,8 @@
 //! - **Upstream bugs kept** (`plan/upstream-issues.md`): the third derivatives `Cuuv` and
 //!   `Cuvv` of the normal's numerator use the coefficient `3.0` for `Buuv x Buv` and
 //!   `Buvv x Buv` (the derivative of `Cuu` / `Cvv` gives `1` and `-1`); the outputs
-//!   `Duvv` and `Dvvv` add `Buuv` instead of `Buvv` / `Bvvv`. The opt-in
-//!   `Kernel::fixes.offset_surface_third_derivative_terms` corrects exactly those four
-//!   terms (WR-160, WR-161; PR #1914), off by default for pinned C++ parity; orders 0..2
+//!   `Duvv` and `Dvvv` add `Buuv` instead of `Buvv` / `Bvvv`. The four terms are
+//!   corrected unconditionally (WR-160, WR-161; PR #1914); orders 0..2
 //!   and `Duuu` are unchanged, and `WR-162` (the upper-half, unequal-order second-
 //!   derivative slot write) is still unfixed. `SplitAt` with an extended
 //!   surface splits the base surface a second time for the extended halves; `SwapUV`
@@ -1736,15 +1735,10 @@ impl OffsetSurface {
             let nuuu = (cuuu - 3.0 * mu * nuu - 3.0 * muu * nu - muuu * n) / m_len;
             put(out, 3 * (hv + 1), d(3, 0)? + offset_distance * nuuu)?;
         }
-        // WR-160/WR-161: the opt-in correction of the four third-order terms.
-        let third_terms_fixed = k.fixes.offset_surface_third_derivative_terms;
         if cond_uuv {
-            // (upstream's 3.0 for Buuv x Buv; the derivative of Cuu gives 1, which
-            // `fixes.offset_surface_third_derivative_terms` takes; WR-160)
-            let buuv_buv_coeff = if third_terms_fixed { 1.0 } else { 3.0 };
             let cuuv = d(3, 1)?.cross(bv)
                 + d(3, 0)?.cross(d(0, 2)?)
-                + (buuv_buv_coeff * d(2, 1)?).cross(d(1, 1)?)
+                + d(2, 1)?.cross(d(1, 1)?)
                 + (2.0 * d(2, 0)?).cross(d(1, 2)?)
                 + bu.cross(d(2, 2)?);
             let muuv =
@@ -1754,41 +1748,25 @@ impl OffsetSurface {
             put(out, 2 * (hv + 1) + 1, d(2, 1)? + offset_distance * nuuv)?;
         }
         if cond_uvv {
-            // (upstream's 3.0 for Buvv x Buv, -1 by the derivative of Cvv; and Buuv in
-            // the output where Buvv belongs; `fixes.offset_surface_third_derivative_terms`
-            // corrects both; WR-160 and WR-161)
-            let buvv_buv_coeff = if third_terms_fixed { -1.0 } else { 3.0 };
             let cuvv = d(2, 2)?.cross(bv)
                 + (2.0 * d(2, 1)?).cross(d(0, 2)?)
-                + (buvv_buv_coeff * d(1, 2)?).cross(d(1, 1)?)
+                + (-1.0 * d(1, 2)?).cross(d(1, 1)?)
                 + d(2, 0)?.cross(d(0, 3)?)
                 + bu.cross(d(1, 3)?);
             let muvv =
                 (cvv.dot(cu) + 2.0 * cv.dot(cuv) + c.dot(cuvv) - mvv * mu - 2.0 * mv * muv) / m_len;
             let nuvv =
                 (cuvv - mu * nvv - 2.0 * muv * nv - 2.0 * mv * nuv - mvv * nu - muvv * n) / m_len;
-            let duvv = if third_terms_fixed {
-                d(1, 2)?
-            } else {
-                d(2, 1)?
-            };
-            put(out, (hv + 1) + 2, duvv + offset_distance * nuvv)?;
+            put(out, (hv + 1) + 2, d(1, 2)? + offset_distance * nuvv)?;
         }
         if hv >= 3 {
-            // (upstream adds Buuv where Bvvv belongs; `fixes.offset_surface_third_derivative_terms`
-            // adds Bvvv; WR-161)
             let cvvv = d(1, 3)?.cross(bv)
                 + (3.0 * d(1, 2)?).cross(d(0, 2)?)
                 + (3.0 * d(1, 1)?).cross(d(0, 3)?)
                 + bu.cross(d(0, 4)?);
             let mvvv = (3.0 * cv.dot(cvv) + c.dot(cvvv) - 3.0 * mv * mvv) / m_len;
             let nvvv = (cvvv - 3.0 * mv * nvv - 3.0 * mvv * nv - mvvv * n) / m_len;
-            let dvvv = if third_terms_fixed {
-                d(0, 3)?
-            } else {
-                d(2, 1)?
-            };
-            put(out, 3, dvvv + offset_distance * nvvv)?;
+            put(out, 3, d(0, 3)? + offset_distance * nvvv)?;
         }
 
         if !do_eval_simple {
@@ -3780,7 +3758,7 @@ mod tests {
         assert!(fixed < 1e-9, "fixed copies disagree by {fixed}");
     }
 
-    // ---- WR-160 / WR-161: opt-in third-derivative terms --------------------------------
+    // ---- WR-160 / WR-161: corrected third-derivative terms --------------------------------
 
     /// The biquadratic Bezier base `B(u, v) = (u + u^2 v, v + u v^2, u v)` over
     /// `[0, 1]^2`. Its `Bu x Bv = (1 + uv) * q` with `q = (-v, -u, 1 + 3uv)`, so on the
@@ -3897,9 +3875,8 @@ mod tests {
         }
     }
 
-    fn offset_evaluates(d: f64, fixed: bool) -> (Kernel, OffsetSurface) {
-        let mut k = Kernel::default();
-        k.fixes.offset_surface_third_derivative_terms = fixed;
+    fn offset_evaluates(d: f64) -> (Kernel, OffsetSurface) {
+        let k = Kernel::default();
         let off = OffsetSurface::new(&k, d, biquadratic_base(), true, SS_UNKNOWN).unwrap();
         (k, off)
     }
@@ -3929,7 +3906,7 @@ mod tests {
         // A full rectangular (3, 3) request exceeds MAX_DERIVS and is not this test.
         for d in [0.125, -0.125] {
             for (u, v) in [(0.25, 0.5), (0.5, 0.25)] {
-                let (k, off) = offset_evaluates(d, false);
+                let (k, off) = offset_evaluates(d);
                 let m = off
                     .evaluate(&k, Point2::new(u, v), 3, 3, flags(true, true))
                     .unwrap();
@@ -4104,7 +4081,7 @@ mod tests {
         let mut sample = 0;
         for d in [0.125, -0.125] {
             for (u, v) in [(0.25, 0.5), (0.5, 0.25)] {
-                let (k, off) = offset_evaluates(d, false);
+                let (k, off) = offset_evaluates(d);
                 let m = off
                     .evaluate(&k, Point2::new(u, v), 3, 3, flags(true, true))
                     .unwrap();
