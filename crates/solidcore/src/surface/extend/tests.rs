@@ -814,3 +814,74 @@ fn every_side_extends_in_turn_and_closed_or_collapsed_sides_are_left() {
         e.sides
     );
 }
+
+#[test]
+fn an_infinite_planes_sides_are_unbounded_and_a_finite_planes_extend() {
+    let kk = k();
+    let inf = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 3.0), Vec3::Z));
+    let e = inf
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Tangent, 4.33)
+        .unwrap();
+    assert!(
+        e.sides
+            .iter()
+            .all(|x| matches!(x, SideExtension::Unbounded)),
+        "{:?}",
+        e.sides
+    );
+    let p = Surface::from(Plane::new(
+        Vec3::ZERO,
+        Vec3::X,
+        Vec3::Y,
+        Vec2::new(1.0, 1.0),
+        &Extent2d::from_bounds(0.0, 0.0, 10.0, 10.0),
+    ));
+    let e = p
+        .extended_sides(&kk, &BoxSide::ALL, Continuity::Tangent, 4.33)
+        .unwrap();
+    assert!(
+        e.sides
+            .iter()
+            .all(|x| matches!(x, SideExtension::Extended(_))),
+        "{:?}",
+        e.sides
+    );
+    assert!(matches!(e.surface.kind(), SurfaceKind::Plane(_)));
+}
+
+#[test]
+fn a_cone_extends_as_itself_along_up_to_its_apex_and_is_left_round_its_axis() {
+    let kk = k();
+    // radius 2 at the bottom, 1 at height 1: the apex at height 2, sqrt 2 slant past the top
+    let pl = Axis2Placement::new(Vec3::ZERO, Vec3::Z, Vec3::X);
+    let mut c = Cone::create_canonical(&kk, &pl, 2.0, 1.0, 1.0, false, false).unwrap();
+    c.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0))
+        .unwrap();
+    let c = Surface::from(c);
+    for how in [Continuity::Tangent, Continuity::Natural] {
+        let e = c.extended_sides(&kk, &BoxSide::ALL, how, 5.0).unwrap();
+        assert!(matches!(e.surface.kind(), SurfaceKind::Cone(_)), "{how:?}");
+        let around = e
+            .sides
+            .iter()
+            .filter(|x| matches!(x, SideExtension::AroundAxis))
+            .count();
+        assert_eq!(around, 2, "{:?}", e.sides);
+        // one side along runs the whole 5, the other stops short of the apex
+        let mut lengths: Vec<(bool, f64)> = e
+            .sides
+            .iter()
+            .filter_map(|x| match x {
+                SideExtension::Extended(a) => Some((false, a.enclosure.mid())),
+                SideExtension::UpToLimit(a) => Some((true, a.enclosure.mid())),
+                _ => None,
+            })
+            .collect();
+        lengths.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let [(true, short), (false, long)] = lengths[..] else {
+            panic!("{:?}", e.sides);
+        };
+        assert!((long - 5.0).abs() <= 1e-8, "{long}");
+        assert!(short < 2f64.sqrt() && short > 2f64.sqrt() - 1e-6, "{short}");
+    }
+}

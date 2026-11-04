@@ -14,11 +14,22 @@
 //! direction and a singular side. Every other side is extended or refused with the side's
 //! own typed error.
 //!
+//! Two more rules (owner, 2026-11-04):
+//! - **Unbounded.** A plane's side at `+-INFINITE_PARAMETER` (the kernel's infinite plane) is
+//!   left: the plane has no side there to extend past.
+//! - **Analytic kinds as themselves.** A cone, sphere, torus or surface of revolution is
+//!   extended as its own exact shape whatever the continuity asked
+//!   ([`Surface::extended_by_distance`] Natural, [`Surface::continued`] for the analytic
+//!   labels): round its axis is a closed direction, so a side round the axis is left; along
+//!   the generator it is extended up to its apex, pole or full turn where the distance asked
+//!   runs past it (the refusal's named distance, the longest that works), and said so.
+//!
 //! Deviations: none (no upstream counterpart). No recursion.
 
-use super::{Continuity, Extended};
+use super::{Continuity, ExtendRefusal, Extended};
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
+use crate::math::INFINITE_PARAMETER;
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::surface::side::{Across, BoxSide};
 use crate::surface::surface::{Surface, SurfaceKind};
@@ -36,6 +47,25 @@ pub enum SideExtension {
     Closed,
     /// Left: the side is not proved longer than a point.
     Collapsed,
+    /// Left: a plane's side at `+-INFINITE_PARAMETER`, unbounded.
+    Unbounded,
+    /// Left: a revolution's side round its axis (a closed direction).
+    AroundAxis,
+    /// Extended less than asked, up to an apex, pole or full turn: the length across it.
+    UpToLimit(Across),
+}
+
+/// For a cone, sphere, torus or surface of revolution, whether side `side` runs round its
+/// axis (its NURBS u is the sweep unless swapped); `None` for any other kind.
+fn round_the_axis(s: &Surface, side: BoxSide) -> Option<bool> {
+    let swap = match s.kind() {
+        SurfaceKind::Cone(c) => c.rev().swap_uv(),
+        SurfaceKind::Sphere(sp) => sp.base.swap_uv,
+        SurfaceKind::Torus(t) => t.base.swap_uv,
+        SurfaceKind::SurfOfRevolution(r) => r.swap_uv(),
+        _ => return None,
+    };
+    Some(side.is_u() != swap)
 }
 
 /// A surface extended past several sides ([`Surface::extended_sides`]).
@@ -97,12 +127,45 @@ impl Surface {
                 *done = SideExtension::Collapsed;
                 continue;
             }
-            let grown = surface.extended_by_distance(k, &dom, side, how, distance)?;
+            if matches!(carrier.kind(), SurfaceKind::Plane(_))
+                && side.at(&dom).abs() >= INFINITE_PARAMETER
+            {
+                *done = SideExtension::Unbounded;
+                continue;
+            }
+            let revolution = round_the_axis(carrier, side);
+            if revolution == Some(true) {
+                *done = SideExtension::AroundAxis;
+                continue;
+            }
+            let how = if revolution.is_some() {
+                Continuity::Natural
+            } else {
+                how
+            };
+            let (grown, capped) = match surface.extended_by_distance(k, &dom, side, how, distance) {
+                Ok(g) => (g, false),
+                // as itself up to its apex, pole or turn: the longest distance that works
+                Err(SolidError::ExtendRefused {
+                    refusal:
+                        ExtendRefusal::PastApex | ExtendRefusal::PastPole | ExtendRefusal::OverATurn,
+                    distance: Some(limit),
+                    ..
+                }) if revolution.is_some() && limit > 0.0 && limit < distance => (
+                    surface.extended_by_distance(k, &dom, side, how, limit)?,
+                    true,
+                ),
+                Err(e) => return Err(e),
+            };
             for s in &mut on {
                 *s = grown.side_of(*s);
             }
             extension = extension.max(grown.extension);
-            *done = SideExtension::Extended(grown.across);
+            *done = if capped {
+                SideExtension::UpToLimit(grown.across)
+            } else {
+                SideExtension::Extended(grown.across)
+            };
             current = Some(grown);
         }
         let surface = match current {
