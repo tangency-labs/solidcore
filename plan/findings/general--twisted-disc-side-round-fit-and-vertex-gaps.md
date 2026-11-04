@@ -1,4 +1,4 @@
-# General: the twisted disc's side rounds miss their radius by up to 1.8e-3, and its top round leaves vertex gaps (2026-11-04)
+# General: the twisted disc's side rounds miss their radius by up to 1.8e-3; its top round leaves vertex gaps and fails at its named fit (2026-11-04)
 
 Unit: the generic blend (hub #2243); `blend::fillet_exact`, the fillet trace's surface. Issue
 #2652 (solidcraft#11848), PR #2659.
@@ -20,12 +20,15 @@ below 5e-5. Its rail-to-rail section has 3 control points, 106 along u. The othe
 rounds (`FaceId(29)`, `FaceId(31)`) put the top round's ball 2 from their walls to 1.4e-6.
 
 Effect at the top round R2: over each side round's top edge the ball is as wide as the side
-round, so its centre should be fixed (the spine crossing z = 13). With #2659 the two
-accurate side rounds' top edges are the ball's piece (their end centres agree to 1e-12).
-Over `FaceId(28)`'s top edge the centres at the edge's ends are 1.1e-3 apart (solver
-tolerance 1.6e-4; the centre of a collapsed offset is ill-conditioned, so the round's 1e-4
-error moves it 10 times as far), so it is no ball's piece and is traced through a nearly
-fixed centre: the rail folds and the round fails with 1001 as before (#2652's diagnosis).
+round, so its centre should be fixed (the spine crossing z = 13). Over the two accurate
+side rounds it is (their end centres agree to 1e-12). Over `FaceId(28)`'s top edge the
+round's radius of curvature toward the ball runs from 1.9988 to 2.0002, crossing 2: the face
+is as wide as the ball along part of the edge only. Under the rule of #2659 (jyviko: a full
+match only; a partial match is refused naming the smallest size that fits) the round is
+refused before the trace (`OffsetCollapses`, fit 1.95861259706246 = 1.9988 less the margin
+0.0402). Before #2659 it was traced through the nearly fixed centre: the centres at the
+edge's ends are 1.1e-3 apart (solver tolerance 1.6e-4; a collapsed offset's centre is
+ill-conditioned), the rail folded and the round failed with 1001 (#2652's diagnosis).
 
 Suspected cause: the side round's surface between its traced sections (the error is small
 at the section rows and large between them, with alternating sign), so its section spacing
@@ -40,6 +43,10 @@ with the same test failing at offsets up to 5.5762783e-05. With a ball smaller t
 rounds no offset collapses, so these gaps are not #2652's event; whether they come from
 the side rounds of part 1 is not yet known.
 
-So the issue's 2 mm round is not yet refused with that fit: at 2 mm the trace over
-`FaceId(28)`'s top edge fails (part 1) before the band check runs, and the fit size does not
-build cleanly (part 2).
+## 3. The named fit does not build
+
+At the fit 1.95861259706246 the top round runs 877 s (release) and fails with
+`Upstream { operation: "blend::fillet_executive::session::crossing_rails", code: 1001,
+entity: Edge(EdgeId(3)) }`, with no fit of its own; 1.9 fails the same way (a slot wall's
+top edge). At 1.5 it is refused `BandsOverlap` naming 1.1018, which builds with the gaps of
+part 2. So after #2659 the user is shown 1.9586 at 2 mm, and that size does not build.
