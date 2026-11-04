@@ -1047,16 +1047,23 @@ pub struct SweepRef<'a> {
 }
 
 impl<'a> SweepRef<'a> {
-    /// Whether `uv` is on the far end of the face's parameter across the sweep, where a path
-    /// definition takes the segment that ends at a joint.
-    fn at_face_end(&self, uv: Point2) -> bool {
+    /// Whether a path definition read at `uv` takes the segment that ends at a joint: the face's
+    /// own side at an end of its parameter across the sweep is inward, and the map takes the
+    /// face's parameter to the definition's with the sign of its slope `b`, so the face's far end
+    /// is the definition's earlier side when `b > 0` and its later side when `b < 0`, and the
+    /// face's near end the reverse.
+    fn joint_side_is_left(&self, uv: Point2) -> bool {
         let dom = self.net.natural_uv_domain();
         let (x, iv) = if self.sweep.map.swapped {
             (uv.x, dom.u_interval())
         } else {
             (uv.y, dom.v_interval())
         };
-        x > iv.min() && x >= iv.max() - 1e-12 * (1.0 + iv.max().abs())
+        let tol = 1e-12 * (1.0 + iv.max().abs().max(iv.min().abs()));
+        let far = x >= iv.max() - tol && x > iv.min();
+        let near = x <= iv.min() + tol && x < iv.max();
+        let rising = self.sweep.map.b[1] > 0.0;
+        (far && rising) || (near && !rising)
     }
 
     /// The definition.
@@ -1115,7 +1122,7 @@ impl<'a> SweepRef<'a> {
             uv,
             highest_u_deriv,
             highest_v_deriv,
-            self.at_face_end(uv),
+            self.joint_side_is_left(uv),
         )
     }
 }

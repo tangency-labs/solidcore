@@ -821,67 +821,95 @@ fn the_definitions_partials_at_the_joints_are_right_sided() {
     assert!(joints >= 3, "{joints}");
 }
 
-/// At the end of a face that ends at an interior joint of the wire, the definition read
-/// through the face (`SweepRef`, asked for the definition itself) has the partials along the
-/// path of its own side, the left one: those of the face's points, taken backwards.
-#[test]
-fn the_definitions_partials_at_a_faces_end_are_its_own_sides() {
-    let mut k = Kernel::default();
-    let wire = wire_path(&k);
-    let b = create_pipe_sweep(&mut k, RADIUS, Some(&Curve::from(wire)), false).unwrap();
-    let all = walls(&b);
-    let _exact = solidcore::surface::procedural_blend::NetScope::exact(&k);
-    let mut ends = 0;
-    for wall in &all {
-        let s = wall.procedural_sweep().expect("a definition");
-        let d = s.definition();
-        let dom = s.net().natural_uv_domain();
-        let (along_u, a) = if d.definition_map().2 {
-            (true, dom.u_interval())
+/// The partials of a wall's definition along the path at both ends of the face's parameter
+/// across the sweep, read through the face (`SweepRef`, asked for the definition itself),
+/// are those of the face's own points taken inward, at every end that is an interior joint
+/// of the wire. Returns how many ends were checked.
+fn check_face_ends(k: &Kernel, wall: &Surface, what: &str) -> usize {
+    let s = wall.procedural_sweep().expect("a definition");
+    let d = s.definition();
+    let dom = s.net().natural_uv_domain();
+    let (along_u, a) = if d.definition_map().2 {
+        (true, dom.u_interval())
+    } else {
+        (false, dom.v_interval())
+    };
+    let other = if along_u {
+        dom.v_interval()
+    } else {
+        dom.u_interval()
+    };
+    let path_ivl = d.path().unwrap().path().natural_interval();
+    let make = |x: f64, o: f64| {
+        if along_u {
+            Point2::new(x, o)
         } else {
-            (false, dom.v_interval())
-        };
-        let other = if along_u {
-            dom.v_interval()
-        } else {
-            dom.u_interval()
-        };
-        let t_end = d
-            .path()
-            .unwrap()
-            .path_parameter(
-                d.definition_parameters(Point2::new(dom.max().x, dom.max().y))
-                    .y,
-            )
-            .0;
-        if t_end >= d.path().unwrap().path().natural_interval().max() - 1e-12 {
+            Point2::new(o, x)
+        }
+    };
+    let h = 1e-7 * (a.max() - a.min());
+    let mut checked = 0;
+    for end in [a.min(), a.max()] {
+        let o0 = other.min() + 0.4 * (other.max() - other.min());
+        let wt = d.definition_parameters(make(end, o0));
+        let t = d.path().unwrap().path_parameter(wt.y).0;
+        if t <= path_ivl.min() + 1e-12 || t >= path_ivl.max() - 1e-12 {
             continue;
         }
-        ends += 1;
-        let h = 1e-7 * (a.max() - a.min());
+        checked += 1;
+        let inward = if end == a.min() { end + h } else { end - h };
         for mid in [0.2, 0.55, 0.8] {
             let o = other.min() + (other.max() - other.min()) * mid;
-            let make = |x: f64| {
-                if along_u {
-                    Point2::new(x, o)
-                } else {
-                    Point2::new(o, x)
-                }
-            };
-            let partials = s.evaluate(&k, make(a.max()), 1, 1).unwrap();
+            let partials = s.evaluate(k, make(end, o), 1, 1).unwrap();
             let analytic = if along_u {
                 partials[1][0]
             } else {
                 partials[0][1]
             };
-            let p1 = s.evaluate_point(&k, make(a.max())).unwrap();
-            let p0 = s.evaluate_point(&k, make(a.max() - h)).unwrap();
-            let fd = (p1 - p0) * (1.0 / h);
+            let p_end = s.evaluate_point(k, make(end, o)).unwrap();
+            let p_in = s.evaluate_point(k, make(inward, o)).unwrap();
+            let fd = (p_in - p_end) * (1.0 / (inward - end));
             assert!(
                 (analytic - fd).length() <= 1e-4 * (1.0 + analytic.length()),
-                "face end at {t_end}: {analytic:?} against {fd:?}"
+                "{what}, end at t = {t}: {analytic:?} against {fd:?}"
             );
         }
     }
-    assert!(ends >= 3, "{ends}");
+    checked
+}
+
+/// At the end of a face that ends at an interior joint of the wire the definition has the
+/// partials of the face's own side, whether the face was reversed or swapped.
+#[test]
+fn the_definitions_partials_at_a_faces_ends_are_its_own_sides() {
+    let mut k = Kernel::default();
+    let wire = wire_path(&k);
+    let b = create_pipe_sweep(&mut k, RADIUS, Some(&Curve::from(wire)), false).unwrap();
+    let _exact = solidcore::surface::procedural_blend::NetScope::exact(&k);
+    let mut checked = 0;
+    for wall in &walls(&b) {
+        checked += check_face_ends(&k, wall, "as built");
+        for edit in 0..6 {
+            let mut e = wall.copy(&k).unwrap();
+            match edit {
+                0 => e.reverse(&k, SurfParamType::U).unwrap(),
+                1 => e.reverse(&k, SurfParamType::V).unwrap(),
+                2 => e.swap_uv(&k).unwrap(),
+                3 => {
+                    e.swap_uv(&k).unwrap();
+                    e.reverse(&k, SurfParamType::U).unwrap();
+                }
+                4 => {
+                    e.swap_uv(&k).unwrap();
+                    e.reverse(&k, SurfParamType::V).unwrap();
+                }
+                _ => {
+                    e.reverse(&k, SurfParamType::U).unwrap();
+                    e.reverse(&k, SurfParamType::V).unwrap();
+                }
+            }
+            checked += check_face_ends(&k, &e, &format!("edit {edit}"));
+        }
+    }
+    assert!(checked >= 20, "{checked}");
 }
