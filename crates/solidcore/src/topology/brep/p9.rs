@@ -47,6 +47,9 @@
 //! WR-527, #1527): on two planes, `MakeEdgeInFaceWithVU` leaves an inner loop whose
 //! test point lies outside the new face's outer loop box (at the retry tolerance)
 //! in place without classifying it, as the fork's tangency-labs/smlib@60b1c6a.
+//! Each inner loop it goes on to classify adds one to
+//! [`WorkCounters::loops_classified`](crate::kernel::WorkCounters::loops_classified)
+//! (the fork's work count, tangency-labs/smlib@edf7414); it changes no result.
 
 use crate::curve::curve::Curve;
 use crate::error::{ignore_status, Result, SolidError, SM_ERR};
@@ -182,11 +185,10 @@ pub fn find_infinite_region(
         };
         let bounds = match supplied_box {
             Some(bounds) => bounds,
-            None => crate::error::ignored(qbrep::calculate_bounding_box(
-                k,
-                &mut *b,
-                BoundingBoxOptions::default(),
-            ))?
+            None => crate::error::ignored(crate::error::passed_on(
+                qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default()),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?
             .unwrap_or_else(crate::geom::extent3d::Extent3d::new),
         };
         let ray_start = bounds.max() + (bounds.max() - bounds.min()) * 0.5;
@@ -456,7 +458,8 @@ fn is_intersector_approx(curve: &Curve) -> Result<bool> {
     }
 }
 
-/// `OrientSheetSurfaces`. `same=true` is upstream's default orientation policy.
+/// `OrientSheetSurfaces`. `same=true` is upstream's default orientation policy. The
+/// face UV swaps' edit notifications (each face's and its surface's) go through `env`.
 ///
 /// # Errors
 /// `SM_ERR` for a face not in the B-rep or a B-rep that is not a sheet; those of the
@@ -467,6 +470,7 @@ pub fn orient_sheet_surfaces(
     b: &mut Brep,
     face: Option<FaceId>,
     same: bool,
+    env: &mut edge::NotifyEnv<'_>,
 ) -> Result<()> {
     let faces = brep_faces(b)?;
     let Some(face) = face.filter(|face| faces.contains(face)) else {
@@ -478,7 +482,10 @@ pub fn orient_sheet_surfaces(
     if is_oriented_sheet(k, b)? {
         if !same {
             // Status ignored upstream (SmBrep.cpp:11644).
-            ignore_status(swap_brep_uv(k, b))?;
+            ignore_status(crate::error::passed_on(
+                swap_brep_uv(k, b, env),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         return Ok(());
     }
@@ -487,7 +494,7 @@ pub fn orient_sheet_surfaces(
         let mut marks = Marks::default();
         if !same {
             // Status ignored upstream (SmBrep.cpp:11659).
-            ignore_status(swap_face_uv(k, b, &mut marks, face))?;
+            ignore_status(swap_face_uv(k, b, &mut marks, face, env))?;
         }
         let upward = required(
             crate::topology::face::p2::upward_faceuse(b, face)?,
@@ -506,7 +513,7 @@ pub fn orient_sheet_surfaces(
                 let f = required(b.faceuse(neighbor)?.face, "neighbor without face")?;
                 if crate::topology::face::p2::upward_faceuse(b, f)? != Some(neighbor) {
                     // Status ignored upstream (SmBrep.cpp:11690).
-                    ignore_status(swap_face_uv(k, b, &mut marks, f))?;
+                    ignore_status(swap_face_uv(k, b, &mut marks, f, env))?;
                 }
                 pending.push(neighbor);
             }
@@ -535,9 +542,9 @@ fn is_oriented_sheet(k: &mut Kernel, b: &Brep) -> Result<bool> {
 }
 
 /// `SwapUV()` ([`crate::topology::brep::p2::swap_uv`], which claims its own mark).
-fn swap_brep_uv(k: &mut Kernel, b: &mut Brep) -> Result<()> {
+fn swap_brep_uv(k: &mut Kernel, b: &mut Brep, env: &mut edge::NotifyEnv<'_>) -> Result<()> {
     let mut marks = crate::topology::topology_traverser::Marks::default();
-    crate::topology::brep::p2::swap_uv(k, b, &mut marks)
+    crate::topology::brep::p2::swap_uv(k, b, &mut marks, env)
 }
 
 /// `sm_SwapFaceUV(pFace, SM_MT_NOMARK)`: swap without marking the face.
@@ -546,6 +553,7 @@ fn swap_face_uv(
     b: &mut Brep,
     marks: &mut crate::topology::topology_traverser::Marks,
     face: FaceId,
+    env: &mut edge::NotifyEnv<'_>,
 ) -> Result<()> {
     crate::topology::brep::p1::swap_face_uv(
         k,
@@ -553,6 +561,7 @@ fn swap_face_uv(
         marks,
         face,
         crate::geom::context::MarkType::NoMark,
+        env,
     )
 }
 
@@ -1148,6 +1157,12 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
             state,
             &[EntityRef::Edge(new_edge), EntityRef::Vertex(new_vertex)],
         );
+        // `SER(sIvl1.SetMinMax(..))`, `SER(sIvl2.SetMinMax(..))` (fork 60a8a51): a split
+        // parameter outside the edge's interval fails here instead of being swapped in
+        if k.fixes.brep_edit_statuses_pass_on {
+            interval.clone().set_min_max(interval.min(), parameter)?;
+            interval.clone().set_min_max(parameter, interval.max())?;
+        }
         let mut ivl1 = Extent1d::from_min_max(interval.min(), parameter);
         let mut ivl2 = Extent1d::from_min_max(parameter, interval.max());
         let primary = required(
@@ -1195,7 +1210,7 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
         })?;
         let split_parameter;
         if same {
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(edge_id)?.curve.as_mut(),
                     "split edge without curve",
@@ -1205,9 +1220,10 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl1,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             split_parameter = ivl1.max();
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(new_edge)?.curve.as_mut(),
                     "new split edge without curve",
@@ -1217,11 +1233,12 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl2,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             b.edge_mut(edge_id)?.interval = ivl1;
             b.edge_mut(new_edge)?.interval = ivl2;
         } else {
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(edge_id)?.curve.as_mut(),
                     "split edge without curve",
@@ -1231,9 +1248,10 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl2,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             split_parameter = ivl2.min();
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(new_edge)?.curve.as_mut(),
                     "new split edge without curve",
@@ -1243,7 +1261,8 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl1,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             b.edge_mut(edge_id)?.interval = ivl2;
             b.edge_mut(new_edge)?.interval = ivl1;
         }
@@ -1335,19 +1354,22 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
             let old1 = *required(old_pair.first(), "missing original pair")?;
             let orientation = b.edgeuse(old1)?.orientation;
             for (&old, &new) in old_pair.iter().zip(new_pair) {
-                ignore_status(split_uv_trim(
-                    k,
-                    b,
-                    SplitUvInput {
-                        original: old,
-                        new,
-                        point,
-                        parameter: split_parameter,
-                        scaled_zero,
-                        orientation,
-                        for_tessellation,
-                    },
-                ))?;
+                ignore_status(crate::error::passed_on(
+                    split_uv_trim(
+                        k,
+                        b,
+                        SplitUvInput {
+                            original: old,
+                            new,
+                            point,
+                            parameter: split_parameter,
+                            scaled_zero,
+                            orientation,
+                            for_tessellation,
+                        },
+                    ),
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)?;
             }
         }
         let tolerance = b.edge(edge_id)?.tolerance;
@@ -1651,7 +1673,10 @@ pub fn make_edge_in_face_with_vu_with_curve_identity(
             };
             let mut transform = Axis2Placement::default();
             transform.translate(translation);
-            ignore_status(copy.transform(k, &transform, None))?;
+            ignore_status(crate::error::passed_on(
+                copy.transform(k, &transform, None),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         let bottom = if b.edgeuse(eu4)?.orientation == OrientType::Same {
             eu4
@@ -1887,7 +1912,10 @@ pub fn make_edge_in_face_with_vu_with_curve_identity(
         remove_old_loop_vertices(b, start)?;
         remove_old_loop_vertices(b, end)?;
         redistribute_seam_trims(k, b, edge_id, original_trim_owner, seam, &domain)?;
-        ignore_status(fp1::remove_loop(b, face, delete))?;
+        ignore_status(crate::error::passed_on(
+            fp1::remove_loop(b, face, delete),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         delete_loop_records(b, delete, env)?;
     }
     brep_notify(
@@ -2265,6 +2293,8 @@ fn redistribute_inner_loops(
             i += 1;
             continue;
         }
+        // (the SolidCraft fork's work count)
+        k.work_counters.add_loop_classified();
         let target = if classify_to_original { face } else { new_face };
         let other = if classify_to_original { new_face } else { face };
         let mut pc = PointClassification::<EntityRef>::new(tolerance);
@@ -2273,12 +2303,15 @@ fn redistribute_inner_loops(
             let _old_domain = computed_uv_domain(k, b, face)?;
             let new_domain = computed_uv_domain(k, b, new_face)?;
             let surface = required(b.face(face)?.surface.as_ref(), "split face without surface")?;
-            let uv = crate::error::ignored(surface.drop_point::<crate::topology::ObjectHandle>(
-                k,
-                point,
-                &surface.natural_uv_domain_with_nurb(k)?,
-                &crate::surface::surface::p5::DropPointOptions::default(),
-            ))?
+            let uv = crate::error::ignored(crate::error::passed_on(
+                surface.drop_point::<crate::topology::ObjectHandle>(
+                    k,
+                    point,
+                    &surface.natural_uv_domain_with_nurb(k)?,
+                    &crate::surface::surface::p5::DropPointOptions::default(),
+                ),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?
             .map_or(crate::geom::vector2d::Vec2::UNDEF, |drop| drop.result_uv);
             new_domain.contains_point(uv, 0.0)
         } else {
@@ -2353,8 +2386,14 @@ fn redistribute_inner_loops(
         if need_move {
             face_notify(b, face, env, NotifyOperation::PreEdit)?;
             face_notify(b, new_face, env, NotifyOperation::PreEdit)?;
-            ignore_status(fp1::remove_loop(b, face, loop_))?;
-            ignore_status(fp1::insert_loop(b, new_face, loop_))?;
+            ignore_status(crate::error::passed_on(
+                fp1::remove_loop(b, face, loop_),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
+            ignore_status(crate::error::passed_on(
+                fp1::insert_loop(b, new_face, loop_),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             let refreshed = fp2::loops(b, face, false, None)?;
             if refreshed.len() >= loops.len() {
                 return Err(SolidError::invalid_input(
@@ -2447,11 +2486,12 @@ fn computed_uv_domain(
     face: FaceId,
 ) -> Result<crate::geom::extent2d::Extent2d> {
     let initial = b.face(face)?.uv_domain;
-    Ok(crate::error::ignored(
+    Ok(crate::error::ignored(crate::error::passed_on(
         crate::topology::face::p1::calculate_uv_domain_from_uv_trim_curves(
             k, b, face, true, false, false,
         ),
-    )?
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
     .map_or(initial, |out| out.domain))
 }
 

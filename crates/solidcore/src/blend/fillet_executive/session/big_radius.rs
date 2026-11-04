@@ -149,10 +149,17 @@ pub(super) fn test_and_convert_big_rad_fillet(
                 return Ok(false);
             }
         }
+        // the fork's (WR-697, 79d4763): two-blend corners only, not a Ball
+        let is_ball = |c: &FilletCorner| {
+            c.blend
+                .is_some_and(crate::blend::blend_corner::BlendCorner::is_ball)
+        };
         if corner(corners, (running_id, &*running), start_corner)?.corner_type()
             != FilletCornerType::NByTwo
             || corner(corners, (running_id, &*running), end_corner)?.corner_type()
                 != FilletCornerType::NByTwo
+            || is_ball(corner(corners, (running_id, &*running), start_corner)?)
+            || is_ball(corner(corners, (running_id, &*running), end_corner)?)
             || !pseudo.fillet_vertex(sv)?.is_processed()
             || !pseudo.fillet_vertex(ev)?.is_processed()
         {
@@ -248,8 +255,12 @@ pub(super) fn test_and_convert_big_rad_fillet(
             this: Some((Some(running_id), &*running)),
             exec: None,
         };
-        match pseudo.calc_rail_int_rail_with_solver_ops(k, sv_sq, lookup, live, target) {
-            Err(e) if e.is_unported() => return Err(e),
+        // fork 873c7c9 passes this on (SER)
+        match crate::error::passed_on(
+            pseudo.calc_rail_int_rail_with_solver_ops(k, sv_sq, lookup, live, target),
+            k.fixes.fillet_statuses_pass_on,
+        )? {
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => {}
         }
     }

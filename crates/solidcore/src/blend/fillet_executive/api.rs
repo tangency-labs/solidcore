@@ -79,22 +79,28 @@ const OP: &str = "blend::fillet_executive::api";
 /// Run `fillet` (a session's set-up, `do_fillet` and the stitch) on `brep`; with
 /// `fixes.fillet_refuse_non_manifold_result` (WR-212, not upstream), a refusal of a
 /// result that is not a closed manifold solid puts back the body as it was before the
-/// call (a [`Brep::clone_for_rollback`] taken first) and names no entity, as the
-/// refused result's edge is gone with it. Every other result is `fillet`'s own.
+/// call (a [`Brep::snapshot`] taken first) and names no entity, as the
+/// refused result's edge is gone with it. Every other result is `fillet`'s own, and
+/// a result the check keeps is the flag-off result: the copy shares nothing with
+/// `brep`, so `fillet` edits the caller's own objects (curve owners included). The
+/// copy fails only on geometry nested deeper than `MAX_GEOMETRY_NESTING`.
+///
+/// A kernel whose cancel token fired returns `Cancelled` in place of `Ok` (#2136), with
+/// the body as the operation left it, as on any other failure.
 fn refusing_non_manifold_result(
     k: &mut Kernel,
     brep: &mut Brep,
     fillet: impl FnOnce(&mut Kernel, &mut Brep) -> Result<()>,
 ) -> Result<()> {
     let saved = if k.fixes.fillet_refuse_non_manifold_result {
-        Some(brep.clone_for_rollback())
+        Some(brep.snapshot()?)
     } else {
         None
     };
     let result = fillet(k, brep);
     match (saved, result) {
         (Some(saved), Err(error)) if is_non_manifold_refusal(&error) => {
-            brep.restore_from(saved);
+            brep.restore(saved);
             Err(without_entity(error))
         }
         (_, result) => {
@@ -102,7 +108,9 @@ fn refusing_non_manifold_result(
             // caller; the body keeps the edits the executive made before a failure,
             // as upstream)
             brep.refresh_cached_topology();
-            result
+            // (not upstream, #2136 / #2371: a cancel that a status-ignoring helper
+            // inside the operation absorbed still ends it as `Cancelled`, never `Ok`)
+            result.and_then(|()| k.check_cancelled(OP))
         }
     }
 }
@@ -212,7 +220,8 @@ pub fn fillet_edges_per_edge(
 /// (`SmLinearFilletLaw`) and one cross-section (`xsect_type` 0 linear, 2 blend
 /// curve, any other value circular), then `StitchAndOrient` with its defaults.
 /// `continuity` (1, 2 or 3 for G1-G3) applies to blend-curve cross-sections, whose
-/// thumbweight is the `SetFilletParameters` default `1.0`.
+/// thumbweight is the `SetFilletParameters` default (`1.0`; the fork's
+/// `SM_GN_DEFAULT_THUMBWEIGHT` with `fixes.fillet_gn_section_generator`).
 ///
 /// # Errors
 /// `SM_ERR_INVALID_INPUT` for an empty edge list or a start or end radius below 8
@@ -251,7 +260,7 @@ pub fn variable_radius_fillet(
 fn ignored<T>(result: Result<T>) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(error) if error.is_unported() => Err(error),
+        Err(error) if error.is_unported_or_cancelled() => Err(error),
         Err(_) => Ok(None),
     }
 }
@@ -304,7 +313,11 @@ fn fillet_all_edges(
             continue;
         };
         session.set_solver_generator(solver, generator)?;
-        ignored(session.load_solver(k, solver))?;
+        // fork 66b02de passes this on (SER)
+        ignored(crate::error::passed_on(
+            session.load_solver(k, solver),
+            k.fixes.fillet_statuses_pass_on,
+        )?)?;
     }
 
     session.create_corners(k, None)?;

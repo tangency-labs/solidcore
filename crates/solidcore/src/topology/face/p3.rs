@@ -141,6 +141,13 @@ pub use crate::topology::topology_traverser::has_lamina_edge;
 
 const OP: &str = "topology::face::p3";
 
+/// A status SMLib drops and the fork passes on (`SER`, tangency-labs/smlib 6997962):
+/// returned with the opt-in [`crate::kernel::UpstreamFixes::query_statuses_pass_on`],
+/// handed on to the site's own ignore otherwise.
+fn pass<T>(k: &Kernel, r: Result<T>) -> Result<Result<T>> {
+    crate::error::passed_on(r, k.fixes.query_statuses_pass_on)
+}
+
 fn null(reason: &'static str) -> SolidError {
     SolidError::invalid_input(OP, reason)
 }
@@ -253,16 +260,19 @@ fn point_3d_classify(
     tol: f64,
 ) -> Result<PointClassType> {
     let mut pc = PointClassification::<EntityRef>::new(tol);
-    ignore_status(crate::query::face::p1::point_3d_classify(
+    ignore_status(pass(
         k,
-        b,
-        f,
-        point,
-        tol,
-        true,
-        &mut pc,
-        crate::query::face::p1::Point3dClassifyOptions::default(),
-    ))?;
+        crate::query::face::p1::point_3d_classify(
+            k,
+            b,
+            f,
+            point,
+            tol,
+            true,
+            &mut pc,
+            crate::query::face::p1::Point3dClassifyOptions::default(),
+        ),
+    )?)?;
     Ok(pc.point_class())
 }
 
@@ -656,6 +666,7 @@ impl LoopOrientationSampler<'_> {
             let mut prev_raw = previous.raw_uv;
             sample.shift = previous.shift;
             face2::check_seam_crossing(
+                self.k,
                 &mut prev_raw,
                 sample.raw_uv,
                 &self.surf_domain,
@@ -862,7 +873,7 @@ pub fn compute_loop_orientation(
             uv_bounds.as_deref_mut(),
         ) {
             Ok(o) if o != OrientType::Unknown => return Ok(o),
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // a failure or an unknown orientation falls through to the 3D walk
             _ => {}
         }
@@ -1304,17 +1315,20 @@ fn create_uv_trim_curves_body(
                     );
 
                     // status ignored upstream
-                    let fixed = ignored(face2::fix_uv_trim_curves_notified(
+                    let fixed = ignored(pass(
                         k,
-                        b,
-                        eu,
-                        cw,
-                        v,
-                        tol_3d,
-                        uv_gap_size,
-                        &uv_domain,
-                        env.as_deref_mut(),
-                    ))?
+                        face2::fix_uv_trim_curves_notified(
+                            k,
+                            b,
+                            eu,
+                            cw,
+                            v,
+                            tol_3d,
+                            uv_gap_size,
+                            &uv_domain,
+                            env.as_deref_mut(),
+                        ),
+                    )?)?
                     .unwrap_or(false);
 
                     if fixed {
@@ -1640,7 +1654,7 @@ pub fn is_degenerate(
             // failure case - quit and return False as the do the least harm answer
             let found = match found {
                 Ok(c) => c,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Ok(false),
             };
 
@@ -1750,7 +1764,7 @@ pub enum IntersectObject {
     /// A surface owned by no face, held by the adapter at this index: the
     /// `pOptIntersectionSurface` of `SmBrep::MergeCurvesOnSurface`
     /// ([`crate::topology::brep::p10::merge_curves_on_surface_through_surface`]).
-    /// [`IntersectObjects`] resolves none; the adapter that holds such surfaces
+    /// `IntersectObjects` resolves none; the adapter that holds such surfaces
     /// resolves them.
     FreeSurface(usize),
 }
@@ -2371,7 +2385,7 @@ pub fn face_intersect_breps_cached(
                 }
                 let mut new_crv = match edge_crv.copy(k) {
                     Ok(c) => c,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => {
                         have_curves = false;
                         break 'faces;
@@ -2379,7 +2393,7 @@ pub fn face_intersect_breps_cached(
                 };
                 let mut interval = fb.edge(e)?.interval;
                 // may snap sIvl by tol to existing knots (status ignored)
-                ignored(new_crv.trim(k, &mut interval, TrimMode::Notify))?;
+                ignored(pass(k, new_crv.trim(k, &mut interval, TrimMode::Notify))?)?;
                 curves_3d.push(new_crv);
                 uv_curves1.push(None);
                 uv_curves2.push(None);
@@ -2454,7 +2468,7 @@ pub fn face_intersect_breps_cached(
                 continue;
             };
             // status ignored upstream
-            let point = ignored(curve.evaluate_point(k, 0.5))?.unwrap_or(Vec3::UNDEF);
+            let point = ignored(pass(k, curve.evaluate_point(k, 0.5))?)?.unwrap_or(Vec3::UNDEF);
             // `Point3DClassify` on both faces, in place on their own B-reps
             let pct1 = point_3d_classify(k, this_brep, f, point, this_zone_tol)?;
             let ob = other_brep.as_deref_mut().unwrap_or(&mut *this_brep);

@@ -159,9 +159,18 @@ pub mod ids {
     pub const TESSELLATING: u64 = 124;
     /// `SM_AI_REPLACE_COMPOSITES`.
     pub const REPLACE_COMPOSITES: u64 = 126;
+    /// `SM_AI_FOLLOWED_BLEND` (the fork's, tangency-labs/smlib `a96ce9f`): the marks of
+    /// one face move whose tangent blends follow (`SmOffsetFacesExecutive`,
+    /// [`crate::offset::offset_faces::FollowedBlendMark`]).
+    pub const FOLLOWED_BLEND: u64 = 130;
     /// `SM_AI_FILLET_CORNER_FACE` (the fork's, tangency-labs/smlib `60af574`): a face of
     /// a set-back fillet corner's patch (`SmFilletExecutive::SetMarkCornerPatches`).
     pub const FILLET_CORNER_FACE: u64 = 132;
+    /// Not upstream (tangency-labs/solidcore#2489): a face a fillet session made, its
+    /// tag's primary id the kind that made it
+    /// ([`crate::blend::definition_check::BlendFaceKind`]); set and removed by the session
+    /// only while [`crate::kernel::Kernel::blend_face_log`] is on.
+    pub const FILLET_BLEND_FACE: u64 = 134;
     /// `SM_AI_METRIC_BASE`: first of the ids used by metric attributes (150-199).
     pub const METRIC_BASE: u64 = 150;
     /// `SM_AI_MASS_PROPERTIES`.
@@ -255,8 +264,8 @@ pub mod region_type {
 /// `SM_UNDEF_ULONG`: the id a destroyed attribute is left with.
 pub const UNDEF_ULONG: u64 = 123_456_789;
 
-/// `SM_ERR`.
-const SM_ERR: i32 = 1001;
+// `SM_ERR`.
+use crate::error::SM_ERR;
 
 /// Largest attribute count or index [`AttributeStore::read_indexed_attributes_from_db`]
 /// accepts (a guard against corrupt input; upstream allocates whatever it reads).

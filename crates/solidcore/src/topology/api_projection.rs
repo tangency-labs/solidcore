@@ -21,6 +21,11 @@
 //!   port returns [`SolidError::InvalidInput`].
 //! - **Statuses.** The `SM_ERR_INVALID_INPUT` and `SM_ERR` the wrappers return themselves
 //!   are [`SolidError::Upstream`] with that code.
+//! - **Overflowing normal (UB-169).** A normal whose squared length overflows unitizes
+//!   to a zero vector. `SmApiProjectBrepOntoPlane` then ignores the failed
+//!   `MakeUnitOrthoVectors` and places its plane with the uninitialised outputs; the port
+//!   returns that failure. `SmApiCreateSilhouetteCurves` reaches `SmHCR`'s UB-169, which
+//!   the port's HCR reports as [`SolidError::InvalidInput`].
 //! - **Output arrays.** A caller's `SmTArray<SmCurve*>` is a `Vec<Option<Curve>>`;
 //!   upstream's appends and restores on failure are kept (an error leaves it as it
 //!   was). The output slots are [`add_curve_output_slots`] (`SmApiAddCurveOutputSlots`).
@@ -86,11 +91,10 @@ fn unit_normal(normal: Vec3) -> Result<Vec3> {
 /// `pBrep->CalculateBoundingBox(BBox)` with its status ignored (the box then stays
 /// empty), and the length of its diagonal.
 fn box_and_length(k: &Kernel, brep: &Brep) -> Result<(Extent3d, f64)> {
-    let bbox = ignored(qbrep::calculate_bounding_box(
-        k,
-        brep,
-        BoundingBoxOptions::default(),
-    ))?
+    let bbox = ignored(crate::error::passed_on(
+        qbrep::calculate_bounding_box(k, brep, BoundingBoxOptions::default()),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
     .unwrap_or_else(Extent3d::new);
     let diagonal = bbox.size();
     let length = diagonal.length();
@@ -173,8 +177,11 @@ pub fn project_brep_onto_plane(
     let plane_origin = bbox.mid() - plane_normal * length;
 
     let mut plane = Axis2Placement::default();
-    // (status ignored upstream)
-    let _ = plane.set_canonical(plane_origin, y, z);
+    // (status ignored upstream; fork 4803d6d passes it on: `SER`)
+    let set = plane.set_canonical(plane_origin, y, z);
+    if k.fixes.brep_edit_statuses_pass_on {
+        set?;
+    }
 
     let invert_plane = plane.invert();
 

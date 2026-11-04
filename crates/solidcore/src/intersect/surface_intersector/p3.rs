@@ -78,7 +78,7 @@
 
 use crate::blend::fillet_standard_solver::p1::FilletLaw;
 use crate::curve::curve::Curve;
-use crate::error::{Result, SolidError, SM_ERR_NULL_POINTER};
+use crate::error::{passed_on, Result, SolidError, SM_ERR_NULL_POINTER};
 use crate::geom::extent1d::{Extent1d, ExtentPointType};
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
@@ -178,7 +178,7 @@ fn unlink(list: &mut Vec<TsectId>, id: TsectId) {
 fn ignored<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -261,7 +261,7 @@ impl SurfaceIntersector<'_> {
         // get surface caches (NER: no cache is SM_ERR_NULL_POINTER)
         let get = |i: SrfIndex| match surface_cache::<SrfIndex>(k, self.surface(i), Some(i)) {
             Ok(c) => Ok(c),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Err(SolidError::Upstream {
                 operation: OP_FBSP,
                 code: SM_ERR_NULL_POINTER,
@@ -376,12 +376,14 @@ impl SurfaceIntersector<'_> {
             })?;
             let iso = cache.iso_boundary_curves(k, &domain, self.this_approx_tol_3d / 3.0)?;
 
-            // add the intervals of the iso curves (statuses ignored)
+            // add the intervals of the iso curves (statuses ignored, passed on with
+            // `ssi_proto_topology_statuses_pass_on`, fork bcc6f01)
+            let pass = k.fixes.ssi_proto_topology_statuses_pass_on;
             for (ii, ivl) in intervals.iter_mut().enumerate() {
                 if ii % 2 == 1 {
-                    let _ = ivl.set_min_max(domain.min().x, domain.max().x);
+                    let _ = passed_on(ivl.set_min_max(domain.min().x, domain.max().x), pass)?;
                 } else {
-                    let _ = ivl.set_min_max(domain.min().y, domain.max().y);
+                    let _ = passed_on(ivl.set_min_max(domain.min().y, domain.max().y), pass)?;
                 }
             }
 
@@ -525,8 +527,8 @@ impl SurfaceIntersector<'_> {
                             let mut uv_ivl2 =
                                 Extent1d::from_min_max(par(&sol.start, 0), par(&sol.end, 0));
                             uv_ivl2.expand_absolute(ivl_size * EFF_ZERO_SQRT);
-                            uv_ivl2 = uv_ivl2
-                                .intersect(&tgt.natural_interval())
+                            // (status ignored, passed on with the flag)
+                            uv_ivl2 = passed_on(uv_ivl2.intersect(&tgt.natural_interval()), pass)?
                                 .unwrap_or_default();
 
                             // use the better end unless the start is on a boundary
@@ -604,7 +606,10 @@ impl SurfaceIntersector<'_> {
         // Add the surface-edge crossings last (statuses ignored)
         for p in core::mem::take(&mut work.edge_crossings) {
             let id = self.alloc_point(p);
-            ignored(self.add_start_point(k, id))?;
+            ignored(passed_on(
+                self.add_start_point(k, id),
+                k.fixes.ssi_proto_topology_statuses_pass_on,
+            )?)?;
         }
 
         // make degenerate curves of the touching points
@@ -615,7 +620,7 @@ impl SurfaceIntersector<'_> {
             // skip points that are on a curve or a start point already
             let starts = self.start_points().to_vec();
             if self.is_point_on_curve(k, degenerate_point, &out.curves_3d, None)?
-                || self.is_point_on_start_point(tsp, &starts, None)?
+                || self.is_point_on_start_point(k, tsp, &starts, None)?
             {
                 continue;
             }
@@ -656,13 +661,19 @@ impl SurfaceIntersector<'_> {
         work: &mut BoundaryWork,
     ) -> Result<()> {
         // boundary curve point (status ignored: an uninitialised point)
-        let pt = ignored(tgt.evaluate(k, par(&sol.start, 0), 1, true, true))?
-            .and_then(|v| v.first().copied())
-            .unwrap_or(Vec3::UNDEF);
+        let pt = ignored(passed_on(
+            tgt.evaluate(k, par(&sol.start, 0), 1, true, true),
+            k.fixes.ssi_proto_topology_statuses_pass_on,
+        )?)?
+        .and_then(|v| v.first().copied())
+        .unwrap_or(Vec3::UNDEF);
 
         // Set bIsDegenerate = TRUE: a degenerate point xsect curve (status ignored)
-        let is_degenerate =
-            ignored(self.classify_boundary_start_point_intersection(k, &tsp))?.unwrap_or(false);
+        let is_degenerate = ignored(passed_on(
+            self.classify_boundary_start_point_intersection(k, &tsp),
+            k.fixes.ssi_proto_topology_statuses_pass_on,
+        )?)?
+        .unwrap_or(false);
 
         // when a degenerate point not on an output curve yet: classify it at the end
         if is_degenerate && !self.is_point_on_curve(k, tsp.crv_pos(), &out.curves_3d, None)? {
@@ -686,7 +697,10 @@ impl SurfaceIntersector<'_> {
             } else {
                 // add the point to the list of start points (status ignored)
                 let id = self.alloc_point(tsp);
-                ignored(self.add_start_point(k, id))?;
+                ignored(passed_on(
+                    self.add_start_point(k, id),
+                    k.fixes.ssi_proto_topology_statuses_pass_on,
+                )?)?;
             }
         }
         Ok(())
@@ -929,7 +943,7 @@ impl SurfaceIntersector<'_> {
                 do_boundary_testing,
             ) {
                 Ok(r) => Ok(r),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Ok(None),
             }
         };
@@ -1407,6 +1421,29 @@ pub fn test_point_with<'s, V: super::p4::IntersectorVirtuals<'s> + ?Sized>(
         return Ok(Some(true));
     }
 
+    // Not upstream (#2500): an extension stops where it comes back onto the traced
+    // curve, in 3D, once it has left that point
+    if let Some(closure) = v.intersector().extension_closes_at {
+        let p1 = need_prev()?;
+        let on_span = super::p1::is_point_on_tsect_span_3d(
+            k,
+            closure,
+            v.intersector().point(p1)?,
+            v.intersector().point(next)?,
+            tol,
+        )?;
+        if v.intersector().extension_left_closure {
+            if on_span {
+                v.intersector_mut().extension_closed = true;
+                return Ok(Some(true));
+            }
+        } else {
+            // left once a span no longer reaches it and the curve is clear of it
+            let away = v.intersector().point(next)?.crv_pos().distance(closure) > 10.0 * tol;
+            v.intersector_mut().extension_left_closure = away && !on_span;
+        }
+    }
+
     // Check whether the point is inside of the domain of the surfaces.
     let next_tsp = v.intersector().point(next)?.clone();
     let mut on_boundary = false;
@@ -1469,6 +1506,8 @@ fn surface_is_singularity(k: &Kernel, surface: &Surface, uv: Point2) -> Result<b
         | SurfaceKind::Sphere(_)
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)

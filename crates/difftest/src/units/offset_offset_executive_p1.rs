@@ -1041,6 +1041,8 @@ fn operation<T>(result: solidcore::Result<T>) -> RResult<(i64, Option<T>)> {
     match result {
         Ok(value) => Ok((i64::from(ffi::NATIVE_SUCCESS), Some(value))),
         Err(SolidError::Upstream { code, .. }) => Ok((i64::from(code), None)),
+        // a failure in solidcore's terms (#2615): its C++ comparison status
+        Err(e @ SolidError::Failed(_)) => Ok((i64::from(e.sm_status().unwrap_or(solidcore::error::SM_ERR)), None)),
         Err(error) => Err(RunError::Kernel(error)),
     }
 }
@@ -3422,9 +3424,17 @@ mod tests {
         let fixtures = context.fixture_cases(Runner.id()).unwrap();
         let fixture = fixtures
             .iter()
-            .find(|case| case.name == "coincident_analytic_line_constructor_rejection")
+            .find(|case| case.name == "shortest_buildable_analytic_line")
             .unwrap();
+        // The fixture's 1e-12 line is built natively and compared.
         let native = Runner.run_cpp(fixture).unwrap();
+        assert!(native.rejected.is_none() && native.deferred.is_none());
+        // The coincident line it held before (end at the start) is still refused by the
+        // native constructor, not compared.
+        let mut coincident = fixture.clone();
+        coincident.name = "coincident_analytic_line_constructor_rejection".into();
+        coincident.inputs["first"][0]["curve"]["end"] = serde_json::json!([0.0, 0.0, 0.0]);
+        let native = Runner.run_cpp(&coincident).unwrap();
         assert_eq!(
             native.rejected.as_deref(),
             Some("native fixture constructor status_1007"),

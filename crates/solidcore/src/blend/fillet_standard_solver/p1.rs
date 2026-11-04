@@ -37,6 +37,7 @@
 //! | [`CurveBasedFs::is_kind_of`], [`CurveBasedFs::type_code`], [`CurveBasedFs::type_string`] | `IsKindOf`, `GetType`, `GetTypeString` |
 //! | [`VariableRadiusFs`]                                     | `SmVariableRadiusFS` (members; `Drop` is the destructor) |
 //! | [`VariableRadiusFs::fillet_law`], [`VariableRadiusFs::fillet_law_orientation`], [`VariableRadiusFs::fillet_law_interval`], [`VariableRadiusFs::set_fillet_law_interval`] | `GetFilletLaw`, `GetFilletLawOrientation`, `GetFilletLawInterval`, `SetFilletLawInterval` |
+//! | [`FilletLaw::corner_parameters`] | `SmFilletLaw::GetCornerParameters`, `SmBSplineFilletLaw::GetCornerParameters` (the fork's 6eecf04) |
 //! | [`VariableRadiusFs::offset_radii_can_change`]            | `SmVariableRadiusFS::OffsetRadiiCanChange`            |
 //! | [`VariableRadiusFs::set_extension_flags`]                | `SmVariableRadiusFS::SetExtensionFlags`               |
 //! | [`VariableRadiusFs::setup_offset_values`]                | `SmVariableRadiusFS::SetupOffsetValues`               |
@@ -52,9 +53,15 @@
 //! | [`JacobianSurfaces`]                                     | the `rpSurface1`, `rpSurface2` arguments of `LoadJacobian` |
 //!
 //! Deviations:
+//! - **Exact circles of one arc count.** With `fixes.fillet_exact_arc_spans` (WR-711,
+//!   not upstream or in the fork) `CircularCrossSectionFsg::create_surface_from_curves`
+//!   with exact arcs takes a second pass when its circles' arc counts differ, building
+//!   each circle of fewer arcs again with the most (`ArcCounts`), as the approximated
+//!   arcs' second pass does with knots; and each point section takes the nearest
+//!   circle's arcs and weights (`collapse_point_sections`).
 //! - **Knife edges.** With `fixes.fillet_knife_edge_rounds` (WR-570, the fork's
 //!   tangency-labs/smlib `b7ec55b`, not in SMLib at the pin) the edge-use constructors
-//!   orient their offsets by [`sector_sides`] (`sm_SectorSides`), which also sides a
+//!   orient their offsets by `sector_sides` (`sm_SectorSides`), which also sides a
 //!   cusp's faces; off, they keep upstream's tangency refusal.
 //! - **Sections at thirds.** [`BlendCurveCrossSectionFsg::at_thirds`] is the fork's
 //!   `m_bAtThirds` (tangency-labs/smlib `fd3b6a7`, not in SMLib at the pin; off unless
@@ -229,7 +236,7 @@ pub use crate::blend::fillet_solver::p1::{
 fn boolean_status(r: Result<bool>) -> Result<bool> {
     match r {
         Ok(v) => Ok(v),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(true),
     }
 }
@@ -241,7 +248,7 @@ fn singularity_status(
 ) -> Result<crate::surface::surface::p5::Singularity> {
     match r {
         Ok(v) => Ok(v),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(crate::surface::surface::p5::Singularity {
             singular: true,
             direction: SurfParamType::Neither,
@@ -1388,12 +1395,10 @@ impl ConstantDistanceFs {
             surface2_rail = Some(other_rail);
             let uv2 = self.surface2_guess(k, brep, other_rail, &mut surface1, uv, pnt)?;
 
-            let domain = self
-                .solver
-                .rail(other_rail)?
-                .base_surface()
-                .natural_uv_domain_with_nurb(k)?;
-            let size: Vec2 = self.solver.surface_extension_factor * domain.size();
+            let other_base = self.solver.rail(other_rail)?.base_surface();
+            let domain = other_base.natural_uv_domain_with_nurb(k)?;
+            // fork WR-609: and the trace's reach (0 without `fillet_trace_reaches_rails`)
+            let size: Vec2 = self.solver.domain_extension(k, Some(other_base), &domain)?;
 
             let n = guess_t.len();
             *interval_mut(intervals, n, OP)? =
@@ -1725,6 +1730,24 @@ impl CurveBasedFs {
         self.original.as_ref()
     }
 
+    /// `SM_CAST_PTR(SmBSplineCurve, GetBaseCurve())` (the fork's 0d43b4c): the curve
+    /// `EvaluateBaseCurve` evaluates, the extended one where there is one, as a B-spline
+    /// curve (`None` where it is not one). A line is its B-spline part (its NURB); the
+    /// fork's copy of an `SmLine` keeps the line's own `Evaluate`.
+    ///
+    /// # Errors
+    ///
+    /// Those of a line's NURB.
+    pub fn base_b_spline_curve(&self) -> Result<Option<BSplineCurve>> {
+        if let Some(e) = &self.extended {
+            return Ok(Some(e.clone()));
+        }
+        match &self.original {
+            Some(c) => Ok(bspline_part(c)?.map(std::borrow::Cow::into_owned)),
+            None => Ok(None),
+        }
+    }
+
     /// `SetOriginalCurve`.
     pub fn set_original_curve(&mut self, curve: Option<Curve>) {
         self.original = curve;
@@ -1933,7 +1956,87 @@ impl FilletLaw {
     pub fn set_extended_edge_curve(&mut self, curve: Option<BSplineCurve>) {
         self.extended = curve;
     }
+
+    /// `GetCornerParameters` (the fork's 6eecf04, not upstream): the parameters inside the
+    /// fillet edge's interval `curve_interval` where the radius has a corner, ascending.
+    /// For a B-spline law (`SmBSplineFilletLaw`), an interior knot of the law curve inside
+    /// the edge map where its slope from the left and from the right differ, taken to the
+    /// edge by the inverse of the map `Evaluate` applies (running from the interval's end
+    /// when `reverse`); none for the other laws (the base's default). The fillet's centre
+    /// curve and rails turn at such a parameter.
+    ///
+    /// The slope is the law curve's `x'` alone, as the fork's: the radius is the law
+    /// curve's x at the curve parameter the edge map gives (`Evaluate`), its `y` not read,
+    /// so a jump in `x'` is a corner of the radius the fillet is built with, and nothing
+    /// else is.
+    ///
+    /// Deviation from the fork: an edge interval or edge map that is not finite or has no
+    /// length is refused, where the fork returns no corners.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] for an edge interval or edge map that is not finite or
+    /// has no length; those of the law curve's `GetKnots` and `Evaluate`.
+    pub fn corner_parameters(&self, curve_interval: &Extent1d, reverse: bool) -> Result<Vec<f64>> {
+        for (ivl, what) in [
+            (
+                curve_interval,
+                "a law's corners need a finite edge interval with length",
+            ),
+            (
+                &self.edge_map,
+                "a law's corners need a finite edge map with length",
+            ),
+        ] {
+            if !(ivl.min().is_finite() && ivl.max().is_finite() && ivl.length() > 0.0) {
+                return Err(SolidError::invalid_input(OP_CORNERS, what));
+            }
+        }
+        let FilletLawKind::BSpline { law_curve, .. } = &self.kind else {
+            return Ok(Vec::new());
+        };
+        let map_length = self.edge_map.length();
+        let (knots, _) = law_curve.knots(None)?;
+        let ivl = law_curve.natural_interval();
+        let mut corners = Vec::new();
+        let mut previous: Option<f64> = None;
+        for &law_t in &knots {
+            let repeated = previous == Some(law_t);
+            previous = Some(law_t);
+            if repeated
+                || law_t <= ivl.min()
+                || law_t >= ivl.max()
+                || law_t <= self.edge_map.min()
+                || law_t >= self.edge_map.max()
+            {
+                continue;
+            }
+            // slopes in the lower and the upper interval at the knot
+            let left = law_curve.evaluate(law_t, 1, false, false)?;
+            let right = law_curve.evaluate(law_t, 1, true, false)?;
+            let (Some(left), Some(right)) = (left.get(1), right.get(1)) else {
+                return Err(SolidError::sm_err(OP_CORNERS));
+            };
+            let (d_left, d_right) = (left.x, right.x);
+            if (d_left - d_right).abs() <= EFF_ZERO * (1.0 + d_left.abs() + d_right.abs()) {
+                continue;
+            }
+            // the edge parameter of the knot (the inverse of the map in Evaluate)
+            let t = (law_t - self.edge_map.min()) / map_length;
+            corners.push(if reverse {
+                curve_interval.max() - t * curve_interval.length()
+            } else {
+                curve_interval.min() + t * curve_interval.length()
+            });
+        }
+        if reverse {
+            corners.reverse();
+        }
+        Ok(corners)
+    }
 }
+
+const OP_CORNERS: &str = "blend::fillet_standard_solver::p1::FilletLaw::corner_parameters";
 
 // ---- SmVariableRadiusFS -------------------------------------------------------------------
 
@@ -2250,9 +2353,11 @@ fn bspline_is_arc(k: &Kernel, c: &BSplineCurve) -> Result<Option<(Axis2Placement
     )
 }
 
-/// `GetKnots` with the status ignored: the unique knots, or `old` on failure.
-fn knots_or(c: &BSplineCurve, old: Vec<f64>) -> Result<Vec<f64>> {
-    Ok(ignored(c.knots(None))?.map_or(old, |k| k.0))
+/// `GetKnots` with the status ignored: the unique knots, or `old` on failure (with
+/// `pass_on`, `fixes.fillet_statuses_pass_on`, the failure is returned).
+fn knots_or(c: &BSplineCurve, old: Vec<f64>, pass_on: bool) -> Result<Vec<f64>> {
+    // fork 66b02de passes this on (SER)
+    Ok(ignored(crate::error::passed_on(c.knots(None), pass_on)?)?.map_or(old, |k| k.0))
 }
 
 /// The knot at `i` of a knot array upstream indexes unchecked.
@@ -2267,13 +2372,16 @@ fn knot(knots: &[f64], i: usize, op: &'static str) -> Result<f64> {
 /// get two more at the thirds of the interval, then mid-span knots go into the
 /// largest span until there are four (`bail_if_stuck`: an insertion that adds no knot
 /// is `SM_ERR`; otherwise upstream loops forever, here
-/// [`SolidError::InvalidInput`]). Returns the knots of `rail1`.
+/// [`SolidError::InvalidInput`]). Returns the knots of `rail1`. The insertion and
+/// `GetKnots` statuses are ignored, or returned with `pass_on`
+/// (`fixes.fillet_statuses_pass_on`).
 fn add_section_knots(
     rail1: &mut BSplineCurve,
     rail2: &mut BSplineCurve,
     mut knots: Vec<f64>,
     bail_if_stuck: bool,
     op: &'static str,
+    pass_on: bool,
 ) -> Result<Vec<f64>> {
     // insert a mid knot for 2 knot curves
     if knots.len() == 2 {
@@ -2281,11 +2389,24 @@ fn add_section_knots(
         let new1 = knot(&knots, 0, op)? + step;
         let new2 = new1 + step;
         // (statuses ignored upstream)
-        ignore_status(rail1.insert_one_knot(new1, 1))?;
-        ignore_status(rail2.insert_one_knot(new1, 1))?;
-        ignore_status(rail1.insert_one_knot(new2, 1))?;
-        ignore_status(rail2.insert_one_knot(new2, 1))?;
-        knots = knots_or(rail1, knots)?;
+        // fork 66b02de passes this on (SER)
+        ignore_status(crate::error::passed_on(
+            rail1.insert_one_knot(new1, 1),
+            pass_on,
+        )?)?;
+        ignore_status(crate::error::passed_on(
+            rail2.insert_one_knot(new1, 1),
+            pass_on,
+        )?)?;
+        ignore_status(crate::error::passed_on(
+            rail1.insert_one_knot(new2, 1),
+            pass_on,
+        )?)?;
+        ignore_status(crate::error::passed_on(
+            rail2.insert_one_knot(new2, 1),
+            pass_on,
+        )?)?;
+        knots = knots_or(rail1, knots, pass_on)?;
     }
 
     let mut n_knots_old = knots.len();
@@ -2303,9 +2424,16 @@ fn add_section_knots(
         }
 
         let mid = (knot(&knots, max_span, op)? + knot(&knots, sub(max_span, 1, op)?, op)?) / 2.0;
-        ignore_status(rail1.insert_one_knot(mid, 1))?;
-        ignore_status(rail2.insert_one_knot(mid, 1))?;
-        knots = knots_or(rail1, knots)?;
+        // fork 66b02de passes this on (SER)
+        ignore_status(crate::error::passed_on(
+            rail1.insert_one_knot(mid, 1),
+            pass_on,
+        )?)?;
+        ignore_status(crate::error::passed_on(
+            rail2.insert_one_knot(mid, 1),
+            pass_on,
+        )?)?;
+        knots = knots_or(rail1, knots, pass_on)?;
 
         let n_knots_new = knots.len();
 
@@ -2322,6 +2450,74 @@ fn add_section_knots(
         n_knots_old = n_knots_new;
     }
     Ok(knots)
+}
+
+/// The centre line's arc (`IsArc`): its frame, radius, start and end angles.
+pub(crate) type CenterArc = (Axis2Placement, f64, f64, f64);
+
+/// `sm_CircleSweptOrRevolved` (the fork's cc08236, moved out of
+/// `CircleSurfaceFromCurves` unchanged): whether the ball's circles along a centre line
+/// and its rails sweep a cylinder (all three parallel lines; the centre line's own kind
+/// answers `GetDegree` and `IsLine`) or revolve a torus (coaxial arcs of the same sweep):
+/// `(sweep, revolve, the centre line's arc)`.
+pub(crate) fn circle_swept_or_revolved(
+    k: &Kernel,
+    center_line: &Curve,
+    rail1: &BSplineCurve,
+    rail2: &BSplineCurve,
+    approx_tol_3d: f64,
+) -> Result<(bool, bool, Option<CenterArc>)> {
+    let mut sweep = false;
+    let mut revolve = false;
+
+    // see if newSurf == RuledSurface (`GetDegree` and `IsLine` of the centre line's
+    // own kind)
+    let deg1_line = if center_line.degree()? == 1 {
+        center_line.is_line(k, ANALYTIC_SAMPLES, ANALYTIC_TOL)?
+    } else {
+        None
+    };
+    if let Some((_, line_vector)) = deg1_line {
+        sweep = true;
+        if line_is_off(line_vector, rail1)? {
+            sweep = false;
+        }
+        if line_is_off(line_vector, rail2)? {
+            sweep = false;
+        }
+    }
+
+    // see if NewSurf == SurfaceOfRevolution
+    let arc = center_line.is_arc(k, ANALYTIC_SAMPLES, ANALYTIC_TOL)?;
+    if let Some((ref_frame, _, _, end_ang)) = &arc {
+        revolve = true;
+        match bspline_is_arc(k, rail1)? {
+            None => revolve = false,
+            Some((ref_frame2, radius2, _, end_ang2)) => {
+                if (end_ang2 - end_ang).abs() * radius2 > approx_tol_3d
+                    || !ref_frame2.are_coaxial(ref_frame, approx_tol_3d, radius2)
+                {
+                    revolve = false;
+                }
+                if revolve {
+                    match bspline_is_arc(k, rail2)? {
+                        None => revolve = false,
+                        Some((ref_frame3, radius3, _, end_ang3)) => {
+                            // Also check against 1s Rail curve.
+                            if (end_ang3 - end_ang).abs() * radius3 > approx_tol_3d
+                                || !ref_frame3.are_coaxial(ref_frame, approx_tol_3d, radius3)
+                                || (end_ang3 - end_ang2).abs() * radius3 > approx_tol_3d
+                                || !ref_frame3.are_coaxial(&ref_frame2, approx_tol_3d, radius3)
+                            {
+                                revolve = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok((sweep, revolve, arc))
 }
 
 /// Whether two lines' directions differ by more than `SM_EFF_ZERO_SQRT` (the sweep
@@ -2352,6 +2548,90 @@ fn equalise_knots(arc: &mut BSplineCurve, max_unique: usize, op: &'static str) -
     arc.insert_knots(&new_knots)
 }
 
+/// The most and fewest arcs among a round's exact circular sections, with
+/// `fixes.fillet_exact_arc_spans` (WR-711; not upstream): a circle of fewer arcs is
+/// built again as the most.
+struct ArcCounts {
+    on: bool,
+    most: usize,
+    fewest: usize,
+}
+
+impl ArcCounts {
+    const fn new(on: bool) -> Self {
+        Self {
+            on,
+            most: 0,
+            fewest: usize::MAX,
+        }
+    }
+
+    /// The arcs of a section that is a rational quadratic circle (degree 2, one arc
+    /// per span), `None` for another section (a point, an interpolating cubic).
+    fn arcs_of(section: &BSplineCurve) -> Result<Option<usize>> {
+        if section.degree()? != 2 {
+            return Ok(None);
+        }
+        Ok(section.number_of_unique_knots()?.checked_sub(1))
+    }
+
+    fn note(&mut self, section: &BSplineCurve) -> Result<()> {
+        if self.on {
+            if let Some(n) = Self::arcs_of(section)? {
+                self.most = self.most.max(n);
+                self.fewest = self.fewest.min(n);
+            }
+        }
+        Ok(())
+    }
+
+    const fn differ(&self) -> bool {
+        self.on && self.most > self.fewest
+    }
+}
+
+/// With `fixes.fillet_exact_arc_spans` (WR-711; not upstream): each point section of
+/// a round of exact circles (where its rails meet, upstream's degree 1 point curve)
+/// becomes the circle nearest it along the rails collapsed onto its point, the same
+/// arcs and weights. The point is the limit of the circles beside it; as a point curve
+/// its weights were 1 where theirs are `cos(a/4)`, and the skin's weights swung between
+/// them (a variable round that ends in a point was 3.4e-4 off its balls, 8.1e-5 with
+/// the circle's).
+fn collapse_point_sections(sections: &mut [BSplineCurve], params: &[f64]) -> Result<()> {
+    let is_circle = |c: &BSplineCurve| ArcCounts::arcs_of(c).map(|n| n.is_some());
+    for i in 0..sections.len() {
+        let Some(section) = sections.get(i) else {
+            continue;
+        };
+        if section.degree()? != 1 || section.number_control_points()? != 2 {
+            continue;
+        }
+        let (start, _) = section.control_point(ControlPointForm::EuclideanRational, 0)?;
+        let (end, _) = section.control_point(ControlPointForm::EuclideanRational, 1)?;
+        if start != end {
+            continue;
+        }
+        let at = params.get(i).copied().unwrap_or_default();
+        let mut nearest: Option<(f64, usize)> = None;
+        for (j, (c, &t)) in sections.iter().zip(params).enumerate() {
+            if is_circle(c)? && nearest.is_none_or(|(d, _)| (t - at).abs() < d) {
+                nearest = Some(((t - at).abs(), j));
+            }
+        }
+        let Some(mut circle) = nearest.and_then(|(_, j)| sections.get(j).cloned()) else {
+            continue;
+        };
+        for j in 0..circle.number_control_points()? {
+            let (_, w) = circle.control_point(ControlPointForm::EuclideanRational, j)?;
+            circle.set_control_point(ControlPointForm::EuclideanRational, j, start, w)?;
+        }
+        if let Some(slot) = sections.get_mut(i) {
+            *slot = circle;
+        }
+    }
+    Ok(())
+}
+
 /// The cross section at `index` of the array upstream indexes unchecked.
 fn section_mut<'a>(
     sections: &'a mut [Option<BSplineCurve>],
@@ -2365,15 +2645,26 @@ fn section_mut<'a>(
 
 /// The cross boundary derivative surface at one end of a skin: the ruled surface from
 /// the end cross section to its copy scaled, translated and rotated onto the rail
-/// tangents `start` / `end` (`CreateByScaleTransRot`), over `[curve interval] x [0, 1]`.
-fn deriv_surface(gen_curve: &BSplineCurve, start: Vec3, end: Vec3) -> Result<BSplineSurface> {
+/// tangents `start` / `end` (`CreateByScaleTransRot`), over `[curve interval] x [0, 1]`
+/// (the domain status ignored, or returned with `pass_on`,
+/// `fixes.fillet_statuses_pass_on`).
+fn deriv_surface(
+    gen_curve: &BSplineCurve,
+    start: Vec3,
+    end: Vec3,
+    pass_on: bool,
+) -> Result<BSplineSurface> {
     let new_curve = gen_curve.create_by_scale_trans_rot(start, end, 0.0)?;
     let mut surf = BSplineSurface::create_ruled_surface(gen_curve, &new_curve, SurfParamType::U)?;
     let crv_ivl = gen_curve.natural_interval();
     let uv_min = Point2::new(crv_ivl.min(), 0.0);
     let uv_max = Point2::new(crv_ivl.max(), 1.0);
     // (status ignored upstream)
-    ignore_status(surf.adjust_step_uv_domain(&Extent2d::from_points(uv_min, uv_max)))?;
+    // fork 66b02de passes this on (SER)
+    ignore_status(crate::error::passed_on(
+        surf.adjust_step_uv_domain(&Extent2d::from_points(uv_min, uv_max)),
+        pass_on,
+    )?)?;
     Ok(surf)
 }
 
@@ -2387,21 +2678,36 @@ fn tangent_at(c: &BSplineCurve, t: f64, op: &'static str) -> Result<Vec3> {
 }
 
 /// Inserts the mid knots of the first and last spans of `rail1` into both rails (the
-/// G1 continuity set-up of the generators).
+/// G1 continuity set-up of the generators; statuses ignored, or returned with
+/// `pass_on`, `fixes.fillet_statuses_pass_on`).
 fn insert_end_span_knots(
     rail1: &mut BSplineCurve,
     rail2: &mut BSplineCurve,
     op: &'static str,
+    pass_on: bool,
 ) -> Result<()> {
     // (statuses ignored upstream)
-    let knts = knots_or(rail1, Vec::new())?;
+    // fork 66b02de passes this on (SER)
+    let knts = knots_or(rail1, Vec::new(), pass_on)?;
     let n = knts.len();
     let start_knot_mid = (knot(&knts, 0, op)? + knot(&knts, 1, op)?) / 2.0;
-    ignore_status(rail1.insert_one_knot(start_knot_mid, 1))?;
-    ignore_status(rail2.insert_one_knot(start_knot_mid, 1))?;
+    ignore_status(crate::error::passed_on(
+        rail1.insert_one_knot(start_knot_mid, 1),
+        pass_on,
+    )?)?;
+    ignore_status(crate::error::passed_on(
+        rail2.insert_one_knot(start_knot_mid, 1),
+        pass_on,
+    )?)?;
     let end_knot_mid = (knot(&knts, sub(n, 2, op)?, op)? + knot(&knts, sub(n, 1, op)?, op)?) / 2.0;
-    ignore_status(rail1.insert_one_knot(end_knot_mid, 1))?;
-    ignore_status(rail2.insert_one_knot(end_knot_mid, 1))?;
+    ignore_status(crate::error::passed_on(
+        rail1.insert_one_knot(end_knot_mid, 1),
+        pass_on,
+    )?)?;
+    ignore_status(crate::error::passed_on(
+        rail2.insert_one_knot(end_knot_mid, 1),
+        pass_on,
+    )?)?;
     Ok(())
 }
 
@@ -2450,7 +2756,11 @@ fn equalise_singular_rows(
             w1 = (w1 + w2) / 2.0;
             for ii in 0..num_v {
                 // (status ignored upstream)
-                ignore_status(surface.set_control_point(form, idx_u, ii, pt1, w1))?;
+                // fork 66b02de passes this on (SER)
+                ignore_status(crate::error::passed_on(
+                    surface.set_control_point(form, idx_u, ii, pt1, w1),
+                    k.fixes.fillet_statuses_pass_on,
+                )?)?;
             }
         }
     }
@@ -2513,6 +2823,45 @@ impl CircularCrossSectionFsg {
         approx_tol_3d: f64,
         need_g1_continuity: bool,
     ) -> Result<BSplineSurface> {
+        // (the fork's order-1 `CreateSurfaceFromCurves`: the curves of a ball of constant
+        // radius, an offset's edge or a corner's ease)
+        self.create_surface_from_curves_of_balls(
+            k,
+            center_line,
+            rail1,
+            rail2,
+            approx_tol_3d,
+            need_g1_continuity,
+            false,
+        )
+    }
+
+    /// [`CircularCrossSectionFsg::create_surface_from_curves`] as the fork's
+    /// `SmGnSectionFSG::CircleSurfaceFromCurves` (tangency-labs/smlib d2a6125, f2ec002,
+    /// e9560e3; `fixes.fillet_gn_section_generator`, WR-685): `ball_radius_varies`, the
+    /// solver's ball changes its radius along the centre line (a radius law, or a constant
+    /// chord between faces whose angle changes). With the flag each section is the circle
+    /// along which the balls' envelope touches the ball, square to the centre line: where
+    /// the ball's radius varies, its centre is the ball's centre moved along the centre
+    /// line by `-r r'/|c'|` (the envelope's condition `<p - c, c'> = -r r'` on the ball
+    /// `|p - c| = r`), `r` and `r'` read off the rails, which lie on the ball; at a
+    /// constant radius it is the great circle.
+    ///
+    /// # Errors
+    ///
+    /// As [`CircularCrossSectionFsg::create_surface_from_curves`]; those of the rails'
+    /// `Evaluate` with the flag.
+    #[allow(clippy::fn_params_excessive_bools)]
+    pub(crate) fn create_surface_from_curves_of_balls(
+        &self,
+        k: &Kernel,
+        center_line: &mut Curve,
+        rail1: &mut BSplineCurve,
+        rail2: &mut BSplineCurve,
+        approx_tol_3d: f64,
+        need_g1_continuity: bool,
+        ball_radius_varies: bool,
+    ) -> Result<BSplineSurface> {
         const OP: &str = OP_CIRC;
         if !is_b_spline_kind(center_line) {
             return Err(SolidError::invalid_input(
@@ -2548,7 +2897,14 @@ impl CircularCrossSectionFsg {
 
         // Surface creation requires 4 or more cross sections so add
         // some extra knots if needed.
-        let knots = add_section_knots(rail1, rail2, knots, true, OP)?;
+        let knots = add_section_knots(
+            rail1,
+            rail2,
+            knots,
+            true,
+            OP,
+            k.fixes.fillet_statuses_pass_on,
+        )?;
 
         // Where the rails meet at an end of the fillet (a degenerate corner whose cross
         // section is a point), both rails end at that one point: each rail is lifted
@@ -2582,60 +2938,14 @@ impl CircularCrossSectionFsg {
         // when center, rail1, and rail2 curves are parallel lines - NewSurf = RuledSurface
         // when center, rail1, and rail2 curves are arcs           - NewSurf = SurfaceOfRevolution
         // else                                                    - NewSurf = Skinned Surface
-        let mut sweep = false;
-        let mut revolve = false;
-
-        // see if newSurf == RuledSurface (`GetDegree` and `IsLine` of the centre line's
-        // own kind)
-        let deg1_line = if center_line.degree()? == 1 {
-            center_line.is_line(k, ANALYTIC_SAMPLES, ANALYTIC_TOL)?
-        } else {
-            None
-        };
-        if let Some((_, line_vector)) = deg1_line {
-            sweep = true;
-            if line_is_off(line_vector, rail1)? {
-                sweep = false;
-            }
-            if line_is_off(line_vector, rail2)? {
-                sweep = false;
-            }
-        }
-
-        // see if NewSurf == SurfaceOfRevolution
-        let arc = center_line.is_arc(k, ANALYTIC_SAMPLES, ANALYTIC_TOL)?;
-        if let Some((ref_frame, _, _, end_ang)) = &arc {
-            revolve = true;
-            match bspline_is_arc(k, rail1)? {
-                None => revolve = false,
-                Some((ref_frame2, radius2, _, end_ang2)) => {
-                    if (end_ang2 - end_ang).abs() * radius2 > approx_tol_3d
-                        || !ref_frame2.are_coaxial(ref_frame, approx_tol_3d, radius2)
-                    {
-                        revolve = false;
-                    }
-                    if revolve {
-                        match bspline_is_arc(k, rail2)? {
-                            None => revolve = false,
-                            Some((ref_frame3, radius3, _, end_ang3)) => {
-                                // Also check against 1s Rail curve.
-                                if (end_ang3 - end_ang).abs() * radius3 > approx_tol_3d
-                                    || !ref_frame3.are_coaxial(ref_frame, approx_tol_3d, radius3)
-                                    || (end_ang3 - end_ang2).abs() * radius3 > approx_tol_3d
-                                    || !ref_frame3.are_coaxial(&ref_frame2, approx_tol_3d, radius3)
-                                {
-                                    revolve = false;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let (sweep, revolve, arc) =
+            circle_swept_or_revolved(k, center_line, rail1, rail2, approx_tol_3d)?;
 
         // track max/min number of knots in cross-section curves
         let mut max_num_unique_knots: usize = 0;
         let mut min_num_unique_knots: usize = 1_000_000;
+        // the exact circles' most and fewest arcs (WR-711)
+        let mut arcs = ArcCounts::new(!self.approximate_arcs && k.fixes.fillet_exact_arc_spans);
 
         // for two passes - 1st pass allocate curves
         //                  2nd pass make all curve knot vectors compatible
@@ -2656,15 +2966,23 @@ impl CircularCrossSectionFsg {
                     rail1,
                     rail2,
                     approx_tol_3d,
+                    ball_radius_varies,
                     &mut cross_sections,
                     &mut parameters_of_cross_sections,
                     &mut max_num_unique_knots,
                     &mut min_num_unique_knots,
+                    &mut arcs,
                 )?;
                 ii += 1;
             }
 
-            if !self.approximate_arcs || max_num_unique_knots == min_num_unique_knots {
+            // (exact circles of different arc counts take the most, WR-711)
+            let second_pass = if self.approximate_arcs {
+                max_num_unique_knots != min_num_unique_knots
+            } else {
+                arcs.differ()
+            };
+            if !second_pass {
                 // only need 1 pass
                 break;
             }
@@ -2678,6 +2996,11 @@ impl CircularCrossSectionFsg {
                 sections.push(c);
                 params.push(t);
             }
+        }
+
+        // a point section takes the nearest circle's arcs and weights (WR-711)
+        if arcs.on {
+            collapse_point_sections(&mut sections, &params)?;
         }
 
         // when surface can be constructed as a ruled surface (linear center and rail curves)
@@ -2741,12 +3064,17 @@ impl CircularCrossSectionFsg {
                 let end = tangent_at(rail2, t, OP)?;
 
                 // save the crossTangent surface
-                *slot = Some(deriv_surface(gen_curve, st, end)?);
+                *slot = Some(deriv_surface(
+                    gen_curve,
+                    st,
+                    end,
+                    k.fixes.fillet_statuses_pass_on,
+                )?);
             }
 
             // add a new knot in the NewSurface start/end intervals
             // to allow the newSurface to interpolate the computed crossTangent values
-            insert_end_span_knots(rail1, rail2, OP)?;
+            insert_end_span_knots(rail1, rail2, OP, k.fixes.fillet_statuses_pass_on)?;
         }
 
         // Build the Skinned Surface to interpolate crossSections and optional end Cross Tangents
@@ -2786,10 +3114,12 @@ impl CircularCrossSectionFsg {
         rail1: &BSplineCurve,
         rail2: &BSplineCurve,
         approx_tol_3d: f64,
+        ball_radius_varies: bool,
         cross_sections: &mut Vec<Option<BSplineCurve>>,
         parameters_of_cross_sections: &mut Vec<f64>,
         max_num_unique_knots: &mut usize,
         min_num_unique_knots: &mut usize,
+        arcs: &mut ArcCounts,
     ) -> Result<()> {
         const OP: &str = OP_CIRC;
         // for lNumBetween count locations between knot points
@@ -2813,17 +3143,46 @@ impl CircularCrossSectionFsg {
             let knot_index = if jj == 0 && ii == 1 { 0 } else { ii };
 
             // get center, rail1, rail2 points for dT
-            let cent = center_line
-                .evaluate(k, t, 1, true, false)?
+            let cent_pv = center_line.evaluate(k, t, 1, true, false)?;
+            let mut cent = cent_pv
                 .first()
                 .copied()
                 .ok_or_else(|| SolidError::sm_err(OP))?;
-            let p1 = rail1.evaluate_point(t)?;
-            let p2 = rail2.evaluate_point(t)?;
+            let (p1, p2, v1, v2) = if k.fixes.fillet_gn_section_generator {
+                // the fork's `CircleSurfaceFromCurves` (WR-685): the rails' points and
+                // tangents, and the section the circle along which the balls' envelope
+                // touches the ball, square to the centre line
+                let tangent = |pv: &[Vec3]| match *pv {
+                    [p, d, ..] => Ok((p, d)),
+                    _ => Err(SolidError::sm_err(OP)),
+                };
+                let (_, cent_d) = tangent(&cent_pv)?;
+                let (p1, d1) = tangent(&rail1.evaluate(t, 1, true, false)?)?;
+                let (p2, d2) = tangent(&rail2.evaluate(t, 1, true, false)?)?;
+                let mut v1 = p1 - cent;
+                let mut v2 = p2 - cent;
+                let speed = cent_d.length();
+                if ball_radius_varies
+                    && speed > EFF_ZERO
+                    && v1.length() > EFF_ZERO
+                    && v2.length() > EFF_ZERO
+                {
+                    let r1 = v1.length();
+                    let r2 = v2.length();
+                    let rate = 0.5 * (v1.dot(d1 - cent_d) / r1 + v2.dot(d2 - cent_d) / r2);
+                    let along = cent_d / speed;
+                    cent += along * (-0.5 * (r1 + r2) * rate / speed);
+                    v1 = p1 - cent;
+                    v2 = p2 - cent;
+                }
+                (p1, p2, v1, v2)
+            } else {
+                let p1 = rail1.evaluate_point(t)?;
+                let p2 = rail2.evaluate_point(t)?;
 
-            // get sample Point gaps
-            let v1 = p1 - cent;
-            let v2 = p2 - cent;
+                // get sample Point gaps
+                (p1, p2, p1 - cent, p2 - cent)
+            };
 
             // when railCurve samplePoints are close together - make a degenerate cross section curve
             if p1.distance(p2) < approx_tol_3d {
@@ -2839,7 +3198,7 @@ impl CircularCrossSectionFsg {
                     // accumulate cross section curve and parameter value
                     parameters_of_cross_sections.push(t);
                     cross_sections.push(Some(arc));
-                } else {
+                } else if self.approximate_arcs {
                     // Insert knots into degenerate Curve until UniqueKnotCount = MaxNumUniqueKnots
                     let arc = section_mut(cross_sections, knot_index, OP)?
                         .as_mut()
@@ -2967,6 +3326,37 @@ impl CircularCrossSectionFsg {
                     angle * 180.0 / PI,
                     NurbCircleParam::Quadratic,
                 )?);
+            } else {
+                // 2nd pass of exact circles (WR-711): a circle of fewer arcs than the
+                // most is built again as that many equal arcs, tweaked and mirrored as
+                // on the 1st pass
+                let slot = section_mut(cross_sections, knot_index, OP)?;
+                let Some(current) = slot.as_ref() else {
+                    continue;
+                };
+                if ArcCounts::arcs_of(current)?.is_none_or(|n| n >= arcs.most) {
+                    continue;
+                }
+                let mut a = BSplineCurve::create_circle_segment_min_arcs(
+                    3,
+                    &placement,
+                    radius1,
+                    0.0,
+                    angle * 180.0 / PI,
+                    NurbCircleParam::Quadratic,
+                    arcs.most,
+                )?;
+                if (radius1 - radius2).abs() > 1.0e-8 {
+                    a.edit_end_point(p1, true, None)?;
+                    a.edit_end_point(p2, false, None)?;
+                }
+                if self.mirror {
+                    let mut mirror = Axis2Placement::default();
+                    mirror.set_canonical(p1, (p2 - p1).unitize()?, z_vec.unitize()?)?;
+                    a = a.create_mirror_curve(&mirror)?;
+                }
+                *slot = Some(a);
+                continue;
             }
 
             // on 1st pass - See if we have a non-circle case
@@ -3021,6 +3411,9 @@ impl CircularCrossSectionFsg {
 
             // accumulate the cross section curves
             if kkk == 0 {
+                if let Some(a) = &arc {
+                    arcs.note(a)?;
+                }
                 parameters_of_cross_sections.push(t);
                 cross_sections.push(arc);
             }
@@ -3148,7 +3541,14 @@ impl BlendCurveCrossSectionFsg {
 
         // Surface creation requires 4 or more cross sections so add
         // some extra knots if needed.
-        let knots = add_section_knots(rail1, rail2, knots, false, OP)?;
+        let knots = add_section_knots(
+            rail1,
+            rail2,
+            knots,
+            false,
+            OP,
+            k.fixes.fillet_statuses_pass_on,
+        )?;
 
         for i in 1..knots.len() {
             let num_between: usize = 0;
@@ -3250,9 +3650,14 @@ impl BlendCurveCrossSectionFsg {
                     gen_curve.ok_or_else(|| SolidError::invalid_input(OP, "no cross sections"))?;
                 let st = tangent_at(rail1, t, OP)?;
                 let end = tangent_at(center_line, t, OP)?;
-                *slot = Some(deriv_surface(gen_curve, st, end)?);
+                *slot = Some(deriv_surface(
+                    gen_curve,
+                    st,
+                    end,
+                    k.fixes.fillet_statuses_pass_on,
+                )?);
             }
-            insert_end_span_knots(rail1, rail2, OP)?;
+            insert_end_span_knots(rail1, rail2, OP, k.fixes.fillet_statuses_pass_on)?;
         }
         if is_closed_base(k, &*rail1, &rail1.natural_interval(), 0.0)?
             && is_closed_base(k, &*rail2, &rail2.natural_interval(), 0.0)?
@@ -3540,6 +3945,29 @@ impl BlendCurveCrossSectionFsg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fork 66b02de (the rail end-span knots: `SER( pRail2->InsertOneKnot(..) )`): the
+    /// second rail runs over another parameter range, so the first rail's span middle
+    /// is not inside it. Upstream drops the failed insertion and the rails go on out of
+    /// step; with `fillet_statuses_pass_on` the error is returned.
+    #[test]
+    fn fillet_statuses_pass_on_end_span_knots_return_a_failed_insertion() {
+        let rails = || {
+            let r1 = BSplineCurve::create_line_segment(3, Vec3::ZERO, Vec3::X).unwrap();
+            let mut r2 = BSplineCurve::create_line_segment(3, Vec3::Y, Vec3::X + Vec3::Y).unwrap();
+            r2.edit_parameterization(&Extent1d::from_min_max(10.0, 11.0))
+                .unwrap();
+            (r1, r2)
+        };
+        let (mut r1, mut r2) = rails();
+        let expected = r2.clone().insert_one_knot(0.5, 1).unwrap_err();
+        insert_end_span_knots(&mut r1, &mut r2, "test", false).unwrap();
+        let (mut r1, mut r2) = rails();
+        assert_eq!(
+            insert_end_span_knots(&mut r1, &mut r2, "test", true).unwrap_err(),
+            expected
+        );
+    }
     use crate::blend::fillet_solver::p1::OffsetSurfaceSlot;
     use crate::nurbs::crv_basic::Curve as NurbCurve;
     use crate::nurbs::math::{CPoint, NOW};
@@ -3831,6 +4259,31 @@ mod tests {
         let mut fs = fs;
         fs.set_fillet_trim_type(BoundaryTrimmingType::Bevel);
         assert_eq!(fs.trim_type, BoundaryTrimmingType::Bevel);
+    }
+
+    #[test]
+    fn failed_radius_law_keeps_both_offset_distances() {
+        let mut curve_based = CurveBasedFs::new(1e-6, 0.5, 0.03);
+        curve_based.solver = cr().solver;
+        let mut fs = VariableRadiusFs {
+            curve_based,
+            law: FilletLaw::new(FilletLawKind::Base),
+            law_orientation: false,
+            law_interval: Extent1d::from_min_max(0.0, 1.0),
+        };
+        let distances = |fs: &VariableRadiusFs| {
+            fs.curve_based
+                .solver
+                .surfaces
+                .each_ref()
+                .map(|s| s.as_ref().unwrap().surface.offset_distance())
+        };
+        let before = distances(&fs);
+        let mut point = TsectPnt::new();
+        point.user_doubles[0] = 0.5;
+        let expected = fs.law.evaluate(0.5, &fs.law_interval, false).unwrap_err();
+        assert_eq!(fs.setup_offset_values(&point).unwrap_err(), expected);
+        assert_eq!(distances(&fs), before);
     }
 
     #[test]

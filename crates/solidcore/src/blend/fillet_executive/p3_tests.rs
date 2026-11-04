@@ -750,6 +750,18 @@ fn state() -> FilletExecutive<Handle> {
         self_intersection_handler: None,
         blend_curve_at_thirds: false,
         mark_corner_patches: false,
+        cliff_overflow: false,
+        open_ends: Vec::new(),
+        overflow_first: false,
+        classify_only: false,
+        overflow_edges: Vec::new(),
+        mitred_edges: Vec::new(),
+        fan_split_points: Vec::new(),
+        earlier_pass_faces: Vec::new(),
+        fit_radius: -1.0,
+        fit_edge: None,
+        fit_kind: FitKind::Radius,
+        fit_setback: -1.0,
     }
 }
 
