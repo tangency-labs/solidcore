@@ -508,6 +508,7 @@ impl PathMotion {
         trace: &SweepTrace,
         net: &BSplineSurface,
     ) -> Result<(Self, f64, bool)> {
+        check_profile(profile)?;
         let (path, spans) = open_path_spans(path, trace.start_normal)?;
         let mut motion = Self {
             path,
@@ -541,6 +542,7 @@ impl PathMotion {
         path: &BSplineCurve,
         start_normal: Vec3,
     ) -> Result<(Self, BSplineSurface, f64)> {
+        check_profile(profile)?;
         let (path, spans) = open_path_spans(path, start_normal)?;
         let mut nodes: Vec<(f64, f64)> = spans.iter().map(|s| (s.from, s.from)).collect();
         if let Some(last) = spans.last() {
@@ -1241,6 +1243,24 @@ impl Column {
     }
 }
 
+/// A profile is a 3D curve of finite control points and finite, positive weights: a weight
+/// that is not has no rational basis whose sections are a convex combination (module docs),
+/// which the bound rests on.
+fn check_profile(profile: &BSplineCurve) -> Result<()> {
+    let c = profile.canonical()?;
+    let finite = c
+        .control_points
+        .iter()
+        .all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
+    if c.dim == 3 && finite && c.weights.iter().all(|&w| w.is_finite() && w > 0.0) {
+        Ok(())
+    } else {
+        Err(bad(
+            "a profile is a 3D curve of finite control points and positive weights",
+        ))
+    }
+}
+
 /// A copy of `path` and its spans, for a 3D path that is not closed: the checks both ways of
 /// making a motion ([`PathMotion::create`], [`PathMotion::create_exact`]) share.
 fn open_path_spans(path: &BSplineCurve, start_normal: Vec3) -> Result<(BSplineCurve, Vec<Span>)> {
@@ -1293,4 +1313,58 @@ fn bezier_weights(path: &BSplineCurve) -> Result<Vec<[f64; 3]>> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
+
+    /// A quadratic profile through three points with the given weights.
+    fn profile(weights: &[f64]) -> Result<BSplineCurve> {
+        BSplineCurve::create_canonical(&CanonicalData {
+            dim: 3,
+            degree: 2,
+            control_points: &[
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, 1.0, 1.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ],
+            form: BSplineCurveForm::default(),
+            knot_multiplicities: &[3, 3],
+            knots: &[0.0, 1.0],
+            knot_type: KnotType::Unspecified,
+            weights: Some(weights),
+            trim: None,
+        })
+    }
+
+    /// A profile with a weight that is not positive and finite is refused before any net is
+    /// built, so the sweep keeps its fitted net rather than a certificate the weight breaks.
+    #[test]
+    fn a_profile_with_a_bad_weight_has_no_exact_net() {
+        let path = BSplineCurve::create_line_segment(
+            3,
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(5.0, 0.0, 0.0),
+        )
+        .unwrap();
+        // a profile of positive weights is accepted
+        let good = profile(&[1.0, 0.7, 1.0]).unwrap();
+        assert!(PathMotion::create_exact(&good, &path, Vec3::Z).is_ok());
+        for weights in [
+            [1.0, -0.1, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, f64::NAN, 1.0],
+            [1.0, f64::INFINITY, 1.0],
+        ] {
+            // (the curve itself may refuse such weights; where it is made, the sweep does)
+            if let Ok(bad_profile) = profile(&weights) {
+                assert!(
+                    PathMotion::create_exact(&bad_profile, &path, Vec3::Z).is_err(),
+                    "{weights:?}"
+                );
+            }
+        }
+    }
 }
