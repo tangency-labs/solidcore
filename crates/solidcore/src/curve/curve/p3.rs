@@ -902,7 +902,18 @@ impl EvalFunction for FindPcExtremaEfo<'_, Curve> {
         // limited so that it cannot change the sign of the step. [B52]
         let lim_2d_deriv = 0.95; // Smaller values can slow down convergence.
 
-        if v_dot_2nd < -tan_dot_tan * lim_2d_deriv {
+        // Not upstream (WR-738, #2546, `fixes.curve_point_minimize_full_newton`): when
+        // minimising, the limit applies only where the full derivative does not keep the
+        // step's sign (F' <= 0: the point at or beyond the centre of curvature, where the
+        // stationary point is not a minimum). Upstream limits it wherever the second order
+        // term is below -0.95 C'.C', so near a centre of curvature, where the true F' is
+        // C'.C' (rho / R) for a point rho from the centre of a circle of radius R, the step
+        // is cut to (rho / R) / 0.05 of Newton's and the solve runs out of iterations
+        // (from rho < R / 100 or so): no closest point on an arc from near its centre.
+        let full_newton = self.kernel.fixes.curve_point_minimize_full_newton
+            && self.solver_operation == SolverOperation::Minimize
+            && tan_dot_tan + v_dot_2nd > 0.0;
+        if !full_newton && v_dot_2nd < -tan_dot_tan * lim_2d_deriv {
             v_dot_2nd = -tan_dot_tan * lim_2d_deriv;
         }
 
