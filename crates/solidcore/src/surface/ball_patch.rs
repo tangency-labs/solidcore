@@ -24,6 +24,8 @@
 //! | [`BallPatch::read_from_db`]           | `ReadFromDB` (the writer: `topology::geometry_write`) |
 //! | [`BallPatch::is_kind_of`]             | `IsKindOf`                                   |
 //! | [`BallPatch::is_on_sphere`], `binomial` (private) | `IsOnSphere`, `sm_Binomial` (efb8007; no SMLib caller) |
+//! | [`BallPatch::is_curve_on_sphere`]     | not in the fork: `IsOnSphere`'s certificate on a curve (#2357) |
+//! | [`BallPatch::move_centre`]            | `Transform`'s centre                         |
 //! | [`BallPatch::create_certified`]       | the capi import's ball patch (`smlib_flat.cpp` `FlatToBrepData`, bc814a5, smlib#102) |
 //! | [`ON_SPHERE_REL_TOL`]                 | `kBallPatchRelTol` (`smlib_flat.cpp`, bc814a5) |
 //! | [`BALL_PATCH_TYPE`]                   | `SmBallPatch_TYPE`                           |
@@ -54,6 +56,7 @@ const OP_CREATE: &str = "surface::ball_patch::BallPatch::create";
 const OP_OFFSET: &str = "surface::ball_patch::BallPatch::create_offset_surface";
 const OP_TRANSFORM: &str = "surface::ball_patch::BallPatch::transform";
 const OP_ON_SPHERE: &str = "surface::ball_patch::BallPatch::is_on_sphere";
+const OP_CURVE_ON_SPHERE: &str = "surface::ball_patch::BallPatch::is_curve_on_sphere";
 const OP_CERTIFIED: &str = "surface::ball_patch::BallPatch::create_certified";
 const OP_READ: &str = "surface::ball_patch::BallPatch::read_from_db";
 
@@ -276,6 +279,94 @@ impl BallPatch {
         Ok(true)
     }
 
+    /// Whether every point of `curve` is on the sphere of centre `centre` and radius
+    /// `radius`: [`Self::is_on_sphere`]'s certificate on a curve (not in the fork; the
+    /// Ball's loop, #2357). The curve is cut into Bezier pieces (every interior knot raised
+    /// to the degree); over each, the Bernstein coefficients (degree `2p`) of
+    /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of `((R + |C|) max W)^2`,
+    /// `W = 1` for a curve that is not rational. `false` for a radius that is not positive
+    /// or a weight that is not.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` for a cut curve whose control polygon is not a whole number of Bezier
+    /// pieces (or a degree 0); those of the knots, the knot insertion and the polygon.
+    pub fn is_curve_on_sphere(
+        curve: &BSplineCurve,
+        centre: Point3,
+        radius: f64,
+        rel_tol: f64,
+    ) -> Result<bool> {
+        let err = || SolidError::sm_err(OP_CURVE_ON_SPHERE);
+        if !positive(radius) {
+            return Ok(false);
+        }
+        let mut cut = curve.copy();
+        let p = cut.degree()?;
+        let (knots, mults) = cut.knots(None)?;
+        let mut add = Vec::new();
+        for k in 1..knots.len().saturating_sub(1) {
+            let (Some(&knot), Some(&mult)) = (knots.get(k), mults.get(k)) else {
+                return Err(err());
+            };
+            for _ in mult..p {
+                add.push(knot);
+            }
+        }
+        cut.insert_knots(&add)?;
+        let (points, weights) = cut.control_polygon()?;
+        let rational = cut.is_rational()?;
+        let n = points.len();
+        if p == 0 || n.checked_sub(1).is_none_or(|m| m % p != 0) {
+            return Err(err());
+        }
+        let weight = |k: usize| -> Result<f64> {
+            if rational {
+                weights.get(k).copied().ok_or_else(err)
+            } else {
+                Ok(1.0)
+            }
+        };
+        let mut w_max = 0.0_f64;
+        for k in 0..n {
+            let w = weight(k)?;
+            if !positive(w) {
+                return Ok(false);
+            }
+            w_max = w_max.max(w);
+        }
+        let scale = (radius + centre.distance(Point3::new(0.0, 0.0, 0.0))) * w_max;
+        let tol = rel_tol * scale * scale;
+        let at = |k: usize| -> Result<(Point3, f64)> {
+            Ok((*points.get(k).ok_or_else(err)?, weight(k)?))
+        };
+        // per piece: F = |H|^2 - R^2 W^2 of degree 2p, H = w (P - C), W = w
+        let mut b = 0;
+        while b + 1 < n {
+            for i in 0..=2 * p {
+                let mut f = 0.0;
+                for a in 0..=p {
+                    if a > i || i - a > p {
+                        continue;
+                    }
+                    let (p1, w1) = at(b + a)?;
+                    let (p2, w2) = at(b + i - a)?;
+                    let h1 = (p1 - centre) * w1;
+                    let h2 = (p2 - centre) * w2;
+                    f += binomial(p, a)
+                        * binomial(p, i - a)
+                        * (h1.dot(h2) - radius * radius * w1 * w2);
+                }
+                f /= binomial(2 * p, i);
+                if f.abs() > tol {
+                    return Ok(false);
+                }
+            }
+            b += p;
+        }
+        Ok(true)
+    }
+
     /// The net (the `SmBSplineSurface` base): every evaluation of the patch is its net's.
     #[must_use]
     pub const fn net(&self) -> &BSplineSurface {
@@ -459,12 +550,26 @@ impl BallPatch {
             }
             factor = sc.x;
         }
-        // the centre as the net's points move: a point curve at it, transformed alike
-        let mut centre = BSplineCurve::create_point_curve(self.centre)?;
-        centre.transform(rotate_n_move, scale)?;
-        self.centre = centre.evaluate_point(centre.natural_interval().min())?;
+        self.centre = Self::move_centre(self.centre, rotate_n_move, scale)?;
         self.radius *= factor;
         self.net.transform_notifying(rotate_n_move, scale, notify)
+    }
+
+    /// `Transform`'s centre: `centre` moved as a net's points move (a point curve at it,
+    /// transformed alike), so a definition that keeps the sphere moves it to the same bits
+    /// as the patch's own.
+    ///
+    /// # Errors
+    ///
+    /// Those of the point curve's transform.
+    pub fn move_centre(
+        centre: Point3,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+    ) -> Result<Point3> {
+        let mut c = BSplineCurve::create_point_curve(centre)?;
+        c.transform(rotate_n_move, scale)?;
+        c.evaluate_point(c.natural_interval().min())
     }
 
     /// `ReadFromDB`: the definition (the centre and the radius), then the net's
