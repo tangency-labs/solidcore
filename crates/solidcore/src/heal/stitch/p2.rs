@@ -31,6 +31,8 @@
 //!   `SplitEdgesWithVertices` splits at most as many edges per vertex as the edge list
 //!   held when that vertex started (a split puts the vertex at both new edge ends).
 //!   Past a bound the port returns [`SolidError::InvalidInput`].
+//! - `DoStitching`'s edge gluing skips a lamina pair that crosses another lamina edge on
+//!   the same curve round it (`RadialGlue`; #2506, not upstream).
 //! - `DoStitching` collects the modified faces (`sModifiedFaces`) as upstream, though
 //!   only commented-out code reads them; its `dMinEdgeLength` is dropped for the same
 //!   reason (the lengths are still computed).
@@ -52,11 +54,12 @@ use crate::geom::object::NotifyOperation;
 use crate::geom::tol::{update_object_tolerance, zone_tol3d, TopologyToUpdate};
 use crate::geom::tree::{NodeGeomType, Tree};
 use crate::kernel::Kernel;
-use crate::math::{Vec3, BIG_DOUBLE};
+use crate::math::{Vec3, BIG_DOUBLE, PI};
 use crate::nurbs::b_spline_curve::p2::BoundingBoxRequest;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::brep::{self as qbrep, BoundingBoxOptions};
 use crate::topology::brep::p1::{self as bp1, SetRegionVoidType};
+use crate::topology::edgeuse::p3::{evaluate_binormal, BinormalOptions};
 use crate::topology::{edge, vertex, Brep, EdgeId, FaceId, RegionId, ShellId, VertexId};
 use crate::{Result, SolidError};
 
@@ -118,6 +121,145 @@ fn at<T: Copy>(list: &[T], i: usize) -> Result<T> {
     list.get(i)
         .copied()
         .ok_or_else(|| SolidError::invalid_input(OP, "index outside the list"))
+}
+
+/// (not upstream, #2506) A lamina edge pair the edge gluing is about to glue, seen round
+/// the curve they share: more than two lamina edges lie on one curve where several faces
+/// end on a common line, such as the side faces of a sweep at a corner its profile passes
+/// twice. Upstream glues the first pair that matches in the vertex's edge order, so the
+/// input order decided whether the glued edges cross. Each face leaves the line
+/// in its own direction (its binormal into the face), so the faces have an order round
+/// the line. Gluing two faces with another face between them on both sides makes the
+/// glued edge cross the edge the others are glued into: each face's outer side then
+/// carries on into the next face's inner side, and the closed shell bounds no region.
+/// Gluing faces next to each other round the line never crosses.
+struct RadialGlue {
+    /// The point of the first edge where the pair was compared (its mid point).
+    point: crate::math::Point3,
+    /// The first edge's tangent there.
+    axis: Vec3,
+    /// The pair's gluing tolerance.
+    tolerance: f64,
+    /// `Stitch::fast_edge_compare`: whether the coincidence test stops at five samples.
+    fast: bool,
+}
+
+impl RadialGlue {
+    /// Whether gluing `first` to `second` (each with its curve parameter at
+    /// [`Self::point`]) leaves one of the `others` lamina edges on the same curve
+    /// between their faces on each side round the curve. Edges in `others` that are not
+    /// coincident with `first` ([`Self::coincident`]) are not on it and are left out;
+    /// with none left the pair is the only one there and does not cross.
+    fn crosses(
+        &self,
+        k: &mut Kernel,
+        b: &mut Brep,
+        first: (EdgeId, f64),
+        second: (EdgeId, f64),
+        others: &[EdgeId],
+    ) -> Result<bool> {
+        let mut on_curve = Vec::new();
+        for &o in others {
+            if let Some(t) = self.coincident(k, b, first, o)? {
+                on_curve.push((o, t));
+            }
+        }
+        if on_curve.is_empty() {
+            return Ok(false);
+        }
+        let axis = self.axis.unitize()?;
+        let start = Self::leaving(k, b, first)?.project_to_plane(axis);
+        let side = axis.cross(start);
+        // the angle round the axis from the first face to a face
+        let angle = |k: &mut Kernel, b: &mut Brep, at: (EdgeId, f64)| -> Result<f64> {
+            let w = Self::leaving(k, b, at)?.project_to_plane(axis);
+            let a = w.dot(side).atan2(w.dot(start));
+            Ok(if a < 0.0 { a + 2.0 * PI } else { a })
+        };
+        let to_second = angle(k, b, second)?;
+        let (mut inside, mut outside) = (false, false);
+        for at in on_curve {
+            let a = angle(k, b, at)?;
+            inside |= a > 0.0 && a < to_second;
+            outside |= a > to_second;
+        }
+        Ok(inside && outside)
+    }
+
+    /// The parameter of `o`'s curve at [`Self::point`] when `o` is coincident with the
+    /// first edge `e` (curve parameter `t` there) by the edge gluing's own test: its
+    /// curve passes the point within the tolerance and, unless both are lines between
+    /// the same vertices, stays within it over the whole edge (five samples, then the
+    /// precise distance unless [`Self::fast`]). A curve that only touches `e`'s at the
+    /// point is not on it.
+    fn coincident(
+        &self,
+        k: &mut Kernel,
+        b: &Brep,
+        (e, t): (EdgeId, f64),
+        o: EdgeId,
+    ) -> Result<Option<f64>> {
+        let o_ivl = edge::interval(b, o)?;
+        let o_curve = curve_of(b, o)?;
+        let dropped = match o_curve.drop_point(
+            k,
+            &o_ivl,
+            self.point,
+            None,
+            self.tolerance,
+            Some(o_ivl.mid()),
+            SolverOperation::Minimize,
+        ) {
+            Ok(d) if d.success && d.distance <= self.tolerance => d,
+            Err(err) if err.is_unported_or_cancelled() => return Err(err),
+            // no drop point within the tolerance: not on the curve
+            Ok(_) | Err(_) => return Ok(None),
+        };
+        let e_ivl = edge::interval(b, e)?;
+        let e_curve = curve_of(b, e)?;
+        if e_curve.degree()? == 1
+            && e_curve.number_natural_knots(k)? == 4
+            && o_curve.degree()? == 1
+            && o_curve.number_natural_knots(k)? == 4
+        {
+            return Ok(Some(dropped.parameter));
+        }
+        let (mut o_start, mut o_end) = (o_ivl.min(), o_ivl.max());
+        let pv = e_curve.evaluate(k, t, 1, true, true)?;
+        let pv_o = o_curve.evaluate(k, dropped.parameter, 1, true, true)?;
+        if tangent(&pv)?.dot(tangent(&pv_o)?) < 0.0 {
+            core::mem::swap(&mut o_start, &mut o_end);
+        }
+        let samples: &[u64] = if self.fast { &[5] } else { &[5, 0] };
+        for &n in samples {
+            let d = e_curve
+                .curve_max_distance_between(
+                    k,
+                    &e_ivl,
+                    o_curve,
+                    o_start,
+                    o_end,
+                    n,
+                    Some(self.tolerance),
+                )?
+                .distance;
+            if d > self.tolerance {
+                return Ok(None);
+            }
+        }
+        Ok(Some(dropped.parameter))
+    }
+
+    /// The direction a lamina edge's face leaves the edge at a curve parameter: the
+    /// binormal of the edge's first edge use, which points into the face whichever face
+    /// use it is in.
+    fn leaving(k: &Kernel, b: &mut Brep, (e, t): (EdgeId, f64)) -> Result<Vec3> {
+        let eu = edge::edgeuses(b, e, None, None)?
+            .first()
+            .copied()
+            .ok_or_else(|| deref("lamina edge without edge use"))?;
+        Ok(evaluate_binormal(k, b, eu, t, true, &BinormalOptions::default())?.binormal)
+    }
 }
 
 /// `SmCurve::CalculateBoundingBox(ivl, &box)` of the edge's curve over its interval.
@@ -832,6 +974,37 @@ impl Stitch<'_> {
                                 }
                                 continue;
                             }
+                        }
+                    }
+
+                    // (not upstream) skip a pair that another lamina edge on the same
+                    // curve lies between on both sides round it
+                    if edge::is_lamina(b, e)? && edge::is_lamina(b, test_e)? {
+                        let mut others = Vec::new();
+                        for o in v_edges.iter().flatten().copied() {
+                            if o != e
+                                && o != test_e
+                                && edge::is_lamina(b, o)?
+                                && edge::other_vertex(b, o, Some(v))?
+                                    == edge::other_vertex(b, e, Some(v))?
+                            {
+                                others.push(o);
+                            }
+                        }
+                        let glue = RadialGlue {
+                            point: mid_pnt,
+                            axis: tangent(&pv)?,
+                            tolerance: this_tol,
+                            fast: self.fast_edge_compare,
+                        };
+                        if glue.crosses(
+                            k,
+                            b,
+                            (e, e_ivl.evaluate(0.5)),
+                            (test_e, dropped.parameter),
+                            &others,
+                        )? {
+                            continue;
                         }
                     }
 
@@ -1651,17 +1824,42 @@ mod tests {
         assert!(r.processed.is_empty() && r.max_vertex_gap == 0.0);
     }
 
-    /// The faces of the cube `[lo, hi]^3` as loose planar faces of `b`, each loop
-    /// counterclockwise about the outward normal (`inward`: about the inward one, the
-    /// faces of a cavity).
-    fn add_cube_faces(k: &mut Kernel, b: &mut Brep, lo: f64, hi: f64, inward: bool) {
-        use crate::curve::curve::Curve;
-        use crate::math::Point3;
-        use crate::primitive::api_curves::create_line_segment;
+    /// A loose planar face of `b` bounded by `curves` (one loop, in order).
+    fn add_planar_face(k: &mut Kernel, b: &mut Brep, curves: &[Curve]) {
         use crate::topology::brep::p2::ArenaNotifyState;
         use crate::topology::brep::p8::{create_planar_faces_with_3d_curves, FaceBuildEnv};
         use crate::topology::loopuse::notify_ref;
         use crate::topology::topology_traverser::Marks;
+
+        let mut state = ArenaNotifyState::new(b);
+        let mut env = state.env(None);
+        let mut marks = Marks::default();
+        let this_face = |f: FaceId| notify_ref(EntityRef::Face(f));
+        let mut fenv = FaceBuildEnv {
+            env: &mut env,
+            marks: &mut marks,
+            this_face: &this_face,
+        };
+        let region = b.infinite_region();
+        create_planar_faces_with_3d_curves(k, b, region, curves, 0.01, &mut fenv).unwrap();
+    }
+
+    /// The line segments from each of `corners` to the next, round to the first.
+    fn polygon(corners: &[crate::math::Point3]) -> Vec<Curve> {
+        use crate::primitive::api_curves::create_line_segment;
+        (0..corners.len())
+            .map(|i| {
+                let line = create_line_segment(corners[i], corners[(i + 1) % corners.len()]);
+                Curve::from(line.unwrap())
+            })
+            .collect()
+    }
+
+    /// The faces of the cube `[lo, hi]^3` as loose planar faces of `b`, each loop
+    /// counterclockwise about the outward normal (`inward`: about the inward one, the
+    /// faces of a cavity).
+    fn add_cube_faces(k: &mut Kernel, b: &mut Brep, lo: f64, hi: f64, inward: bool) {
+        use crate::math::Point3;
 
         let p = |x: f64, y: f64, z: f64| Point3::new(x, y, z);
         let (a, c) = (lo, hi);
@@ -1678,23 +1876,7 @@ mod tests {
             if inward {
                 corners.reverse();
             }
-            let curves: Vec<Curve> = (0..4)
-                .map(|i| {
-                    let line = create_line_segment(corners[i], corners[(i + 1) % 4]).unwrap();
-                    Curve::from(line)
-                })
-                .collect();
-            let mut state = ArenaNotifyState::new(b);
-            let mut env = state.env(None);
-            let mut marks = Marks::default();
-            let this_face = |f: FaceId| notify_ref(EntityRef::Face(f));
-            let mut fenv = FaceBuildEnv {
-                env: &mut env,
-                marks: &mut marks,
-                this_face: &this_face,
-            };
-            let region = b.infinite_region();
-            create_planar_faces_with_3d_curves(k, b, region, &curves, 0.01, &mut fenv).unwrap();
+            add_planar_face(k, b, &polygon(&corners));
         }
     }
 
@@ -1734,6 +1916,68 @@ mod tests {
         assert_eq!(void_count(&build(true)), 2);
         // upstream: only the infinite region
         assert_eq!(void_count(&build(false)), 1);
+    }
+
+    /// (#2506) Four loose faces end on the z axis from the origin to (0, 0, 1): two half
+    /// squares in y = 0, leaving it along +x and -x, and two half squares in x = 0
+    /// bounded there by the bumps (0, ±8 t (1 - t) (t - 1/2)^2, t), leaving it along +y
+    /// and -y. The bumps have the axis's end points and touch it at its mid point, but
+    /// lie 0.094 off it at t = 1/4: they are not on it, so they are neither glued nor
+    /// between the two faces in y = 0 round it, and those two are glued. Judging the
+    /// bumps by the mid point alone counts them as on the axis, one on each side of the
+    /// pair, and leaves all 16 edges lamina.
+    #[test]
+    fn stitch_glues_a_pair_past_curves_that_only_touch_its_mid_point() {
+        use crate::math::Point3;
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::crv_basic::Curve as NurbCurve;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::primitive::api_curves::create_line_segment;
+
+        let p = |x: f64, y: f64, z: f64| Point3::new(x, y, z);
+        let mut k = Kernel::default();
+        let mut b = crate::topology::brep::p3::new_brep(
+            &mut k,
+            crate::geom::tol::USE_DEFAULT,
+            crate::geom::tol::USE_DEFAULT,
+        )
+        .unwrap();
+        let (o, top) = (p(0.0, 0.0, 0.0), p(0.0, 0.0, 1.0));
+        add_planar_face(
+            &mut k,
+            &mut b,
+            &polygon(&[o, p(1.0, 0.0, 0.0), p(1.0, 0.0, 1.0), top]),
+        );
+        add_planar_face(
+            &mut k,
+            &mut b,
+            &polygon(&[o, top, p(-1.0, 0.0, 1.0), p(-1.0, 0.0, 0.0)]),
+        );
+        for side in [1.0, -1.0] {
+            // 8 t (1 - t) (t - 1/2)^2 in the Bernstein basis of degree 4, z = t
+            let y = [0.0, 0.5, -2.0 / 3.0, 0.5, 0.0];
+            let pw = (0..5)
+                .map(|i| CPoint::new(0.0, side * y[i], i as f64 / 4.0, NOW))
+                .collect();
+            let knots = vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+            let bump = BSplineCurve::from_nurb(NurbCurve::new(pw, 4, knots).unwrap(), 3, false);
+            let line = |a: Point3, c: Point3| Curve::from(create_line_segment(a, c).unwrap());
+            let curves = [
+                Curve::from(bump),
+                line(top, p(0.0, side, 1.0)),
+                line(p(0.0, side, 1.0), p(0.0, side, 0.0)),
+                line(p(0.0, side, 0.0), o),
+            ];
+            add_planar_face(&mut k, &mut b, &curves);
+        }
+        let r = stitch_into_shell(&mut k, &mut b, true, 0.01).unwrap();
+        // 16 edges, the two in y = 0 on the axis glued into one
+        let edges = bp1::edges(&b, None).unwrap();
+        let mut lamina = 0;
+        for &e in &edges {
+            lamina += usize::from(edge::is_lamina(&b, e).unwrap());
+        }
+        assert_eq!((edges.len(), lamina), (15, 14), "{r:?}");
     }
 
     #[test]

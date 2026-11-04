@@ -14,11 +14,12 @@
 //! Without the flag the cap plane is refused in 15 of the 24 orders, and the sweep still
 //! returns its eight side faces as an open skin. With it the plane is one loop of all eight
 //! lines (area 59) in every order, and the swept body has ten faces, every edge manifold
-//! and the right area. In 15 orders that body is the plate less the hole, volume 118. In
-//! the other 9 (rotations 4, 6 and 7 of each variant) the closed shell gets no solid
-//! region: one void region, volume 0, though `check_brep` passes it. That is a separate
-//! defect after the loop ordering, in the sweep's stitch (#2506; see the WR-591 addendum
-//! of 2026-11-03): [`wr591_on_sweep_is_the_plate_less_the_hole_in_every_order`].
+//! and the right area, the plate less the hole, volume 118, in every order. In 9 of them
+//! (rotations 4, 6 and 7 of each variant) the closed shell got no solid region (one void
+//! region, volume 0, though `check_brep` passed it) until the sweep's stitch glued its
+//! coincident lamina edges as neighbours round their line, a separate defect after the
+//! loop ordering (#2506; see the WR-591 addendum of 2026-11-03):
+//! [`wr591_on_sweep_is_the_plate_less_the_hole_in_every_order`].
 
 #![allow(
     clippy::unwrap_used,
@@ -71,7 +72,8 @@ const REFUSED_OFF: [(usize, usize); 15] = [
     (2, 7),
 ];
 
-/// The rotations whose closed body gets no solid region with the flag, in every variant.
+/// The rotations whose closed body got no solid region with the flag before #2506's
+/// stitch fix, in every variant.
 const NO_SOLID_ROTATIONS: [usize; 3] = [4, 6, 7];
 
 fn p(q: [f64; 2]) -> Point3 {
@@ -269,10 +271,10 @@ fn wr591_on_sweep_is_the_plate_less_the_hole() {
 /// line through the corner (0, 3), so the sweep's stitch finds four coincident lamina
 /// edges there; it must glue each to a neighbour round the line, the two walls across
 /// the outside and the two hole faces across the hole, or each wall to the hole face
-/// next to it. In rotations 4, 6 and 7 of every variant it glues each wall to the far
-/// hole face instead: the two glued edges cross, the faces' two sides join into one
-/// shell, and the closed body gets one void region and no solid one (volume 0), though
-/// `check_brep` `Level2` passes it.
+/// next to it. The regression test of that fix: without it, in rotations 4, 6 and 7 of
+/// every variant the stitch glues each wall to the far hole face: the two glued edges
+/// cross, the faces' two sides join into one shell, and the closed body gets one void
+/// region and no solid one (volume 0), though `check_brep` `Level2` passes it.
 #[test]
 fn wr591_on_sweep_is_the_plate_less_the_hole_in_every_order() {
     let mut bad = Vec::new();
