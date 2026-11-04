@@ -242,7 +242,7 @@ fn chamfered_rounded_cube(d: f64, fixes: bool) -> (Kernel, Brep, solidcore::Resu
 }
 
 /// The closed form: the rounded cube less the chamfer, by the coarea formula
-/// int_0^d (d - s) (80 + 2 pi (5 - s)) ds (the bottom face's inward offset by s has
+/// `int_0^d (d - s) (80 + 2 pi (5 - s)) ds` (the bottom face's inward offset by s has
 /// perimeter 80 + 2 pi (5 - s), the chamfer's height there is d - s).
 fn chamfered_rounded_cube_volume(d: f64) -> f64 {
     (900.0 - (4.0 - PI) * 25.0) * 30.0 - (40.0 * d * d + PI * d * d * (5.0 - d / 3.0))
