@@ -291,7 +291,10 @@ fn the_check_still_reports_a_tight_bend_next_to_a_domain_end() {
             (min_radius - BEND_MIN_RADIUS).abs() <= 1e-9 * BEND_MIN_RADIUS,
             "smallest radius {min_radius:e}"
         );
-        assert!(min_radius < BEND_TOL, "{min_radius:e} is above the tolerance");
+        assert!(
+            min_radius < BEND_TOL,
+            "{min_radius:e} is above the tolerance"
+        );
         assert!(
             (at - bend_t).abs() < 0.01,
             "the smallest radius sits at t = {at:e}, not next to the bend"
@@ -302,8 +305,14 @@ fn the_check_still_reports_a_tight_bend_next_to_a_domain_end() {
         assert!(!ok, "the tight bend checks clean (at_end = {at_end})");
         let (index, value, tol) = failed.expect("a failed test");
         assert_eq!(index, 14, "failed test {index}, not the 3D radius test");
-        assert!((tol - BEND_TOL).abs() <= 1e-15 * tol, "radius tolerance {tol:e}");
-        assert!(value < tol, "reported radius {value:e} is not below {tol:e}");
+        assert!(
+            (tol - BEND_TOL).abs() <= 1e-15 * tol,
+            "radius tolerance {tol:e}"
+        );
+        assert!(
+            value < tol,
+            "reported radius {value:e} is not below {tol:e}"
+        );
         assert!(
             (value - min_radius).abs() <= 1e-4 * min_radius,
             "reported radius {value:e} is not the minimum {min_radius:e}"
