@@ -252,7 +252,7 @@ impl Surface {
                 "the side is not the end of the surface's B-spline form",
             ));
         }
-        let made = |e: f64| -> Result<Option<Made>> {
+        let made = |e: f64| -> Result<Option<Made<Surface>>> {
             let Some(grown) = source.extended(how, e)? else {
                 return Ok(None);
             };
@@ -275,12 +275,12 @@ impl Surface {
                 Some(Ok(a)) => Ok(Some(a)),
                 Some(Err(e)) => Err(e),
             };
-        let ((surface, extension), enclosure) = solve(&made, &across, &source, distance)?;
+        let ((surface, extension), enclosure) = solve(OP, &made, &across, &source, distance)?;
         let surface = surface.ok_or_else(op_err)?;
         // a bound that is not finite certifies nothing of the extension (its net's rounding
         // ran away, as near a vanishing weight): not exact (the solve met none such)
         if !extension.is_finite() {
-            return Err(not_exact(None));
+            return Err(not_exact(OP, None));
         }
         // (a): the source's net and knots, bit for bit, over its box
         let SurfaceKind::BSpline(b) = surface.kind() else {
@@ -376,7 +376,7 @@ fn widened(
     // the widened's length across is the distance, by its closed form: checked as any
     // extension's is
     if !matches!(says(Some(&across), 0.0, distance), Says::Met) {
-        return Err(not_exact(None));
+        return Err(not_exact(OP, None));
     }
     Ok(Extended {
         surface: grown,
@@ -443,9 +443,9 @@ fn workable(b: Option<&Across>, extension: f64) -> Option<f64> {
     (l > 0.0 && matches!(says(Some(b), extension, l), Says::Met)).then_some(l)
 }
 
-fn not_exact(distance: Option<f64>) -> SolidError {
+fn not_exact(op: &'static str, distance: Option<f64>) -> SolidError {
     SolidError::ExtendRefused {
-        operation: OP,
+        operation: op,
         refusal: ExtendRefusal::NotExact,
         distance,
     }
@@ -458,12 +458,13 @@ fn not_exact(distance: Option<f64>) -> SolidError {
 /// is not measured to the stop ([`Says::Unproved`]) bounds the bracket too, when a shorter
 /// ask measured to the stop reaches `d`; otherwise the extension is refused as not exact,
 /// naming the longest such ask's distance.
-fn solve(
-    made: &dyn Fn(f64) -> Result<Option<Made>>,
-    across: &dyn Fn(&Option<Surface>) -> Result<Option<Across>>,
+fn solve<T>(
+    op: &'static str,
+    made: &dyn Fn(f64) -> Result<Option<Made<T>>>,
+    across: &dyn Fn(&Option<T>) -> Result<Option<Across>>,
     source: &Local,
     d: f64,
-) -> Result<(Made, Across)> {
+) -> Result<(Made<T>, Across)> {
     // the first ask: the parameter range times d over the source's length across it
     let range = source.range()?;
     let whole = made(range)?;
@@ -512,7 +513,7 @@ fn solve(
     let (good, bad) = (Cell::new(0.0_f64), Cell::new(f64::INFINITY));
     // an ask, or the longest positive one below it when its weights are not: the ask made,
     // its surface and its across length
-    let try_ask = |e: f64| -> Result<Option<Asked>> {
+    let try_ask = |e: f64| -> Result<Option<Asked<T>>> {
         let e = if e >= bad.get() {
             0.5 * (good.get() + bad.get())
         } else {
@@ -542,7 +543,7 @@ fn solve(
         let longest = if lo > 0.0 { made(lo)? } else { None };
         let Some(s) = longest else {
             return Err(SolidError::ExtendRefused {
-                operation: OP,
+                operation: op,
                 refusal: ExtendRefusal::WeightVanishes,
                 distance: None,
             });
@@ -558,7 +559,7 @@ fn solve(
         // refusal names the longest workable one. Weight positivity need not be monotone in
         // the ask, so this is a long workable distance, not proved the longest.
         let mut longest = workable(b.as_ref(), s.1);
-        let mut reaching: Option<Asked> = None;
+        let mut reaching: Option<Asked<T>> = None;
         let mut back = 0.5;
         for _ in 0..BACK_OFFS {
             let ask = lo * (1.0 - back);
@@ -593,7 +594,7 @@ fn solve(
             }
         }
         Err(SolidError::ExtendRefused {
-            operation: OP,
+            operation: op,
             refusal: ExtendRefusal::WeightVanishes,
             distance: longest,
         })
@@ -604,7 +605,7 @@ fn solve(
     let unproved = |e: f64| -> Result<(f64, f64)> {
         match longest_workable(e)? {
             Some((m, l, mid)) if l >= d => Ok((m, mid - d)),
-            other => Err(not_exact(other.map(|(_, l, _)| l))),
+            other => Err(not_exact(op, other.map(|(_, l, _)| l))),
         }
     };
     // (ask, f) running short of d and past it
@@ -655,7 +656,7 @@ fn solve(
     }
     let (Some((mut lo, mut flo)), Some((mut hi, mut fhi))) = (short, past) else {
         return Err(SolidError::NotConverged {
-            operation: OP,
+            operation: op,
             iterations: u32::try_from(BRACKET_TRIES).unwrap_or(u32::MAX),
         });
     };
@@ -693,19 +694,19 @@ fn solve(
         }
     }
     Err(SolidError::NotConverged {
-        operation: OP,
+        operation: op,
         iterations: u32::try_from(SOLVE_TRIES).unwrap_or(u32::MAX),
     })
 }
 
 /// A met ask's extension and its length (met implies a length).
-fn finish(s: Made, b: Option<Across>) -> Result<(Made, Across)> {
+fn finish<T>(s: Made<T>, b: Option<Across>) -> Result<(Made<T>, Across)> {
     let b = b.ok_or_else(op_err)?;
     Ok((s, b))
 }
 
 /// An ask made: the ask, its extension and its across length (none: not measured).
-type Asked = (f64, Made, Option<Across>);
+type Asked<T> = (f64, Made<T>, Option<Across>);
 
 /// Which end of the Illinois bracket moved last.
 #[derive(PartialEq)]
@@ -715,9 +716,9 @@ enum Moved {
     Hi,
 }
 
-/// An extension made: its surface (none when its net overflowed) and the bound on its part
-/// past the side.
-type Made = (Option<Surface>, f64);
+/// An extension made: its surface or curve (none when its net overflowed) and the bound on its
+/// part past the side.
+type Made<T> = (Option<T>, f64);
 
 /// An ask and its across length's middle less the distance.
 type Try = Option<(f64, f64)>;
@@ -742,6 +743,15 @@ fn dot4(x: H, y: H) -> f64 {
     x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3]
 }
 
+/// A control point as a homogeneous point (a polynomial net's weight 1).
+fn homogeneous(c: &CPoint) -> H {
+    if c.w == NOW {
+        [c.x, c.y, c.z, 1.0]
+    } else {
+        [c.x, c.y, c.z, c.w]
+    }
+}
+
 /// A surface's net seen from the side it is extended past: rows of homogeneous points along
 /// the extended direction, the side at the rows' high end (a low side reversed: the knots
 /// negated, the rows read backwards, both exact).
@@ -764,13 +774,7 @@ impl Local {
     fn of(net: &Net, side: BoxSide) -> Result<Self> {
         let cpts = net.cpts();
         let rational = net.is_rational();
-        let h = |c: &CPoint| -> H {
-            if c.w == NOW {
-                [c.x, c.y, c.z, 1.0]
-            } else {
-                [c.x, c.y, c.z, c.w]
-            }
-        };
+        let h = homogeneous;
         let (rows, knots, p): (Vec<Vec<H>>, &[f64], usize) = if side.is_u() {
             let cols = cpts.first().map_or(0, Vec::len);
             let rows = (0..cols)
@@ -781,14 +785,26 @@ impl Local {
             let rows = cpts.iter().map(|r| r.iter().map(h).collect()).collect();
             (rows, net.v_knots(), net.q())
         };
+        Self::from_rows(rows, knots.to_vec(), p, rational, side.is_high())
+    }
+
+    /// The rows of a curve's net (one) or a surface's, seen from the end they are extended
+    /// past (`high`: the knots' high end), checked to be extendable there.
+    fn from_rows(
+        rows: Vec<Vec<H>>,
+        knots: Vec<f64>,
+        p: usize,
+        rational: bool,
+        high: bool,
+    ) -> Result<Self> {
         let mut l = Self {
             rows,
-            knots: knots.to_vec(),
+            knots,
             p,
             rational,
             err: 0.0,
         };
-        if !side.is_high() {
+        if !high {
             l.reverse();
         }
         if l.p == 0 || l.rows.iter().any(|r| r.len() <= l.p) {
@@ -803,7 +819,7 @@ impl Local {
         if !clamped {
             return Err(SolidError::invalid_input(
                 OP,
-                "the surface's form is not clamped at the side",
+                "the net is not clamped at the side",
             ));
         }
         Ok(l)
@@ -892,6 +908,26 @@ impl Local {
             (0, vec![0.0, 1.0])
         };
         Net::new(net, self.p, q, self.knots.clone(), v)
+    }
+
+    /// As a NURBS curve (the first row), its end back at `high`.
+    fn curve(mut self, high: bool) -> Result<crate::nurbs::crv_basic::Curve> {
+        if !high {
+            self.reverse();
+        }
+        let rational = self.rational;
+        let row = self.rows.into_iter().next().ok_or_else(op_err)?;
+        let pts = row
+            .iter()
+            .map(|x| {
+                if rational {
+                    CPoint::new(x[0], x[1], x[2], x[3])
+                } else {
+                    CPoint::new(x[0], x[1], x[2], NOW)
+                }
+            })
+            .collect();
+        crate::nurbs::crv_basic::Curve::new(pts, self.p, self.knots)
     }
 
     /// The rows with `t` inserted until it has multiplicity `p`, from a copy (knot insertion:
@@ -1246,7 +1282,9 @@ fn keeps(net: &Net, out: &Net, side: BoxSide) -> Result<bool> {
     Ok(points_kept && a.len() <= b.len())
 }
 
+mod curve;
 mod sides;
+pub use curve::ExtendedCurve;
 pub use sides::{ExtendedSides, SideExtension};
 
 #[cfg(test)]
