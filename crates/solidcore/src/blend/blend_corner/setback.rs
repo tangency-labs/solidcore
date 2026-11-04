@@ -204,29 +204,21 @@ pub fn builds_setback(corner: &FilletCorner) -> bool {
 }
 
 /// Not the fork's (solidcore-native, WR-697 addendum `setback-asked-not-built-refused`; the
-/// fork refuses this only in its capi): whether a setback asked for at `corner` would be
-/// dropped. `asked_fill` is whether one was asked with `SetSetBackFill` before the corners
-/// were made, which only the Setback reads; `SetSetBackDist` on the made corner is its
-/// [`FilletCorner::set_back_dist`]. The Setback builds either; an N x N corner
-/// ([`builds_setback`]) builds the one set on it, so a fill asked there is dropped only when
-/// no setback is set on the corner too; any other corner drops both. With
-/// `Kernel::fixes.fillet_blend_corner` the session refuses such a request
-/// ([`SETBACK_NOT_BUILT`], `CornerUnsupported`) instead of building the corner without it.
+/// fork refuses this only in its capi): whether a setback set on the made `corner`
+/// (`SetSetBackDist`, its [`FilletCorner::set_back_dist`]) would be dropped, the corner
+/// building none ([`builds_setback`]). With `Kernel::fixes.fillet_blend_corner` the session
+/// refuses it ([`SETBACK_NOT_BUILT`], `CornerUnsupported`) instead of building the corner
+/// without it, and refuses a `SetSetBackFill` request at such a corner when the corners are
+/// made. An N x N corner is never refused, as before the port: it builds the setback set on
+/// it, and ignores a `SetSetBackFill` request (which only the Setback reads).
 #[must_use]
-pub fn asked_setback_not_built(corner: &FilletCorner, asked_fill: bool) -> bool {
-    let set = corner.set_back_dist > 0.0;
-    if corner.blend.is_some_and(BlendCorner::is_setback) {
-        false
-    } else if builds_setback(corner) {
-        asked_fill && !set
-    } else {
-        asked_fill || set
-    }
+pub fn asked_setback_not_built(corner: &FilletCorner) -> bool {
+    corner.set_back_dist > 0.0 && !builds_setback(corner)
 }
 
 /// The refusal's comment for [`asked_setback_not_built`].
 pub const SETBACK_NOT_BUILT: &str =
-    "Fillet Error: a setback is asked for at a corner that builds none (neither the blend corner's Setback nor an N x N corner given the setback), so it would not be built";
+    "Fillet Error: a setback is asked for at a corner that builds none (neither the blend corner's Setback nor an N x N corner), so it would not be built";
 
 /// `SmFilletExecutive::GetSetBackFill`: the first fill asked at `vertex`.
 #[must_use]

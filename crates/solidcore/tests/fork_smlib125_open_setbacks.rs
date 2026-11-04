@@ -415,14 +415,14 @@ fn setback_set_on_a_corner_that_builds_none_is_refused() {
 }
 
 /// The box [0, 40]^2 x [0, 20] less the cylinder r 20 about (40, 40): at (20, 40, 20) a top
-/// edge, the top arc and the vertical edge, all convex, one curved, rounded 2 and set back
-/// 4. Without `fillet_setback_beside_curved_faces` it is no Setback but the `NxN` corner,
+/// edge, the top arc and the vertical edge, all convex, one curved, rounded 2, set back 4.
+/// Without `fillet_setback_beside_curved_faces` it is no Setback but the `NxN` corner,
 /// whose setback path builds the setback set on it (`SetSetBackDist`): the pinned setback
 /// corner (16, 39, 25), with the flag as without it. The fork's dc757a6 deletes that path
 /// (its SMLib at 18e96f1 builds the corner without the setback, 11 faces); solidcore keeps
-/// it (solidcore#2365). A fill asked there (`SetSetBackFill`, which only the Setback reads)
-/// with no setback set on the corner would be dropped, so it is refused
-/// (`CornerUnsupported`).
+/// it (solidcore#2365). A `SetSetBackFill` request there (which only the Setback reads) is
+/// ignored, as before the port: the corner without a setback (11, 24, 15, as the fork's
+/// SMLib builds it) when none is set on it.
 #[test]
 fn nxn_corner_builds_the_setback_set_on_it() {
     use solidcore::primitive::api_primitives::create_cylinder;
@@ -431,12 +431,12 @@ fn nxn_corner_builds_the_setback_set_on_it() {
         [20.0, 40.0, 10.0],
         [25.0, 40.0 - 175.0_f64.sqrt(), 20.0],
     ];
-    // (fill, dist) for each door
     for (blend_on, fill, dist) in [
         (true, false, true),
         (true, true, true),
         (true, true, false),
         (false, false, true),
+        (false, true, false),
     ] {
         let mut k = all_fixes(blend_on);
         k.fixes.fillet_setback_beside_curved_faces = false;
@@ -455,16 +455,11 @@ fn nxn_corner_builds_the_setback_set_on_it() {
             dist,
         );
         assert_eq!(r.event, Some(None), "{blend_on} {fill} {dist}");
-        if dist {
-            assert_eq!(r.code, 0, "{}", r.comment);
-            let mut b = r.body.expect("a body");
-            stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
-            assert_eq!(counts(&b), (16, 39, 25), "{blend_on} {fill}");
-        } else {
-            assert!(r.body.is_none());
-            assert_eq!(r.code, 9, "{}", r.comment); // CornerUnsupported
-            assert!(r.comment.contains("builds none"), "{}", r.comment);
-        }
+        assert_eq!(r.code, 0, "{}", r.comment);
+        let mut b = r.body.expect("a body");
+        stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+        let want = if dist { (16, 39, 25) } else { (11, 24, 15) };
+        assert_eq!(counts(&b), want, "{blend_on} {fill} {dist}");
     }
 }
 

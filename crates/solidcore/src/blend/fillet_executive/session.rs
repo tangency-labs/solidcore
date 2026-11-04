@@ -2274,9 +2274,9 @@ impl<'target> FilletSession<'target> {
                 // solidcore-native (WR-697 addendum; the fork refuses this only in its capi): a
                 // corner asked to be set back (SetSetBackFill) that builds no setback at all
                 // (neither the Setback nor an N x N corner) would drop it silently, so it is
-                // refused, decided from the request and the classification alone. An N x N
-                // corner builds a setback set on it after (SetSetBackDist): whether it is
-                // set is decided by `do_filleting` (`asked_setback_not_built`).
+                // refused, decided from the request and the classification alone (the second
+                // door, SetSetBackDist on the made corner, is refused by `do_filleting` on
+                // the same `builds_setback`).
                 if k.fixes.fillet_blend_corner
                     && crate::blend::blend_corner::setback::set_back_fill_of(
                         set_back_fills,
@@ -2665,9 +2665,9 @@ impl<'target> FilletSession<'target> {
     /// Left `open`, a G1 corner is the Setback's hole (its spring curves, no fill, ef57570);
     /// only a G2 corner (eased, or curvature-continuous sections) stays the fill's patches
     /// the caller removes. A corner asked for here that is not the Setback is refused
-    /// (`CornerUnsupported`), except an N x N corner given the setback with
-    /// [`Self::set_corner_setback`], which builds it on its own setback path. Without the
-    /// flag it changes nothing.
+    /// (`CornerUnsupported`), except an N x N corner, which ignores the request as before
+    /// (it builds a setback given with [`Self::set_corner_setback`] on its own setback
+    /// path). Without the flag it changes nothing.
     pub fn set_set_back_fill(&mut self, vertex: VertexId, setback: f64, ease: f64, open: bool) {
         self.objects
             .set_back_fills
