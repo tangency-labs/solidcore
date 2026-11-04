@@ -18,13 +18,13 @@
 //! iso-line along `d` is one point, so every pure derivative `∂_d^n S` (n ≥ 1) is identically
 //! zero there, and those partials are set to exact zero ([`zero_collapsed`]) before the
 //! expansion. A coefficient then vanishes only when it is within its own error: each partial
-//! carries the rounding of its evaluation ([`Scale`]: `γ` times the net's size and the basis
-//! derivatives' scale along each direction to the partial's orders, `2p / Δ` per order for a
-//! spline, the knot span `Δ` holding the point), propagated through the terms of `N_k`:
+//! carries a certified bound on the rounding of its evaluation
+//! ([`super::collapse::certified_partials`]: the classifier's de Boor bounds carried through the
+//! derivative recurrences and Leibniz's quotient), propagated through the terms of `N_k`:
 //! `|N_k| ≤ Σ_m (|D^m S_u| E_n + E_m |D^n S_v| + E_m E_n) / (m! n!) + γ Σ_m |D^m S_u| |D^n S_v| / (m! n!)`.
 //! No absolute or cross-order threshold: under parameters scaled by any factor each order of
 //! partials, each `N_k` and each bound scale alike, so the order and the limit are the same, at
-//! any offset (the caller takes the partials with the pole point at the origin) and size.
+//! any offset and size.
 use super::spline::{Partials, MAX_PARTIAL_ORDER};
 use super::vec::VecExt;
 use super::EvalError;
@@ -39,40 +39,24 @@ fn cancellation() -> f64 {
     super::collapse::gamma(64)
 }
 
-/// The scale of a surface's partials at a point, for their rounding: the net's size (its
-/// largest point from the pole, times its weights' spread) and, along u and v, the factor one
-/// more derivative can grow them by (`2p / Δ` for a spline's basis, 1 for an angle).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Scale {
-    /// The net's size, mm.
-    pub size: f64,
-    /// Per direction (u, v), the growth of one derivative.
-    pub per: [f64; 2],
-}
-
-impl Scale {
-    /// A bound on the rounding of the partial `∂_u^i ∂_v^j S`: the rational quotient's Leibniz
-    /// sums over basis derivatives of these scales, generously.
-    fn err(self, i: usize, j: usize) -> f64 {
-        super::collapse::gamma(1024)
-            * self.size
-            * self.per[0].powi(i as i32)
-            * self.per[1].powi(j as i32)
-    }
-}
+/// A certified bound on the rounding of each partial (`[i][j]` for `∂_u^i ∂_v^j S`), as
+/// [`super::collapse::certified_partials`] gives them.
+pub type Errors = [[f64; MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1];
 
 /// The partials `d` with every pure derivative along a collapsed direction (`collapsed[0]`: u,
-/// `[1]`: v) set to exact zero, as the classifier's verdict makes them.
-pub fn zero_collapsed(d: &mut Partials, collapsed: [bool; 2]) {
+/// `[1]`: v) set to exact zero, as the classifier's verdict makes them, and their errors with
+/// them.
+pub fn zero_collapsed(d: &mut Partials, errors: &mut Errors, collapsed: [bool; 2]) {
     for n in 1..=MAX_PARTIAL_ORDER {
-        if collapsed[0] {
-            if let Some(x) = d.get_mut(n).and_then(|row| row.get_mut(0)) {
+        for (dir, (i, j)) in [(0, (n, 0)), (1, (0, n))] {
+            if !collapsed.get(dir).copied().unwrap_or(false) {
+                continue;
+            }
+            if let Some(x) = d.get_mut(i).and_then(|row| row.get_mut(j)) {
                 *x = Vec3::ZERO;
             }
-        }
-        if collapsed[1] {
-            if let Some(x) = d.get_mut(0).and_then(|row| row.get_mut(n)) {
-                *x = Vec3::ZERO;
+            if let Some(x) = errors.get_mut(i).and_then(|row| row.get_mut(j)) {
+                *x = 0.0;
             }
         }
     }
@@ -107,7 +91,11 @@ fn directional(d: &Partials, first: usize, m: usize, [a, b]: [f64; 2]) -> Option
 /// partials are the classifier's ([`zero_collapsed`]). [`EvalError::Degenerate`] when every
 /// coefficient up to `k = 3` vanishes (a pole of higher order), or `dir` is zero or not finite;
 /// [`EvalError::Unevaluable`] when a partial is not finite.
-pub fn limit_along(d: &Partials, dir: [f64; 2], scale: Scale) -> Result<(Vec3, usize), EvalError> {
+pub fn limit_along(
+    d: &Partials,
+    dir: [f64; 2],
+    errors: &Errors,
+) -> Result<(Vec3, usize), EvalError> {
     let degenerate = |why: &str| {
         EvalError::Degenerate(format!("no normal along ({}, {}): {why}", dir[0], dir[1]))
     };
@@ -117,7 +105,13 @@ pub fn limit_along(d: &Partials, dir: [f64; 2], scale: Scale) -> Result<(Vec3, u
     if !d.iter().flatten().all(|p| p.is_finite()) {
         return Err(EvalError::Unevaluable("a partial is not finite".into()));
     }
-    let err = |i: usize, j: usize| scale.err(i, j);
+    let err = |i: usize, j: usize| {
+        errors
+            .get(i)
+            .and_then(|r| r.get(j))
+            .copied()
+            .unwrap_or(f64::INFINITY)
+    };
     // `D^m` of S_u (first = 0) or S_v (1) and its error bound.
     let directional_err = |first: usize, m: usize| -> f64 {
         (0..=m)

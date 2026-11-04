@@ -48,7 +48,10 @@
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // NaN-refusing tests
 
-use super::spline::{onto_knots, EvalCurve, EvalSurface, MAX_SPLINE_DEGREE};
+use super::spline::{
+    linear, onto_knots, rotation_derivative, EvalCurve, EvalSurface, Partials, MAX_PARTIAL_ORDER,
+    MAX_SPLINE_DEGREE,
+};
 use super::vec::VecExt;
 use super::EvalError;
 use crate::math::Vec3;
@@ -578,6 +581,265 @@ fn radius(
         return Err(refused("a radius is not finite"));
     }
     Ok((r, err))
+}
+
+// ---- Certified partials ----
+//
+// The partials a pole's limit normal is read from ([`super::pole::limit_along`]), each with a
+// certified bound on its rounding, from the same machinery: a B-spline's derivative is the
+// B-spline of degree p − 1 on the inner knots whose homogeneous control points are
+// `p (P_(i+1) − P_i) / (u_(i+p+1) − u_(i+1))` (each with its rounding), evaluated by
+// [`de_boor`] (which carries its inputs' bounds); a rational surface's partials then follow from
+// the homogeneous ones by Leibniz's rule, `A_ij = Σ C(i,k) C(j,l) w_kl S_(i−k)(j−l)`, the bounds
+// carried through each product, sum and the division by the weight.
+
+/// The derivative's control points and knots of the homogeneous B-spline of degree `p` on
+/// `knots` over `pts`, each point with its rounding: the difference, the knot span and the
+/// scale by `p / Δ` (`γ_4` of the result), on the inputs' own errors. A span of zero length
+/// carries no basis function: its point is zero.
+fn derive(p: usize, knots: &[f64], pts: &[Hom]) -> Option<(Vec<Hom>, Vec<f64>)> {
+    let n = pts.len();
+    if p == 0 || n < 2 {
+        return None;
+    }
+    let mut out = Vec::new();
+    for i in 0..n - 1 {
+        let (a, b) = (pts.get(i)?, pts.get(i + 1)?);
+        let span = knots.get(i + p + 1)? - knots.get(i + 1)?;
+        if span == 0.0 {
+            out.push(Hom::default());
+            continue;
+        }
+        let f = p as f64 / span;
+        let mut h = [0.0; 4];
+        for ((x, bk), ak) in h.iter_mut().zip(b.h).zip(a.h) {
+            *x = f * (bk - ak);
+        }
+        let g = gamma(4);
+        let sx = h[0].abs().max(h[1].abs()).max(h[2].abs());
+        out.push(Hom {
+            h,
+            ex: f.abs() * (a.ex + b.ex) * (1.0 + g) + g * sx,
+            ew: f.abs() * (a.ew + b.ew) * (1.0 + g) + g * h[3].abs(),
+        });
+    }
+    let inner = knots.get(1..knots.len().checked_sub(1)?)?.to_vec();
+    Some((out, inner))
+}
+
+/// The `i`-th derivative at `t` of the homogeneous B-spline of degree `p` on `knots` over
+/// `pts`, with its rounding: zero past its degree.
+fn derivative_at(p: usize, knots: &[f64], pts: &[Hom], i: usize, t: f64) -> Result<Hom, Off> {
+    if i > p {
+        return Ok(Hom::default());
+    }
+    let (mut pts, mut knots) = (pts.to_vec(), knots.to_vec());
+    for r in 0..i {
+        let (q, k) = derive(p - r, &knots, &pts).ok_or(Off::Malformed)?;
+        pts = q;
+        knots = k;
+    }
+    let n = pts.len();
+    de_boor(p - i, &knots, n, |j| pts.get(j).copied(), t)
+}
+
+/// A vector and a certified bound on its error's length.
+type Bounded = (Vec3, f64);
+
+/// Leibniz's quotient on a table of homogeneous partials `a[i][j]` (with their rounding):
+/// the Euclidean partials `S_ij` for `i + j ≤ MAX_PARTIAL_ORDER`, each with its bound.
+fn quotient(
+    a: &[[Hom; MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1],
+) -> Result<[[Bounded; MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1], EvalError> {
+    let binom =
+        |n: usize, k: usize| -> f64 { (1..=k).map(|i| (n + 1 - i) as f64 / i as f64).product() };
+    let at = |i: usize, j: usize| a.get(i).and_then(|r| r.get(j)).copied().unwrap_or_default();
+    let w00 = at(0, 0);
+    let (w, ew) = (w00.h[3], w00.ew);
+    if !(w.abs() > ew) {
+        return Err(refused(&format!(
+            "the weight {w} is not certified non-zero (rounding {ew})"
+        )));
+    }
+    let mut s = [[(Vec3::ZERO, 0.0); MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1];
+    for order in 0..=MAX_PARTIAL_ORDER {
+        for i in 0..=order {
+            let j = order - i;
+            let aij = at(i, j);
+            let mut num = Vec3::new(aij.h[0], aij.h[1], aij.h[2]);
+            let mut err = 3f64.sqrt() * aij.ex;
+            let mut size = num.len();
+            let mut terms = 0usize;
+            for k in 0..=i {
+                for l in 0..=j {
+                    if k == 0 && l == 0 {
+                        continue;
+                    }
+                    let c = binom(i, k) * binom(j, l);
+                    let wk = at(k, l);
+                    let (sv, se) = s
+                        .get(i - k)
+                        .and_then(|r| r.get(j - l))
+                        .copied()
+                        .unwrap_or((Vec3::ZERO, 0.0));
+                    let t = sv * (c * wk.h[3]);
+                    num -= t;
+                    err += c * (wk.h[3].abs() * se + wk.ew * sv.len() + wk.ew * se);
+                    size += t.len();
+                    terms += 1;
+                }
+            }
+            let q = num * (1.0 / w);
+            // The sum's rounding over its terms, then the division with the weight's error.
+            let e_num = err + gamma(2 * terms + 4) * size;
+            let e = (e_num + q.len() * ew) / (w.abs() - ew) + 2.0 * UNIT * q.len();
+            if !(q.is_finite() && e.is_finite()) {
+                return Err(refused("a partial is not finite"));
+            }
+            if let Some(slot) = s.get_mut(i).and_then(|r| r.get_mut(j)) {
+                *slot = (q, e * (1.0 + gamma(8)));
+            }
+        }
+    }
+    Ok(s)
+}
+
+/// The partials of `s` at `uv` to the fourth order ([`Partials`]) and a certified bound on each
+/// one's rounding, from the net or profile by the classifier's de Boor machinery (above).
+pub fn certified_partials(
+    s: &EvalSurface,
+    uv: [f64; 2],
+) -> Result<
+    (
+        Partials,
+        [[f64; MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1],
+    ),
+    EvalError,
+> {
+    check(uv, 0.0)?;
+    let mut d: Partials = [[Vec3::ZERO; MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1];
+    let mut e = [[0.0; MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1];
+    let mut put = |i: usize, j: usize, (v, err): Bounded| {
+        if let (Some(x), Some(y)) = (
+            d.get_mut(i).and_then(|r| r.get_mut(j)),
+            e.get_mut(i).and_then(|r| r.get_mut(j)),
+        ) {
+            *x = v;
+            *y = err;
+        }
+    };
+    match s {
+        EvalSurface::Plane { origin, du, dv } => {
+            put(
+                0,
+                0,
+                (
+                    *origin + *du * uv[0] + *dv * uv[1],
+                    gamma(4) * (origin.len() + (*du * uv[0]).len() + (*dv * uv[1]).len()),
+                ),
+            );
+            put(1, 0, (*du, 0.0));
+            put(0, 1, (*dv, 0.0));
+        }
+        EvalSurface::Nurbs(n) => {
+            let [u, v] = s.wrap(uv);
+            let [pu, pv] = n.degree();
+            let [nu, nv] = n.count();
+            let [ku, kv] = n.knots();
+            let ctrl = n.ctrl();
+            let off = |o: Off| off_message(o, uv);
+            let mut a = [[Hom::default(); MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1];
+            for i in 0..=MAX_PARTIAL_ORDER {
+                // Each v-column's i-th u-derivative at u: a homogeneous curve in v.
+                let line: Vec<Hom> = (0..nv)
+                    .map(|l| {
+                        let col: Vec<Hom> = (0..nu)
+                            .map(|k| {
+                                ctrl.get(l * nu + k)
+                                    .copied()
+                                    .map(Hom::exact)
+                                    .ok_or(Off::Malformed)
+                            })
+                            .collect::<Result<_, _>>()?;
+                        derivative_at(pu, ku, &col, i, u)
+                    })
+                    .collect::<Result<_, _>>()
+                    .map_err(off)?;
+                for j in 0..=MAX_PARTIAL_ORDER - i {
+                    let h = derivative_at(pv, kv, &line, j, v).map_err(off)?;
+                    if let Some(x) = a.get_mut(i).and_then(|r| r.get_mut(j)) {
+                        *x = h;
+                    }
+                }
+            }
+            let q = quotient(&a)?;
+            for (i, row) in q.iter().enumerate() {
+                for (j, b) in row.iter().enumerate() {
+                    if i + j <= MAX_PARTIAL_ORDER {
+                        put(i, j, *b);
+                    }
+                }
+            }
+        }
+        EvalSurface::Revolved {
+            profile,
+            origin,
+            axis,
+            transform,
+            swap,
+        } => {
+            let [a0, b0] = s.wrap(uv);
+            let (t, angle) = if *swap { (b0, a0) } else { (a0, b0) };
+            let pts: Vec<Hom> = profile.ctrl().iter().copied().map(Hom::exact).collect();
+            let off = |o: Off| off_message(o, uv);
+            let mut a = [[Hom::default(); MAX_PARTIAL_ORDER + 1]; MAX_PARTIAL_ORDER + 1];
+            for i in 0..=MAX_PARTIAL_ORDER {
+                let h =
+                    derivative_at(profile.degree(), profile.knots(), &pts, i, t).map_err(off)?;
+                if let Some(x) = a.get_mut(i).and_then(|r| r.get_mut(0)) {
+                    *x = h;
+                }
+            }
+            // The profile's Euclidean derivatives (a curve: the table's first column).
+            let c = quotient(&a)?;
+            let (top, _) = norms(transform);
+            for i in 0..=MAX_PARTIAL_ORDER {
+                let (ci, ei) = c
+                    .get(i)
+                    .and_then(|r| r.first())
+                    .copied()
+                    .unwrap_or((Vec3::ZERO, 0.0));
+                let x = if i == 0 { ci - *origin } else { ci };
+                let ex = if i == 0 {
+                    ei + gamma(1) * (ci.len() + origin.len())
+                } else {
+                    ei
+                };
+                for j in 0..=MAX_PARTIAL_ORDER - i {
+                    let r = rotation_derivative(*axis, x, angle, j);
+                    // A rotation's derivatives move a vector by at most its length; the turn's
+                    // own rounding (trigonometry, products, sums) within γ_16 of it.
+                    let er = ex + gamma(16) * x.len();
+                    let (val, err) = if i == 0 && j == 0 {
+                        let p = super::spline::affine(transform, *origin + r);
+                        (
+                            p,
+                            top * (er + gamma(2) * (origin.len() + r.len())) + gamma(8) * p.len(),
+                        )
+                    } else {
+                        let p = linear(transform, r);
+                        (p, top * er + gamma(8) * top * r.len())
+                    };
+                    if *swap {
+                        put(j, i, (val, err));
+                    } else {
+                        put(i, j, (val, err));
+                    }
+                }
+            }
+        }
+    }
+    Ok((d, e))
 }
 
 /// Which directions `s` is collapsed along at `uv`, exactly (to rounding), or within `reach`

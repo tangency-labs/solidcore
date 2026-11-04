@@ -183,3 +183,62 @@ fn a_pole_within_a_reach_gets_its_directional_limit() {
         );
     }
 }
+
+/// Where the old modelled bound (`γ_1024` × the net's size from the pole × (2p / Δ) per order)
+/// misjudged: a pole row whose homogeneous weights are 1, −1, 1 (its Euclidean points one
+/// point, so the classifier's pole), its surface weight `(1 − 2v)²` near zero at v = ½ + 1e-4.
+/// Every partial there is divided by that weight, so its rounding is about 1/(4e-8) times what
+/// the model allowed for: the kernel's own evaluation and the certified one differ by more than
+/// twice the model's bound on some partials (so one of them is off by more than the model
+/// allows), and on each of those the certified bound is larger than the model's.
+#[test]
+fn the_certified_bound_covers_a_weight_near_zero_the_model_did_not() {
+    let profile = [[0.0, 0.0], [0.0, 0.5 * L], [L, L]];
+    let arc = [([1.0, 0.0], 1.0), ([1.0, 1.0], MID), ([0.0, 1.0], 1.0)];
+    let apex_w = [1.0, -1.0, 1.0];
+    let o = [3.0, -2.0, 5.0];
+    let mut ctrl = Vec::new();
+    for (j, ([ax, ay], w)) in arc.iter().enumerate() {
+        for (i, [r, z]) in profile.iter().enumerate() {
+            let w = if i == 0 { apex_w[j] } else { *w };
+            let p = [o[0] + r * ax, o[1] + r * ay, o[2] + z];
+            ctrl.push([w * p[0], w * p[1], w * p[2], w]);
+        }
+    }
+    let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    let s = EvalSurface::nurbs([2, 2], [knots.clone(), knots], [3, 3], ctrl.clone());
+    let q = [0.0, 0.5 + 1e-4];
+    assert_eq!(
+        crate::eval::collapse::collapse(&s, q, 0.0).unwrap(),
+        crate::eval::collapse::Collapse::V
+    );
+    let (cert, errors) = crate::eval::collapse::certified_partials(&s, q).unwrap();
+    let kernel = s.partials(q[0], q[1]).unwrap();
+    // The old model: the net's largest distance from the pole times its weights' spread, and
+    // 2p / Δ = 4 per order on these single-span knots.
+    let at = kernel[0][0];
+    let size = ctrl
+        .iter()
+        .map(|h| (Vec3::new(h[0], h[1], h[2]) * (1.0 / h[3]) - at).len())
+        .fold(0.0, f64::max);
+    let model = |i: i32, j: i32| crate::eval::collapse::gamma(1024) * size * 4f64.powi(i + j);
+    let mut beyond = 0;
+    for i in 0..=MAX_PARTIAL_ORDER {
+        for j in 0..=MAX_PARTIAL_ORDER - i {
+            let gap = cert[i][j].dist(kernel[i][j]);
+            let m = model(i as i32, j as i32);
+            if gap > 2.0 * m {
+                beyond += 1;
+                assert!(
+                    errors[i][j] > m,
+                    "({i}, {j}): certified {} vs model {m}",
+                    errors[i][j]
+                );
+            }
+        }
+    }
+    assert!(
+        beyond > 0,
+        "the evaluations should differ past the model's allowance"
+    );
+}
