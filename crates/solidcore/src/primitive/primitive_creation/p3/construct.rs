@@ -482,7 +482,9 @@ impl PrimitiveCreation {
                 )?;
                 // not upstream (#2572): a sweep along a path in the frame chain's frames,
                 // with no scale, keeps its definition and the net's certified distance
-                // from it; a net the definition does not certify keeps none
+                // from it; a net the definition does not certify keeps none (the
+                // error is the reason it has none, and the ledger keeps the kinds of wall
+                // that do not)
                 let definition = match (&trace, prepared.scale.is_none()) {
                     (Some(trace), true) => {
                         ProceduralSweep::create_path(&profile, &prepared.path, trace, &net).ok()

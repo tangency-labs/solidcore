@@ -15,8 +15,8 @@
 //!
 //! each knot span of the path being one or the other, and the frame at a span's start the
 //! previous span's frame at its end (the joints are G1). A span is classified by sampling
-//! it at 12 parameters (a line to `1e-9` of the path's size for degree up to 3, a circle for
-//! a conic), the classification's error added to the bound. A path with any other span (a
+//! it at 12 parameters (a line to `1e-11` of the path's size for degree up to 3, a circle for
+//! a conic); the frame itself is the exact closed form (a rigid rotation of the span's start frame), so the classification only decides which closed form a span has, and a span that is a line or an arc within that tolerance is taken as one. A path with any other span (a
 //! general spline: the rotation-minimizing equation has no closed form there, and its
 //! certified enclosure is not here yet) or a closed one has no definition: the #2505
 //! ledger's `path-spline` and `path-closed`.
@@ -327,20 +327,27 @@ impl PathMotion {
         let (Some(&(v0, t0)), Some(&(v1, t1))) = (self.nodes.first(), self.nodes.last()) else {
             return (v, 1.0);
         };
-        if !(v > v0) {
-            return (t0, 1.0);
-        }
-        if !(v < v1) {
-            return (t1, 1.0);
-        }
-        let i = self
-            .nodes
-            .partition_point(|&(x, _)| x <= v)
-            .saturating_sub(1);
+        // beyond the ends the parameter is held, with the slope of the end segment
+        let last = self.nodes.len().saturating_sub(2);
+        let i = if v > v0 {
+            self.nodes
+                .partition_point(|&(x, _)| x <= v)
+                .saturating_sub(1)
+                .min(last)
+        } else {
+            0
+        };
+        let held = if !(v > v0) {
+            Some(t0)
+        } else if !(v < v1) {
+            Some(t1)
+        } else {
+            None
+        };
         match (self.nodes.get(i), self.nodes.get(i + 1)) {
             (Some(&(va, ta)), Some(&(vb, tb))) if vb > va => {
                 let m = (tb - ta) / (vb - va);
-                (ta + m * (v - va), m)
+                (held.unwrap_or(ta + m * (v - va)), m)
             }
             _ => (v, 1.0),
         }
@@ -386,14 +393,19 @@ impl PathMotion {
             .spans
             .get(j)
             .ok_or_else(|| SolidError::invalid_input(OP_EVAL, "the path has no spans"))?;
-        let (z, dz, dx) = match span.kind {
-            SpanKind::Line => (span.z0, Vec3::ZERO, Vec3::ZERO),
+        // the frame is the exact closed form (a rigid rotation of the span's start frame), so
+        // it is orthonormal and its rates are those of its own angle
+        let (x, z, dx, dz) = match span.kind {
+            SpanKind::Line => (span.x0, span.z0, Vec3::ZERO, Vec3::ZERO),
             SpanKind::Arc { axis, .. } => {
                 // turned by the angle the tangent has turned about the axis
                 let angle = span.x0.cross(x).dot(axis).atan2(span.x0.dot(x));
                 let rate = axis.dot(x.cross(dx));
-                let z = rodrigues(span.z0, axis, angle);
-                (z, axis.cross(z) * rate, dx)
+                let (xe, ze) = (
+                    rodrigues(span.x0, axis, angle),
+                    rodrigues(span.z0, axis, angle),
+                );
+                (xe, ze, axis.cross(xe) * rate, axis.cross(ze) * rate)
             }
         };
         let y = z.cross(x);
@@ -675,8 +687,7 @@ impl PathMotion {
             }
         }
         let floor = gamma(96) * (big + reach) * 4.0;
-        let classified = 1e-11 * (1.0 + big) * (1.0 + reach);
-        let bound = round_up(worst * (1.0 + SLACK) + floor + classified);
+        let bound = round_up(worst * (1.0 + SLACK) + floor);
         if bound.is_finite() && bound > 0.0 {
             Ok(bound)
         } else {
@@ -860,7 +871,7 @@ fn unit_tangent(path: &BSplineCurve, t: f64, from_left: bool) -> Result<Vec3> {
 }
 
 /// What the knot span `[from, to]` of `path` of degree `degree` is, by 12 samples: a line
-/// (collinear within `1e-9` of the path's size; any degree up to 3 is then that line) or a
+/// (collinear within `1e-11` of the path's size; any degree up to 3 is then that line) or a
 /// circular arc (degree up to 2, so a conic, which 12 points on a circle make that circle).
 fn classify(path: &BSplineCurve, from: f64, to: f64, degree: usize) -> Result<SpanKind> {
     const N: u32 = 11;

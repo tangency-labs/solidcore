@@ -42,7 +42,7 @@
 //!
 //! **Two motions, one kind (slice 2).** A wall swept along a general path ([`path`],
 //! [`PathMotion`]) is the same definition with another motion: the profile carried along the
-//! path in the frame of `sweep_scale`'s projection normal method, in closed form, the net
+//! path in the path's rotation-minimizing frame, in closed form, the net
 //! across a map from its parameter to the path's, and the bound an enclosure of the net
 //! against it (the module's docs state the frame rule and the enclosure).
 //!
@@ -983,8 +983,8 @@ impl ProceduralSweep {
     }
 
     /// The definition of the wall `sweep_scale` fitted: `profile` carried along `path` in the
-    /// frame the chain of `trace` gives, its bound certified against `net`
-    /// ([`PathMotion::create`]).
+    /// path's rotation-minimizing frame (started from the normal `trace` holds), its bound
+    /// certified against `net` ([`PathMotion::create`]).
     ///
     /// # Errors
     ///

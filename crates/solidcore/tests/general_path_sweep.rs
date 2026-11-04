@@ -1,6 +1,6 @@
 //! A general-path sweep is a `ProceduralSweep` definition with a certified bound (#2572,
-//! slice 2; not upstream): the profile carried along the path in the frame the sweep's
-//! projection normal method gives, in closed form, beside the net `sweep_scale` fits and the
+//! slice 2; not upstream): the profile carried along the path in the path's
+//! rotation-minimizing frame, in closed form, beside the net `sweep_scale` fits and the
 //! net's certified distance from it, `|B - S| <= bound`.
 //!
 //! - A circle along a line, an arc, or a line and then an arc: the definition's points are
@@ -706,4 +706,53 @@ fn issue_2572_every_path_wall_is_a_definition_or_in_the_ledger() {
         fixed.is_empty(),
         "listed kinds no case makes bare any more (fixed? delete their ledger files): {fixed:?}"
     );
+}
+
+/// The definition's partials at the ends of the net's parameter across the sweep are those
+/// of its points, one-sided: the held parameter keeps the end segment's slope.
+#[test]
+fn the_definitions_partials_at_the_ends_are_its_slopes() {
+    let mut k = Kernel::default();
+    let b = create_pipe_sweep(&mut k, RADIUS, Some(&arc_path()), false).unwrap();
+    let wall = only_wall(&b);
+    let sweep = wall.procedural_sweep().unwrap();
+    let d = sweep.definition();
+    let dom = sweep.net().natural_uv_domain();
+    let (u, v) = (dom.u_interval(), dom.v_interval());
+    let h = 1e-6;
+    for end in 0..2 {
+        for mid in [0.3, 0.7] {
+            for along_u in [false, true] {
+                // along the parameter whose end is tested; the other held at `mid`
+                let (a, other) = if along_u { (u, v) } else { (v, u) };
+                let at = if end == 0 { a.min() } else { a.max() };
+                let inward = if end == 0 {
+                    at + h * (a.max() - a.min())
+                } else {
+                    at - h * (a.max() - a.min())
+                };
+                let o = other.min() + (other.max() - other.min()) * mid;
+                let make = |s: f64| {
+                    if along_u {
+                        Point2::new(s, o)
+                    } else {
+                        Point2::new(o, s)
+                    }
+                };
+                let partials = d.evaluate_definition(make(at), 1, 1).unwrap();
+                let analytic = if along_u {
+                    partials[1][0]
+                } else {
+                    partials[0][1]
+                };
+                let p_end = d.evaluate_definition_point(make(at)).unwrap();
+                let p_in = d.evaluate_definition_point(make(inward)).unwrap();
+                let fd = (p_in - p_end) * (1.0 / (inward - at));
+                assert!(
+                    (analytic - fd).length() <= 1e-3 * (1.0 + analytic.length()),
+                    "end {end}: {analytic:?} against {fd:?}"
+                );
+            }
+        }
+    }
 }
