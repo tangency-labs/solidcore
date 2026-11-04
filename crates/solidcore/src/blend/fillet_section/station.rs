@@ -253,7 +253,7 @@ pub fn sided_span(u: &[f64], p: usize, n: usize, x: f64, side: i32) -> usize {
 
 /// `sm_DersBasis`: the non-zero basis functions `N_{k-p..k}` and their derivatives up to
 /// `d` at `x` in span `k`, `ders[d][j]` (the NURBS book's A2.3, its knot differences taken
-/// from the knots directly).
+/// from the knots directly, in `T`: for an interval `T` every result holds the exact one).
 #[must_use]
 pub fn ders_basis<T: GnScalar>(u: &[f64], k: usize, p: usize, x: T, d: usize) -> Vec<Vec<T>> {
     let (k, p) = (k as isize, p as isize);
@@ -279,7 +279,13 @@ pub fn ders_basis<T: GnScalar>(u: &[f64], k: usize, p: usize, x: T, d: usize) ->
         put(&mut right, j, T::of(knot(u, k + j)) - x);
         let mut saved = T::of(0.0);
         for r in 0..j {
-            ndu.set(j, r, T::of(knot(u, k + r + 1) - knot(u, k + 1 - j + r)));
+            // the knots are exact: their difference is rounded in T (outward for an
+            // interval), never as a double first (#2559)
+            ndu.set(
+                j,
+                r,
+                T::of(knot(u, k + r + 1)) - T::of(knot(u, k + 1 - j + r)),
+            );
             let temp = ndu.at(r, j - 1) / ndu.at(j, r);
             ndu.set(r, j, saved + at(&right, r + 1) * temp);
             saved = at(&left, j - r) * temp;
@@ -637,7 +643,8 @@ pub fn gn_evaluate_vn<T: GnScalar>(
                     fb *= b as f64;
                 }
                 let mono = pua.mul(pvb, tr);
-                let sf = T::of(1.0 / (fa * fb));
+                // a! b! is exact, 1 / (a! b!) is rounded in T (#2559)
+                let sf = T::of(1.0) / T::of(fa * fb);
                 let cs = [pf.at(a, b), pf.at(a + 1, b), pf.at(a, b + 1)];
                 let outs: [&mut VSer<T>; 3] = [&mut s, &mut su, &mut sv];
                 for (c, out) in cs.iter().zip(outs) {
