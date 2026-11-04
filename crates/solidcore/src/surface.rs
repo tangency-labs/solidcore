@@ -17,8 +17,11 @@ pub mod implicit;
 pub mod offset_surface;
 pub mod plane;
 pub mod procedural_blend;
+pub mod procedural_sweep;
 pub mod sphere;
 pub mod srf_in_volume;
+pub mod step_seam;
+pub mod step_window;
 pub mod surf_of_extrusion;
 pub mod surf_of_revolution;
 #[allow(clippy::module_inception)]

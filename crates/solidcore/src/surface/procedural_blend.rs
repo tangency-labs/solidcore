@@ -71,6 +71,7 @@ use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{Point2, EFF_ZERO};
 use crate::nurbs::b_spline_curve::BSplineCurve;
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{
     BSplineSurface, BoundingBoxRequest, BoundingBoxes, SurfParamType,
 };
@@ -134,7 +135,9 @@ pub struct BlendCounts {
     pub net_evaluations: u64,
 }
 
-/// `SmBlendNetScope`, with the tolerance its caller asks for (#2510): while one lives, a
+/// `SmBlendNetScope`, with the tolerance its caller asks for (#2510), for every definition
+/// with a certified net (a blend's, and a swept wall's through
+/// [`crate::surface::procedural_sweep::SweepRef`], #2572): while one lives, a
 /// procedural blend's `Evaluate`, `EvaluateSimple` and `EvaluatePoint` on the kernel are
 /// its net's wherever the net's certified bound is at most that tolerance
 /// ([`ProceduralBlend::net_answers`]), the definition's elsewhere. The net is within its
@@ -1332,6 +1335,23 @@ impl ProceduralBlend {
         scale: Option<Vec3>,
         depth: usize,
     ) -> Result<()> {
+        self.transform_notifying_at_depth(k, rotate_n_move, scale, depth, &mut |_| Ok(()))
+    }
+
+    /// [`ProceduralBlend::transform_at_depth`] with the edit notifications of the net's
+    /// transform ([`BSplineSurface::transform_notifying`]) sent through `notify`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`ProceduralBlend::transform_at_depth`] and of `notify`.
+    pub(crate) fn transform_notifying_at_depth(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        depth: usize,
+        notify: &mut EditNotify<'_>,
+    ) -> Result<()> {
         let mut factor = 1.0;
         if let Some(sc) = scale {
             #[allow(clippy::neg_cmp_op_on_partial_ord)] // the fork's NaN-refusing test
@@ -1354,7 +1374,7 @@ impl ProceduralBlend {
         }
         self.def.chamfer = self.def.chamfer.map(|c| c.scaled(factor));
         self.renew();
-        self.net.transform(rotate_n_move, scale)?;
+        self.net.transform_notifying(rotate_n_move, scale, notify)?;
         // (#2388) the bound is taken in the round's own frame, which moves with it: it
         // scales, and takes in the motion's own rounding where the round now lies
         self.def.bound = self.def.bound * factor
@@ -1427,23 +1447,39 @@ pub enum BlendRef<'a> {
     },
 }
 
-/// The definition a surface keeps beside its kind ([`Surface::procedural_blend`]): a round
-/// of an exact class (#2485) or a blend corner's face (#2488).
+/// The definition a surface keeps beside its kind ([`Surface::procedural_blend`],
+/// [`Surface::procedural_sweep`]): a round of an exact class (#2485), a blend corner's face
+/// (#2488) or a screw-swept wall (#2572).
 #[derive(Debug, Clone)]
 pub enum KeptDefinition {
     /// An exact round's.
     Round(exact::ExactRound),
     /// A blend corner face's.
     Corner(corner::CornerDefinition),
+    /// A swept wall's.
+    Sweep(crate::surface::procedural_sweep::ProceduralSweep),
 }
 
 impl KeptDefinition {
+    /// Whether the definition follows a motion of its net by `scale`: a sweep's only
+    /// under a uniform one ([`crate::surface::procedural_sweep::ProceduralSweep::follows`]);
+    /// a round's and a corner's always (their own transforms refuse what they cannot
+    /// follow).
+    #[must_use]
+    pub fn follows(&self, scale: Option<Vec3>) -> bool {
+        match self {
+            Self::Sweep(_) => crate::surface::procedural_sweep::ProceduralSweep::follows(scale),
+            Self::Round(_) | Self::Corner(_) => true,
+        }
+    }
+
     /// Moves the definition with its net ([`exact::ExactRound::transform`],
-    /// [`corner::CornerDefinition::transform`]).
+    /// [`corner::CornerDefinition::transform`],
+    /// [`crate::surface::procedural_sweep::ProceduralSweep::transform`]).
     ///
     /// # Errors
     ///
-    /// Those of the two motions.
+    /// Those of the three motions.
     pub fn transform(
         &mut self,
         k: &Kernel,
@@ -1454,6 +1490,34 @@ impl KeptDefinition {
         match self {
             Self::Round(r) => r.transform(k, rotate_n_move, scale, depth),
             Self::Corner(c) => c.transform(k, rotate_n_move, scale, depth),
+            Self::Sweep(s) => s.transform(rotate_n_move, scale),
+        }
+    }
+
+    /// Whether the definition is read through a map of the net's parameters, which the
+    /// net's reversals, reparametrisations and swaps move: an exact round's leader map, a
+    /// sweep's map. A corner's definition is a set's and has none.
+    #[must_use]
+    pub const fn has_parameter_map(&self) -> bool {
+        matches!(self, Self::Round(_) | Self::Sweep(_))
+    }
+
+    /// The net's parameter in `u` (or v) became `w'` with `w = alpha + beta w'`: the map
+    /// follows ([`KeptDefinition::has_parameter_map`]).
+    pub(crate) fn reparametrize_map(&mut self, u: bool, alpha: f64, beta: f64) {
+        match self {
+            Self::Round(r) => r.reparametrize_map(u, alpha, beta),
+            Self::Sweep(s) => s.reparametrize_map(u, alpha, beta),
+            Self::Corner(_) => {}
+        }
+    }
+
+    /// The net's u and v swapped: the map follows.
+    pub(crate) fn swap_map(&mut self) {
+        match self {
+            Self::Round(r) => r.swap_map(),
+            Self::Sweep(s) => s.swap_map(),
+            Self::Corner(_) => {}
         }
     }
 }
