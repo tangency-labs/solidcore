@@ -125,6 +125,28 @@ fn straight_line(curve: &BSplineCurve) -> (f64, f64, f64, f64) {
     (off, slow, fast, kappa)
 }
 
+/// A second straight 2D trim, from @bherbruck's independent check of this fix on #2637:
+/// the same shape with unevenly spaced x, where rounding leaves `|C' x C''|` above
+/// `EFF_ZERO` at some parameters, so the objective answers a finite radius there rather
+/// than `BIG_DOUBLE`. It is straight in closed form just the same.
+fn rounded_straight_trim() -> BSplineCurve {
+    const BH_XS: [f64; 13] = [
+        5.6e-15, 0.05, 0.3, 0.32, 0.9, 1.4, 1.45, 2.2, 2.9, 3.0, 3.8, 4.5, 4.7047,
+    ];
+    const BH_BREAKS: [f64; 5] = [0.0, 0.033987, 0.067974, 0.101961, 0.135948];
+    let cps: Vec<CPoint> = BH_XS.iter().map(|&x| CPoint::new(x, Y, NOZ, 1.0)).collect();
+    let mut knots: Vec<f64> = Vec::with_capacity(17);
+    for (i, &b) in BH_BREAKS.iter().enumerate() {
+        let mult = if i == 0 || i == BH_BREAKS.len() - 1 {
+            4
+        } else {
+            3
+        };
+        knots.extend(vec![b; mult]);
+    }
+    BSplineCurve::from_data(2, cps.len() - 1, knots.len() - 1, 3, &cps, &knots).unwrap()
+}
+
 /// The trim's handle in the solutions of its own property analysis.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TrimCurve;
@@ -204,6 +226,22 @@ fn smallest_radius(curve: &BSplineCurve) -> (f64, f64, f64) {
 /// holds independently of the search below.
 #[test]
 fn the_trim_is_a_straight_line_without_curvature() {
+    // the second trim is straight in closed form just the same, with a curvature that
+    // rounding leaves above zero in places rather than at it
+    let (off2, slow2, _, kappa2) = straight_line(&rounded_straight_trim());
+    assert!(off2 <= 1e-15, "the second trim leaves its line by {off2:e}");
+    assert!(slow2 > 0.0, "the second trim's speed vanishes");
+    assert!(
+        kappa2 > 0.0,
+        "the second trim's curvature rounds to zero everywhere"
+    );
+    assert!(kappa2 < 1e-10, "curvature {kappa2:e} on the second trim");
+    assert!(
+        1.0 / kappa2 > 1e9,
+        "radius {:e} on the second trim",
+        1.0 / kappa2
+    );
+
     let (off, slow, fast, kappa) = straight_line(&trim(2));
     assert!(
         off <= 1e-15,
@@ -222,31 +260,60 @@ fn the_trim_is_a_straight_line_without_curvature() {
     assert!(XS.windows(2).all(|w| w[0] < w[1]), "x is not increasing");
 }
 
-/// **The minimum-radius search finds no finite minimum on the straight trim.** Its
-/// objective is the radius of curvature, which is unbounded at every parameter of a
-/// straight piece, so there is no minimum to report and the search returns no solution.
+/// **The minimum-radius search reports no radius below the check's tolerance.** The
+/// objective is the radius of curvature, unbounded along a straight piece, so there is no
+/// small radius to find and the check stays clean.
+///
+/// The criterion is the check's own, not "no solution at all", because whether the search
+/// returns anything depends on rounding rather than on the geometry: `|C' x C''|` is not
+/// always below `EFF_ZERO` on a straight trim, and where it is not the objective answers a
+/// real, huge radius instead of `BIG_DOUBLE` — which the no-solution rule keeps, correctly,
+/// since it is a value the search evaluated (@bherbruck on #2637). Measured here: on the
+/// issue's trim both searches return nothing, and on [`rounded_straight_trim`] the
+/// objective does produce finite radii (5.259e-12 for `|C' x C''|` at t = 0.0067974, a
+/// radius of 1.877e14) while the search still returns nothing, and its check is clean.
+/// Either way what matters is that no reported radius is small enough to matter: the
+/// issue's trim is held against the check's own tolerance, the second against its own
+/// smallest true radius, because a check that passes reports no tolerance to read.
 #[test]
-fn the_min_radius_search_finds_no_finite_minimum() {
-    let curve = trim(2);
-    let k = check_kernel();
-    let opts: PropertyAnalysisOptions<'_, TrimCurve> = PropertyAnalysisOptions::default();
-    let found = Curve::from(curve.clone())
-        .global_property_analysis(
-            &k,
-            &curve.natural_interval(),
-            CurvePropertyType::MinimizeRadiusOfCurvature,
-            SEP,
-            &opts,
-        )
-        .unwrap();
-    let sols = found.solutions.as_slice();
-    assert!(
-        sols.is_empty(),
-        "{} solutions on a curve without curvature, first value {:e} at t = {:e}",
-        sols.len(),
-        sols[0].start.solution_value,
-        sols[0].start.parameters[0]
-    );
+fn the_min_radius_search_finds_no_radius_below_the_tolerance() {
+    // the issue's trim against the check's own tolerance; the second against its own
+    // smallest true radius, since a passing check reports no tolerance to read
+    let second = rounded_straight_trim();
+    let (_, _, _, kappa) = straight_line(&second);
+    for (name, curve, floor) in [
+        ("the issue's trim", trim(2), RADIUS_TOL),
+        (
+            "a straight trim whose rounding leaves a radius",
+            second.clone(),
+            0.5 / kappa,
+        ),
+    ] {
+        let k = check_kernel();
+        let opts: PropertyAnalysisOptions<'_, TrimCurve> = PropertyAnalysisOptions::default();
+        let found = Curve::from(curve.clone())
+            .global_property_analysis(
+                &k,
+                &curve.natural_interval(),
+                CurvePropertyType::MinimizeRadiusOfCurvature,
+                SEP,
+                &opts,
+            )
+            .unwrap();
+        for s in found.solutions.as_slice() {
+            let v = s.start.solution_value;
+            assert!(
+                v > floor,
+                "{name}: the search reports a radius of {v:e} at t = {:e}, below {floor:e}",
+                s.start.parameters[0]
+            );
+        }
+        assert_eq!(
+            radius_report(&k, &curve),
+            (true, None),
+            "{name}: the check fails"
+        );
+    }
 }
 
 /// **The check passes on the straight 2D trim (test 13).** `AssertValid` reads the
