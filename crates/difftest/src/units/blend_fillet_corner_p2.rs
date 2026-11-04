@@ -1067,6 +1067,14 @@ impl UnitDiff for Runner {
             push(&mut v, name, src, Inputs::P1Corner { inner })?;
         }
         v.retain(|case| !retired(case));
+        // `AdjustTopology` cases that reach the big-radius conversion, deleted with #2400
+        v.retain(|case| {
+            !matches!(
+                case.parse::<Inputs>(),
+                Ok(Inputs::Corner { method: CornerMethod::AdjustConcave, corner, .. })
+                    if super::blend_fillet_corner_p3::reaches_big_rad_conversion(&corner)
+            )
+        });
         Ok(v)
     }
 }

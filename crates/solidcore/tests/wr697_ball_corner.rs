@@ -1562,9 +1562,9 @@ fn five_and_six_chamfers_at_an_apex_are_bilinear_quadrilaterals() {
 // (the bevel's for the Mitre, the ring's for the Facet), not by two blends meeting. The
 // fork's own events are Nx2 corners by type, as they took over the Nx2 corner's tests one
 // for one; were the chamfer event one too, the executive would treat it as a two-blend
-// corner: its big-radius conversion of the fillet between two Nx2 corners, its squeeze of
-// a rail edge too short at an Nx2 corner, the Nx2 branch of the fillet edges'
-// connectivity, and a mitred Turn's corner edges (#2355's review). At the 2/3/4 corner,
+// corner: its squeeze of a rail edge too short at an Nx2 corner, the Nx2 branch of the
+// fillet edges' connectivity, and a mitred Turn's corner edges (#2355's review; the
+// big-radius conversion it also listed is deleted, #2400). At the 2/3/4 corner,
 // as either type: NByNConvex.
 #[test]
 fn a_chamfer_corner_is_the_nxn_corner_by_type() {
