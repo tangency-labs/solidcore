@@ -31,13 +31,16 @@
 //! whose pieces [`LawCornerPieces::classify`] keeps on the solver (the fork's
 //! `AddLawCornerPieces`, 7babe17).
 //!
-//! Not ported yet: the executive's split of the round's faces at the corners
+//! The executive splits the round's faces at the corners after the merge
 //! (`NoteRadiusCornerSurfaces`, `SplitFilletFacesAtRadiusCorners`, 6eecf04, on
-//! `SmBrep::SubdivideFaceAtDiscontinuities` and `ReplaceCurve`, now on main from
-//! solidcore#1828), and `SmFilletExecutive::BuildLawCorners` (which puts the pieces back on
-//! the split faces, adds the zones and stitches the round again, with `sm_PieceOfFace`,
+//! `SmBrep::SubdivideFaceAtDiscontinuities` and `ReplaceCurve`: the live session's
+//! `law_corners`).
+//!
+//! Not ported yet: `SmFilletExecutive::BuildLawCorners` (which puts the pieces back on the
+//! split faces, adds the zones and stitches the round again, with `sm_PieceOfFace`,
 //! `sm_EdgeBetween` and the 62fcc82 unstitch), with the `EaseSetBackSections` refusal of a
-//! law-cornered round (58d03ef). Until then the round is one face across its turns.
+//! law-cornered round (58d03ef). Until then the split faces carry the joined surface, which
+//! near a corner that dips or peaks is not its balls' envelope.
 //!
 //! Deviations: out-params are return values; `SmLawCornerPieces::Copy` is `Clone`, and the
 //! solver's list of kept pieces is a slice the caller owns, so

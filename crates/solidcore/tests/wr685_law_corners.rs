@@ -685,8 +685,7 @@ fn a_law_cornered_rounds_pieces_are_its_balls_envelope() {
 /// into one face per side, each smooth (no C0 knot inside its surface), with an edge along
 /// the turn, which SMLib's check refuses inside a face. On the dip from either end and on a
 /// peak: the box's six faces and the round's two, the edge between them on the corner's
-/// plane (x = 10 on the cube, y = 10 on the box), the body clean at check level 2, and the
-/// volume the split does not change (the faces cover what the one face did).
+/// plane (x = 10 on the cube, y = 10 on the box), and the body clean at check level 2.
 #[test]
 fn a_law_cornered_round_is_split_at_its_corner() {
     let (a, b) = (Point3::new(0.0, 20.0, 20.0), Point3::new(20.0, 20.0, 20.0));
@@ -755,12 +754,12 @@ fn a_law_cornered_round_is_split_at_its_corner() {
 
 /// The fork's 5e8c9c1 build, through its C API (a scratch driver running the capi cases):
 /// the volume removed at `smlib_brep_volume`'s 1e-7.
-const BLOCKED: &str = "the law's corners are traced through and the round skinned piece by \
-    piece, but its faces are not yet split there and the corner zones not built \
-    (tangency-labs/smlib@6eecf04, 7babe17)";
+const BLOCKED: &str = "the law's corners are traced through, the round skinned piece by \
+    piece and split there, but the corner zones are not built (BuildLawCorners, \
+    tangency-labs/smlib@7babe17)";
 
 #[test]
-#[ignore = "blocked: the face split at the law's corners and BuildLawCorners (the fork's 6eecf04, 7babe17)"]
+#[ignore = "blocked: BuildLawCorners, the corner zones and crossings (the fork's 7babe17)"]
 fn law_peak() {
     // 2 -> w -> 2 on the 10 x 20 x 30 box's top edge x = 10, z = 30, from y = 0: the
     // block's six faces and the two sides' rounds, meeting where they cross
@@ -787,7 +786,7 @@ fn law_peak() {
 }
 
 #[test]
-#[ignore = "blocked: the face split at the law's corners and BuildLawCorners (the fork's 6eecf04, 7babe17)"]
+#[ignore = "blocked: BuildLawCorners, the corner zones and crossings (the fork's 7babe17)"]
 fn law_dip() {
     // 4 -> 2 -> 4 on the 20 cube's edge y = z = 20 from either end, and the same law as a
     // quadratic with a corner at 0.5: the cube's six faces, the two sides' rounds and the
@@ -825,7 +824,7 @@ fn law_dip() {
 }
 
 #[test]
-#[ignore = "blocked: the face split at the law's corners and BuildLawCorners (the fork's 6eecf04, 7babe17)"]
+#[ignore = "blocked: BuildLawCorners, the corner zones and crossings (the fork's 7babe17)"]
 fn law_dips() {
     // 4, 2, 4, 2 at 0, 0.25, 0.75, 1 on the 20 cube's edge y = z = 20: a dip, then a peak;
     // the cube's six faces, three rounds and the zone at the dip (the fork:

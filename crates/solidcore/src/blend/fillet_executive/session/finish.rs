@@ -551,6 +551,10 @@ impl FilletSession<'_> {
             }
         }
         result?;
+        // The fork's SplitFilletFacesAtRadiusCorners (6eecf04): a fillet surface turns where
+        // its radius has a corner; the face is split there into faces that are smooth, with
+        // an edge along the turn.
+        self.split_fillet_faces_at_radius_corners(k)?;
         if !k.fixes.fillet_refuse_non_manifold_result {
             return Ok(());
         }
@@ -724,6 +728,9 @@ impl FilletSession<'_> {
                 session.refuse_crossing_rails(k)?;
             }
             session.shrink_fillet_faces(k)?;
+            // The fork's NoteRadiusCornerSurfaces (6eecf04): the fillet surfaces that turn at
+            // a radius corner, whose faces DoFillet splits there once they are in the target
+            session.note_radius_corner_surfaces(k)?;
             // The fork's SetMarkCornerPatches (60af574): mark the set-back corners'
             // patch faces, which the merge copies into the target with their marks.
             session.mark_corner_patches()?;
