@@ -536,6 +536,13 @@ impl ProceduralSweep {
         Point2::new(m.a[0] + m.b[0] * p, m.a[1] + m.b[1] * q)
     }
 
+    /// The map's terms: `(w, t) = (a[0] + b[0] p, a[1] + b[1] q)`, `(p, q)` the face's
+    /// `(u, v)`, or `(v, u)` when swapped (the blends' `GetDefinitionMap`).
+    #[must_use]
+    pub const fn definition_map(&self) -> ([f64; 2], [f64; 2], bool) {
+        (self.map.a, self.map.b, self.map.swapped)
+    }
+
     /// The angle `theta(t)` the net's arcs turn to at its parameter `t` across the turns
     /// (clamped to the stations), and `d theta / dt`.
     #[must_use]
@@ -948,7 +955,10 @@ mod tests {
             let e = atan_point(x);
             let y = f64::atan(x);
             assert!(e.lo <= y && y <= e.hi, "{x}: {e:?} misses {y}");
-            assert!(e.hi - e.lo <= 8.0 * f64::EPSILON * y + 1e-290, "{x}: {e:?} is loose");
+            assert!(
+                e.hi - e.lo <= 8.0 * f64::EPSILON * y + 1e-290,
+                "{x}: {e:?} is loose"
+            );
         }
         assert_eq!(atan_point(0.6), Ivl::whole());
         assert_eq!(atan_point(-0.1), Ivl::whole());
