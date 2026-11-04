@@ -426,7 +426,7 @@ impl ExecutiveAccess<Handle> for Access {
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
         // This fixture owns no corners, so no handle resolves to one. The virtual
-        // dispatch is `blend::fillet_corner::p3::FilletCorner::adjust_tangent_corner`.
+        // `AdjustTangentCorner` is the base's SM_SUCCESS at every corner (#2400).
         missing()
     }
     fn calc_fillet_geom(

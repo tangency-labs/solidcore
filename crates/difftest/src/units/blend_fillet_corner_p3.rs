@@ -1,8 +1,8 @@
 //! Runner for unit `blend.fillet_corner_p3`: the fillet corner classification
 //! (`SmFilletCorner::Create`) and the corner operations (`CalcCornerGeom`, the virtual
-//! `CreateCornerPatch`, `AdjustTopology` and `AdjustTangentCorner`). The cases of the old
-//! corner code deleted with #2400 are retired ([`retired`]): corners of the 1x1 and 2x2
-//! classes, and `TestAndConvertBigRadFillet`.
+//! `CreateCornerPatch` and `AdjustTopology`). The cases of the old corner code deleted with
+//! #2400 are retired ([`retired`]): corners of the 1x1 and 2x2 classes, `AdjustTangentCorner`
+//! (every corner's is the base class's success now) and `TestAndConvertBigRadFillet`.
 //!
 //! C++: `solidcore_ffi::units::blend_fillet_corner_p3` (upstream
 //! `source/SMLib/src/SmFilletCorner.cpp`). Rust: `solidcore::blend::fillet_corner::p3`.
@@ -261,12 +261,16 @@ fn kind_of(i: usize) -> Result<FilletCornerKind, HarnessError> {
         .ok_or_else(|| harness("corner class index without a Rust class (1x1 and 2x2 deleted, #2400)"))
 }
 
-/// A case on a corner of the deleted `SmFillet1x1Corner` or `SmFillet2x2Corner` (#2400):
-/// not run, no Rust class is left to compare (plan/difftest-waivers.toml).
+/// A case of the old corner code deleted with #2400: a corner of the deleted
+/// `SmFillet1x1Corner` or `SmFillet2x2Corner`, or `AdjustTangentCorner` (the Nx2
+/// override went with the fork's smlib#113 34288e5, the closed Nx1 one with caa67d0;
+/// every corner's is the base class's success now). Not run: no Rust code is left to
+/// compare (plan/difftest-waivers.toml).
 fn retired(case: &Case) -> bool {
     matches!(
         case.parse::<Inputs>(),
-        Ok(Inputs::Corner { corner, .. }) if KINDS.get(corner.kind).is_some_and(Option::is_none)
+        Ok(Inputs::Corner { op, corner, .. })
+            if op == CornerOp::AdjustTangent || KINDS.get(corner.kind).is_some_and(Option::is_none)
     )
 }
 
@@ -798,7 +802,12 @@ fn corner_rust(
             CornerOp::CalcGeom => c.calc_corner_geom(env),
             CornerOp::Patch => c.create_corner_patch(env),
             CornerOp::AdjustTopology => c.adjust_topology(env),
-            CornerOp::AdjustTangent => c.adjust_tangent_corner(env),
+            CornerOp::AdjustTangent => {
+                return Err(SolidError::invalid_input(
+                    "difftest::blend_fillet_corner_p3",
+                    "AdjustTangentCorner cases are retired (#2400)",
+                ))
+            }
         }
         .map(|()| 0.0)
     })

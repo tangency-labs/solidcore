@@ -261,8 +261,9 @@ pub struct TsectPnt {
     /// `m_adUserDoubles`: per-algorithm scratch values.
     pub user_doubles: [f64; MAX_USER_DOUBLES],
     /// `m_apUserPointer[0..2]` (`None`: `NULL`). SMLib's only writer
-    /// (`SmFilletGeom::MakeRailEdgeuse`) stores surfaces in them and its only reader
-    /// (`SmFilletNx2Corner::AdjustTangentCorner`) reads them back as surfaces.
+    /// (`SmFilletGeom::MakeRailEdgeuse`) stores surfaces in them; their only reader,
+    /// `SmFilletNx2Corner::AdjustTangentCorner`, went with the fork's smlib#113 (34288e5,
+    /// #2400).
     pub user_pointer: [Option<UserSurface>; 2],
 }
 

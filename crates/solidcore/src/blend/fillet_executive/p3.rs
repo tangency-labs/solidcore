@@ -1069,11 +1069,9 @@ pub trait ExecutiveAccess<O: ClassObject + SolutionObject + Ord> {
         executive: &mut FilletExecutive<O>,
     ) -> Result<()>;
 
-    /// Virtual `AdjustTangentCorner` dispatch: delegate to the ported
-    /// `blend::fillet_corner::p3::FilletCorner::adjust_tangent_corner`, which runs
-    /// `SmFilletNx2Corner::AdjustTangentCorner`,
-    /// `SmFilletNx1ClosedCorner::AdjustTangentCorner` (`blend.fillet_corner_p2`) and the
-    /// base (`blend.fillet_corner_p1`: `return SM_SUCCESS`).
+    /// Virtual `AdjustTangentCorner` dispatch: the base class's `return SM_SUCCESS`
+    /// (`blend.fillet_corner_p1`) at every corner since the Nx2 and closed Nx1 overrides
+    /// went (the fork's smlib#113, 34288e5 and caa67d0; #2400).
     fn adjust_tangent_corner(
         &mut self,
         k: &mut Kernel,
