@@ -3,9 +3,9 @@
 //!
 //! Each is a recipe of kernel calls (`solidcore::prism`): the kernel checks the profiles, splits
 //! their loops, makes their curves, reads sheets back as regions, extrudes a region and proves a
-//! prism; ops sequences those with the kernel's planar faces and 2D boolean, and copies the
-//! record's planar profiles (`solidcore_record::{Seg2, Loop2, Region2, Plane}`) to the kernel's
-//! and back. It computes no geometric quantity.
+//! prism; ops sequences those with the kernel's planar faces and 2D boolean, the record's
+//! planar profiles and planes converted by `solidcore-convert` ([`convert::region2`],
+//! [`convert::plane`] and back). It computes no geometric quantity.
 //!
 //! The booleans keep free-form curves exact: every boundary of a result is a piece of an
 //! operand's boundary, cut where it crosses the other, never refitted.
@@ -16,12 +16,12 @@
 use solidcore::boolean::api_brep::{boolean_2d, Boolean2dOutcome};
 use solidcore::eval::Frame;
 use solidcore::kernel::Kernel;
-use solidcore::math::Vec2 as KVec2;
 use solidcore::primitive::api_trim_ops::create_planar_faces;
 use solidcore::primitive::primitive_creation::Boolean2d;
 use solidcore::prism::{extrude, measure, profile as kp, read, sheet};
 use solidcore::Brep;
-use solidcore_record::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcore_convert as convert;
+use solidcore_record::{Loop2, Plane, Region2, Seg2, Vec2};
 
 pub use solidcore::prism::measure::Interval;
 pub use solidcore::prism::profile::ProfileRefusal;
@@ -48,114 +48,9 @@ impl<T> Answer for Out<T> {
     }
 }
 
-fn kv(p: Vec2) -> KVec2 {
-    KVec2::new(p.x, p.y)
-}
-
-fn rv(p: KVec2) -> Vec2 {
-    Vec2::new(p.x, p.y)
-}
-
-/// The record's segment as the kernel's.
-fn to_kernel_seg(s: &Seg2) -> kp::Seg2 {
-    match *s {
-        Seg2::Line { a, b } => kp::Seg2::Line { a: kv(a), b: kv(b) },
-        Seg2::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => kp::Seg2::Arc {
-            center: kv(center),
-            radius,
-            start,
-            sweep,
-        },
-        Seg2::Cubic { p0, p1, p2, p3 } => kp::Seg2::Cubic {
-            p0: kv(p0),
-            p1: kv(p1),
-            p2: kv(p2),
-            p3: kv(p3),
-        },
-        Seg2::Conic { a, apex, b, w } => kp::Seg2::Conic {
-            a: kv(a),
-            apex: kv(apex),
-            b: kv(b),
-            w,
-        },
-        Seg2::Bezier { n, p } => kp::Seg2::Bezier { n, p: p.map(kv) },
-    }
-}
-
-/// The kernel's segment as the record's.
-fn to_record_seg(s: &kp::Seg2) -> Seg2 {
-    match *s {
-        kp::Seg2::Line { a, b } => Seg2::Line { a: rv(a), b: rv(b) },
-        kp::Seg2::Arc {
-            center,
-            radius,
-            start,
-            sweep,
-        } => Seg2::Arc {
-            center: rv(center),
-            radius,
-            start,
-            sweep,
-        },
-        kp::Seg2::Cubic { p0, p1, p2, p3 } => Seg2::Cubic {
-            p0: rv(p0),
-            p1: rv(p1),
-            p2: rv(p2),
-            p3: rv(p3),
-        },
-        kp::Seg2::Conic { a, apex, b, w } => Seg2::Conic {
-            a: rv(a),
-            apex: rv(apex),
-            b: rv(b),
-            w,
-        },
-        kp::Seg2::Bezier { n, p } => Seg2::Bezier { n, p: p.map(rv) },
-    }
-}
-
-fn to_kernel_loop(l: &Loop2) -> kp::Loop2 {
-    kp::Loop2 {
-        segs: l.segs.iter().map(to_kernel_seg).collect(),
-    }
-}
-
-fn to_record_loop(l: &kp::Loop2) -> Loop2 {
-    Loop2 {
-        segs: l.segs.iter().map(to_record_seg).collect(),
-    }
-}
-
-fn to_kernel_region(r: &Region2) -> kp::Region2 {
-    kp::Region2 {
-        outer: to_kernel_loop(&r.outer),
-        holes: r.holes.iter().map(to_kernel_loop).collect(),
-    }
-}
-
-fn to_record_region(r: &kp::Region2) -> Region2 {
-    Region2 {
-        outer: to_record_loop(&r.outer),
-        holes: r.holes.iter().map(to_record_loop).collect(),
-    }
-}
-
-fn frame(p: &Plane) -> Frame {
-    let a = |v: Vec3| [v.x, v.y, v.z];
-    Frame {
-        origin: a(p.origin),
-        x_axis: a(p.x),
-        y_axis: a(p.y),
-    }
-}
-
 /// The frame the planar booleans work in: the regions' own coordinates.
 fn regions_frame() -> Frame {
-    frame(&Plane::XY)
+    convert::plane(&Plane::XY)
 }
 
 fn op2(op: BooleanOp) -> Boolean2d {
@@ -278,8 +173,8 @@ pub fn planar_regions_boolean(
         return Err(Error::Argument);
     }
     let (ka, kb): (Vec<_>, Vec<_>) = (
-        a.iter().map(to_kernel_region).collect(),
-        b.iter().map(to_kernel_region).collect(),
+        a.iter().map(convert::region2).collect(),
+        b.iter().map(convert::region2).collect(),
     );
     checked(ka.iter().chain(&kb), tolerance)?;
     match (a.is_empty(), b.is_empty(), op) {
@@ -303,7 +198,7 @@ pub fn planar_regions_boolean(
         let read = sheet::sheet_regions(k, &r, &regions_frame(), tolerance)?;
         Ok(Out(Ok(read.regions)))
     })?;
-    Ok(out.0?.iter().map(to_record_region).collect())
+    Ok(out.0?.iter().map(convert::record_region2).collect())
 }
 
 /// Normalized planar material extruded as one body, keeping every disjoint region and its
@@ -324,9 +219,9 @@ pub fn extrude_planar_regions(
     if regions.is_empty() {
         return Err(Error::Argument);
     }
-    let kr: Vec<_> = regions.iter().map(to_kernel_region).collect();
+    let kr: Vec<_> = regions.iter().map(convert::region2).collect();
     checked(kr.iter(), EXTRUDE_TOLERANCE)?;
-    let target = frame(plane);
+    let target = convert::plane(plane);
     let pieces = run("extrude_planar_regions", |k| {
         let union = match sheet_of(k, &kr, EXTRUDE_TOLERANCE)? {
             Ok(s) => s,
@@ -377,12 +272,12 @@ impl Answer for PrismSection {}
 /// # Errors
 /// Those of the session.
 pub fn prism_section(body: &Body, plane: &Plane) -> Result<Option<PrismSection>> {
-    let f = frame(plane);
+    let f = convert::plane(plane);
     let s = read_body("prism_section", body, |k, b| Ok(measure::section(k, b, &f)))?;
     Ok(s.map(|s| PrismSection {
         lo: s.lo,
         hi: s.hi,
-        region: to_record_region(&s.region),
+        region: convert::record_region2(&s.region),
         tolerance: s.tolerance,
         volume: s.volume,
     }))
@@ -454,7 +349,7 @@ pub fn planar_edges(
         .iter()
         .map(|i| order::edge(order, *i))
         .collect::<Result<Vec<_>>>()?;
-    let f = frame(plane);
+    let f = convert::plane(plane);
     read_body("planar_edges", body, |k, b| {
         let pieces = read::planar_edges(k, b, &f, &ids)
             .into_iter()
@@ -462,11 +357,11 @@ pub fn planar_edges(
                 e.map(|ps| {
                     ps.into_iter()
                         .map(|p| match p {
-                            read::PlanarPiece::Seg(s) => PlanarPiece::Seg(to_record_seg(&s)),
+                            read::PlanarPiece::Seg(s) => PlanarPiece::Seg(convert::record_seg2(&s)),
                             read::PlanarPiece::Spline(s) => PlanarPiece::Spline(PlanarSpline {
                                 degree: s.degree,
                                 knots: s.knots,
-                                points: s.points.into_iter().map(rv).collect(),
+                                points: s.points.into_iter().map(convert::record_vec2).collect(),
                                 weights: s.weights,
                             }),
                         })
@@ -487,7 +382,7 @@ pub fn planar_edges(
 /// # Errors
 /// [`Error::Profile`] for a malformed segment.
 pub fn region_area(region: &Region2) -> Result<kp::Area> {
-    to_kernel_region(region)
+    convert::region2(region)
         .signed_area()
         .map_err(|_| Error::Profile(ProfileRefusal::FreeForm))
 }
@@ -496,5 +391,5 @@ pub fn region_area(region: &Region2) -> Result<kp::Area> {
 /// when `p` is on the loop or within rounding of it.
 #[must_use]
 pub fn loop_holds(lp: &Loop2, p: Vec2) -> Option<bool> {
-    to_kernel_loop(lp).holds(kv(p))
+    convert::loop2(lp).holds(convert::vec2(p))
 }
