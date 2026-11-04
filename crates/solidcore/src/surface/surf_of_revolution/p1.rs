@@ -507,8 +507,8 @@ impl SurfOfRevolution {
     /// `surface.surf_of_revolution_p2`): the X axis points from the axis point to the
     /// curve's STEP start point (with
     /// [`UpstreamFixes::revolution_frame_from_profile_origin`](crate::kernel::UpstreamFixes::revolution_frame_from_profile_origin),
-    /// its point at parameter 0 when the STEP interval holds it, WR-738; or, when that
-    /// is on the axis, its point at 45%), the
+    /// its point at parameter 0 when the STEP interval holds it, WR-738, and its start
+    /// when that is on the axis; or, when that is on the axis, its point at 45%), the
     /// domain is `[0, 360]` by the curve's STEP interval; the NURB is made by
     /// [`Self::make_nurb`]. A zero axis (squared length below `SM_EFF_ZERO_SQ`) is
     /// taken as `(0, 0, 1)`, as upstream's unchecked `Unitize`.
@@ -534,19 +534,25 @@ impl SurfOfRevolution {
         // when the interval holds it: the point the profile is defined from, where an
         // unbounded profile's start is SM_INFINITE_PARAMETER away (past the axis for a
         // line crossing it, so the frame would face the other nappe)
-        let ref_param =
-            if k.fixes.revolution_frame_from_profile_origin && crv_ivl.contains_value(0.0, 0.0) {
-                0.0
-            } else {
-                crv_ivl.min()
-            };
+        let fix = k.fixes.revolution_frame_from_profile_origin;
+        let from_origin = fix && crv_ivl.contains_value(0.0, 0.0);
+        let ref_param = if from_origin { 0.0 } else { crv_ivl.min() };
         let mut pnt = first(&gen_evaluate_step(k, &swept_curve, ref_param, 0)?)?;
 
         // Vector from SweptCurve Start to RotAxis point
         let mut x_vec = pnt - axis_point;
+        let on_axis = |x_vec: Vec3| x_vec.length() < EFF_ZERO || x_vec.is_parallel_to(z_vec, 1.0);
+
+        // with the fix, a profile origin on the axis gives way to the start first, the
+        // point upstream takes (a segment through the axis whose origin and 45% point
+        // are both on it, e.g. `s (1, 0, 1)` on [-9, 11])
+        if from_origin && on_axis(x_vec) {
+            pnt = first(&gen_evaluate_step(k, &swept_curve, crv_ivl.min(), 0)?)?;
+            x_vec = pnt - axis_point;
+        }
 
         // when start point is on rot axis
-        if x_vec.length() < EFF_ZERO || x_vec.is_parallel_to(z_vec, 1.0) {
+        if on_axis(x_vec) {
             // try SweptCurve nearMidPoint
             pnt = first(&gen_evaluate_step(
                 k,
