@@ -56,7 +56,6 @@ use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::solution_array::{ObjectKind, SolutionObject};
 use crate::kernel::Kernel;
@@ -68,6 +67,7 @@ use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::crv_adv::p1::CurveEnd;
 use crate::nurbs::knots::Side as KnotSide;
+use crate::surface::extend::Continuity;
 use crate::surface::procedural_blend::corner::CornerDefinition;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep::p7::{make_face_with_curves, FaceCurvesInput};
@@ -487,15 +487,11 @@ fn curve_surface(
 fn rail_wall(rail: &Curve, normal: Vec3, reach: f64, op: &'static str) -> Result<Surface> {
     let b0 = bspline_curve(rail).ok_or_else(|| SolidError::null_pointer(op))?;
     let b1 = b0
-        .create_extended_curve_by_distance(
-            0.25 * reach,
-            CurveEnd::Start,
-            ContinuityType::CInfinity,
-        )?
-        .ok_or_else(|| SolidError::null_pointer(op))?;
+        .extended_by_distance(CurveEnd::Start, Continuity::Natural, 0.25 * reach)?
+        .curve;
     let mut bb = b1
-        .create_extended_curve_by_distance(0.25 * reach, CurveEnd::End, ContinuityType::CInfinity)?
-        .ok_or_else(|| SolidError::null_pointer(op))?;
+        .extended_by_distance(CurveEnd::End, Continuity::Natural, 0.25 * reach)?
+        .curve;
     let shift = normal * (-reach);
     bb.transform(
         &Axis2Placement::new(

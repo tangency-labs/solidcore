@@ -1835,14 +1835,13 @@ impl FilletBrep {
             ] {
                 let base =
                     b_spline_part(&extended).ok_or_else(|| SolidError::null_pointer(OP_SEAM))?;
-                let longer = base
-                    .create_extended_curve_by_distance(
-                        2.0 * reach,
-                        end,
-                        crate::geom::geom_utility::p2::ContinuityType::CInfinity,
-                    )?
-                    .ok_or_else(|| SolidError::null_pointer(OP_SEAM))?;
-                extended = Curve::from(longer);
+                // as itself (its end span's polynomial continued), exactly
+                let longer = base.extended_by_distance(
+                    end,
+                    crate::surface::extend::Continuity::Natural,
+                    2.0 * reach,
+                )?;
+                extended = Curve::from(longer.curve);
             }
             extended
         } else {
