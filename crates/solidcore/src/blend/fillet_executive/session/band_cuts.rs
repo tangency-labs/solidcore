@@ -242,7 +242,7 @@ fn usable(b: Extent3d) -> Option<Extent3d> {
     (finite && !b.has_negative_volume()).then_some(b)
 }
 
-/// The box of `surface` over its natural domain (the domain band_cuts' solves use), for
+/// The box of `surface` over its natural domain (the domain the check's solves use), for
 /// the kinds whose box is the hull of a control net that holds the surface (the B-spline
 /// override of `CalculateBoundingBox`, unexpanded); `None` for the others or a box that
 /// cannot be made: such a face is always tested.

@@ -21,7 +21,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    clippy::indexing_slicing
+    clippy::indexing_slicing,
+    clippy::approx_constant // the entry's vertices, as printed
 )] // test helpers
 
 use solidcore::blend::fillet_executive::api::{create_face_from_surface, fillet_edges};
