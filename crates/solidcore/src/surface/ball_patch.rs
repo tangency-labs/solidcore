@@ -23,7 +23,8 @@
 //! | [`BallPatch::transform`]              | `Transform`                                  |
 //! | [`BallPatch::read_from_db`]           | `ReadFromDB` (the writer: `topology::geometry_write`) |
 //! | [`BallPatch::is_kind_of`]             | `IsKindOf`                                   |
-//! | [`BallPatch::is_on_sphere`], `binomial` (private) | `IsOnSphere`, `sm_Binomial` (efb8007; no SMLib caller) |
+//! | [`BallPatch::is_on_sphere`]           | `IsOnSphere` (efb8007; no SMLib caller), by [`crate::eval::sphere`] |
+//! | [`BallPatch::from_form`]              | not in the fork: a patch from a record's NURBS form (#2357) |
 //! | [`BallPatch::is_curve_on_sphere`]     | not in the fork: `IsOnSphere`'s certificate on a curve (#2357) |
 //! | [`BallPatch::move_centre`]            | `Transform`'s centre                         |
 //! | [`BallPatch::create_certified`]       | the capi import's ball patch (`smlib_flat.cpp` `FlatToBrepData`, bc814a5, smlib#102) |
@@ -33,7 +34,8 @@
 //! Deviations: out-params are return values. `IsOnSphere`'s tolerance is not the fork's
 //! `rel_tol ((R + |C|) max W)^2`, which grows with the centre's distance from the origin
 //! and admits a net millimetres off a sphere far from it: here it is `rel_tol (R max W)^2`
-//! plus a forward error bound of computing each coefficient (#2357). `SmDatabaseIO::IsValidType` is a debug-build
+//! plus a forward error bound of computing each coefficient, the one certificate of
+//! [`crate::eval::sphere`] (#2357). `SmDatabaseIO::IsValidType` is a debug-build
 //! assertion only (not ported for any type). The fork's b439d73 notes that the shell's
 //! exact offset of a Ball patch is later put on a tangent-extended B-spline
 //! (`GetCreateExtendedSurface`), which no longer carries the sphere: so here too, unless
@@ -42,6 +44,7 @@
 //! dispatcher's nesting count.
 
 use crate::error::{Result, SolidError};
+use crate::eval;
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::tol::are_same;
 use crate::geom::vector3d::{Point3, Vec3};
@@ -50,8 +53,10 @@ use crate::math::EFF_ZERO;
 use crate::nurbs::b_spline_curve::p2::ControlPointForm;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::p2::EditNotify;
-use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
+use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::knots::Side;
+use crate::nurbs::math::{CPoint, NOW, NOZ};
+use crate::nurbs::srf_basic::Surface as NurbSurface;
 use crate::surface::surface::Surface;
 use crate::topology::database_io::{DatabaseReader, FileType, InputStream};
 
@@ -60,6 +65,7 @@ const OP_OFFSET: &str = "surface::ball_patch::BallPatch::create_offset_surface";
 const OP_TRANSFORM: &str = "surface::ball_patch::BallPatch::transform";
 const OP_ON_SPHERE: &str = "surface::ball_patch::BallPatch::is_on_sphere";
 const OP_CURVE_ON_SPHERE: &str = "surface::ball_patch::BallPatch::is_curve_on_sphere";
+const OP_FROM_FORM: &str = "surface::ball_patch::BallPatch::from_form";
 const OP_CERTIFIED: &str = "surface::ball_patch::BallPatch::create_certified";
 const OP_READ: &str = "surface::ball_patch::BallPatch::read_from_db";
 
@@ -73,7 +79,7 @@ pub const BALL_PATCH_TYPE: i64 = SURF_BASE_TYPE + 42;
 /// definition's sphere when `|X - C W|^2 - R^2 W^2` is zero to this much of the sphere's
 /// size squared, `(R max W)^2`, past the rounding of computing it
 /// ([`BallPatch::is_on_sphere`]).
-pub const ON_SPHERE_REL_TOL: f64 = 1e-12;
+pub const ON_SPHERE_REL_TOL: f64 = eval::sphere::ON_SPHERE_REL_TOL;
 
 /// `SmBallPatch`: a rational B-spline patch every point of which is on the sphere of
 /// centre `C` and radius `R` (its net is exact, not an approximation); `(C, R)` is its
@@ -91,109 +97,45 @@ pub struct BallPatch {
     radius: f64,
 }
 
-/// `sm_Binomial` (the fork's efb8007): `n` choose `k` as a double, by its product.
-#[allow(clippy::cast_precision_loss)] // degrees are small
-fn binomial(n: usize, k: usize) -> f64 {
-    let mut d = 1.0;
-    for i in 1..=k {
-        d = d * (n - k + i) as f64 / i as f64;
-    }
-    d
+/// A point's coordinates.
+const fn xyz(p: Point3) -> [f64; 3] {
+    [p.x, p.y, p.z]
+}
+
+/// A NURBS surface's form for the evaluator: its knots and homogeneous control points as
+/// stored (weight 1 where it is not rational); `None` without NURB data.
+pub(crate) fn surface_form(net: &BSplineSurface) -> Option<eval::Surface> {
+    let n = net.gw_nurb()?;
+    let w = |c: &CPoint| if c.w == NOW { 1.0 } else { c.w };
+    Some(eval::Surface::RationalSpline {
+        u_knots: n.u_knots().to_vec(),
+        v_knots: n.v_knots().to_vec(),
+        homogeneous: n
+            .rows()
+            .map(|r| r.iter().map(|c| [c.x, c.y, c.z, w(c)]).collect())
+            .collect(),
+    })
+}
+
+/// A NURBS curve's form for the evaluator, as [`surface_form`] (z 0 for a 2D curve).
+pub(crate) fn curve_form(c: &BSplineCurve) -> Option<eval::Curve> {
+    let n = c.nurb.as_ref()?;
+    Some(eval::Curve::RationalSpline {
+        knots: n.knots().to_vec(),
+        homogeneous: n
+            .cpts()
+            .iter()
+            .map(|p| {
+                let w = if p.w == NOW { 1.0 } else { p.w };
+                [p.x, p.y, if p.z == NOZ { 0.0 } else { p.z }, w]
+            })
+            .collect(),
+    })
 }
 
 /// `true` when `x > 0` (`false` for NaN), the fork's `!( x > 0.0 )` refusals negated.
 fn positive(x: f64) -> bool {
     x.partial_cmp(&0.0) == Some(std::cmp::Ordering::Greater)
-}
-
-/// `gamma_k = k u / (1 - k u)`, `u` the unit roundoff: the relative error bound of `k`
-/// floating operations in a chain (Higham, the standard model).
-fn gamma(k: usize) -> f64 {
-    #[allow(clippy::cast_precision_loss)] // operation counts are small
-    let ku = k as f64 * (f64::EPSILON / 2.0);
-    ku / (1.0 - ku)
-}
-
-/// Whether the residual `f` is decided zero within `bound`: both finite and `|f| <= bound`.
-/// A NaN or an infinity (a hostile number, or a coefficient that overflowed) is never
-/// within: a comparison with NaN is false, so the test is written to accept, not refuse.
-fn within(f: f64, bound: f64) -> bool {
-    f.is_finite() && bound.is_finite() && f.abs() <= bound
-}
-
-/// `|x| + |y| + |z|`.
-fn l1(v: Vec3) -> f64 {
-    v.x.abs() + v.y.abs() + v.z.abs()
-}
-
-/// One Bernstein coefficient of `|X - C W|^2 - R^2 W^2` on a Bezier piece, summed term by
-/// term (`add`), with a forward error bound of computing it in floating point.
-///
-/// A term is `c (h1 . h2 - R^2 w1 w2)`, `h = (P - C) w`. Each `h` carries an absolute error
-/// of at most `gamma(k_h) (|P|_1 + |C|_1) w` (the Euclidean point from its homogeneous one,
-/// the difference, the product, and the cut's knot insertion, `k_h` operations), so the
-/// dot product's error is `a1 |h2| + |h1| a2 + a1 a2` plus its own and the product's
-/// rounding; the binomial factors, the sum over the terms and the final division add
-/// `gamma(k)` of the terms' magnitudes. The bound is at the magnitude of `P` and `C`: what
-/// the coefficient cannot be decided below, wherever the sphere is.
-struct Coefficient {
-    /// The sum of the terms.
-    f: f64,
-    /// The sum of the terms' propagated input errors.
-    err: f64,
-    /// The sum of the terms' magnitudes, `c (|h1| |h2| + R^2 w1 w2)`.
-    mag: f64,
-    /// The terms so far.
-    terms: usize,
-}
-
-impl Coefficient {
-    const fn new() -> Self {
-        Self {
-            f: 0.0,
-            err: 0.0,
-            mag: 0.0,
-            terms: 0,
-        }
-    }
-
-    /// Adds the term `c (h1 . h2 - R^2 w1 w2)` of the points `p1`, `p2` and weights `w1`,
-    /// `w2`, each `h` known to `gamma(k_h)` of its magnitude.
-    #[allow(clippy::too_many_arguments)]
-    fn add(
-        &mut self,
-        c: f64,
-        (p1, w1): (Point3, f64),
-        (p2, w2): (Point3, f64),
-        centre: Point3,
-        radius: f64,
-        k_h: usize,
-    ) {
-        let h1 = (p1 - centre) * w1;
-        let h2 = (p2 - centre) * w2;
-        let r2w = radius * radius * w1 * w2;
-        self.f += c * (h1.dot(h2) - r2w);
-        let origin = Point3::new(0.0, 0.0, 0.0);
-        let c1 = l1(centre - origin);
-        let a1 = gamma(k_h) * (l1(p1 - origin) + c1) * w1.abs();
-        let a2 = gamma(k_h) * (l1(p2 - origin) + c1) * w2.abs();
-        let (n1, n2) = (h1.length(), h2.length());
-        self.err += c * (a1 * n2 + n1 * a2 + a1 * a2);
-        self.mag += c * (n1 * n2 + r2w.abs());
-        self.terms += 1;
-    }
-
-    /// The coefficient (the sum divided by `divisor`) and its error bound; `degree` the
-    /// highest degree whose binomials the terms and the divisor were made with.
-    fn finish(&self, divisor: f64, degree: usize) -> (f64, f64) {
-        // the dot product and R^2 w1 w2 (5), the binomials (two products of two per
-        // direction, each 2 degree operations), the sum and the division
-        let k = 8 + 8 * degree + self.terms;
-        (
-            self.f / divisor,
-            (self.err + gamma(k) * self.mag) / divisor * (1.0 + gamma(2)),
-        )
-    }
 }
 
 impl BallPatch {
@@ -264,199 +206,92 @@ impl BallPatch {
     }
 
     /// `IsOnSphere` (the fork's efb8007): whether every point of `net` is on the sphere of
-    /// centre `centre` and radius `radius`, decided on the net, not at sample points. The
-    /// net is cut into Bezier pieces (every interior knot raised to the degree); over each,
-    /// the Bernstein coefficients (degrees `2p`, `2q`) of the homogeneous identity
-    /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of `(R max W)^2` (the
-    /// patch's own size, the same wherever the sphere is) plus a forward error bound of
-    /// computing that coefficient in floating point ([`Coefficient`]: the rounding at the
-    /// magnitude of the points and the centre). `false` for a net that is not rational or a
-    /// radius that is not positive. The fork's SMLib has no caller (only its capi's import does; here
-    /// [`Self::create_certified`]).
+    /// centre `centre` and radius `radius`, decided on the net, not at sample points, by the
+    /// one certificate [`eval::sphere::surface_on_sphere`] (its tolerance `rel_tol (R max W)^2`
+    /// past the rounding of computing each coefficient, not the fork's). `false` for a net the
+    /// certificate refuses: off the sphere, not finite, or not rational; a radius that is not
+    /// finite and positive.
     ///
     /// # Errors
     ///
-    /// `SM_ERR` for a cut net whose control net is not a whole number of Bezier pieces
-    /// (or a degree 0); those of the knots, the knot insertion and the control net.
+    /// `SM_ERR` for a net without NURB data.
     pub fn is_on_sphere(
         net: &BSplineSurface,
         centre: Point3,
         radius: f64,
         rel_tol: f64,
     ) -> Result<bool> {
-        let err = || SolidError::sm_err(OP_ON_SPHERE);
-        if !net.is_rational() || !positive(radius) {
+        if !net.is_rational() {
             return Ok(false);
         }
-        // the net cut into Bezier pieces: every interior knot to the degree's multiplicity
-        let mut cut = net.copy();
-        let degrees = [cut.degree(SurfParamType::U), cut.degree(SurfParamType::V)];
-        for (dir, &deg) in [SurfParamType::U, SurfParamType::V].iter().zip(&degrees) {
-            let (knots, mults) = cut.knots(*dir, None)?;
-            let mut add = Vec::new();
-            let interior = knots.len().saturating_sub(1);
-            for k in 1..interior {
-                let (Some(&knot), Some(&mult)) = (knots.get(k), mults.get(k)) else {
-                    return Err(err());
-                };
-                for _ in mult..deg {
-                    add.push(knot);
-                }
-            }
-            if !add.is_empty() {
-                cut.insert_knots(*dir, &add)?;
-            }
-        }
-        let cpn = cut.control_point_net()?;
-        let (lu, lv) = (cpn.u_count, cpn.v_count);
-        let [p, q] = degrees;
-        let whole = |n: usize, d: usize| n.checked_sub(1).is_some_and(|m| m % d == 0);
-        if p == 0
-            || q == 0
-            || !whole(lu, p)
-            || !whole(lv, q)
-            || Some(cpn.weights.len()) != lu.checked_mul(lv)
-        {
-            return Err(err());
-        }
-        let mut w_max = 0.0_f64;
-        for &w in &cpn.weights {
-            let aw = w.abs();
-            w_max = if w_max > aw { w_max } else { aw };
-        }
-        // the geometric tolerance, at the patch's own size (translation-invariant); the
-        // rounding of computing each coefficient is bounded on its own ([`Coefficient`])
-        let geometric = rel_tol * (radius * w_max) * (radius * w_max);
-        // (h: the Euclidean point, the difference and the product; the cut's insertions,
-        // at most p convex combinations per direction, 2 operations each)
-        let k_h = 3 + 2 * (p + q);
-        let at = |k: usize| -> Result<(Point3, f64)> {
-            match (cpn.points.get(k), cpn.weights.get(k)) {
-                (Some(&pt), Some(&w)) => Ok((pt, w)),
-                _ => Err(err()),
-            }
-        };
-        // per piece: the homogeneous coordinates' Bernstein coefficients H = w (P - C), W = w
-        let mut bu = 0;
-        while bu + 1 < lu {
-            let mut bv = 0;
-            while bv + 1 < lv {
-                // F = |H|^2 - R^2 W^2, of degree (2p, 2q)
-                for i in 0..=2 * p {
-                    for j in 0..=2 * q {
-                        let mut f = Coefficient::new();
-                        for a in 0..=p {
-                            if a > i || i - a > p {
-                                continue;
-                            }
-                            for b in 0..=q {
-                                if b > j || j - b > q {
-                                    continue;
-                                }
-                                let k1 = (bu + a) * lv + (bv + b);
-                                let k2 = (bu + i - a) * lv + (bv + j - b);
-                                let c = binomial(p, a)
-                                    * binomial(p, i - a)
-                                    * binomial(q, b)
-                                    * binomial(q, j - b);
-                                f.add(c, at(k1)?, at(k2)?, centre, radius, k_h);
-                            }
-                        }
-                        let (f, rounding) =
-                            f.finish(binomial(2 * p, i) * binomial(2 * q, j), 2 * p.max(q));
-                        if !within(f, geometric + rounding) {
-                            return Ok(false);
-                        }
-                    }
-                }
-                bv += q;
-            }
-            bu += p;
-        }
-        Ok(true)
+        let form = surface_form(net).ok_or_else(|| SolidError::sm_err(OP_ON_SPHERE))?;
+        Ok(eval::sphere::surface_on_sphere(&form, xyz(centre), radius, rel_tol).is_ok())
     }
 
     /// Whether every point of `curve` is on the sphere of centre `centre` and radius
-    /// `radius`: [`Self::is_on_sphere`]'s certificate on a curve (not in the fork; the
-    /// Ball's loop, #2357). The curve is cut into Bezier pieces (every interior knot raised
-    /// to the degree); over each, the Bernstein coefficients (degree `2p`) of
-    /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of `(R max W)^2` plus the
-    /// rounding bound of computing it, as there; `W = 1` for a curve that is not rational. `false` for a radius that is not positive
-    /// or a weight that is not.
+    /// `radius`: [`Self::is_on_sphere`]'s certificate on a curve (not in the fork; the Ball's
+    /// loop, #2357), [`eval::sphere::curve_on_sphere`].
     ///
     /// # Errors
     ///
-    /// `SM_ERR` for a cut curve whose control polygon is not a whole number of Bezier
-    /// pieces (or a degree 0); those of the knots, the knot insertion and the polygon.
+    /// `SM_ERR` for a curve without NURB data.
     pub fn is_curve_on_sphere(
         curve: &BSplineCurve,
         centre: Point3,
         radius: f64,
         rel_tol: f64,
     ) -> Result<bool> {
-        let err = || SolidError::sm_err(OP_CURVE_ON_SPHERE);
-        if !positive(radius) {
-            return Ok(false);
-        }
-        let mut cut = curve.copy();
-        let p = cut.degree()?;
-        let (knots, mults) = cut.knots(None)?;
-        let mut add = Vec::new();
-        for k in 1..knots.len().saturating_sub(1) {
-            let (Some(&knot), Some(&mult)) = (knots.get(k), mults.get(k)) else {
-                return Err(err());
-            };
-            for _ in mult..p {
-                add.push(knot);
-            }
-        }
-        cut.insert_knots(&add)?;
-        let (points, weights) = cut.control_polygon()?;
-        let rational = cut.is_rational()?;
-        let n = points.len();
-        if p == 0 || n.checked_sub(1).is_none_or(|m| m % p != 0) {
-            return Err(err());
-        }
-        let weight = |k: usize| -> Result<f64> {
-            if rational {
-                weights.get(k).copied().ok_or_else(err)
-            } else {
-                Ok(1.0)
-            }
+        let form = curve_form(curve).ok_or_else(|| SolidError::sm_err(OP_CURVE_ON_SPHERE))?;
+        Ok(eval::sphere::curve_on_sphere(&form, xyz(centre), radius, rel_tol).is_ok())
+    }
+
+    /// A ball patch whose net is the NURBS form `net` (an [`eval::Surface::RationalSpline`],
+    /// its homogeneous control points as given), on the sphere of `centre` and `radius`
+    /// ([`Self::create`]). The net is not certified on the sphere here: a reader certifies it
+    /// first ([`eval::sphere::surface_on_sphere`]).
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` for a form that is not a rational NURBS or whose knots and points do
+    /// not fit; those of [`Self::create`].
+    pub fn from_form(net: &eval::Surface, centre: Point3, radius: f64) -> Result<Self> {
+        let eval::Surface::RationalSpline {
+            u_knots,
+            v_knots,
+            homogeneous,
+        } = net
+        else {
+            return Err(SolidError::invalid_input(
+                OP_FROM_FORM,
+                "a ball patch's net is a rational NURBS",
+            ));
         };
-        let mut w_max = 0.0_f64;
-        for k in 0..n {
-            let w = weight(k)?;
-            if !positive(w) {
-                return Ok(false);
-            }
-            w_max = w_max.max(w);
-        }
-        let geometric = rel_tol * (radius * w_max) * (radius * w_max);
-        let k_h = 3 + 2 * p;
-        let at = |k: usize| -> Result<(Point3, f64)> {
-            Ok((*points.get(k).ok_or_else(err)?, weight(k)?))
+        let nu = homogeneous.len();
+        let nv = homogeneous.first().map_or(0, Vec::len);
+        let degree = |knots: &[f64], n: usize| {
+            knots
+                .len()
+                .checked_sub(n + 1)
+                .filter(|&p| p >= 1)
+                .ok_or_else(|| {
+                    SolidError::invalid_input(OP_FROM_FORM, "a net's knots and points do not fit")
+                })
         };
-        // per piece: F = |H|^2 - R^2 W^2 of degree 2p, H = w (P - C), W = w
-        let mut b = 0;
-        while b + 1 < n {
-            for i in 0..=2 * p {
-                let mut f = Coefficient::new();
-                for a in 0..=p {
-                    if a > i || i - a > p {
-                        continue;
-                    }
-                    let c = binomial(p, a) * binomial(p, i - a);
-                    f.add(c, at(b + a)?, at(b + i - a)?, centre, radius, k_h);
-                }
-                let (f, rounding) = f.finish(binomial(2 * p, i), 2 * p);
-                if !within(f, geometric + rounding) {
-                    return Ok(false);
-                }
-            }
-            b += p;
-        }
-        Ok(true)
+        let (p, q) = (degree(u_knots, nu)?, degree(v_knots, nv)?);
+        let grid = homogeneous
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|&[x, y, z, w]| CPoint::new(x, y, z, w))
+                    .collect()
+            })
+            .collect();
+        let nurb = NurbSurface::new(grid, p, q, u_knots.clone(), v_knots.clone())?;
+        let net = BSplineSurface {
+            nurb: Some(nurb).into(),
+            ..BSplineSurface::new()
+        };
+        Self::create(&net, centre, radius)
     }
 
     /// The net (the `SmBSplineSurface` base): every evaluation of the patch is its net's.
