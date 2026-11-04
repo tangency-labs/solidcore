@@ -3291,6 +3291,54 @@ mod tests {
     }
 
     #[test]
+    fn wr90_default_append_matches_scanned_maximum() {
+        fn array(lengths: &[f64]) -> GapArray {
+            let mut result = GapArray::new();
+            for &length in lengths {
+                result.add(Gap::from(VertexEdgeGap {
+                    gap_3d: length,
+                    ..VertexEdgeGap::new()
+                }));
+            }
+            result
+        }
+        fn check(array: &GapArray, expected: &[f64]) {
+            let lengths: Vec<_> = (0..array.len())
+                .map(|i| array.get(i).unwrap().length())
+                .collect();
+            assert_eq!(lengths, expected);
+            let mut max = None;
+            for (index, &length) in lengths.iter().enumerate() {
+                assert!(length.is_finite() && length >= 0.0);
+                if max.is_none_or(|(_, previous)| length > previous) {
+                    max = Some((index, length));
+                }
+            }
+            assert_eq!(array.max_gap_index(), max.map(|(index, _)| index));
+            assert_eq!(array.max_gap_length(), max.map_or(0.0, |(_, length)| length));
+        }
+
+        let mut dst = array(&[0.5]);
+        let src = array(&[1.0, 3.0, 2.0]);
+        dst.append(&src);
+        check(&dst, &[0.5, 1.0, 3.0, 2.0]);
+        assert_eq!(dst.max_gap_index(), Some(2));
+        let mut empty = array(&[]);
+        empty.append(&src);
+        check(&empty, &[1.0, 3.0, 2.0]);
+        dst.append(&array(&[]));
+        check(&dst, &[0.5, 1.0, 3.0, 2.0]);
+        let mut ties = array(&[0.0, 1e-300, 1e300]);
+        ties.append(&array(&[1e300, 0.0]));
+        check(&ties, &[0.0, 1e-300, 1e300, 1e300, 0.0]);
+        let mut chain_source = array(&[0.0]);
+        chain_source.append(&array(&[1e-300, 1e300]));
+        let mut chain_target = array(&[1.0]);
+        chain_target.append(&chain_source);
+        check(&chain_target, &[1.0, 0.0, 1e-300, 1e300]);
+    }
+
+    #[test]
     fn wr90_gap_array_append_opt_in_updates_longest_gap() {
         let g = |l: f64| {
             Gap::from(VertexEdgeGap {
