@@ -85,6 +85,7 @@ fn validate_results(e: &Value, bodies: &serde_json::Map<String, Value>, made: &[
 
 fn validate_continuations(e: &Value, f: &Path) {
     let calls = e["calls"].as_array().unwrap();
+    let mut terminal = false;
     for (i, c) in calls.iter().enumerate() {
         if let Some(marker) = c.get("continued") {
             assert!(
@@ -97,7 +98,13 @@ fn validate_continuations(e: &Value, f: &Path) {
                 "{}: call {i}: continued requires an expected error",
                 f.display()
             );
+            assert!(
+                !terminal,
+                "{}: call {i}: continued follows a terminal refusal",
+                f.display()
+            );
         }
+        terminal |= c["error"].is_string() && c["continued"].as_bool() != Some(true);
     }
 }
 
@@ -229,6 +236,8 @@ fn regression_handled_refusal_markers() {
         serde_json::json!([{"error": "refused", "continued": "true"}, {}]),
         serde_json::json!([{"outputs": ["b1"], "continued": true}, {}]),
         serde_json::json!([{"outputs": ["b1"], "continued": false}]),
+        serde_json::json!([{"error": "terminal"}, {"error": "later", "continued": true}]),
+        serde_json::json!([{"error": "terminal", "continued": false}, {"error": "later", "continued": true}]),
     ] {
         let e = serde_json::json!({"calls": calls});
         assert!(

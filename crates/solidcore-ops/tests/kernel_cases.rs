@@ -316,6 +316,38 @@ fn within(got: f64, want: f64, tol: &Value) -> bool {
 /// Runs a case's calls and grades the result against `rig` (or, for a hand-written case
 /// without one, `expected`): `Ok(deviation)` for a match.
 fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
+    let calls = e["calls"].as_array().unwrap();
+    // Check the entire trace before a terminal refusal or an unsupported import can
+    // stop replay. A later malformed marker must not turn into an unchecked pass.
+    let mut terminal = false;
+    let continued_flags = calls
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let op = c["op"].as_str().unwrap();
+            let continued = match c.get("continued") {
+                Some(v) => {
+                    let continued = v.as_bool().ok_or_else(|| {
+                        Stop::Fail(format!("call {i} ({op}): continued must be a boolean"))
+                    })?;
+                    if !c["error"].is_string() {
+                        return Err(Stop::Fail(format!(
+                            "call {i} ({op}): continued requires an expected error"
+                        )));
+                    }
+                    if terminal {
+                        return Err(Stop::Fail(format!(
+                            "call {i} ({op}): continued follows a terminal refusal"
+                        )));
+                    }
+                    continued
+                }
+                None => false,
+            };
+            terminal |= c["error"].is_string() && !continued;
+            Ok(continued)
+        })
+        .collect::<Result<Vec<_>, Stop>>()?;
     let recs = records(entry, e);
     let mut bodies: HashMap<String, Slot> = HashMap::new();
     for (name, how) in e["bodies"].as_object().into_iter().flatten() {
@@ -338,8 +370,7 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
             Err(x) => return Err(Stop::Fail(format!("{name}: from_record: {x}"))),
         }
     }
-    let calls = e["calls"].as_array().unwrap();
-    for (i, c) in calls.iter().enumerate() {
+    for (i, (c, continued)) in calls.iter().zip(continued_flags).enumerate() {
         let op = c["op"].as_str().unwrap();
         let mut ins = Vec::new();
         for n in c["inputs"].as_array().unwrap() {
@@ -352,20 +383,6 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
             );
         }
         let traced_error = c.get("error").and_then(Value::as_str);
-        let continued = match c.get("continued") {
-            Some(v) => {
-                let continued = v.as_bool().ok_or_else(|| {
-                    Stop::Fail(format!("call {i} ({op}): continued must be a boolean"))
-                })?;
-                if traced_error.is_none() {
-                    return Err(Stop::Fail(format!(
-                        "call {i} ({op}): continued requires an expected error"
-                    )));
-                }
-                continued
-            }
-            None => false,
-        };
         match (call(c, &mut ins)?, traced_error) {
             (Ok(out), None) => {
                 for n in c["outputs"].as_array().into_iter().flatten() {
@@ -534,6 +551,23 @@ fn a_final_handled_refusal_still_grades_the_retained_body() {
     assert!(
         matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("bodies 1"))
     );
+}
+
+#[test]
+fn a_terminal_refusal_cannot_hide_later_invalid_markers() {
+    for marker in [
+        serde_json::json!("true"),
+        serde_json::json!(true),
+        serde_json::json!(false),
+    ] {
+        let mut e = handled_refusal_case();
+        e["calls"][0].as_object_mut().unwrap().remove("continued");
+        e["calls"][1]["error"] = serde_json::json!("refused");
+        e["calls"][1]["continued"] = marker;
+        assert!(
+            matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("continued"))
+        );
+    }
 }
 
 fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> Graded {
