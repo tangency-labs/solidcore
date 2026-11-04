@@ -123,12 +123,14 @@ fn edgeuses_round(b: &Brep, vertex: VertexId) -> Result<Vec<EdgeuseId>> {
 
 /// The edges `e` runs on into, tangentially and of its convexity, at each of its vertices
 /// (each with the vertex), within `tangency` radians; none for an edge without a blend
-/// edge use.
+/// edge use. `run_out`: leave out an edge a blend of `e` run on would run out of the part
+/// along, as the End does ([`continuing_edges`]); a tangent chain keeps it.
 fn runs_on_into(
     k: &Kernel,
     b: &mut Brep,
     e: EdgeId,
     tangency: f64,
+    run_out: bool,
 ) -> Result<Vec<(VertexId, EdgeId)>> {
     let mut out = Vec::new();
     let Some(fil_eu) = edge::blend_edgeuse(k, b, e)? else {
@@ -138,7 +140,17 @@ fn runs_on_into(
     let end = edge::end_vertex(b, e)?.filter(|&v| Some(v) != start); // a closed edge's one
     for v in [start, end].into_iter().flatten() {
         let round = edgeuses_round(b, v)?;
-        let found = continuing_edges(k, b, v, fil_eu, &round, rad_to_deg(tangency), &[], false)?;
+        let found = continuing_edges(
+            k,
+            b,
+            v,
+            fil_eu,
+            &round,
+            rad_to_deg(tangency),
+            &[],
+            false,
+            run_out,
+        )?;
         out.extend(found.into_iter().map(|f| (v, f)));
     }
     Ok(out)
@@ -150,8 +162,9 @@ fn runs_on_into(
 /// there at a smooth vertex ([`continuing_edges`]): the other edge runs on along one of its
 /// faces, leaves the vertex opposite to it within `tangency` radians, has the same
 /// convexity (a round cannot pass from one side of the faces to the other), and its faces
-/// do not meet tangentially at the vertex. An edge without a blend edge use (a smooth edge,
-/// a lamina edge) ends the chain.
+/// do not meet tangentially at the vertex. Whether a blend run on past the vertex would run
+/// out of the part (#2656) is the End's question, not the chain's. An edge without a blend
+/// edge use (a smooth edge, a lamina edge) ends the chain.
 ///
 /// # Errors
 /// [`SolidError::InvalidInput`] for a tangency not finite or not in `(0, pi / 2)`; those of
@@ -178,7 +191,7 @@ pub fn tangent_chain(
     let mut next = 0;
     while let Some(&e) = chain.get(next) {
         next += 1;
-        for (_, f) in runs_on_into(k, b, e, tangency)? {
+        for (_, f) in runs_on_into(k, b, e, tangency, false)? {
             if !chain.contains(&f) && edge::blend_edgeuse(k, b, f)?.is_some() {
                 chain.push(f);
             }
@@ -199,7 +212,7 @@ pub fn continuation(
     tangency: f64,
 ) -> Result<Option<(EdgeId, VertexId, EdgeId)>> {
     for &e in edges {
-        for (v, f) in runs_on_into(k, b, e, tangency)? {
+        for (v, f) in runs_on_into(k, b, e, tangency, true)? {
             if !edges.contains(&f) && edge::blend_edgeuse(k, b, f)?.is_some() {
                 return Ok(Some((e, v, f)));
             }
@@ -221,7 +234,7 @@ pub fn continuation_at(
     tangency: f64,
     blended: &[EdgeId],
 ) -> Result<Option<EdgeId>> {
-    for (w, f) in runs_on_into(k, b, e, tangency)? {
+    for (w, f) in runs_on_into(k, b, e, tangency, true)? {
         if w == v && !blended.contains(&f) && edge::blend_edgeuse(k, b, f)?.is_some() {
             return Ok(Some(f));
         }

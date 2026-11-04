@@ -149,6 +149,7 @@ pub fn end_at_smooth_vertex(
         tan_tol_deg,
         earlier_pass_faces,
         true,
+        true,
     )?;
     Ok(!found.is_empty())
 }
@@ -170,7 +171,9 @@ pub fn end_at_smooth_vertex(
 /// past the vertex, runs out of the part (`run_on_leaves_the_part`: the edge turns into
 /// their shared face away from the blended edge continued, as an earlier round's end arc
 /// does). There the End on the end face runs the blend on, as before smlib#124, instead of
-/// capping it with a face square to the blends at the vertex.
+/// capping it with a face square to the blends at the vertex. `run_out` asks for that test:
+/// the End's question; without it, the edges the blended edge continues into tangentially,
+/// whether or not a blend run on would stay in the part (a tangent chain's).
 ///
 /// # Errors
 /// `SM_ERR_NULL_POINTER` for an edge use without face, radial or edge; those of the
@@ -185,6 +188,7 @@ pub fn continuing_edges(
     tan_tol_deg: f64,
     earlier_pass_faces: &[FaceId],
     first: bool,
+    run_out: bool,
 ) -> Result<Vec<EdgeId>> {
     let mut found = Vec::new();
     let fil_edge = eu1::edge(target, fil_eu)?.ok_or_else(nul)?;
@@ -244,7 +248,7 @@ pub fn continuing_edges(
             && leaves
             && leave0.dot(leave1) < -(tan_tol_deg * (PI / 180.0)).cos()
             && same_convexity_edges_round_vertex(k, target, fil_eu, other)?
-            && !run_on_leaves_the_part(k, target, vertex, fil_eu, eu, leave0)?
+            && !(run_out && run_on_leaves_the_part(k, target, vertex, fil_eu, eu, leave0)?)
         {
             found.push(other);
             if first {
