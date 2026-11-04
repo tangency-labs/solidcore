@@ -2578,8 +2578,9 @@ fn panic_fuzz_boolean_sets() {
 
 #[test]
 fn panic_fuzz_nm_sweeps() {
-    // (case 4, a curve sweep from edges along an ellipse, takes 11 s optimised and past
-    // the hang limit in a debug build)
+    // (the fifth case, 15137747025202472589, a curve sweep from edges along an ellipse,
+    // takes 10 s optimised and past the hang limit in a debug build; the slow cases the
+    // fuzz finds are tracked in #2756)
     run_family("nm_sweeps", Mix::NmSweeps, 4);
 }
 
@@ -2600,8 +2601,8 @@ fn panic_fuzz_heal() {
 
 #[test]
 fn panic_fuzz_parts() {
-    // (case 6, a binary part of a swung body and a torus read back, takes past 20 s in a
-    // debug build)
+    // (the seventh case, a binary part of a swung body and a torus read back, took past
+    // 20 s in a debug build on Brep clones; see #2756 for the slow cases)
     run_family("parts", Mix::Parts, 6);
 }
 
