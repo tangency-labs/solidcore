@@ -1,8 +1,8 @@
 //! The session's refusals on its edges, typed ([`BlendRefusal`] in
 //! [`SolidError::BlendRefused`]): an edge with no blend (from every preparation), a round
-//! too small to change the part (constant circular rounds, with
-//! `fixes.fillet_refuse_rounds_too_small`), a round that cannot end where its edge runs
-//! on tangentially and a setback asked for too short or too long (from `DoFilleting`).
+//! too small to change the part (constant circular rounds, before preparation), a round
+//! that cannot end where its edge runs on tangentially and a setback asked for too short
+//! or too long (from `DoFilleting`).
 //!
 //! Not upstream (solidcore's): upstream fails an edge with no blend edge use with
 //! `SM_ERR_INVALID_INPUT`, and the others with `SM_ERR`; each refusal keeps that status
@@ -65,8 +65,8 @@ impl FilletSession<'_> {
         }
     }
 
-    /// With `fixes.fillet_refuse_rounds_too_small`, the first circular constant round of
-    /// `edges` (edge i at `radii[i]`, or `radii[0]` for every edge; its section
+    /// The first circular constant round of `edges` (edge i at `radii[i]`, or `radii[0]`
+    /// for every edge; its section
     /// `sections[i]` or `sections[0]`) too small to change the part
     /// ([`round_too_small`]), refused as [`BlendRefusal::RoundTooSmall`] with status `SM_ERR`
     /// before the edges are prepared. Edges without a blend edge use are left to the
@@ -78,9 +78,6 @@ impl FilletSession<'_> {
         radii: &[f64],
         sections: &[FilletSurfaceGeneratorType],
     ) -> Result<()> {
-        if !k.fixes.fillet_refuse_rounds_too_small {
-            return Ok(());
-        }
         for (i, &e) in edges.iter().enumerate() {
             let radius = radii.get(i).or_else(|| radii.first()).copied();
             let section = sections.get(i).or_else(|| sections.first()).copied();

@@ -8,7 +8,7 @@
 //! - An edge whose faces meet tangentially all along it (the plate's seam where a corner's
 //!   cylinder runs into a flat side) has no blend: `EdgeNotBlendable { reason: Smooth }`,
 //!   status `SM_ERR_INVALID_INPUT` as before.
-//! - A round too small to change the part (`fixes.fillet_refuse_rounds_too_small`): across a
+//! - A round too small to change the part: across a
 //!   crease whose faces turn by delta, a round of radius r lies r (sec(delta/2) - 1) inside
 //!   the edge; below the edge's tolerance it is refused with the smallest radius that rounds
 //!   it, tolerance / (sec(delta/2) - 1).
@@ -283,14 +283,6 @@ fn a_round_within_the_tolerance_of_its_edge_is_refused() {
     let faces = b.face_list().len();
     fillet_edges(&mut k, &mut b, &[e], 0.5, 1, 1, 1.0).unwrap();
     assert_eq!(b.face_list().len(), faces + 1);
-    // without the fix the small round is prepared as before
-    let mut k = kernel(|f| f.fillet_refuse_rounds_too_small = false);
-    let mut b = crease(&mut k);
-    let e = pick(&k, &b, [10.0, 0.0, 2.5]);
-    let circular = [FilletSurfaceGeneratorType::Circular];
-    let mut s = FilletSession::new(&mut k, &mut b).unwrap();
-    s.prepare_per_edge_constant_radius(&mut k, &[e], &[small], &circular, 1, 1.0)
-        .unwrap();
 }
 
 /// #2223's rim and corner arc rounded together, without its fix and the blend corner: the

@@ -1609,8 +1609,6 @@ pub struct UpstreamFixes {
     /// against the untrimmed surface. Classifications outside editing are unchanged
     /// (WR-732, #2503; solidcore-native, no fork commit).
     pub brep_ray_classifies_current_trims: bool,
-    /// A circular constant round too small to change the part is refused before the session prepares its edges, with [`crate::SolidError::BlendRefused`] (`BlendRefusal::RoundTooSmall`, status `SM_ERR`) naming the edge, the least turn of its faces' normals across it, its tolerance and the smallest radius that rounds it: across faces turning by delta a round of radius r lies r (sec(delta/2) - 1) inside the sharp edge at its middle, and below the edge's tolerance (at least the body's) it is the edge itself to the model's accuracy ([`crate::blend::blend_refusal::round_too_small`]). Off: the round is prepared and built as before (solidcore-native, no fork commit).
-    pub fillet_refuse_rounds_too_small: bool,
 }
 }
 
