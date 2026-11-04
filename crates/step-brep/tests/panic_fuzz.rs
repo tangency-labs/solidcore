@@ -199,6 +199,35 @@ fn token(
     Some((s, e))
 }
 
+/// The entity name of the first instance definition (`#<id> = NAME(` or, for a complex
+/// instance, `#<id> = (NAME(`) at or after `i`, so an edit swaps a type and never hits
+/// `.T.`, `.F.`, an exponent's `E` or a string.
+fn entity_name(bytes: &[u8], i: usize) -> Option<(usize, usize)> {
+    let skip = |mut j: usize, f: &dyn Fn(u8) -> bool| {
+        while j < bytes.len() && f(bytes[j]) {
+            j += 1;
+        }
+        j
+    };
+    let mut from = i;
+    while let Some((_, id_end)) = token(bytes, from, |b| b == b'#', |b| b.is_ascii_digit()) {
+        from = id_end;
+        let j = skip(id_end, &|b| b.is_ascii_whitespace());
+        if bytes.get(j) != Some(&b'=') {
+            continue;
+        }
+        let s = skip(j + 1, &|b| b.is_ascii_whitespace() || b == b'(');
+        if !bytes.get(s).is_some_and(u8::is_ascii_uppercase) {
+            continue;
+        }
+        let e = skip(s, &|b| {
+            b.is_ascii_uppercase() || b == b'_' || b.is_ascii_digit()
+        });
+        return Some((s, e));
+    }
+    None
+}
+
 fn line_at(bytes: &[u8], i: usize) -> (usize, usize) {
     let s = bytes[..i]
         .iter()
@@ -264,13 +293,8 @@ fn apply(bytes: &mut Vec<u8>, e: &Edit) {
             }
         }
         Edit::Entity(at, name) => {
-            if let Some((s, end)) = token(
-                bytes,
-                place(bytes, at),
-                |b| b.is_ascii_uppercase(),
-                |b| b.is_ascii_uppercase() || b == b'_' || b.is_ascii_digit(),
-            ) {
-                splice(bytes, (s, end), name.as_bytes());
+            if let Some(range) = entity_name(bytes, place(bytes, at)) {
+                splice(bytes, range, name.as_bytes());
             }
         }
         Edit::Nest(at, depth) => {
@@ -406,6 +430,55 @@ impl Family for FlatDecode {
             let _ = step_import::flat::decode(&flat);
         }
     }
+}
+
+/// `Edit::Entity` replaces an entity name of an instance definition, wherever it lands in
+/// the file, and nothing else (`.T.`, `.F.`, an exponent's `E`, a string).
+#[test]
+fn entity_edit_lands_on_an_entity_name() {
+    let bytes = include_bytes!("fixtures/discord-2026-10-30-fillet.step");
+    let text = std::str::from_utf8(bytes).unwrap();
+    let mut complex = 0;
+    for k in 0..1000 {
+        let at = place(bytes, f64::from(k) / 1000.0);
+        let Some((s, e)) = entity_name(bytes, at) else {
+            // past the last definition only
+            assert!(!text[at..].contains("\n#"), "no name found from byte {at}");
+            continue;
+        };
+        let name = &text[s..e];
+        assert!(
+            name.bytes().next().unwrap().is_ascii_uppercase()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b == b'_' || b.is_ascii_digit()),
+            "{name:?} at byte {s}"
+        );
+        assert_eq!(
+            bytes.get(e),
+            Some(&b'('),
+            "{name:?} at byte {s} is not followed by `(`"
+        );
+        // what precedes the name is `#<id>=`, then optionally `(` for a complex instance
+        let head = text[..s].trim_end();
+        let head = match head.strip_suffix('(') {
+            Some(h) => {
+                complex += 1;
+                h.trim_end()
+            }
+            None => head,
+        };
+        let head = head
+            .strip_suffix('=')
+            .unwrap_or_else(|| panic!("{name:?} at byte {s}"));
+        let id = head.trim_end().rsplit('#').next().unwrap();
+        assert!(
+            !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
+            "{name:?} at byte {s} does not follow `#<id>=`"
+        );
+        assert!(s >= at, "the name starts before the edit's place");
+    }
+    assert!(complex > 0, "no complex instance was reached");
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! The panic fuzz's harness (#2490): a seeded PRNG, hostile values, and a runner that
 //! calls each generated case on its own thread under `catch_unwind`, records every
-//! panic's message and location through a panic hook, and reports a case that runs past
+//! panic's message and location through a panic hook (a panic library code catches
+//! itself is a finding too: the web build is panic=abort), and reports a case that runs past
 //! the hang limit as a hang finding (its kernel's [`solidcore::CancelToken`] is
 //! cancelled, and a case that still does not return is left running).
 //!
@@ -119,6 +120,22 @@ fn env_u64(name: &str) -> Option<u64> {
     std::env::var(name).ok().and_then(|v| v.trim().parse().ok())
 }
 
+/// `SOLIDCORE_PANIC_FUZZ_REPRO`'s `<family>:<u64 seed>`, split; panics on any other form
+/// (a malformed spec would otherwise skip every family, or run the CI set, silently).
+pub fn parse_repro(spec: &str) -> (&str, u64) {
+    let parsed = spec
+        .split_once(':')
+        .and_then(|(f, seed)| Some((f.trim(), seed.trim().parse::<u64>().ok()?)))
+        .filter(|(f, _)| !f.is_empty());
+    match parsed {
+        Some(p) => p,
+        None => panic!(
+            "SOLIDCORE_PANIC_FUZZ_REPRO={spec:?}: expected `<family>:<u64 seed>`, \
+             e.g. `booleans:12`"
+        ),
+    }
+}
+
 /// The run's settings, read from the environment.
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -139,10 +156,14 @@ impl Settings {
         // a debug build runs the slowest CI cases in ~10 s (under 2 s optimised)
         let hang_default = if cfg!(debug_assertions) { 60 } else { 5 };
         let (repro, skip) = match std::env::var("SOLIDCORE_PANIC_FUZZ_REPRO") {
-            Ok(spec) => match spec.split_once(':') {
-                Some((f, seed)) if f == family => (seed.trim().parse().ok(), false),
-                _ => (None, true),
-            },
+            Ok(spec) => {
+                let (f, seed) = parse_repro(&spec);
+                if f == family {
+                    (Some(seed), false)
+                } else {
+                    (None, true)
+                }
+            }
             Err(_) => (None, false),
         };
         Self {
@@ -171,6 +192,9 @@ pub struct Panic {
     pub location: String,
     /// The innermost backtrace frame in this workspace's crates, when there is one.
     pub frame: Option<String>,
+    /// Library code caught it (`catch_unwind`) and the case returned normally; with
+    /// panic=abort (the web build) it aborts all the same.
+    pub caught: bool,
 }
 
 impl Panic {
@@ -232,6 +256,7 @@ fn install_hook() {
                     message,
                     location,
                     frame,
+                    caught: false,
                 });
             });
         }));
@@ -266,8 +291,9 @@ pub enum Outcome {
     Done,
     /// Panicked.
     Panicked(Panic),
-    /// Still running at the hang limit.
-    Hang,
+    /// Still running at the hang limit. `detached`: it did not return within the grace
+    /// period after its token was cancelled either, and is left running.
+    Hang { detached: bool },
 }
 
 /// Runs one input on its own thread.
@@ -282,20 +308,23 @@ pub fn run_one<F: Family>(input: F::Input, hang: Duration) -> Outcome {
         .spawn(move || {
             FUZZING.with(|f| f.set(true));
             let result = panic::catch_unwind(AssertUnwindSafe(|| F::run(input, &thread_token)));
-            let outcome = match result {
-                Ok(()) => Outcome::Done,
-                Err(payload) => Outcome::Panicked(
-                    LAST_PANIC
-                        .with(|p| p.borrow_mut().take())
-                        .unwrap_or_else(|| Panic {
-                            message: payload
-                                .downcast_ref::<String>()
-                                .cloned()
-                                .unwrap_or_else(|| "<no hook record>".into()),
-                            location: String::new(),
-                            frame: None,
-                        }),
-                ),
+            // A panic the library caught itself (`catch_unwind` turning it into a value)
+            // returns normally here, but aborts under the web build's panic=abort: any
+            // panic the hook recorded is a finding, whichever way `run` ended.
+            let recorded = LAST_PANIC.with(|p| p.borrow_mut().take());
+            let outcome = match (result, recorded) {
+                (Ok(()), None) => Outcome::Done,
+                (Ok(()), Some(p)) => Outcome::Panicked(Panic { caught: true, ..p }),
+                (Err(_), Some(p)) => Outcome::Panicked(p),
+                (Err(payload), None) => Outcome::Panicked(Panic {
+                    message: payload
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .unwrap_or_else(|| "<no hook record>".into()),
+                    location: String::new(),
+                    frame: None,
+                    caught: false,
+                }),
             };
             let _ = tx.send(outcome);
         })
@@ -309,7 +338,8 @@ pub fn run_one<F: Family>(input: F::Input, hang: Duration) -> Outcome {
     token.cancel();
     match rx.recv_timeout(Duration::from_secs(2)) {
         Ok(Outcome::Panicked(p)) => Outcome::Panicked(p),
-        _ => Outcome::Hang,
+        Ok(_) => Outcome::Hang { detached: false },
+        Err(_) => Outcome::Hang { detached: true },
     }
 }
 
@@ -336,7 +366,8 @@ pub fn fuzz<F: Family>(family: &F, settings: &Settings) -> BTreeMap<String, Find
     let started = Instant::now();
     let mut slowest = (Duration::ZERO, 0);
     let mut hangs = 0;
-    for (n, seed) in seeds.iter().copied().enumerate() {
+    let mut detached_threads = 0;
+    for seed in seeds.iter().copied() {
         let input = family.generate(&mut Rng(seed));
         if settings.repro.is_some() {
             eprintln!("{} case {seed}: {input:#?}", family.name());
@@ -348,7 +379,7 @@ pub fn fuzz<F: Family>(family: &F, settings: &Settings) -> BTreeMap<String, Find
         if took > slowest.0 {
             slowest = (took, seed);
         }
-        if took > settings.hang / 2 && !matches!(outcome, Outcome::Hang) {
+        if took > settings.hang / 2 && !matches!(outcome, Outcome::Hang { .. }) {
             eprintln!(
                 "panic fuzz: {} case {seed} took {took:?} (hang limit {:?})",
                 family.name(),
@@ -358,24 +389,24 @@ pub fn fuzz<F: Family>(family: &F, settings: &Settings) -> BTreeMap<String, Find
         let (key, panic) = match outcome {
             Outcome::Done => continue,
             Outcome::Panicked(p) => (p.key(), Some(p)),
-            Outcome::Hang => {
+            Outcome::Hang { detached } => {
                 hangs += 1;
+                if detached {
+                    detached_threads += 1;
+                }
                 eprintln!(
-                    "panic fuzz: {} case {seed} still running at the hang limit {:?}; \
+                    "panic fuzz: {} case {seed} still running at the hang limit {:?}{}; \
                      repro: SOLIDCORE_PANIC_FUZZ_REPRO={}:{seed}\n  input: {}",
                     family.name(),
                     settings.hang,
+                    if detached {
+                        ", ignores its cancel token (left running)"
+                    } else {
+                        ""
+                    },
                     family.name(),
                     shown.chars().take(1500).collect::<String>()
                 );
-                if hangs >= 8 {
-                    eprintln!(
-                        "panic fuzz: {}: 8 hangs, stopping after {} cases",
-                        family.name(),
-                        n + 1
-                    );
-                    break;
-                }
                 if !settings.fail_on_hang {
                     continue;
                 }
@@ -393,13 +424,15 @@ pub fn fuzz<F: Family>(family: &F, settings: &Settings) -> BTreeMap<String, Find
             });
     }
     eprintln!(
-        "panic fuzz: {}: {} cases in {:?}, slowest {:?} (case {}), {} hangs, {} distinct findings",
+        "panic fuzz: {}: {} cases in {:?}, slowest {:?} (case {}), {} hangs \
+         ({} threads left running), {} distinct findings",
         family.name(),
         seeds.len(),
         started.elapsed(),
         slowest.0,
         slowest.1,
         hangs,
+        detached_threads,
         findings.len()
     );
     findings
@@ -416,6 +449,10 @@ pub fn assert_no_findings(family: &str, findings: &BTreeMap<String, Finding>) {
     );
     for (key, f) in findings {
         let what = match &f.panic {
+            Some(p) if p.caught => format!(
+                "panic at {} `{}`, caught by library code (aborts under panic=abort)",
+                p.location, p.message
+            ),
             Some(p) => format!("panic at {} `{}`", p.location, p.message),
             None => "hang".to_string(),
         };

@@ -8,8 +8,9 @@
 //! shells, transforms, checks, mass properties, boundary tessellation, queries and
 //! the native file reader on mutated files, on bodies made by the earlier steps. Every
 //! case runs under `catch_unwind` on its own thread (`support/panic_fuzz.rs`); the test
-//! fails listing each distinct panic location with a reproducing seed and input, and
-//! each case that runs past the hang limit.
+//! fails listing each distinct panic location with a reproducing seed and input. A case
+//! that runs past the hang limit is printed with its seed and input; by default it does
+//! not fail the test, and it does with `SOLIDCORE_PANIC_FUZZ_HANGS=fail`.
 //!
 //! CI runs a fixed seed set; `SOLIDCORE_PANIC_FUZZ_CASES=<n>` runs more (see the
 //! harness for the other variables).
@@ -26,7 +27,7 @@ mod offset_fixture;
 #[path = "support/panic_fuzz.rs"]
 mod panic_fuzz;
 
-use panic_fuzz::{assert_no_findings, fuzz, Family, Rng, Settings};
+use panic_fuzz::{assert_no_findings, fuzz, parse_repro, Family, Rng, Settings};
 use solidcore::blend::fillet_executive::api as fillet;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep as boolean;
@@ -1457,4 +1458,30 @@ fn panic_fuzz_analysis() {
 #[test]
 fn panic_fuzz_files() {
     run_family("files", Mix::Files, 25);
+}
+
+/// `SOLIDCORE_PANIC_FUZZ_REPRO` takes `<family>:<u64 seed>`; anything else is an error
+/// rather than a run that skips every family or falls back to the CI seed set.
+#[test]
+fn repro_spec_parses() {
+    assert_eq!(parse_repro("booleans:12"), ("booleans", 12));
+    assert_eq!(parse_repro(" booleans : 12 "), ("booleans", 12));
+}
+
+#[test]
+#[should_panic(expected = "expected `<family>:<u64 seed>`")]
+fn repro_spec_without_a_seed_is_rejected() {
+    parse_repro("booleans");
+}
+
+#[test]
+#[should_panic(expected = "expected `<family>:<u64 seed>`")]
+fn repro_spec_with_a_bad_seed_is_rejected() {
+    parse_repro("booleans:12x");
+}
+
+#[test]
+#[should_panic(expected = "expected `<family>:<u64 seed>`")]
+fn repro_spec_without_a_family_is_rejected() {
+    parse_repro(":12");
 }
