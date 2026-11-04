@@ -708,6 +708,24 @@ fn issue_2572_the_definition_follows_its_nets_edits() {
         .unwrap();
     assert!(squashed.procedural_sweep().is_none());
     assert!(matches!(squashed.kind(), SurfaceKind::BSpline(_)));
+    // a new STEP domain can grow and reparametrise the net past its stations: the
+    // definition goes, the B-spline stays
+    let mut grown = wall.copy(&k).unwrap();
+    let dom = grown.procedural_sweep().unwrap().net().natural_uv_domain();
+    let (u, v) = (dom.u_interval(), dom.v_interval());
+    grown
+        .adjust_step_uv_domain(
+            &k,
+            &solidcore::geom::extent2d::Extent2d::from_bounds(
+                u.min() - 1.0,
+                v.min(),
+                u.max(),
+                v.max() + 1.0,
+            ),
+        )
+        .unwrap();
+    assert!(grown.procedural_sweep().is_none());
+    assert!(matches!(grown.kind(), SurfaceKind::BSpline(_)));
 }
 
 /// The ledger: each kind of wall face that is not a definition yet, with its issue (the

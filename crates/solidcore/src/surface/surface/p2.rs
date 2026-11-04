@@ -3079,6 +3079,17 @@ impl Surface {
     ) -> Result<()> {
         self.take_made_kind_for_edit();
         self.boundary_memo = BoundaryMemo::new();
+        // (#2485, #2572) extending the boundary spans and trimming can reparametrise the
+        // net by more than an affine map and carry it past its definition, so a
+        // definition read through a map of the net's parameters is dropped, as an
+        // extension drops it
+        if self
+            .definition
+            .as_deref()
+            .is_some_and(KeptDefinition::has_parameter_map)
+        {
+            self.definition = None;
+        }
         match &mut self.kind {
             SurfaceKind::BSpline(s) => s.adjust_step_uv_domain(new_step_uv_domain),
             SurfaceKind::ProceduralBlend(pb) => {

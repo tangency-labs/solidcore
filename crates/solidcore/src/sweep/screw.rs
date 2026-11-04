@@ -64,7 +64,7 @@ use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData
 use crate::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::surface::cone::Cone;
-use crate::surface::procedural_sweep::{ProceduralSweep, RadialLaw, ScrewMotion};
+use crate::surface::procedural_sweep::{ProceduralSweep, RadialLaw, ScrewMotion, MAX_HALF_ANGLE};
 use crate::surface::surface::Surface;
 use crate::topology::brep::p8::{self, FaceBuildEnv};
 use crate::topology::{Brep, FaceId};
@@ -233,6 +233,18 @@ impl Stations {
         } else {
             self.half.cos()
         }
+    }
+}
+
+/// How many spans of at most `piece` (radians of turn) cover `width`: one more where the
+/// half-angle the stations compute, `0.5 width / n` rounded, would land past
+/// [`MAX_HALF_ANGLE`] though the exact quotient does not (at 11.75 turns of `TAU / 8`).
+fn span_count(width: f64, piece: f64) -> f64 {
+    let n = (width / piece).ceil();
+    if 0.5 * width / n > MAX_HALF_ANGLE {
+        n + 1.0
+    } else {
+        n
     }
 }
 
@@ -805,7 +817,7 @@ fn sweep(
         {
             piece *= 0.99;
         }
-        let n = ((b1 - b0) / piece).ceil();
+        let n = span_count(b1 - b0, piece);
         spans += n;
         if !(spans <= MAX_STATIONS) {
             return Err(bad("too many spans"));
@@ -880,4 +892,23 @@ fn solid(brep: Brep) -> Result<Brep> {
         return Err(SolidError::sm_err(OP));
     }
     Ok(brep)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn span_half_angles_stay_within_the_cap_after_rounding() {
+        // 11.75 and 23.5 turns at the widest span: ceil gives 94 and 188 spans, whose
+        // rounded half-angle is 5.6e-17 past TAU / 16
+        for turns in [11.75, 23.5, 41.75, 47.0, 83.5] {
+            let width = TAU * turns;
+            let n = span_count(width, TAU / 8.0);
+            assert!(0.5 * width / n <= MAX_HALF_ANGLE, "{turns} turns");
+            assert!(n <= (width / (TAU / 8.0)).ceil() + 1.0);
+        }
+        // where rounding does not overshoot, the count is the least that covers
+        assert_eq!(span_count(TAU * 2.0, TAU / 8.0), 16.0);
+    }
 }
