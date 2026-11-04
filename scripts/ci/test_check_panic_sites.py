@@ -119,6 +119,12 @@ class Proofs(unittest.TestCase):
         self.assertIsNone(c.auto_reason("int-div", "size / ZERO", src))
         self.assertIsNone(c.auto_reason("int-div", "size / BLOCK", ""))
 
+    def test_a_parameter_named_like_the_constant_is_no_proof(self):
+        src = "mod a { const BLOCK: usize = 64; }\nfn f(size: usize, BLOCK: usize) {}\n"
+        self.assertIsNone(c.auto_reason("int-div", "size / BLOCK", src))
+        src = "const BLOCK: usize = 64;\nlet g = |mut BLOCK: usize| 0;\n"
+        self.assertIsNone(c.auto_reason("int-div", "size / BLOCK", src))
+
 
 def row(fn="f", pattern="Vec::remove", n="1", status="open", code="remove(i)", reason="",
         file=LIB):
@@ -151,6 +157,17 @@ class Ratchet(unittest.TestCase):
         errors = c.check([row(code="remove(j)")], listed)
         self.assertEqual(len(errors), 1)
         self.assertIn("new panic-prone call `remove(j)`", errors[0])
+
+    def test_ratchet_tolerates_a_renumbering_of_open_rows(self):
+        # a proven remove(0) added before two open rows shifts both of their n
+        base = [row(code="remove(i)"), row(n="2", code="remove(j)")]
+        listed = [row(status="proven", code="remove(0)", reason="literal index after a check"),
+                  row(n="2", code="remove(i)"), row(n="3", code="remove(j)")]
+        self.assertEqual(c.ratchet(listed, base), [])
+        # a different call at an existing key is a new open row
+        self.assertEqual(len(c.ratchet([row(code="remove(k)")], [row()])), 1)
+        # a function renamed keeps its open rows
+        self.assertEqual(c.ratchet([row(fn="g")], [row()]), [])
 
     def test_renumbered_site_is_not_new(self):
         # a provable windows(2) added before a listed open windows(k) shifts its n

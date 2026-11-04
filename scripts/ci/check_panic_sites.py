@@ -134,7 +134,13 @@ def const_value(src, name):
         r"\bconst\s+" + name + r"\s*:\s*[iu](?:8|16|32|64|size)\s*=\s*([0-9][0-9_]*)" + INT + r"\s*;",
         src,
     )
-    names = re.findall(r"\b(?:const|static|let(?:\s+mut)?)\s+" + name + r"\b", src)
+    # every binding of the name, function and closure parameters included: a parameter
+    # that shadows the constant makes the proof unsound (no scope resolution here)
+    names = re.findall(
+        r"\b(?:const|static|let(?:\s+mut)?)\s+" + name + r"\b"
+        r"|[(,|]\s*(?:mut\s+)?" + name + r"\s*:",
+        src,
+    )
     return int(defs[0].replace("_", "")) if len(defs) == 1 and len(names) == 1 else None
 
 
@@ -523,11 +529,13 @@ def stale(current, listed):
 
 
 def ratchet(listed, base):
-    """Open rows that were not open in the base list (matched by key, else pattern + code)."""
-    base_open = {key(r): r for r in base if r["status"] == "open"}
-    new_open = [r for r in listed if r["status"] == "open" and key(r) not in base_open]
-    used = {key(r) for r in listed if r["status"] == "open"} & base_open.keys()
-    spare = Counter((r["pattern"], r["code"]) for k, r in base_open.items() if k not in used)
+    """Open rows that were not open in the base list: matched by `sig` as a multiset (so
+    a renumbering is no new row), then by pattern + call text among the leftovers (a
+    function or file moved or renamed)."""
+    base_open = [r for r in base if r["status"] == "open"]
+    new_open = excess([r for r in listed if r["status"] == "open"], base_open)
+    left = excess(base_open, [r for r in listed if r["status"] == "open"])
+    spare = Counter((r["pattern"], r["code"]) for r in left)
     errors = []
     for r in new_open:
         if spare[(r["pattern"], r["code"])] > 0:
