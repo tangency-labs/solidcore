@@ -3923,13 +3923,13 @@ mod tests {
     }
 
     #[test]
-    fn offset_third_derivatives_match_closed_form_when_fixed() {
+    fn offset_third_derivatives_match_closed_form_by_default() {
         // The public bound permits total order 3: equal highest orders with
         // `only_upper_half = true` fill the i + j <= 3 entries of the 4x4 matrix.
         // A full rectangular (3, 3) request exceeds MAX_DERIVS and is not this test.
         for d in [0.125, -0.125] {
             for (u, v) in [(0.25, 0.5), (0.5, 0.25)] {
-                let (k, off) = offset_evaluates(d, true);
+                let (k, off) = offset_evaluates(d, false);
                 let m = off
                     .evaluate(&k, Point2::new(u, v), 3, 3, flags(true, true))
                     .unwrap();
@@ -3949,53 +3949,177 @@ mod tests {
     }
 
     #[test]
-    fn offset_third_derivative_terms_default_keeps_upstream_third_partials() {
+    fn offset_unchanged_partials_default_bits() {
+        // Sampled pre-fix bits, not a universal bit-identity proof.
+        let expected: [[[u64; 3]; 7]; 4] = [
+            [
+                [
+                    4597784033420957231,
+                    4603052133372172998,
+                    4597843606503600894,
+                ],
+                [
+                    4608507369001728780,
+                    4595937248662427790,
+                    4602721857074240154,
+                ],
+                [
+                    4575355825046357480,
+                    4608374220493674685,
+                    4597551169972174395,
+                ],
+                [
+                    4606488318174322130,
+                    4594149428474944805,
+                    13811210086974777617,
+                ],
+                [
+                    4603548734204850756,
+                    4607464454410458233,
+                    4607524890612695553,
+                ],
+                [
+                    4590854552892320701,
+                    4602398157112256935,
+                    13790382657961158572,
+                ],
+                [
+                    4594342907449483204,
+                    13824079142491288122,
+                    4599049961336867727,
+                ],
+            ],
+            [
+                [
+                    4603052133372172998,
+                    4597784033420957231,
+                    4597843606503600894,
+                ],
+                [
+                    4608374220493674685,
+                    4575355825046357480,
+                    4597551169972174395,
+                ],
+                [
+                    4595937248662427790,
+                    4608507369001728780,
+                    4602721857074240154,
+                ],
+                [
+                    4602398157112256935,
+                    4590854552892320701,
+                    13790382657961158572,
+                ],
+                [
+                    4607464454410458233,
+                    4603548734204850756,
+                    4607524890612695553,
+                ],
+                [
+                    4594149428474944805,
+                    4606488318174322130,
+                    13811210086974777617,
+                ],
+                [
+                    4578434541086050647,
+                    13818365831681546033,
+                    4589762622815018533,
+                ],
+            ],
+            [
+                [
+                    4599496712514278632,
+                    4603431404879963450,
+                    4576459430447861784,
+                ],
+                [
+                    4608109268411991284,
+                    4599294204986700729,
+                    4602592743369460427,
+                ],
+                [
+                    4593127507237113762,
+                    4608242416920045379,
+                    4598487244331827426,
+                ],
+                [
+                    4607529469112865047,
+                    13817521465329720613,
+                    4587838050120001809,
+                ],
+                [
+                    4600938989108239225,
+                    4606618347579135758,
+                    4606497475174661117,
+                ],
+                [
+                    13814226589747096509,
+                    4602819150202841901,
+                    4567010621106382764,
+                ],
+                [
+                    13817714944304259012,
+                    4600707105636512314,
+                    13822421998191643535,
+                ],
+            ],
+            [
+                [
+                    4603431404879963450,
+                    4599496712514278632,
+                    4576459430447861784,
+                ],
+                [
+                    4608242416920045379,
+                    4593127507237113762,
+                    4598487244331827426,
+                ],
+                [
+                    4599294204986700729,
+                    4608109268411991284,
+                    4602592743369460427,
+                ],
+                [
+                    4602819150202841901,
+                    13814226589747096509,
+                    4567010621106382764,
+                ],
+                [
+                    4606618347579135758,
+                    4600938989108239224,
+                    4606497475174661117,
+                ],
+                [
+                    13817521465329720613,
+                    4607529469112865047,
+                    4587838050120001809,
+                ],
+                [
+                    13801806577940826455,
+                    4594993794826770225,
+                    13813134659669794341,
+                ],
+            ],
+        ];
+        let mut sample = 0;
         for d in [0.125, -0.125] {
             for (u, v) in [(0.25, 0.5), (0.5, 0.25)] {
-                let uv = Point2::new(u, v);
-                let (k_on, on) = offset_evaluates(d, true);
-                let (k_off, off) = offset_evaluates(d, false);
-                let m_on = on.evaluate(&k_on, uv, 3, 3, flags(true, true)).unwrap();
-                let m_off = off.evaluate(&k_off, uv, 3, 3, flags(true, true)).unwrap();
-
-                // Orders 0..2 and Suuu are bit-identical between the flag states.
-                for (i, j) in [
-                    (0usize, 0usize),
-                    (1, 0),
-                    (0, 1),
-                    (2, 0),
-                    (1, 1),
-                    (0, 2),
-                    (3, 0),
-                ] {
+                let (k, off) = offset_evaluates(d, false);
+                let m = off
+                    .evaluate(&k, Point2::new(u, v), 3, 3, flags(true, true))
+                    .unwrap();
+                for (n, (i, j)) in [(0, 0), (1, 0), (0, 1), (2, 0), (1, 1), (0, 2), (3, 0)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let p = m[i][j];
                     assert_eq!(
-                        (
-                            m_on[i][j].x.to_bits(),
-                            m_on[i][j].y.to_bits(),
-                            m_on[i][j].z.to_bits()
-                        ),
-                        (
-                            m_off[i][j].x.to_bits(),
-                            m_off[i][j].y.to_bits(),
-                            m_off[i][j].z.to_bits()
-                        ),
-                        "D[{i}][{j}] differs between the flag states"
+                        [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()],
+                        expected[sample][n],
+                        "sample {sample}, D[{i}][{j}]"
                     );
                 }
-
-                // The default keeps upstream's four wrong third-order terms, visibly.
-                let cf = closed_form(u, v, d);
-                for (got, want, what) in [
-                    (m_off[2][1], cf.suuv, "Duuv"),
-                    (m_off[1][2], cf.suvv, "Duvv"),
-                    (m_off[0][3], cf.svvv, "Dvvv"),
-                ] {
-                    let scale = want.length().max(1.0);
-                    assert!(
-                        (got - want).length() > 1e-3 * scale,
-                        "{what} should disagree before the fix: got {got:?}, want {want:?}"
-                    );
-                }
+                sample += 1;
             }
         }
     }
