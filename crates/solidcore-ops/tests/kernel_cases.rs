@@ -357,9 +357,9 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
                 let continued = v.as_bool().ok_or_else(|| {
                     Stop::Fail(format!("call {i} ({op}): continued must be a boolean"))
                 })?;
-                if traced_error.is_none() || (continued && i + 1 == calls.len()) {
+                if traced_error.is_none() {
                     return Err(Stop::Fail(format!(
-                        "call {i} ({op}): continued requires an expected error and a later operation"
+                        "call {i} ({op}): continued requires an expected error"
                     )));
                 }
                 continued
@@ -462,7 +462,8 @@ fn handled_refusal_case() -> Value {
              "params": {"center": [0, 0, 0], "radius": 1}, "outputs": ["b1"]}
         ],
         "result": [{"made": "b1"}],
-        "expected": {"body_count": 1, "volume_mm3": 4.0 * std::f64::consts::PI / 3.0}
+        "expected": {"body_count": 1, "volume_mm3": 4.0 * std::f64::consts::PI / 3.0,
+                     "tolerance": {"rel": 1e-9}}
     })
 }
 
@@ -523,10 +524,15 @@ fn malformed_continuation_markers_fail_before_replaying_the_call() {
     assert!(
         matches!(run_case(Path::new("unused.json"), &successful_call), Err(Stop::Fail(why)) if why.contains("continued requires"))
     );
-    let mut last_call = handled_refusal_case();
-    last_call["calls"].as_array_mut().unwrap().truncate(1);
+}
+
+#[test]
+fn a_final_handled_refusal_still_grades_the_retained_body() {
+    let mut e = handled_refusal_case();
+    e["calls"].as_array_mut().unwrap().swap(0, 1);
+    e["expected"]["body_count"] = serde_json::json!(2);
     assert!(
-        matches!(run_case(Path::new("unused.json"), &last_call), Err(Stop::Fail(why)) if why.contains("continued requires"))
+        matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("bodies 1"))
     );
 }
 

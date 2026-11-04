@@ -87,17 +87,14 @@ fn validate_continuations(e: &Value, f: &Path) {
     let calls = e["calls"].as_array().unwrap();
     for (i, c) in calls.iter().enumerate() {
         if let Some(marker) = c.get("continued") {
-            let continued = marker.as_bool().unwrap_or_else(|| {
-                panic!("{}: call {i}: continued must be a boolean", f.display())
-            });
             assert!(
-                c["error"].is_string(),
-                "{}: call {i}: continued requires an expected error",
+                marker.is_boolean(),
+                "{}: call {i}: continued must be a boolean",
                 f.display()
             );
             assert!(
-                !continued || i + 1 < calls.len(),
-                "{}: call {i}: continued requires a later operation",
+                c["error"].is_string(),
+                "{}: call {i}: continued requires an expected error",
                 f.display()
             );
         }
@@ -223,6 +220,7 @@ fn regression_handled_refusal_markers() {
     for calls in [
         serde_json::json!([{"error": "refused"}]),
         serde_json::json!([{"error": "refused", "continued": false}]),
+        serde_json::json!([{"error": "refused", "continued": true}]),
         serde_json::json!([{"error": "refused", "continued": true}, {"outputs": ["b1"]}]),
     ] {
         validate_continuations(&serde_json::json!({"calls": calls}), path);
@@ -231,7 +229,6 @@ fn regression_handled_refusal_markers() {
         serde_json::json!([{"error": "refused", "continued": "true"}, {}]),
         serde_json::json!([{"outputs": ["b1"], "continued": true}, {}]),
         serde_json::json!([{"outputs": ["b1"], "continued": false}]),
-        serde_json::json!([{"error": "refused", "continued": true}]),
     ] {
         let e = serde_json::json!({"calls": calls});
         assert!(
