@@ -15,9 +15,8 @@ use super::chamfer::{ChamferDefinition, ChamferSize};
 use super::corner::{CornerDefinition, SetbackFill};
 use super::exact::{ExactClass, ExactRound};
 use super::record::{
-    BallCornerRecord, BezierCurveRecord, BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord,
-    ClassInputsRecord, CornerRecord, DraftRecord, EndCornerRecord, ExactClassRecord,
-    ExactNetKindRecord,
+    BezierCurveRecord, BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord, ClassInputsRecord,
+    CornerRecord, DraftRecord, EndCornerRecord, ExactClassRecord, ExactNetKindRecord,
     ExactNetRecord, ExactRoundRecord, LeaderMapRecord, MixedCornerRecord, MixedSideRecord,
     NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord, PlaneRecord, ProceduralBlendRecord,
     QuadricKindRecord, QuadricRecord, RadiusRecord, SetbackCornerRecord, SetbackRoundRecord,
@@ -643,16 +642,13 @@ pub fn corner_to_record(k: &Kernel, surface: &Surface) -> Result<CornerRecord> {
     let xyz = |p: Point3| [p.x, p.y, p.z];
     let face_net = || support_record(k, net, 1);
     Ok(match corner {
-        CornerDefinition::Ball(d) => {
-            let Some(form) = as_b_spline(k, surface)? else {
-                return Err(SolidError::sm_err(OP_CORNER_TO));
-            };
-            CornerRecord::Ball(BallCornerRecord {
-                centre: xyz(d.centre),
-                radius: d.radius,
-                boundary: d.boundary.iter().map(curve_record).collect::<Result<_>>()?,
-                net: surface_record(&form)?,
-            })
+        // the Ball's patch is recorded as its B-rep face, its sphere the face's `BallPatch`
+        // label over its net, and read back certified by solidcore-convert's `ball_patch`
+        CornerDefinition::Ball(_) => {
+            return Err(SolidError::invalid_input(
+                OP_CORNER_TO,
+                "a ball's patch is recorded as its B-rep face, not as a corner record",
+            ))
         }
         CornerDefinition::Swept(d) => CornerRecord::Swept(SweptCornerRecord {
             common: support_record(k, &d.common, 1)?,
@@ -758,18 +754,6 @@ pub fn corner_from_record(k: &Kernel, rec: &CornerRecord) -> Result<Surface> {
         .map_err(|e| SolidError::invalid_input(OP_CORNER_FROM, e.reason))?;
     let p = |a: [f64; 3]| Point3::new(a[0], a[1], a[2]);
     let (net, definition) = match rec {
-        CornerRecord::Ball(r) => {
-            // the patch on the record's sphere (`SmBallPatch::Create`); not checked on it:
-            // corner_rebuild does that
-            let centre = p(r.centre);
-            let mut net = Surface::from(BallPatch::create(&surface_of(&r.net)?, centre, r.radius)?);
-            net.set_corner_definition(CornerDefinition::ball(
-                centre,
-                r.radius,
-                r.boundary.iter().map(curve_of).collect::<Result<_>>()?,
-            )?);
-            return Ok(net);
-        }
         CornerRecord::Swept(r) => (
             &r.net,
             CornerDefinition::swept(

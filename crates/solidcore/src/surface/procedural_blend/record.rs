@@ -572,8 +572,6 @@ impl ExactRoundRecord {
 /// A face of a blend corner's (#2488): its corner kind's definition and its net.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CornerRecord {
-    /// The Ball's patch on its sphere.
-    Ball(BallCornerRecord),
     /// A Swept turn's torus.
     Swept(SweptCornerRecord),
     /// An End's patch on its support face.
@@ -582,20 +580,6 @@ pub enum CornerRecord {
     Setback(SetbackCornerRecord),
     /// A Mixed corner's face.
     Mixed(Box<MixedCornerRecord>),
-}
-
-/// The Ball's patch (#2357): its sphere, the patch's boundary and its net, a rational patch
-/// on the sphere (an `SmBallPatch`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BallCornerRecord {
-    /// The sphere's centre.
-    pub centre: [f64; 3],
-    /// The sphere's radius.
-    pub radius: f64,
-    /// The patch's loop's curves (its three sections).
-    pub boundary: Vec<NurbsCurveRecord>,
-    /// The net, the patch: rational.
-    pub net: NurbsSurfaceRecord,
 }
 
 /// A Swept turn (#2488): the end section of its two rounds revolved about the side edge,
@@ -802,32 +786,13 @@ fn corner_surface(s: &SupportRecord, field: &'static str) -> Result<(), RecordEr
 impl CornerRecord {
     /// The structural check: every curve and surface as their own checks, its numbers
     /// finite, a positive radius and tolerance, a torus label on a Swept turn's net, a
-    /// bounded End, a bounded Ball with a rational net.
+    /// bounded End.
     ///
     /// # Errors
     ///
     /// The first [`RecordError`] met.
     pub fn validate(&self) -> Result<(), RecordError> {
         match self {
-            Self::Ball(r) => {
-                if !points_finite(&[r.centre]) {
-                    return Err(refuse("centre", "a ball's centre is finite"));
-                }
-                if !(r.radius.is_finite() && r.radius > 0.0) {
-                    return Err(refuse("radius", "a ball's radius is finite and positive"));
-                }
-                if r.boundary.is_empty() {
-                    return Err(refuse("boundary", "a ball's patch is bounded"));
-                }
-                for c in &r.boundary {
-                    c.validate("boundary")?;
-                }
-                r.net.validate("net")?;
-                if r.net.weights.is_none() {
-                    return Err(refuse("net", "a ball's patch is rational"));
-                }
-                Ok(())
-            }
             Self::Swept(r) => {
                 corner_surface(&r.common, "common")?;
                 corner_surface(&r.net, "net")?;
