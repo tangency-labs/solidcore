@@ -480,6 +480,21 @@ fn law_round(
     knots: &[f64],
     radii: &[f64],
 ) -> (f64, usize) {
+    let (k, mut b) = law_body(size, from, to, degree, knots, radii);
+    let faces = b.faces().ids().count();
+    (size[0] * size[1] * size[2] - volume(&k, &mut b), faces)
+}
+
+/// The box `size` with its edge from `from` to `to` rounded by the law, as
+/// [`law_round`] makes it.
+fn law_body(
+    size: [f64; 3],
+    from: Point3,
+    to: Point3,
+    degree: usize,
+    knots: &[f64],
+    radii: &[f64],
+) -> (Kernel, Brep) {
     let mut k = Kernel::default();
     k.fixes.clone_from(&UpstreamFixes::all());
     let mut b = create_box(&mut k, Vec3::ZERO, size[0], size[1], size[2]).unwrap();
@@ -493,32 +508,174 @@ fn law_round(
             .unwrap();
         session.do_fillet(&mut k).unwrap();
     }
-    let faces = b.faces().ids().count();
-    (size[0] * size[1] * size[2] - volume(&k, &mut b), faces)
+    (k, b)
 }
 
-/// The piecewise skin of the fork's 6eecf04, before its law corners (7babe17): each side of
-/// a law corner skinned on its own, between the corner and the round's end, its sections the
-/// balls' touch circles of its own side, and the sides joined C0 at the corner. On the dip
-/// (4 -> 2 -> 4 on the 20 cube's edge y = z = 20, from either end) that removes 39.6456, the
-/// fork's own value at 6eecf04 and 5fbffc9 (WR-685's law-corner addendum), where one surface
-/// skinned across the turn removes 35.0271. The corner ball's zone (7babe17) then makes it
-/// the union of the balls, 39.5421 (`law_dip`).
+/// How far `p` is from the envelope of the balls `ball(t)` (centre, radius) for `t` over
+/// `[t0, t1]`: `min_t |p - c(t)| - r(t)`, by 4001 samples refined by golden sections on
+/// the best sample's neighbourhood. Zero on the envelope, below zero inside a ball.
+fn off_the_balls(p: Point3, t0: f64, t1: f64, ball: impl Fn(f64) -> (Point3, f64)) -> f64 {
+    let d = |t: f64| {
+        let (c, r) = ball(t);
+        p.distance(c) - r
+    };
+    let n = 4000;
+    let step = (t1 - t0) / f64::from(n);
+    let (mut best, mut at) = (f64::INFINITY, t0);
+    for i in 0..=n {
+        let t = t0 + step * f64::from(i);
+        if d(t) < best {
+            best = d(t);
+            at = t;
+        }
+    }
+    let (mut a, mut b) = ((at - step).max(t0), (at + step).min(t1));
+    let g = (5.0_f64.sqrt() - 1.0) / 2.0;
+    for _ in 0..80 {
+        let (x1, x2) = (b - g * (b - a), a + g * (b - a));
+        if d(x1) < d(x2) {
+            b = x2;
+        } else {
+            a = x1;
+        }
+    }
+    best.min(d(0.5 * (a + b)))
+}
+
+/// The round's kept pieces (the solvers' `law_corner_pieces`) with the solvers'
+/// tolerance, from the box `size` with its edge from `from` to `to` rounded by the law, as
+/// [`law_body`] makes it.
+fn law_pieces(
+    size: [f64; 3],
+    from: Point3,
+    to: Point3,
+    knots: &[f64],
+    radii: &[f64],
+) -> (Vec<BSplineSurface>, f64) {
+    use solidcore::blend::fillet_geom::p1::FilletSolverId;
+    let mut k = Kernel::default();
+    k.fixes.clone_from(&UpstreamFixes::all());
+    let mut b = create_box(&mut k, Vec3::ZERO, size[0], size[1], size[2]).unwrap();
+    let (e, reversed) = edge_between(&k, &b, from, to);
+    let law = spline_law(1, knots, radii, reversed);
+    let base = radii[0].max(radii[radii.len() - 1]);
+    let mut session = FilletSession::new(&mut k, &mut b).unwrap();
+    session
+        .prepare_variable_radius_edges(&mut k, &[e], base, law, 1, 1)
+        .unwrap();
+    session.do_fillet(&mut k).unwrap();
+    let mut pieces = Vec::new();
+    let mut tol = 0.0_f64;
+    for id in 0.. {
+        let Ok(s) = session.solver(FilletSolverId(id)) else {
+            break;
+        };
+        tol = tol.max(s.base().approx_tol_3d);
+        for kept in &s.base().law_corner_pieces {
+            pieces.extend(kept.pieces.iter().map(BSplineSurface::copy));
+        }
+    }
+    (pieces, tol)
+}
+
+/// The worst of [`off_the_balls`] over a 21 x 11 grid of each of `pieces`' natural
+/// domains, each piece against its own side's balls: those over `[t0, corner]` for a piece
+/// whose middle is before `corner` along the edge (`along`), else over `[corner, t1]`, at
+/// its points over that side.
+fn worst_piece_off_the_balls(
+    pieces: &[BSplineSurface],
+    t0: f64,
+    corner: f64,
+    t1: f64,
+    along: impl Fn(Point3) -> f64,
+    ball: impl Fn(f64) -> (Point3, f64),
+) -> (f64, usize) {
+    let mut worst = 0.0_f64;
+    let mut points = 0;
+    for piece in pieces {
+        let d = piece.natural_uv_domain();
+        let middle = along(piece.evaluate_point(d.evaluate(0.5, 0.5)).unwrap());
+        let (t0, t1) = if middle < corner {
+            (t0, corner)
+        } else {
+            (corner, t1)
+        };
+        for i in 0..=20 {
+            for j in 0..=10 {
+                let uv = d.evaluate(f64::from(i) / 20.0, f64::from(j) / 10.0);
+                let p = piece.evaluate_point(uv).unwrap();
+                if !(t0..=t1).contains(&along(p)) {
+                    continue;
+                }
+                worst = worst.max(off_the_balls(p, t0, t1, &ball).abs());
+                points += 1;
+            }
+        }
+    }
+    (worst, points)
+}
+
+/// The piecewise skin of the fork's 6eecf04 (before its law corners, 7babe17): each side
+/// of a law corner skinned on its own, its sections the balls' touch circles of its own
+/// side, the sides joined C0 at the corner and kept as their exact pieces. Each piece is
+/// the envelope of its side's balls: on the 20 cube's edge y = z = 20 the ball at x (its
+/// faces y = 20 and z = 20, the material below) has centre (x, 20 - r(x), 20 - r(x)) and
+/// radius r(x), the law 4 -> 2 -> 4 linear in x either side of x = 10 (the same from
+/// either end); at the peak 2 -> 3 -> 2 on the 10 x 20 x 30 box's edge x = 10, z = 30
+/// along y, centre (10 - r, y, 30 - r). Every point of a piece over its side of the edge
+/// is on its side's envelope, never inside one of its side's balls, to the solvers'
+/// tolerance (the fork's faces, which are these pieces, are within 7.6e-10). At a peak a
+/// side runs on inside the other side's balls near the corner (the sides cross there,
+/// where `BuildLawCorners` ends them). The joined surface is not the envelope: at a dip the sides
+/// end on two different touch circles and the join takes one boundary row between them,
+/// which `BuildLawCorners` mends by putting the pieces back on the split faces.
 #[test]
-fn a_dips_sides_are_skinned_piece_by_piece() {
+fn a_law_cornered_rounds_pieces_are_its_balls_envelope() {
+    let lin = |a: f64, m: f64, z: f64, t: f64| {
+        if t <= 10.0 {
+            a + (m - a) * t / 10.0
+        } else {
+            m + (z - m) * (t - 10.0) / 10.0
+        }
+    };
     let (a, b) = (Point3::new(0.0, 20.0, 20.0), Point3::new(20.0, 20.0, 20.0));
     for (from, to) in [(a, b), (b, a)] {
-        let (removed, faces) = law_round(
+        let (pieces, tol) = law_pieces(
             [20.0; 3],
             from,
             to,
-            1,
             &[0.0, 0.0, 0.5, 1.0, 1.0],
             &[4.0, 2.0, 4.0],
         );
-        eprintln!("dip, skinned piece by piece: removed {removed}, want 39.6456, {faces} faces");
-        assert!((removed - 39.6456).abs() <= 1e-4 * 39.6456, "{removed}");
+        let ball = |x: f64| {
+            let r = lin(4.0, 2.0, 4.0, x);
+            (Point3::new(x, 20.0 - r, 20.0 - r), r)
+        };
+        let (worst, points) = worst_piece_off_the_balls(&pieces, 0.0, 10.0, 20.0, |p| p.x, ball);
+        eprintln!("dip from {from:?}: {} pieces, {points} points, worst {worst:.3e} off the balls, tol {tol:e}", pieces.len());
+        assert_eq!(pieces.len(), 2);
+        assert!(points > 100, "{points}");
+        assert!(worst <= tol, "{worst}");
     }
+    let (pieces, tol) = law_pieces(
+        [10.0, 20.0, 30.0],
+        Point3::new(10.0, 0.0, 30.0),
+        Point3::new(10.0, 20.0, 30.0),
+        &[0.0, 0.0, 0.5, 1.0, 1.0],
+        &[2.0, 3.0, 2.0],
+    );
+    let ball = |y: f64| {
+        let r = lin(2.0, 3.0, 2.0, y);
+        (Point3::new(10.0 - r, y, 30.0 - r), r)
+    };
+    let (worst, points) = worst_piece_off_the_balls(&pieces, 0.0, 10.0, 20.0, |p| p.y, ball);
+    eprintln!(
+        "peak: {} pieces, {points} points, worst {worst:.3e} off the balls, tol {tol:e}",
+        pieces.len()
+    );
+    assert_eq!(pieces.len(), 2);
+    assert!(points > 100, "{points}");
+    assert!(worst <= tol, "{worst}");
 }
 
 /// The fork's 5e8c9c1 build, through its C API (a scratch driver running the capi cases):
