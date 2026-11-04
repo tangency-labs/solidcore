@@ -30,7 +30,10 @@
 //! | [`ON_SPHERE_REL_TOL`]                 | `kBallPatchRelTol` (`smlib_flat.cpp`, bc814a5) |
 //! | [`BALL_PATCH_TYPE`]                   | `SmBallPatch_TYPE`                           |
 //!
-//! Deviations: out-params are return values. `SmDatabaseIO::IsValidType` is a debug-build
+//! Deviations: out-params are return values. `IsOnSphere`'s tolerance is not the fork's
+//! `rel_tol ((R + |C|) max W)^2`, which grows with the centre's distance from the origin
+//! and admits a net millimetres off a sphere far from it: here it is `rel_tol (R max W)^2`
+//! plus a forward error bound of computing each coefficient (#2357). `SmDatabaseIO::IsValidType` is a debug-build
 //! assertion only (not ported for any type). The fork's b439d73 notes that the shell's
 //! exact offset of a Ball patch is later put on a tangent-extended B-spline
 //! (`GetCreateExtendedSurface`), which no longer carries the sphere: so here too, unless
@@ -67,8 +70,9 @@ const SURF_BASE_TYPE: i64 = 15000;
 pub const BALL_PATCH_TYPE: i64 = SURF_BASE_TYPE + 42;
 
 /// `kBallPatchRelTol` (the fork's capi `smlib_flat.cpp`, bc814a5): a net is on its
-/// definition's sphere when `|X - C W|^2 - R^2 W^2` is zero to this much of the patch's size
-/// squared ([`BallPatch::is_on_sphere`]), rounding at the part's scale.
+/// definition's sphere when `|X - C W|^2 - R^2 W^2` is zero to this much of the sphere's
+/// size squared, `(R max W)^2`, past the rounding of computing it
+/// ([`BallPatch::is_on_sphere`]).
 pub const ON_SPHERE_REL_TOL: f64 = 1e-12;
 
 /// `SmBallPatch`: a rational B-spline patch every point of which is on the sphere of
@@ -100,6 +104,89 @@ fn binomial(n: usize, k: usize) -> f64 {
 /// `true` when `x > 0` (`false` for NaN), the fork's `!( x > 0.0 )` refusals negated.
 fn positive(x: f64) -> bool {
     x.partial_cmp(&0.0) == Some(std::cmp::Ordering::Greater)
+}
+
+/// `gamma_k = k u / (1 - k u)`, `u` the unit roundoff: the relative error bound of `k`
+/// floating operations in a chain (Higham, the standard model).
+fn gamma(k: usize) -> f64 {
+    #[allow(clippy::cast_precision_loss)] // operation counts are small
+    let ku = k as f64 * (f64::EPSILON / 2.0);
+    ku / (1.0 - ku)
+}
+
+/// `|x| + |y| + |z|`.
+fn l1(v: Vec3) -> f64 {
+    v.x.abs() + v.y.abs() + v.z.abs()
+}
+
+/// One Bernstein coefficient of `|X - C W|^2 - R^2 W^2` on a Bezier piece, summed term by
+/// term (`add`), with a forward error bound of computing it in floating point.
+///
+/// A term is `c (h1 . h2 - R^2 w1 w2)`, `h = (P - C) w`. Each `h` carries an absolute error
+/// of at most `gamma(k_h) (|P|_1 + |C|_1) w` (the Euclidean point from its homogeneous one,
+/// the difference, the product, and the cut's knot insertion, `k_h` operations), so the
+/// dot product's error is `a1 |h2| + |h1| a2 + a1 a2` plus its own and the product's
+/// rounding; the binomial factors, the sum over the terms and the final division add
+/// `gamma(k)` of the terms' magnitudes. The bound is at the magnitude of `P` and `C`: what
+/// the coefficient cannot be decided below, wherever the sphere is.
+struct Coefficient {
+    /// The sum of the terms.
+    f: f64,
+    /// The sum of the terms' propagated input errors.
+    err: f64,
+    /// The sum of the terms' magnitudes, `c (|h1| |h2| + R^2 w1 w2)`.
+    mag: f64,
+    /// The terms so far.
+    terms: usize,
+}
+
+impl Coefficient {
+    const fn new() -> Self {
+        Self {
+            f: 0.0,
+            err: 0.0,
+            mag: 0.0,
+            terms: 0,
+        }
+    }
+
+    /// Adds the term `c (h1 . h2 - R^2 w1 w2)` of the points `p1`, `p2` and weights `w1`,
+    /// `w2`, each `h` known to `gamma(k_h)` of its magnitude.
+    #[allow(clippy::too_many_arguments)]
+    fn add(
+        &mut self,
+        c: f64,
+        (p1, w1): (Point3, f64),
+        (p2, w2): (Point3, f64),
+        centre: Point3,
+        radius: f64,
+        k_h: usize,
+    ) {
+        let h1 = (p1 - centre) * w1;
+        let h2 = (p2 - centre) * w2;
+        let r2w = radius * radius * w1 * w2;
+        self.f += c * (h1.dot(h2) - r2w);
+        let origin = Point3::new(0.0, 0.0, 0.0);
+        let c1 = l1(centre - origin);
+        let a1 = gamma(k_h) * (l1(p1 - origin) + c1) * w1.abs();
+        let a2 = gamma(k_h) * (l1(p2 - origin) + c1) * w2.abs();
+        let (n1, n2) = (h1.length(), h2.length());
+        self.err += c * (a1 * n2 + n1 * a2 + a1 * a2);
+        self.mag += c * (n1 * n2 + r2w.abs());
+        self.terms += 1;
+    }
+
+    /// The coefficient (the sum divided by `divisor`) and its error bound; `degree` the
+    /// highest degree whose binomials the terms and the divisor were made with.
+    fn finish(&self, divisor: f64, degree: usize) -> (f64, f64) {
+        // the dot product and R^2 w1 w2 (5), the binomials (two products of two per
+        // direction, each 2 degree operations), the sum and the division
+        let k = 8 + 8 * degree + self.terms;
+        (
+            self.f / divisor,
+            (self.err + gamma(k) * self.mag) / divisor * (1.0 + gamma(2)),
+        )
+    }
 }
 
 impl BallPatch {
@@ -173,9 +260,11 @@ impl BallPatch {
     /// centre `centre` and radius `radius`, decided on the net, not at sample points. The
     /// net is cut into Bezier pieces (every interior knot raised to the degree); over each,
     /// the Bernstein coefficients (degrees `2p`, `2q`) of the homogeneous identity
-    /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of
-    /// `((R + |C|) max W)^2`. `false` for a net that is not rational or a radius that is
-    /// not positive. The fork's SMLib has no caller (only its capi's import does; here
+    /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of `(R max W)^2` (the
+    /// patch's own size, the same wherever the sphere is) plus a forward error bound of
+    /// computing that coefficient in floating point ([`Coefficient`]: the rounding at the
+    /// magnitude of the points and the centre). `false` for a net that is not rational or a
+    /// radius that is not positive. The fork's SMLib has no caller (only its capi's import does; here
     /// [`Self::create_certified`]).
     ///
     /// # Errors
@@ -228,8 +317,12 @@ impl BallPatch {
             let aw = w.abs();
             w_max = if w_max > aw { w_max } else { aw };
         }
-        let scale = (radius + centre.distance(Point3::new(0.0, 0.0, 0.0))) * w_max;
-        let tol = rel_tol * scale * scale;
+        // the geometric tolerance, at the patch's own size (translation-invariant); the
+        // rounding of computing each coefficient is bounded on its own ([`Coefficient`])
+        let geometric = rel_tol * (radius * w_max) * (radius * w_max);
+        // (h: the Euclidean point, the difference and the product; the cut's insertions,
+        // at most p convex combinations per direction, 2 operations each)
+        let k_h = 3 + 2 * (p + q);
         let at = |k: usize| -> Result<(Point3, f64)> {
             match (cpn.points.get(k), cpn.weights.get(k)) {
                 (Some(&pt), Some(&w)) => Ok((pt, w)),
@@ -244,7 +337,7 @@ impl BallPatch {
                 // F = |H|^2 - R^2 W^2, of degree (2p, 2q)
                 for i in 0..=2 * p {
                     for j in 0..=2 * q {
-                        let mut f = 0.0;
+                        let mut f = Coefficient::new();
                         for a in 0..=p {
                             if a > i || i - a > p {
                                 continue;
@@ -255,19 +348,16 @@ impl BallPatch {
                                 }
                                 let k1 = (bu + a) * lv + (bv + b);
                                 let k2 = (bu + i - a) * lv + (bv + j - b);
-                                let (p1, w1) = at(k1)?;
-                                let (p2, w2) = at(k2)?;
-                                let h1 = (p1 - centre) * w1;
-                                let h2 = (p2 - centre) * w2;
                                 let c = binomial(p, a)
                                     * binomial(p, i - a)
                                     * binomial(q, b)
                                     * binomial(q, j - b);
-                                f += c * (h1.dot(h2) - radius * radius * w1 * w2);
+                                f.add(c, at(k1)?, at(k2)?, centre, radius, k_h);
                             }
                         }
-                        f /= binomial(2 * p, i) * binomial(2 * q, j);
-                        if f.abs() > tol {
+                        let (f, rounding) =
+                            f.finish(binomial(2 * p, i) * binomial(2 * q, j), 2 * p.max(q));
+                        if f.abs() > geometric + rounding {
                             return Ok(false);
                         }
                     }
@@ -283,8 +373,8 @@ impl BallPatch {
     /// `radius`: [`Self::is_on_sphere`]'s certificate on a curve (not in the fork; the
     /// Ball's loop, #2357). The curve is cut into Bezier pieces (every interior knot raised
     /// to the degree); over each, the Bernstein coefficients (degree `2p`) of
-    /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of `((R + |C|) max W)^2`,
-    /// `W = 1` for a curve that is not rational. `false` for a radius that is not positive
+    /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of `(R max W)^2` plus the
+    /// rounding bound of computing it, as there; `W = 1` for a curve that is not rational. `false` for a radius that is not positive
     /// or a weight that is not.
     ///
     /// # Errors
@@ -335,8 +425,8 @@ impl BallPatch {
             }
             w_max = w_max.max(w);
         }
-        let scale = (radius + centre.distance(Point3::new(0.0, 0.0, 0.0))) * w_max;
-        let tol = rel_tol * scale * scale;
+        let geometric = rel_tol * (radius * w_max) * (radius * w_max);
+        let k_h = 3 + 2 * p;
         let at = |k: usize| -> Result<(Point3, f64)> {
             Ok((*points.get(k).ok_or_else(err)?, weight(k)?))
         };
@@ -344,21 +434,16 @@ impl BallPatch {
         let mut b = 0;
         while b + 1 < n {
             for i in 0..=2 * p {
-                let mut f = 0.0;
+                let mut f = Coefficient::new();
                 for a in 0..=p {
                     if a > i || i - a > p {
                         continue;
                     }
-                    let (p1, w1) = at(b + a)?;
-                    let (p2, w2) = at(b + i - a)?;
-                    let h1 = (p1 - centre) * w1;
-                    let h2 = (p2 - centre) * w2;
-                    f += binomial(p, a)
-                        * binomial(p, i - a)
-                        * (h1.dot(h2) - radius * radius * w1 * w2);
+                    let c = binomial(p, a) * binomial(p, i - a);
+                    f.add(c, at(b + a)?, at(b + i - a)?, centre, radius, k_h);
                 }
-                f /= binomial(2 * p, i);
-                if f.abs() > tol {
+                let (f, rounding) = f.finish(binomial(2 * p, i), 2 * p);
+                if f.abs() > geometric + rounding {
                     return Ok(false);
                 }
             }
