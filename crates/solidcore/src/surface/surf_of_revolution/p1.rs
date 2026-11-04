@@ -2307,16 +2307,21 @@ mod tests {
         (k, s)
     }
 
-    /// Asserts that `point` inverts to the STEP parameters `uv` (exact to rounding)
-    /// and that the surface evaluates there back to `point`.
+    /// Asserts that `point` inverts to the STEP parameters `uv` (exact to rounding),
+    /// both in the surface's domain and without it (the STEP window's
+    /// `step_inversion_unbounded`), and that the surface evaluates there back to
+    /// `point`.
     fn assert_inverts(k: &Kernel, s: &SurfOfRevolution, point: Point3, uv: Point2) {
-        let (got, _) = s
-            .step_inversion(k, &s.step_uv_domain(), point, 1e-9, None)
-            .unwrap_or_else(|e| panic!("{point:?} does not invert: {e:?}"));
-        assert!(
-            (got.x - uv.x).abs() <= 1e-9 && (got.y - uv.y).abs() <= 1e-9,
-            "{point:?} inverts to {got:?}, expected {uv:?}"
-        );
+        let bounded = s.step_inversion(k, &s.step_uv_domain(), point, 1e-9, None);
+        let unbounded = s.step_inversion_unbounded(k, point, 1e-9);
+        for (mode, r) in [("bounded", bounded), ("unbounded", unbounded)] {
+            let (got, _) =
+                r.unwrap_or_else(|e| panic!("{point:?} does not invert ({mode}): {e:?}"));
+            assert!(
+                (got.x - uv.x).abs() <= 1e-9 && (got.y - uv.y).abs() <= 1e-9,
+                "{point:?} inverts ({mode}) to {got:?}, expected {uv:?}"
+            );
+        }
         let back = s.evaluate_step_point(k, uv).unwrap();
         assert!(
             (back - point).length() <= 1e-9,
