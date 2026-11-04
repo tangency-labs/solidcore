@@ -129,6 +129,9 @@ fn extended_offset_discards_only_unused_support_continuations() {
             fixes: solidcore::kernel::UpstreamFixes::all(),
             ..Kernel::default()
         };
+        // WR-736's normal-offset corner image must not consume LocalOperation's
+        // bounding-box extension distance as the replacement's displacement.
+        assert!(k.fixes.offset_lamina_corner_at_vertex_image);
         let base = rising_eight_turns();
         let mut b = non_iso_trimmed_patch(&mut k, base.clone());
         assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
@@ -341,6 +344,9 @@ fn extended_offset_preserves_paired_non_iso_parameter_curves() {
         fixes: solidcore::kernel::UpstreamFixes::all(),
         ..Kernel::default()
     };
+    // Keep the uniform-offset lamina correction enabled: local replacements
+    // must still construct their corners from their supplied supports.
+    assert!(k.fixes.offset_lamina_corner_at_vertex_image);
     let base = rising_eight_turns();
     let mut b = non_iso_trimmed_patch(&mut k, base.clone());
     assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)

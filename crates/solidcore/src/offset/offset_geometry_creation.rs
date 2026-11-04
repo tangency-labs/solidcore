@@ -52,7 +52,9 @@
 //!   lamina edge's offset, at a vertex whose next edge is lamina or a tangent sector, where
 //!   the offset curve passes nearest the vertex's image `V + d n(V)`
 //!   (`offset_vertex_image`), instead of at the crossing of the two edges' UV trim curves
-//!   or the neighbour's offset vertex. Solidcore-native, no fork commit.
+//!   or the neighbour's offset vertex. This normal-displacement image applies to
+//!   uniform offsets, not local operations with independently supplied replacement
+//!   supports. Solidcore-native, no fork commit.
 //! - **Object handles.** Every `SmObject*` (topology, curves, surfaces) is a caller
 //!   handle `O` ([`ClassObject`] + [`SolutionObject`]), as in
 //!   [`proto_topology`](crate::topology::proto_topology) and the topology intersector.
@@ -2768,7 +2770,11 @@ impl OffsetGeometryCreation {
             // edges' UV trim curves is taken: the crossing's parameter is the UV curve's,
             // which the lifted curve does not keep, and between tangent edges the crossing
             // is ill-conditioned.
+            // A local operation supplies replacement supports, not a uniform normal
+            // displacement. Its offset_distance sizes the extensions only; its
+            // corners must follow those supports' existing trim constraints.
             let vertex_image = k.fixes.offset_lamina_corner_at_vertex_image
+                && !executive.is_local_operation()
                 && !tan_eus.is_empty()
                 && brep.edge_is_lamina(base_edge)?;
             if vertex_image {
