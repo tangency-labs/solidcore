@@ -73,6 +73,15 @@ class Keys(unittest.TestCase):
         src = "trait T {\n    fn decl(&self) -> [u8; 2];\n    fn body(v: &mut Vec<u8>) { v.remove(0); }\n}\n"
         self.assertEqual(rows(src, [remove(src)])[0]["fn"], "T::body")
 
+    def test_lifetimes_do_not_swallow_following_code(self):
+        # a lifetime has no closing quote: taken for a char literal it would blank the
+        # text up to the next quote, the `(` of the signature included
+        src = ("fn f<'a>(v: &'a mut Vec<u8>, c: char) -> &'a u8 {\n"
+               "    let _q = '{';\n    v.remove(0);\n    &v[0]\n}\n"
+               "fn g(v: &mut Vec<u8>) { v.remove(1); }\n")
+        got = [(r["fn"], r["code"]) for r in rows(src, [remove(src), remove(src, 1)])]
+        self.assertEqual(got, [("f", "remove(0)"), ("g", "remove(1)")])
+
     def test_other_files_and_lints_are_ignored(self):
         msgs = [message("clippy::disallowed_methods", "use of a disallowed method "
                         "`alloc::vec::Vec::remove`", SRC, "remove", file="crates/x/src/a.rs"),
@@ -257,8 +266,6 @@ class Main(unittest.TestCase):
             self.assertEqual(c.main(argv), 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class Messages(unittest.TestCase):
@@ -270,3 +277,6 @@ class Messages(unittest.TestCase):
             c.parse_messages(json.dumps(msg))
         self.assertIn("LINTS", str(e.exception))
 
+
+if __name__ == "__main__":
+    unittest.main()
