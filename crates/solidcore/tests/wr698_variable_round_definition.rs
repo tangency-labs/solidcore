@@ -279,6 +279,7 @@ fn generator_round(k: &Kernel, has_edgeuse: bool) -> Surface {
             law,
             interval: Extent1d::from_min_max(0.0, L),
             reverse: false,
+            span: None,
         }),
     };
     let mut g = FilletSurfaceGenerator::circular(false, 0.05, false, false);
@@ -346,6 +347,7 @@ fn the_law_in_the_edge_s_parameter_is_the_solver_s() {
                 law: law.clone(),
                 interval: ivl,
                 reverse,
+                span: None,
             };
             let c = law_in_parameter(&lb).unwrap().unwrap();
             let mut solver_law = law.clone();
