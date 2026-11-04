@@ -4,6 +4,7 @@ description = "The modelling operations applications built on solidcore call: ea
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+publish = false
 rust-version.workspace = true
 repository = "https://github.com/tangency-labs/solidcore"
 keywords = ["cad", "brep", "nurbs", "modelling"]
