@@ -454,7 +454,7 @@ fn curvature_meets_every_distance_across_a_mirror_knot() {
     let mut last = 0.0;
     for i in 1..=60 {
         let e = 0.85 + 0.005 * f64::from(i);
-        let Some(g) = source.extended(Continuity::Curvature, e).unwrap() else {
+        let Grown::Made(g) = source.extended(Continuity::Curvature, e).unwrap() else {
             break;
         };
         let out = Surface::from(BSplineSurface::from_gw_nurb(
@@ -483,7 +483,9 @@ fn tangents_first_point_is_the_exact_reflection() {
     };
     let net = b.gw_nurb().unwrap().clone();
     let source = Local::of(&net, BoxSide::UMax).unwrap();
-    let g = source.extended(Continuity::Tangent, 1.0).unwrap().unwrap();
+    let Grown::Made(g) = source.extended(Continuity::Tangent, 1.0).unwrap() else {
+        panic!("not made")
+    };
     for (r, src) in g.rows.iter().zip(&source.rows) {
         let n = src.len();
         let (pn, pn1) = (src[n - 1], src[n - 2]);

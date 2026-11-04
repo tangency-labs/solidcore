@@ -169,7 +169,8 @@ fn form_of<'a>(
 /// `(1 - a) x + a y` whose coefficient rounds relative to the knots it is made of
 /// (`|da| <= gamma_3 (|t| + |u_i| + |u_j|) / (u_j - u_i)`) and whose result rounds by
 /// `gamma_3`, so a level moves a coordinate by at most `c = gamma_3 (1 + 6 K / S) . 2 M`,
-/// `K` the largest knot, `S` the least span, `M` the net's largest coordinate. `L` levels
+/// `K` the largest knot, `S` the least span, `M` the largest of that coordinate (the points'
+/// `w x, w y, w z` and the weights `w` apart, so the bounds scale with the model). `L` levels
 /// move it by `L c`; the Euclidean point `H / w` then by
 /// `sqrt3 (2 L c' + u) M_H w_max / w_min^2` (`c'` the relative part of `c`).
 #[derive(Debug, Clone, Copy)]
@@ -178,8 +179,20 @@ struct Rounding {
     level: f64,
     /// `M_H w_max / w_min^2`.
     scale: f64,
-    /// `M_H`, the net's largest homogeneous coordinate.
-    homogeneous: f64,
+    /// `M_H`, the net's largest homogeneous point coordinate (`w x`, `w y`, `w z`).
+    points: f64,
+    /// The net's largest weight.
+    weights: f64,
+}
+
+/// A bound on how far each computed homogeneous point is from the exact one: in its point
+/// coordinates and in its weight.
+#[derive(Debug, Clone, Copy)]
+struct Made {
+    /// On `w x`, `w y`, `w z`.
+    points: f64,
+    /// On `w`.
+    weight: f64,
 }
 
 impl Rounding {
@@ -228,7 +241,8 @@ impl Rounding {
             Ok(Self {
                 level,
                 scale,
-                homogeneous: h.max(wmax),
+                points: h,
+                weights: wmax,
             })
         } else {
             Err(SolidError::invalid_input(
@@ -238,10 +252,14 @@ impl Rounding {
         }
     }
 
-    /// The error of a homogeneous coordinate after `levels` levels.
+    /// The error of the homogeneous coordinates after `levels` levels.
     #[allow(clippy::cast_precision_loss)]
-    fn homogeneous(self, levels: usize) -> f64 {
-        (1.0 + 1e-12) * (2.0 * levels as f64 * self.level + f64::EPSILON) * self.homogeneous
+    fn homogeneous(self, levels: usize) -> Made {
+        let f = (1.0 + 1e-12) * (2.0 * levels as f64 * self.level + f64::EPSILON);
+        Made {
+            points: f * self.points,
+            weight: f * self.weights,
+        }
     }
 
     /// The Euclidean error of a point after `levels` levels.
@@ -257,20 +275,23 @@ fn euclid(h: [f64; 4]) -> Vec3 {
 }
 
 /// The rounding a rational Bezier piece's length carries, from its homogeneous points as
-/// computed, each coordinate within `made` of the exact piece's.
+/// computed, each point coordinate within `made.points` and each weight within `made.weight`
+/// of the exact piece's (written `e` and `e_w` below; `M_h` is the largest point coordinate,
+/// `M_w` the largest weight).
 ///
 /// - **The leaves' cuts** (`cut`): `2 p` de Casteljau levels on the piece's points for
 ///   `t` in `[0, 1]`, each a convex combination rounding by `gamma_3` of the sum of the
-///   magnitudes (at most `2 M_h`), so a leaf's homogeneous point is within
-///   `4 p gamma_4 M_h` of the computed piece's, and its Euclidean point within that times
-///   `(sqrt3 + M) / w_min` (`M` the largest Euclidean point, `w_min` the least weight).
+///   magnitudes, so a leaf's homogeneous point is within `c = 4 p gamma_4 M_h` and its weight
+///   within `c_w = 4 p gamma_4 M_w` of the computed piece's, and its Euclidean point
+///   (`dC = (dH - C dw) / w`) within `(sqrt3 c + M c_w) / w_min` (`M` the largest Euclidean
+///   point, `w_min` the least weight).
 /// - **The piece moved** by `made`: the length of the computed piece is within
 ///   `int |C~' - C'|` of the exact one's. With `C' = (P' - C w') / w`,
 ///   `C~' - C' = (dP' - C~ dw' - dC w') / w~ - C' dw / w~`; on `[0, 1]`, `|dP'| <= 2 p sqrt3
-///   made` and `|dw'| <= 2 p made` (the derivative's control points are `p` times the
-///   points' differences), `|dC| <= made (sqrt3 + M) / w_min`, `|w'| <= p max |w_i+1 - w_i|`
-///   and `|C'| <= p (w_max / w_min)^2 max |E_i+1 - E_i|` (the rational derivative's bound),
-///   each widened by `made` where it is taken from the computed points.
+///   e` and `|dw'| <= 2 p e_w` (the derivative's control points are `p` times the points'
+///   differences), `|dC| <= (sqrt3 e + M e_w) / w_min`, `|w'| <= p max |w_i+1 - w_i|` and
+///   `|C'| <= p (w_max / w_min)^2 max |E_i+1 - E_i|` (the rational derivative's bound), each
+///   widened by its error where it is taken from the computed points.
 #[derive(Debug, Clone, Copy)]
 struct PieceBounds {
     /// The degree.
@@ -283,13 +304,13 @@ struct PieceBounds {
 
 impl PieceBounds {
     /// `None` when a weight is not proved positive or a bound is not finite.
-    fn of(piece: &[[f64; 4]], made: f64) -> Option<Self> {
+    fn of(piece: &[[f64; 4]], made: Made) -> Option<Self> {
         let n = piece.len().checked_sub(1)?;
         #[allow(clippy::cast_precision_loss)]
         let p = n as f64;
         let (mut mh, mut m, mut wmin, mut wmax) = (0.0_f64, 0.0_f64, f64::INFINITY, 0.0_f64);
         for h in piece {
-            mh = h.iter().fold(mh, |x, c| x.max(c.abs()));
+            mh = h.iter().take(3).fold(mh, |x, c| x.max(c.abs()));
             m = m.max(euclid(*h).length());
             wmin = wmin.min(h[3]);
             wmax = wmax.max(h[3]);
@@ -302,19 +323,19 @@ impl PieceBounds {
         // a few ulps on each bound computed here
         let slack = 1.0 + gamma(16);
         let sqrt3 = 3f64.sqrt() * slack;
-        let cut_h = 4.0 * p * gamma(4) * mh;
-        let low = wmin - made - cut_h;
+        let (cut_h, cut_w) = (4.0 * p * gamma(4) * mh, 4.0 * p * gamma(4) * wmax.abs());
+        let (e, ew) = (made.points, made.weight);
+        let low = wmin - ew - cut_w;
         if low.is_nan() || low <= 0.0 {
             return None;
         }
-        let cut = cut_h * (sqrt3 + m) / low * slack;
-        let point = made * (sqrt3 + m) / low * slack;
-        let w1 = p * (dw + 2.0 * made);
-        let ratio = (wmax + made) / low;
+        let cut = (sqrt3 * cut_h + m * cut_w) / low * slack;
+        let point = (sqrt3 * e + m * ew) / low * slack;
+        let w1 = p * (dw + 2.0 * ew);
+        let ratio = (wmax + ew) / low;
         let d1 = p * ratio * ratio * (leg + 2.0 * point);
         let moved =
-            (2.0 * p * sqrt3 * made + (m + point) * 2.0 * p * made + point * w1 + d1 * made) / low
-                * slack;
+            (2.0 * p * sqrt3 * e + (m + point) * 2.0 * p * ew + point * w1 + d1 * ew) / low * slack;
         (cut.is_finite() && moved.is_finite()).then_some(Self { p, cut, moved })
     }
 }
@@ -597,7 +618,7 @@ impl Surface {
 /// The length of a curve given by its rational Bezier `pieces`, each homogeneous point within
 /// `made` of the exact curve's, as an enclosure to `rel` ([`Surface::length_across_side`]'s
 /// method and rounding).
-fn measure(pieces: &[Piece], made: f64, rel: f64) -> Result<Across> {
+fn measure(pieces: &[Piece], made: Made, rel: f64) -> Result<Across> {
     let (mut chords, mut polygons, mut leaves) = (0.0_f64, 0.0_f64, 0_usize);
     let (mut chord_cuts, mut polygon_cuts, mut moved) = (0.0_f64, 0.0_f64, 0.0_f64);
     let mut converged = true;

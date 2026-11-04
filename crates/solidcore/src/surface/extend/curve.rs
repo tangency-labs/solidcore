@@ -14,7 +14,7 @@
 //!
 //! Deviations: none (no upstream counterpart). No recursion.
 
-use super::{not_exact, op_err, solve, Continuity, Local, Made, REL};
+use super::{not_exact, op_err, solve, Continuity, Grown, Local, Made, REL};
 use crate::error::{Result, SolidError};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::crv_adv::p1::CurveEnd;
@@ -74,8 +74,10 @@ impl BSplineCurve {
         )?;
         let joint = if high { source.end()? } else { -source.end()? };
         let made = |e: f64| -> Result<Option<Made<Net>>> {
-            let Some(grown) = source.extended(how, e)? else {
-                return Ok(None);
+            let grown = match source.extended(how, e)? {
+                Grown::Made(g) => g,
+                Grown::WeightNotPositive => return Ok(None),
+                Grown::OverBudget => return Ok(Some((None, f64::INFINITY))),
             };
             // a net that overflowed is no extension to measure: unproved, not refused
             if !grown.is_finite() {

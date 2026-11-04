@@ -262,8 +262,10 @@ impl Surface {
             ));
         }
         let made = |e: f64| -> Result<Option<Made<Surface>>> {
-            let Some(grown) = source.extended(how, e)? else {
-                return Ok(None);
+            let grown = match source.extended(how, e)? {
+                Grown::Made(g) => g,
+                Grown::WeightNotPositive => return Ok(None),
+                Grown::OverBudget => return Ok(Some((None, f64::INFINITY))),
             };
             // a net that overflowed is no extension to measure: unproved, not refused
             if !grown.is_finite() {
@@ -763,6 +765,18 @@ type Made<T> = (Option<T>, f64);
 /// An ask and its across length's middle less the distance.
 type Try = Option<(f64, f64)>;
 
+/// An extension by a parameter, or why there is none.
+enum Grown {
+    /// Made, its weights positive.
+    Made(Local),
+    /// A weight would not be positive.
+    WeightNotPositive,
+    /// Its mirror steps or a row's control points would run past their budgets: no extension
+    /// to measure, as one whose net overflowed (the solve takes it as unproved, so a long ask
+    /// is refused naming a distance that works).
+    OverBudget,
+}
+
 /// A homogeneous point `(w x, w y, w z, w)`.
 type H = [f64; 4];
 
@@ -1031,8 +1045,8 @@ impl Local {
         self.err * (2.0 + pmax) / wmin * (1.0 + gamma(8))
     }
 
-    /// The extension by the parameter `e`, or `None` when a weight is not positive.
-    fn extended(&self, how: Continuity, e: f64) -> Result<Option<Self>> {
+    /// The extension by the parameter `e`, or why there is none.
+    fn extended(&self, how: Continuity, e: f64) -> Result<Grown> {
         if !(e.is_finite() && e > 0.0) {
             return Err(SolidError::invalid_input(
                 OP,
@@ -1058,10 +1072,7 @@ impl Local {
                 while left > 0.0 {
                     steps += 1;
                     if steps > MAX_STEPS {
-                        return Err(SolidError::Unsupported {
-                            operation: OP,
-                            reason: "the extension needs more mirror steps than its budget",
-                        });
+                        return Ok(Grown::OverBudget);
                     }
                     // Curvature mirrors at most the last Bezier span a step, so its C2 point is
                     // that span's end and the extension is continuous in e; Tangent mirrors
@@ -1075,10 +1086,7 @@ impl Local {
                     cur = cur.mirrored(step, how == Continuity::Curvature)?;
                     left -= step;
                     if cur.rows.first().map_or(0, Vec::len) > MAX_ROW_POINTS {
-                        return Err(SolidError::Unsupported {
-                            operation: OP,
-                            reason: "the extension needs more control points than its budget",
-                        });
+                        return Ok(Grown::OverBudget);
                     }
                 }
                 cur
@@ -1090,7 +1098,11 @@ impl Local {
                 .iter()
                 .flatten()
                 .all(|x| x[3] > 0.0 && x[3].is_finite());
-        Ok(positive.then_some(grown))
+        Ok(if positive {
+            Grown::Made(grown)
+        } else {
+            Grown::WeightNotPositive
+        })
     }
 
     /// The source's rows and knots, the end knot down to multiplicity `p` as the joint, then
