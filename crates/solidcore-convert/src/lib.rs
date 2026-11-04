@@ -28,12 +28,6 @@
 //! | [`Seg2`] | [`kp::Seg2`] | [`seg2`] | [`record_seg2`] |
 //! | [`Loop2`] | [`kp::Loop2`] | [`loop2`] | [`record_loop2`] |
 //! | [`Region2`] (a planar profile) | [`kp::Region2`] | [`region2`] | [`record_region2`] |
-//! | a ball patch [`Face`] of a [`Brep`] | [`BallPatch`] | [`ball_patch`], certified | |
-//!
-//! A ball patch is the one face the record carries with a definition beside its net: the sphere
-//! its `BallPatch` label names. [`ball_patch`] makes the kernel's patch only once the kernel's
-//! certificate ([`k::sphere`]) holds for the net and for every curve of the face's loops; the
-//! conversion itself still computes nothing.
 //!
 //! [`brep`] converts the record's B-rep to the kernel's body and back.
 
@@ -44,8 +38,7 @@ pub mod brep;
 
 use solidcore::eval as k;
 use solidcore::prism::profile as kp;
-use solidcore::surface::ball_patch::BallPatch;
-use solidcore_record::brep::{Brep, Curve, Curve2, Face, Frame, Loop, Surface};
+use solidcore_record::brep::{Curve, Curve2, Frame, Surface};
 use solidcore_record::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 
 /// The record's vector as the kernel's.
@@ -515,45 +508,4 @@ pub fn record_region2(r: &kp::Region2) -> Region2 {
         outer: record_loop2(&r.outer),
         holes: r.holes.iter().map(record_loop2).collect(),
     }
-}
-
-/// The kernel's ball patch for face `face` of `brep`, a face whose surface is a `BallPatch`
-/// label over its NURBS net: made only after the net, and every curve of the face's loops
-/// (each edge's NURBS form, or its curve when that is a NURBS), are certified on the label's
-/// sphere ([`k::sphere::surface_on_sphere`], [`k::sphere::curve_on_sphere`] at
-/// [`k::sphere::ON_SPHERE_REL_TOL`]). The record is the definition: no ball patch is made from
-/// a net the certificate does not prove on its sphere.
-///
-/// # Errors
-///
-/// [`k::EvalError`] naming the face: no such face, a face that is not a ball patch with its
-/// NURBS form, a loop edge missing or not a NURBS, or the certificate's refusal (the
-/// coefficient off the sphere, its value and its bound; a number that is not finite).
-pub fn ball_patch(brep: &Brep, face: usize) -> Result<BallPatch, k::EvalError> {
-    let named = |e: k::EvalError| k::EvalError::Invalid(format!("ball patch face {face}: {e}"));
-    let refuse = |what: &str| k::EvalError::Invalid(format!("ball patch face {face}: {what}"));
-    let f: &Face = brep.faces.get(face).ok_or_else(|| refuse("no such face"))?;
-    let (Surface::BallPatch { center, radius }, Some(net)) = (&f.surface, &f.nurbs) else {
-        return Err(refuse("not a ball patch with its NURBS net"));
-    };
-    let net = surface(net);
-    k::sphere::surface_on_sphere(&net, *center, *radius, k::sphere::ON_SPHERE_REL_TOL)
-        .map_err(named)?;
-    for l in &f.loops {
-        let Loop::Edges { edges } = l else {
-            continue;
-        };
-        for e in edges {
-            let edge = usize::try_from(e.edge)
-                .ok()
-                .and_then(|i| brep.edges.get(i))
-                .ok_or_else(|| refuse("a loop edge is missing"))?;
-            let c = curve(edge.nurbs.as_ref().unwrap_or(&edge.curve));
-            k::sphere::curve_on_sphere(&c, *center, *radius, k::sphere::ON_SPHERE_REL_TOL)
-                .map_err(|why| refuse(&format!("loop edge {}: {why}", e.edge)))?;
-        }
-    }
-    let [x, y, z] = *center;
-    BallPatch::from_form(&net, solidcore::Vec3::new(x, y, z), *radius)
-        .map_err(|e| refuse(&e.to_string()))
 }
