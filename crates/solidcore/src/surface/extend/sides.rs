@@ -82,6 +82,22 @@ pub struct ExtendedSides {
 }
 
 impl Surface {
+    /// The surface extended `distance` past every side of its natural box, as `how` says
+    /// ([`Surface::extended_sides`] with [`BoxSide::ALL`]): what callers that extend "on every
+    /// side" take.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::extended_sides`], a refusal included.
+    pub fn extended_every_side(
+        &self,
+        k: &Kernel,
+        how: Continuity,
+        distance: f64,
+    ) -> Result<Surface> {
+        Ok(self.extended_sides(k, &BoxSide::ALL, how, distance)?.surface)
+    }
+
     /// The surface extended `distance` past each side of its natural box in `asked`, as
     /// `how` says, exactly (module docs), a side whose direction closes or that is not proved
     /// longer than a point left as it is.
@@ -168,7 +184,11 @@ impl Surface {
             };
             current = Some(grown);
         }
+        // an exact round continued as itself (Natural, or a revolution, extended as itself
+        // whatever was asked) is still on its definition (#2487)
+        let natural = how == Continuity::Natural || round_the_axis(self, BoxSide::UMin).is_some();
         let surface = match current {
+            Some(e) if natural => self.carry_exact_round_on_natural_extension(e.surface),
             Some(e) => e.surface,
             None => self.copy(k)?,
         };

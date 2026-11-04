@@ -426,7 +426,6 @@ fn partials_past_the_series_are_refused() {
 #[test]
 fn the_base_class_paths_take_the_blend_s_box_and_points() {
     use solidcore::geom::extent2d::Extent2d;
-    use solidcore::geom::geom_utility::p2::ContinuityType;
     use solidcore::math::EFF_ZERO_DEG;
     let k = kernel();
     for (bumpy, n, w, law) in [
@@ -456,13 +455,12 @@ fn the_base_class_paths_take_the_blend_s_box_and_points() {
             (m.min().x, m.min().y, m.max().x, m.max().y),
             (-100.0, -100.0, 101.0, 101.0)
         );
-        let ext = s
-            .create_extended_surface(&k, 0.1, ContinuityType::G1)
-            .unwrap();
-        let ed = ext.natural_uv_domain_with_nurb(&k).unwrap();
-        assert!(close(ed.min().x, -0.1) && close(ed.max().y, 1.1));
-        let p0 = ext.evaluate_point(&k, ed.min()).unwrap();
-        assert!((p0 - Point3::new(-0.1, -0.1, 0.0)).length() < 1e-15);
+        // a blend is extended by its definition, not its net: the exact extension refuses
+        // it, and no net is extended in its place (#2730)
+        assert!(matches!(
+            s.extended_every_side(&k, solidcore::surface::extend::Continuity::Tangent, 0.1),
+            Err(solidcore::SolidError::Unsupported { .. })
+        ));
     }
 }
 
