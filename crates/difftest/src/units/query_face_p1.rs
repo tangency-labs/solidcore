@@ -476,6 +476,16 @@ impl solidcore::intersect::point_class::ClassGeometry<EntityRef> for NoGeometry 
     }
 }
 
+/// [`drop_trim_cache`] of every face: the shims' loop over `g.faces` that deletes the
+/// trimmed surface caches a file read leaves (`query_brep.cpp`'s box and classify ops,
+/// `geom_tol.cpp`'s B-rep ops).
+pub(crate) fn drop_trim_caches(b: &Brep) -> Result<(), HarnessError> {
+    for (f, _) in b.faces().iter() {
+        drop_trim_cache(b, f)?;
+    }
+    Ok(())
+}
+
 /// The shim's `drop_trim_cache(f)` (`harness/cpp/shim/query_face_p1.cpp`, before
 /// `Point3DClassify`): `SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, srf)`. The cache's
 /// tree state lives in the deleted object upstream, so the slot goes back to

@@ -635,6 +635,9 @@ pub(super) const K_TRIM_CURVE: u8 = 13;
 const K_REGION: u8 = 14;
 /// A loop use a face's trimmed surface cache names (Rust side only, never exported).
 const K_LOOPUSE: u8 = 15;
+/// A subdivision surface of a face surface's kept trimmed cache (Rust side only, never
+/// exported; `surface::surface::p2::subdivision_surface_name`).
+const K_SUBDIVISION_SURFACE: u8 = 16;
 
 /// An object handle: the B-rep (`2` for the curve stores, `-1` for the intersector),
 /// the kind and the index. Ordered as the shim sorts (`brep`, `kind`, `index`). A
@@ -997,6 +1000,7 @@ fn cache_entity_h(b: i8, e: EntityRef) -> solidcore::Result<H> {
         EntityRef::Loopuse(lu) => hd(b, K_LOOPUSE, lu.index()),
         EntityRef::Edgeuse(eu) => hd(b, K_EDGEUSE, eu.index()),
         EntityRef::Vertexuse(vu) => hd(b, K_VERTEXUSE, vu.index()),
+        EntityRef::Brep(n) => hd(b, K_SUBDIVISION_SURFACE, n.index()),
         _ => return Err(invalid("entity a surface cache does not name")),
     })
 }
@@ -1014,6 +1018,7 @@ fn cache_h_entity(b: i8, h: H) -> solidcore::Result<EntityRef> {
         K_LOOPUSE => EntityRef::Loopuse(LoopuseId::from_index(h.i)),
         K_EDGEUSE => EntityRef::Edgeuse(EdgeuseId::from_index(h.i)),
         K_VERTEXUSE => EntityRef::Vertexuse(VertexuseId::from_index(h.i)),
+        K_SUBDIVISION_SURFACE => EntityRef::Brep(BrepId::from_index(h.i)),
         _ => return Err(invalid("handle a surface cache does not name")),
     })
 }

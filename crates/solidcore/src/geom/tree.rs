@@ -780,12 +780,28 @@ impl<O: Copy + PartialEq> Tree<O> {
         &self,
         map: impl Fn(O) -> Result<P>,
     ) -> Result<Tree<P>> {
+        self.map_objects_by_role(&map, &|o| map(o).map(Some))
+    }
+
+    /// [`Tree::map_objects`] with the surface handles (each surface node's surface
+    /// and the tree's owner surface) translated by `surface` and every other handle by
+    /// `map`: for a handle space where a surface and its face are one handle and a
+    /// target space where they are two objects, as upstream's `SmSurface*` and
+    /// `SmFace*` are.
+    ///
+    /// # Errors
+    /// Any error returned by `map` or `surface`.
+    pub fn map_objects_by_role<P: Copy + PartialEq>(
+        &self,
+        map: &dyn Fn(O) -> Result<P>,
+        surface: &dyn Fn(O) -> Result<Option<P>>,
+    ) -> Result<Tree<P>> {
         let mut lists = Vec::new();
         for item in &self.lists {
             lists.push(ObjectList {
                 next: item.next,
                 bbox: item.bbox,
-                object: item.object.map(&map).transpose()?,
+                object: item.object.map(map).transpose()?,
             });
         }
         let mut nodes = Vec::new();
@@ -798,8 +814,8 @@ impl<O: Copy + PartialEq> Tree<O> {
                     split_dir: aux.split_dir,
                     is_marked: aux.is_marked,
                     node_class: aux.node_class,
-                    face: aux.face.map(&map).transpose()?,
-                    surface: aux.surface.map(&map).transpose()?,
+                    face: aux.face.map(map).transpose()?,
+                    surface: aux.surface.map(surface).transpose()?.flatten(),
                     slot: aux.slot,
                 }),
             };
@@ -822,8 +838,8 @@ impl<O: Copy + PartialEq> Tree<O> {
             nodes,
             lists,
             curve_data: self.curve_data.clone(),
-            owner_curve: self.owner_curve.map(&map).transpose()?,
-            owner_surface: self.owner_surface.map(map).transpose()?,
+            owner_curve: self.owner_curve.map(map).transpose()?,
+            owner_surface: self.owner_surface.map(surface).transpose()?.flatten(),
         })
     }
 

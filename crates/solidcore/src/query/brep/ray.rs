@@ -27,8 +27,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{EntityRef, Result, SolidError};
 use crate::kernel::Kernel;
 use crate::math::Point2;
-use crate::query::face::p2::BrepCacheFace;
-use crate::surface::surface::p1::{get_surface_cache_with_face, SurfaceSolveContext};
+use crate::query::face::p2::{
+    solve_surface_cache_of_face, surface_cache_state_of_face, BrepCacheFace,
+};
+use crate::surface::surface::p1::{
+    get_surface_cache_with_face, make_surface_cache, SurfaceSolveContext,
+};
 use crate::surface::surface::{CacheTreeState, Surface};
 use crate::surface::surface_cache::face_context::{
     FaceQueries, MappedCacheFace, PreparedFaceQueries,
@@ -124,9 +128,12 @@ fn cache_handle(entity: EntityRef) -> Result<CacheObject> {
         EntityRef::Face(f) => CacheObject::Face(f),
         EntityRef::Edge(e) => CacheObject::Edge(e),
         EntityRef::Vertex(v) => CacheObject::Vertex(v),
-        other @ (EntityRef::Loopuse(_) | EntityRef::Edgeuse(_) | EntityRef::Vertexuse(_)) => {
-            CacheObject::Other(notify_ref(other))
-        }
+        // (a kept cache's subdivision surfaces are named `EntityRef::Brep`:
+        // `surface::p2::subdivision_surface_name`)
+        other @ (EntityRef::Loopuse(_)
+        | EntityRef::Edgeuse(_)
+        | EntityRef::Vertexuse(_)
+        | EntityRef::Brep(_)) => CacheObject::Other(notify_ref(other)),
         _ => {
             return Err(SolidError::invalid_input(
                 OP,
@@ -144,9 +151,12 @@ fn prepare_surface_cache(
     face_surface_cache(k, b, face, true)
 }
 
-/// `smsurf_GetSurfaceCache` of `face`'s surface: the trimmed cache its factory makes
-/// (`CacheMakeOrValidate`), with its tree then built when `get_tree` (a solve's
-/// `GetTree`, which creates the face's UV trim curves and implants its boundary).
+/// `smsurf_GetSurfaceCache` of `face`'s surface: the trimmed cache the surface keeps
+/// (`CacheMakeOrValidate`'s `m_pCacheObj`, reused unless its face was modified and the
+/// B-rep is not being edited), else the one its factory makes and keeps, handed out as a
+/// copy ([`solve_surface_cache_of_face`]); its tree is then built when `get_tree` (a
+/// solve's `GetTree`, which creates the face's UV trim curves and implants its boundary).
+/// A surface without owning face gets the cache its factory makes, not kept.
 /// Without `get_tree`, a cache the factory leaves without tree (made during a Boolean
 /// operation, or reused unbuilt: [`Surface::cache_tree_state`]) keeps the state bits
 /// the `SmTrimSrfCache` constructor set, as upstream's until its first `GetTree`; a
@@ -163,6 +173,22 @@ fn face_surface_cache(
         .as_ref()
         .ok_or(SolidError::null_pointer(OP))?
         .clone_for_evaluation()?;
+    // the trimmed cache kept on the face's surface (`m_pCacheObj`), made by the first
+    // lookup and reused by every later one: while the B-rep is edited a modified face
+    // keeps its cache, built with its trims when editing was off (#2503)
+    if let Some(owner) = surface.face()? {
+        let handle = Some(CacheObject::Surface(face));
+        let kept = if get_tree {
+            solve_surface_cache_of_face(k, b, face, owner, &surface, handle, cache_handle)?
+        } else {
+            surface_cache_state_of_face(k, b, face, owner, &surface, handle, cache_handle)?
+        };
+        return match kept {
+            Some(cache) => Ok(cache),
+            // no trimmed cache: the surface cache, built fresh
+            None => make_surface_cache(k, &surface, handle),
+        };
+    }
     // upstream reuses a cache whose tree is built, with the built tree's state bits
     let get_tree = get_tree || surface.cache_tree_state() == CacheTreeState::Built;
     let entities: BTreeMap<_, _> = b

@@ -438,6 +438,30 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         &self,
         map: impl Fn(O) -> Result<P>,
     ) -> Result<TrimSrfCache<P>> {
+        let base = self.base.map_handles(&map)?;
+        self.map_implants(base, &map)
+    }
+
+    /// [`TrimSrfCache::map_handles`] with the cache's own surface handle named
+    /// `surface` where it names the surface ([`SurfaceCache::map_handles_naming_surface`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`TrimSrfCache::map_handles`].
+    pub fn map_handles_naming_surface<P: Copy + PartialEq>(
+        &self,
+        map: impl Fn(O) -> Result<P>,
+        surface: Option<P>,
+    ) -> Result<TrimSrfCache<P>> {
+        let base = self.base.map_handles_naming_surface(&map, surface)?;
+        self.map_implants(base, &map)
+    }
+
+    fn map_implants<P: Copy + PartialEq>(
+        &self,
+        base: SurfaceCache<P>,
+        map: &dyn Fn(O) -> Result<P>,
+    ) -> Result<TrimSrfCache<P>> {
         let edgeuse_curves = self
             .edgeuse_curves
             .iter()
@@ -452,7 +476,7 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
             })
             .collect::<Result<_>>()?;
         Ok(TrimSrfCache {
-            base: self.base.map_handles(&map)?,
+            base,
             edgeuse_curves,
             poly_edge_geometry: self
                 .poly_edge_geometry

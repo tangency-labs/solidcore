@@ -653,6 +653,24 @@ impl<'a> InsertionGeometry<'a> {
             _ => None,
         }
     }
+    /// [`InsertionGeometry::handle`] for the objects a face surface's trimmed cache
+    /// names: a kept cache's subdivision surfaces (`EntityRef::Brep`,
+    /// `surface::surface::p2::subdivision_surface_name`) keep a name each in the body's
+    /// topology, which never otherwise holds a B-rep.
+    fn cache_handle(role: InsertionBody, entity: EntityRef) -> FilletObject {
+        match (role, entity) {
+            (InsertionBody::Target, EntityRef::Brep(_)) => {
+                FilletObject::Topology(FilletBody::Target, entity)
+            }
+            (InsertionBody::Pseudo, EntityRef::Brep(_)) => {
+                FilletObject::Topology(FilletBody::Pseudo, entity)
+            }
+            (InsertionBody::Intermediate, EntityRef::Brep(_)) => {
+                FilletObject::IntermediateTopology(entity)
+            }
+            _ => Self::handle(role, entity),
+        }
+    }
     fn handle(role: InsertionBody, entity: EntityRef) -> FilletObject {
         if matches!(entity, EntityRef::Brep(_)) {
             return match role {
