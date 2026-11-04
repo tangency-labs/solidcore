@@ -1,7 +1,8 @@
 //! Sweeps: planar faces, extrusion (straight or drafted), revolution, sweep along a path, loft
 //! through sections or to a point, the sweep of a profile placed at stations, the screw sweep
-//! of a thread or coil, and curves projected onto or sectioning a face. Profiles, paths and
-//! sections are lists of [`Curve`]s; each sweep returns a new body.
+//! of a thread or coil, and curves projected onto or sectioning a face (named by its record
+//! index through the body's [`Order`]). Profiles, paths and sections are lists of [`Curve`]s;
+//! each sweep returns a new body.
 //!
 //! Each call makes its curves from the list (the kernel's constructors), checks its numbers
 //! before the kernel sees them, runs the kernel's sweep and hands the result over only when it
@@ -48,7 +49,7 @@ use solidcore::topology::brep::p8::{
     create_planar_face_with_3d_curves, create_planar_faces_with_3d_curves, FaceBuildEnv,
 };
 use solidcore::topology::brep::planar_section::{PlanarSectionOptions, SectionOutputs};
-use solidcore::topology::Brep;
+use solidcore::topology::{Brep, FaceId};
 use solidcore::SolidError;
 
 pub use solidcore::curve::arc::{Join, OnOneCircle};
@@ -61,6 +62,7 @@ pub use solidcore::sweep::api_brep::TaperCornerRefusal as CornerRefusal;
 
 use crate::body::{finish, Body, Expect};
 use crate::error::status;
+use crate::order::{self, Order};
 use crate::session::{run, with_body};
 use crate::{Error, Result};
 
@@ -1103,20 +1105,35 @@ fn put_curve(c: &KCurve) -> solidcore::Result<Out<(Curve, [f64; 2])>> {
     )))
 }
 
+/// The kernel face of `b` that record index `i` names through `order` (the [`Order`] of `b`'s
+/// record): an index past the record's faces, or one naming a face `b` does not have (an
+/// order taken before an edit removed it), is [`Error::Argument`].
+fn face_of(b: &Brep, order: &Order, i: usize) -> Result<FaceId> {
+    let f = order::face(order, i)?;
+    if b.face_list().contains(&f) {
+        Ok(f)
+    } else {
+        Err(Error::Argument)
+    }
+}
+
 /// The curve tolerance of [`project_curves`] and [`face_section`].
 fn tolerance_ok(tolerance: f64) -> bool {
     tolerance.is_finite() && (1e-9..1e3).contains(&tolerance)
 }
 
 /// `curves` projected along `direction` (any length; from them toward the face) onto record
-/// face `face` of `body` (`SmBrep::CreateParallelProjectionCurves` on that face), each within
-/// `tolerance` of the true projection, as NURBS with their intervals.
+/// face `face` of `body` (through `order`, its record's [`Order`]:
+/// `SmBrep::CreateParallelProjectionCurves` on that face), each within `tolerance` of the true
+/// projection, as NURBS with their intervals.
 ///
 /// # Errors
-/// [`Error::Argument`] for a number, index or curve list refused; the kernel's status;
+/// [`Error::Argument`] for a number or curve list refused, or an index past the record's faces
+/// or naming a face the body does not have; the kernel's status;
 /// [`Error::Empty`] when nothing projects.
 pub fn project_curves(
     body: &Body,
+    order: &Order,
     face: usize,
     curves: &[Curve],
     direction: [f64; 3],
@@ -1127,7 +1144,7 @@ pub fn project_curves(
     }
     with_body("project_curves", body, |k, b| {
         let given = parsed!(parse(k, curves));
-        let face = parsed!(b.face_list().get(face).copied().ok_or(Error::Argument));
+        let face = parsed!(face_of(b, order, face));
         let faces = [face];
         let opts = ParallelProjectionOptions {
             approx_tol_3d: Some(tolerance),
@@ -1163,15 +1180,18 @@ pub fn project_curves(
     })?
 }
 
-/// The section of record face `face` of `body` by the plane through `plane_point` square to
-/// `plane_normal` (any length), as NURBS with their intervals.
+/// The section of record face `face` of `body` (through `order`, its record's [`Order`]) by the
+/// plane through `plane_point` square to `plane_normal` (any length), as NURBS with their
+/// intervals.
 ///
 /// # Errors
-/// [`Error::Argument`] for a number or index refused; the kernel's status;
+/// [`Error::Argument`] for a number refused, or an index past the record's faces or naming a
+/// face the body does not have; the kernel's status;
 /// [`Error::Unsupported`] when the kernel does not say which face each curve lies on;
 /// [`Error::Empty`] when the plane misses the face.
 pub fn face_section(
     body: &Body,
+    order: &Order,
     face: usize,
     plane_point: [f64; 3],
     plane_normal: [f64; 3],
@@ -1186,7 +1206,7 @@ pub fn face_section(
         return Err(Error::Argument);
     }
     with_body("face_section", body, |k, b| {
-        let face = parsed!(b.face_list().get(face).copied().ok_or(Error::Argument));
+        let face = parsed!(face_of(b, order, face));
         // UV curves are asked for, so the classify is forced: an analytic face's intersector
         // makes none, and without it the trim drops the whole section (solidcore#1769).
         let opts = PlanarSectionOptions {

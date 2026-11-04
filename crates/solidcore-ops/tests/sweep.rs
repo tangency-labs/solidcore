@@ -22,11 +22,11 @@
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use solidcore_ops::sweep::{
-    arcs_on_one_circle, curves_meet, extrude, join_arcs, loft, loft_to_point, planar_faces,
-    revolve, screw_sweep, sweep_placed, sweep_stations, Affine, CornerRefusal, Curve, DraftCorner,
-    Ends, Join, PathCheck, SweepFrame, SweepRoute, Verdict,
+    arcs_on_one_circle, curves_meet, extrude, face_section, join_arcs, loft, loft_to_point,
+    planar_faces, project_curves, revolve, screw_sweep, sweep_placed, sweep_stations, Affine,
+    CornerRefusal, Curve, DraftCorner, Ends, Join, PathCheck, SweepFrame, SweepRoute, Verdict,
 };
-use solidcore_ops::{Body, Error};
+use solidcore_ops::{make_box, Body, Error};
 
 const Z: [f64; 3] = [0.0, 0.0, 1.0];
 
@@ -794,5 +794,62 @@ fn a_closed_path_whose_ends_are_almost_meeting_is_refused() {
     assert_eq!(
         sweep_placed(&profile, &path, frame, cap).err(),
         Some(Error::PathGap { join: n - 1 })
+    );
+}
+
+/// The faces of a 10 mm box named by record index through its `Order`: the plane z = 5 (its
+/// normal at length 2) sections the four side faces in one curve each, at z = 5, and misses the
+/// top and bottom; an index past the record's faces and a normal of no length are refused.
+#[test]
+fn a_box_s_record_faces_section_at_their_index() {
+    let b = make_box([0.0; 3], [10.0; 3]).unwrap();
+    let (record, order) = b.to_record().unwrap();
+    assert_eq!(record.faces.len(), 6);
+    let mut cut = 0;
+    for i in 0..6 {
+        match face_section(&b, &order, i, [0.0, 0.0, 5.0], [0.0, 0.0, 2.0], 1e-6) {
+            Ok(curves) => {
+                assert_eq!(curves.len(), 1, "face {i}");
+                let Curve::Nurbs { points, .. } = &curves[0].0 else {
+                    panic!("face {i}: {:?}", curves[0].0)
+                };
+                assert!(points.iter().all(|p| (p[2] / p[3] - 5.0).abs() < 1e-9));
+                cut += 1;
+            }
+            Err(e) => assert_eq!(e, Error::Empty, "face {i}"),
+        }
+    }
+    assert_eq!(cut, 4);
+    let at = |i, n| face_section(&b, &order, i, [0.0, 0.0, 5.0], n, 1e-6);
+    assert_eq!(at(6, Z), Err(Error::Argument), "an index past the faces");
+    assert_eq!(
+        at(0, [0.0; 3]),
+        Err(Error::Argument),
+        "a normal of no length"
+    );
+}
+
+/// A segment over a 10 mm box projected down (the direction at length 3) lands on one record
+/// face, the top, at z = 10; an index past the record's faces and a direction of no length are
+/// refused.
+#[test]
+fn a_segment_projects_onto_a_box_s_record_face_at_its_index() {
+    let b = make_box([0.0; 3], [10.0; 3]).unwrap();
+    let (_, order) = b.to_record().unwrap();
+    let seg = [line([2.0, 3.0, 20.0], [8.0, 3.0, 20.0])];
+    let landed: Vec<_> = (0..6)
+        .filter_map(|i| project_curves(&b, &order, i, &seg, [0.0, 0.0, -3.0], 1e-6).ok())
+        .collect();
+    assert_eq!(landed.len(), 1);
+    let Curve::Nurbs { points, .. } = &landed[0][0].0 else {
+        panic!("{:?}", landed[0][0].0)
+    };
+    assert!(points.iter().all(|p| (p[2] / p[3] - 10.0).abs() < 1e-9));
+    let at = |i, d| project_curves(&b, &order, i, &seg, d, 1e-6);
+    assert_eq!(at(6, Z), Err(Error::Argument), "an index past the faces");
+    assert_eq!(
+        at(0, [0.0; 3]),
+        Err(Error::Argument),
+        "a direction of no length"
     );
 }
