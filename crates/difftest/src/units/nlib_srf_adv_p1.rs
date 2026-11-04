@@ -31,7 +31,6 @@ use solidcore::nurbs::crv_adv::p1::{CurveEnd, BARE_FLAG_REASON};
 use solidcore::nurbs::crv_basic::{Boundary, Curve};
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_adv::p1 as adv;
-use solidcore::nurbs::srf_adv::p2::SrfContinuity;
 use solidcore::nurbs::srf_adv::p3::ExtendContinuity;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
@@ -451,8 +450,15 @@ fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         } => {
             let s = build(&resolve(sur)?)?;
             let end = CurveEnd::from_flag(*end).ok_or_else(|| harness("bad end flag"))?;
-            let cont = SrfContinuity::from_flag(*cont).ok_or_else(|| harness("bad cont flag"))?;
-            let r = adv::extend_by_dist(&s, *dist, direction(*dir)?, end, cont);
+            // `N_SrfExtendByDist` has no counterpart: the exact extension (#2730)
+            let r = crate::util::extension::net(
+                &solidcore::kernel::Kernel::default(),
+                &s,
+                *dist,
+                direction(*dir)?,
+                end,
+                *cont,
+            );
             o.push(status(&r));
             if let Ok(q) = r {
                 dump(&mut o, &q);

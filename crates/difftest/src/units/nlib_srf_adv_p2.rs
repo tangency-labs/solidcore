@@ -34,7 +34,7 @@ use serde_json::Value;
 use solidcore::nurbs::crv_adv::p1::CurveEnd;
 use solidcore::nurbs::knots::Side;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
-use solidcore::nurbs::srf_adv::p2::{self as adv, SrfContinuity};
+use solidcore::nurbs::srf_adv::p2 as adv;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
 use solidcore_ffi::units::nlib_srf_adv_p2::{self as ffi, Op};
@@ -342,9 +342,9 @@ fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         } => {
             let dir = Direction::from_flag(*dir).ok_or_else(|| harness("bad direction flag"))?;
             let end = CurveEnd::from_flag(*end).ok_or_else(|| harness("bad end flag"))?;
-            let cont =
-                SrfContinuity::from_flag(*cont).ok_or_else(|| harness("bad continuity flag"))?;
-            let r = adv::extend_by_dist_at_depth(&s, *dist, dir, end, cont, *depth);
+            // `ST_surxsdr` has no counterpart: the exact extension (#2730), at any depth
+            let _ = depth;
+            let r = crate::util::extension::net(&solidcore::kernel::Kernel::default(), &s, *dist, dir, end, *cont);
             o.push(status(&r));
             if let Ok(q) = r {
                 dump(&mut o, &q);

@@ -495,12 +495,9 @@ fn rust_body(i: &Inputs, c: &InlineCrv, cur: &Curve, o: &mut Vec<f64>) -> Result
             cont,
             ..
         } => {
-            let kind = if *relative {
-                ToleranceKind::Relative
-            } else {
-                ToleranceKind::Absolute
-            };
-            let q = cur.extend_by_dist_at_depth(*dist, kind, end.end(), cont.cont(), 0)?;
+            // `ST_curxcdr` has no counterpart: the exact extension (#2730)
+            let q =
+                crate::util::extension::nlib_curve(cur, *dist, *relative, end.end(), cont.cont())?;
             push_crv(o, &q);
         }
         Inputs::ExtendParam { par, end, cont, .. } => {

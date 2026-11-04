@@ -836,13 +836,15 @@ fn run_step(
         }
         StepIn::Extend { dist, cont } => {
             let c = continuity_of(*cont)?;
-            push_res(o, s.create_extended_surface(k, *dist, c), |o, r| {
+            let whole = Surface::from(s.clone());
+            push_res(o, crate::util::extension::surface(k, &whole, None, *dist, c), |o, r| {
                 put_result(k, o, &r)
             })
         }
         StepIn::ExtendDir { param, dist, cont } => {
             let (p, c) = (param_of(*param)?, continuity_of(*cont)?);
-            push_res(o, s.create_extended_surface_dir(k, p, *dist, c), |o, r| {
+            let whole = Surface::from(s.clone());
+            push_res(o, crate::util::extension::surface(k, &whole, Some(p), *dist, c), |o, r| {
                 put_result(k, o, &r)
             })
         }

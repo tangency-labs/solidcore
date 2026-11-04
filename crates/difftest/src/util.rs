@@ -3,6 +3,7 @@
 pub mod assert_reports;
 #[cfg(feature = "cpp")]
 pub(crate) mod exact_curve;
+pub mod extension;
 pub mod primitive;
 #[cfg(feature = "cpp")]
 pub(crate) mod trim_curve;

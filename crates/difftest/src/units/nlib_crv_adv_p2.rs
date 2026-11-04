@@ -671,7 +671,10 @@ fn rust_body(i: &Inputs, c: &InlineCrv, cur: &Curve, o: &mut Vec<f64>) -> Result
             end,
             cont,
             ..
-        } => push_crv(o, &cur.extend_by_dist(*dist, kind(*relative), end.end(), cont.cont())?),
+        } => push_crv(
+            o,
+            &crate::util::extension::nlib_curve(cur, *dist, *relative, end.end(), cont.cont())?,
+        ),
         Inputs::ExtendParam { par, end, cont, .. } => {
             let q = cur.extend_by_param_dist(par.get(c).map_err(bad_knot)?, end.end(), cont.cont())?;
             push_crv(o, &q);
