@@ -156,6 +156,10 @@ impl Caches {
 pub struct WorkCounters {
     face_pairs: Cell<u64>,
     loops_classified: Cell<u64>,
+    band_sections: Cell<u64>,
+    band_face_solves: Cell<u64>,
+    band_face_caches: Cell<u64>,
+    band_edge_solves: Cell<u64>,
 }
 
 impl WorkCounters {
@@ -176,10 +180,66 @@ impl WorkCounters {
         self.loops_classified.get()
     }
 
+    /// Not the fork's (#2648): sections of convex blends judged by the check that a blend
+    /// keeps the part whole (`band_cuts`): each section found at a station or trial radius.
+    #[must_use]
+    pub fn band_sections(&self) -> u64 {
+        self.band_sections.get()
+    }
+
+    /// Not the fork's (#2648): the intersections of a section with a face's surface that the
+    /// `band_cuts` checks ran.
+    #[must_use]
+    pub fn band_face_solves(&self) -> u64 {
+        self.band_face_solves.get()
+    }
+
+    /// Not the fork's (#2648): the faces' trimmed-surface caches the `band_cuts` checks made
+    /// (at most one per face per check).
+    #[must_use]
+    pub fn band_face_caches(&self) -> u64 {
+        self.band_face_caches.get()
+    }
+
+    /// Not the fork's (#2648): the intersections of an edge with a station's plane that the
+    /// `band_cuts` checks ran.
+    #[must_use]
+    pub fn band_edge_solves(&self) -> u64 {
+        self.band_edge_solves.get()
+    }
+
     /// Zeroes every count (`SmWorkCounters::Reset`).
     pub fn reset(&self) {
         self.face_pairs.set(0);
         self.loops_classified.set(0);
+        self.band_sections.set(0);
+        self.band_face_solves.set(0);
+        self.band_face_caches.set(0);
+        self.band_edge_solves.set(0);
+    }
+
+    /// Counts one section judged by a `band_cuts` check.
+    pub(crate) fn add_band_section(&self) {
+        self.band_sections
+            .set(self.band_sections.get().saturating_add(1));
+    }
+
+    /// Counts one section–face intersection of a `band_cuts` check.
+    pub(crate) fn add_band_face_solve(&self) {
+        self.band_face_solves
+            .set(self.band_face_solves.get().saturating_add(1));
+    }
+
+    /// Counts one face cache made by a `band_cuts` check.
+    pub(crate) fn add_band_face_cache(&self) {
+        self.band_face_caches
+            .set(self.band_face_caches.get().saturating_add(1));
+    }
+
+    /// Counts one edge–plane intersection of a `band_cuts` check.
+    pub(crate) fn add_band_edge_solve(&self) {
+        self.band_edge_solves
+            .set(self.band_edge_solves.get().saturating_add(1));
     }
 
     /// Counts one face pair examined for intersection.

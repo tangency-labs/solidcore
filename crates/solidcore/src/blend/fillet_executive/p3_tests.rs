@@ -1488,3 +1488,33 @@ fn tag_merge_component_retains_allocated_markers_when_merge_fails() {
     assert_eq!(access.events, ["new_attr", "merge"]);
     assert_eq!(executive.topo_edges, [Some(Handle(20))]);
 }
+
+/// #2648: the checks that a convex blend keeps the part whole and does not break through
+/// it poll the kernel's token before each solver: a fired token stops them there, before
+/// the adapter's (no live session) error.
+#[test]
+fn band_checks_poll_the_token_before_each_solver() {
+    for fired in [false, true] {
+        let mut executive = state();
+        executive.solvers.push(Handle(1));
+        let mut k = Kernel::default();
+        let token = crate::kernel::CancelToken::new();
+        k.set_cancel_token(token.clone());
+        if fired {
+            token.cancel();
+        }
+        let mut access = Access::default();
+        let cut = executive.refuse_blends_cutting_the_part(&mut k, &mut access);
+        let through = executive.refuse_blends_breaking_through(&mut k, &mut access);
+        for result in [cut, through] {
+            if fired {
+                assert_eq!(result, Err(SolidError::Cancelled { operation: OP }));
+            } else {
+                assert!(
+                    matches!(result, Err(SolidError::InvalidInput { .. })),
+                    "{result:?}"
+                );
+            }
+        }
+    }
+}

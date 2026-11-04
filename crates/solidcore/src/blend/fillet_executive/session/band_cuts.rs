@@ -12,15 +12,22 @@
 //! |-------------------------------|------------------------------------------|
 //! | [`band_cuts_the_part`]        | `SmFilletSolver::BandCutsThePart`        |
 //! | [`BandCut`]                   | its outputs `rbCuts`, `rdRadius`, `rdSetback` |
-//! | `edges_crossing_plane` (private) | `sm_EdgesCrossingPlane`               |
+//! | `Station::crossings_of` (private) | `sm_EdgesCrossingPlane`, one edge   |
 //! | `keeps_material_behind` (private) | `sm_KeepsMaterialBehind`             |
 //! | `keeps` (private)             | the `Keeps` lambda of `BandCutsThePart`  |
 //!
 //! Not the fork's: [`band_breaks_through_the_part`] (WR-707, #2299), the same sections
 //! judged for breaking through the part into a hollow behind a wall, with
-//! `fixes.fillet_refuse_rounds_breaking_through`.
+//! `fixes.fillet_refuse_rounds_breaking_through`; and [`BandCheck`] (#2648), what a check
+//! keeps across its solvers and sections.
 //!
-//! Deviations: the fork's out-params are returned (`None` for no cut). The solutions of
+//! Deviations: the fork's out-params are returned (`None` for no cut). Each section is
+//! judged only against the edges and faces within its reach (#2648, [`BandCheck`]): the
+//! answer is the fork's (an edge or face out of reach has no crossing that counts), but an
+//! error the fork would meet on an out-of-reach edge or face is not met. A station's plane
+//! crossings are found edge by edge as its sections ask for them, not all up front; each
+//! face's trimmed cache is made once per check, not once per section; the check polls the
+//! kernel's cancel token. The solutions of
 //! `SmSurface::GlobalCurveIntersect` carry no object handles (the fork reads only their
 //! parameters). Every loop is bounded by fixed counts (32 steps, 40 bisections, halvings
 //! down to a millionth of the radius); there is no recursion.
@@ -33,6 +40,7 @@ use crate::blend::fillet_executive::session::ball_regular::{
 use crate::blend::fillet_executive::session::SolverObject;
 use crate::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use crate::curve::curve::Curve;
+use crate::curve::curve::CurveKind;
 use crate::curve::ellipse::p2::EllipseOptions;
 use crate::curve::ellipse::Ellipse;
 use crate::curve::line::Line;
@@ -41,20 +49,22 @@ use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
+use crate::geom::extent3d::Extent3d;
 use crate::geom::solution_array::{ObjectKind, SolutionObject, SolutionType};
 use crate::geom::tol::{brep_zone_tol_3d, SmallTopoType};
 use crate::intersect::point_class::{PointClassType, PointClassification};
 use crate::intersect::surface_intersector::p1::{SrfIndex, TsectPnt};
 use crate::kernel::Kernel;
 use crate::math::{rad_to_deg, Point2, Point3, Vec3, EFF_ZERO};
-use crate::query::brep::{BrepFaceServices, BrepQuery};
+use crate::nurbs::b_spline_curve::BoundingBoxRequest;
+use crate::query::brep::{BrepFaceServices, BrepQuery, FaceCaches};
 use crate::surface::plane::p1::Plane;
-use crate::surface::surface::Surface;
+use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep_cache::CacheObject;
 use crate::topology::edge;
 use crate::topology::edgeuse::p1 as eu;
-use crate::topology::{face, vertex, Brep, FaceId};
-use std::collections::BTreeSet;
+use crate::topology::{face, vertex, Brep, EdgeId, FaceId};
+use std::collections::{BTreeMap, BTreeSet};
 
 const OP: &str = "blend::fillet_executive::session::band_cuts";
 
@@ -117,62 +127,291 @@ impl SolutionObject for Operand {
     }
 }
 
-/// `sm_EdgesCrossingPlane`: the points where `body`'s edges cross the plane through
-/// `origin` square to the unit `normal`, each edge's curve intersected with the plane; an
-/// edge lying in the plane gives its ends there.
-fn edges_crossing_plane(
-    k: &Kernel,
-    body: &Brep,
-    origin: Point3,
-    normal: Vec3,
-) -> Result<Vec<Point3>> {
-    let mut crossings = Vec::new();
-    let x = if normal.x.abs() < 0.9 {
-        Vec3::new(1.0, 0.0, 0.0).cross(normal)
-    } else {
-        Vec3::new(0.0, 1.0, 0.0).cross(normal)
-    };
-    let x = x.unitize()?;
-    let y = normal.cross(x);
-    let plane = Surface::from(Plane::create_canonical(&Axis2Placement::new(origin, x, y))?);
-    let domain = plane.natural_uv_domain_with_nurb(k)?;
-    let tol = body.tolerance();
-    for e in crate::topology::brep::p1::edges(body, None)? {
-        let Some(curve) = edge::evaluation_curve(body, e)? else {
-            continue;
-        };
-        let interval = edge::interval(body, e)?;
-        let solutions = plane.global_curve_intersect(
-            k,
-            [
-                Operand::Curve(curve.natural_interval()),
-                Operand::Plane(domain),
-            ],
-            &domain,
-            &curve,
-            &interval,
-            tol,
-        )?;
-        for sol in solutions.as_slice() {
-            let t = sol
-                .start
-                .parameters
-                .first()
-                .copied()
-                .ok_or_else(|| SolidError::null_pointer(OP))?;
-            crossings.push(curve.evaluate_point(k, t)?);
-            if sol.solution_type == SolutionType::RangeOfValues {
-                let t = sol
-                    .end
-                    .parameters
-                    .first()
-                    .copied()
-                    .ok_or_else(|| SolidError::null_pointer(OP))?;
-                crossings.push(curve.evaluate_point(k, t)?);
-            }
-        }
+/// What one check of a body's convex blends keeps from section to section and from solver
+/// to solver ([`band_cuts_the_part`] and [`band_breaks_through_the_part`] over every solver
+/// of a session, #2648). The body does not change during a check: the trimmed-surface
+/// caches and UV trims its solves make on it change no answer. So each face's trimmed
+/// cache is made once ([`FaceCaches`]), and each face's and edge's box once.
+///
+/// The boxes keep each section's tests to the geometry within its reach, by construction
+/// giving the answers of testing everything: a curve and a surface (or a plane) whose
+/// boxes lie farther apart than the intersections' tolerance have no intersection, and a
+/// plane crossing an edge lies on the edge, inside its box.
+#[derive(Default)]
+pub struct BandCheck {
+    /// The faces' trimmed-surface caches made so far.
+    caches: FaceCaches,
+    /// Every face in the body's order, with the box of its surface over the domain its
+    /// solves use (`None`: unbounded, or a kind without a certain box; always tested).
+    faces: Option<Vec<(FaceId, Option<Extent3d>)>>,
+    /// Every edge in the body's order, with the box of its curve over its interval
+    /// (`None`: always tested).
+    edges: Option<Vec<(EdgeId, Option<Extent3d>)>>,
+}
+
+impl core::fmt::Debug for BandCheck {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BandCheck")
+            .field("caches", &self.caches.len())
+            .finish_non_exhaustive()
     }
-    Ok(crossings)
+}
+
+impl BandCheck {
+    /// A check that has made nothing yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Every face of `body` with its box, made the first time they are asked for.
+    fn faces(&mut self, k: &Kernel, body: &Brep) -> Result<&[(FaceId, Option<Extent3d>)]> {
+        if self.faces.is_none() {
+            let mut out = Vec::new();
+            for f in crate::topology::brep::p1::faces(body, None)? {
+                let bound = match face::p2::surface(body, f)? {
+                    Some(surface) => surface_bound(k, surface),
+                    None => None,
+                };
+                out.push((f, bound));
+            }
+            self.faces = Some(out);
+        }
+        Ok(self.faces.as_deref().unwrap_or(&[]))
+    }
+
+    /// Every edge of `body` with its box, made the first time they are asked for.
+    fn edges(&mut self, k: &Kernel, body: &Brep) -> Result<&[(EdgeId, Option<Extent3d>)]> {
+        if self.edges.is_none() {
+            let mut out = Vec::new();
+            for e in crate::topology::brep::p1::edges(body, None)? {
+                let bound = match edge::evaluation_curve(body, e)? {
+                    Some(curve) => curve_bound(k, &curve, &edge::interval(body, e)?),
+                    None => None,
+                };
+                out.push((e, bound));
+            }
+            self.edges = Some(out);
+        }
+        Ok(self.edges.as_deref().unwrap_or(&[]))
+    }
+
+    /// Solves `surface` (face `f`'s, over `domain`) against `section` through the face's
+    /// trimmed cache, kept from solve to solve.
+    #[allow(clippy::too_many_arguments)]
+    fn face_solve(
+        &mut self,
+        k: &Kernel,
+        body: &mut Brep,
+        f: FaceId,
+        surface: &Surface,
+        domain: &Extent2d,
+        section: &Curve,
+        interval: &Extent1d,
+        tolerance: f64,
+    ) -> Result<crate::geom::solution_array::SolutionArray<CacheObject>> {
+        k.work_counters.add_band_face_solve();
+        let before = self.caches.len();
+        let mut services =
+            BrepFaceServices::with_caches(&mut *body, core::mem::take(&mut self.caches));
+        // the face's surface solves through its face (its trimmed cache), as upstream's
+        // `GlobalCurveIntersect` reaches the owner's cache
+        let solutions = surface.global_curve_intersect_with_context::<CacheObject>(
+            k,
+            [None, Some(CacheObject::Surface(f))],
+            None,
+            &mut services,
+            domain,
+            section,
+            interval,
+            tolerance,
+        );
+        self.caches = services.into_caches();
+        for _ in before..self.caches.len() {
+            k.work_counters.add_band_face_cache();
+        }
+        solutions
+    }
+}
+
+/// A box that bounds something: finite and not inside out.
+fn usable(b: Extent3d) -> Option<Extent3d> {
+    let finite = [b.min, b.max]
+        .iter()
+        .all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
+    (finite && !b.has_negative_volume()).then_some(b)
+}
+
+/// The box of `surface` over its natural domain (the domain band_cuts' solves use), for
+/// the kinds whose box is the hull of a control net that holds the surface (the B-spline
+/// override of `CalculateBoundingBox`, unexpanded); `None` for the others or a box that
+/// cannot be made: such a face is always tested.
+fn surface_bound(k: &Kernel, surface: &Surface) -> Option<Extent3d> {
+    if !matches!(
+        surface.kind(),
+        SurfaceKind::BSpline(_)
+            | SurfaceKind::Plane(_)
+            | SurfaceKind::Cone(_)
+            | SurfaceKind::Sphere(_)
+            | SurfaceKind::Torus(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::SurfOfRevolution(_)
+            | SurfaceKind::SurfOfExtrusion(_)
+    ) {
+        return None;
+    }
+    let surface = surface.clone_for_evaluation().ok()?;
+    let domain = surface.natural_uv_domain_with_nurb(k).ok()?;
+    let boxes = surface
+        .calculate_bounding_box(k, &domain, [true, false, false], false)
+        .ok()?;
+    usable(boxes.normal_box?)
+}
+
+/// The box of `curve` over `interval`, for the kinds whose box is the hull of a control
+/// polygon that holds the curve (a B-spline, conic or line); `None` for the others or a box
+/// that cannot be made.
+fn curve_bound(k: &Kernel, curve: &Curve, interval: &Extent1d) -> Option<Extent3d> {
+    if !matches!(
+        curve.kind(),
+        CurveKind::BSpline(_)
+            | CurveKind::Ellipse(_)
+            | CurveKind::Line(_)
+            | CurveKind::Hyperbola(_)
+            | CurveKind::Parabola(_)
+    ) {
+        return None;
+    }
+    let req = BoundingBoxRequest {
+        normal: true,
+        pseudo: false,
+        polar: false,
+    };
+    usable(
+        curve
+            .calculate_bounding_box(k, interval, req, true)
+            .ok()?
+            .normal?,
+    )
+}
+
+/// The distance from `p` to the box `b` (0 inside it).
+fn distance_to_box(b: &Extent3d, p: Point3) -> f64 {
+    let gap = |v: f64, lo: f64, hi: f64| {
+        if v < lo {
+            lo - v
+        } else if v > hi {
+            v - hi
+        } else {
+            0.0
+        }
+    };
+    Vec3::new(
+        gap(p.x, b.min.x, b.max.x),
+        gap(p.y, b.min.y, b.max.y),
+        gap(p.z, b.min.z, b.max.z),
+    )
+    .length()
+}
+
+/// A station's plane, through `origin` square to the unit `normal`, and the body's edges
+/// crossing it (`sm_EdgesCrossingPlane`), each edge's crossings found the first time a
+/// section asks for them.
+struct Station {
+    /// The plane.
+    plane: Surface,
+    /// Its natural domain.
+    domain: Extent2d,
+    /// The edges whose boxes reach the plane (within twice the body's tolerance, the
+    /// intersections' tolerance), in the body's order, with their boxes.
+    near: Vec<(EdgeId, Option<Extent3d>)>,
+    /// The crossings found so far, by edge.
+    crossings: BTreeMap<EdgeId, Vec<Point3>>,
+}
+
+impl Station {
+    /// The plane of the station at `origin` with the unit `normal` (the edge's tangent).
+    fn new(
+        k: &Kernel,
+        check: &mut BandCheck,
+        body: &Brep,
+        origin: Point3,
+        normal: Vec3,
+    ) -> Result<Self> {
+        let x = if normal.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0).cross(normal)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0).cross(normal)
+        };
+        let x = x.unitize()?;
+        let y = normal.cross(x);
+        let plane = Surface::from(Plane::create_canonical(&Axis2Placement::new(origin, x, y))?);
+        let domain = plane.natural_uv_domain_with_nurb(k)?;
+        let reach = 2.0 * body.tolerance();
+        let near = check
+            .edges(k, body)?
+            .iter()
+            .filter(|(_, bound)| {
+                bound.is_none_or(|b| !(b.distance_to_plane(origin, normal).abs() > reach))
+            })
+            .copied()
+            .collect();
+        Ok(Self {
+            plane,
+            domain,
+            near,
+            crossings: BTreeMap::new(),
+        })
+    }
+
+    /// `sm_EdgesCrossingPlane` for one edge: the points where its curve crosses the plane,
+    /// the curve intersected with the plane; an edge lying in the plane gives its ends there.
+    fn crossings_of(&mut self, k: &Kernel, body: &Brep, e: EdgeId) -> Result<&[Point3]> {
+        if !self.crossings.contains_key(&e) {
+            let mut crossings = Vec::new();
+            if let Some(curve) = edge::evaluation_curve(body, e)? {
+                k.work_counters.add_band_edge_solve();
+                let interval = edge::interval(body, e)?;
+                let solutions = self.plane.global_curve_intersect(
+                    k,
+                    [
+                        Operand::Curve(curve.natural_interval()),
+                        Operand::Plane(self.domain),
+                    ],
+                    &self.domain,
+                    &curve,
+                    &interval,
+                    body.tolerance(),
+                )?;
+                for sol in solutions.as_slice() {
+                    let t = sol
+                        .start
+                        .parameters
+                        .first()
+                        .copied()
+                        .ok_or_else(|| SolidError::null_pointer(OP))?;
+                    crossings.push(curve.evaluate_point(k, t)?);
+                    if sol.solution_type == SolutionType::RangeOfValues {
+                        let t = sol
+                            .end
+                            .parameters
+                            .first()
+                            .copied()
+                            .ok_or_else(|| SolidError::null_pointer(OP))?;
+                        crossings.push(curve.evaluate_point(k, t)?);
+                    }
+                }
+            }
+            self.crossings.insert(e, crossings);
+        }
+        Ok(self.crossings.get(&e).map_or(&[][..], Vec::as_slice))
+    }
+}
+
+/// The box of a section over its interval; `None` (every face tested) where it cannot be
+/// made.
+fn section_bound(k: &Kernel, section: &Curve, interval: &Extent1d) -> Option<Extent3d> {
+    curve_bound(k, section, interval)
 }
 
 /// `sm_KeepsMaterialBehind`: whether the part keeps material behind the section of a
@@ -184,13 +423,22 @@ fn edges_crossing_plane(
 /// or the section (as an exact curve) crosses a face's surface inside the face. With
 /// neither, one point of the section classified against the body says whether it lies
 /// inside the part; outside, the blend takes all of the part between its rails there.
+///
+/// Only the geometry within reach of the section is tested (#2648), by construction with
+/// the answer of testing all of it: a crossing counts only within the ball's radius of its
+/// centre (a round's) or on the station's plane (a chamfer's), so an edge whose box lies
+/// farther from the centre, or from the plane, has none that counts; and a face whose
+/// surface's box lies farther from the section's box than twice the intersections'
+/// tolerance has no intersection with it.
+#[allow(clippy::too_many_arguments)]
 fn keeps_material_behind(
     k: &Kernel,
     body: &mut Brep,
+    check: &mut BandCheck,
+    station: &mut Station,
     centre: Point3,
     rails: [Point3; 2],
     chord: bool,
-    crossings: &[Point3],
 ) -> Result<bool> {
     let [rail1, rail2] = rails;
     let a = rail1 - centre;
@@ -202,21 +450,35 @@ fn keeps_material_behind(
         return Ok(true); // rails opposite or together: no region to judge
     }
     let tol = 1.0e-9 * r2.sqrt();
-    for &crossing in crossings {
-        let x = crossing - centre;
-        let (xa, xb) = (x.dot(a), x.dot(b));
-        let alpha = (xa * bb - xb * ab) / det;
-        let beta = (xb * aa - xa * ab) / det;
-        if alpha < -1.0e-12 || beta < -1.0e-12 {
-            continue;
+    // a round's crossing counts within `r2.sqrt() + tol` of the centre: the edges whose boxes
+    // lie farther (by more than the body's tolerance, as a crossing lies on its curve) have
+    // none that counts; a chamfer's counts anywhere on the plane over its triangle
+    let reach = (!chord).then(|| r2.sqrt() + tol + body.tolerance());
+    let mut i = 0;
+    while let Some(&(e, bound)) = station.near.get(i) {
+        i += 1;
+        if let (Some(reach), Some(b)) = (reach, bound) {
+            if distance_to_box(&b, centre) > reach {
+                continue;
+            }
         }
-        let inside = if chord {
-            alpha + beta <= 1.0 + 1.0e-12
-        } else {
-            x.length() <= r2.sqrt() + tol
-        };
-        if inside {
-            return Ok(true);
+        k.check_cancelled(OP)?;
+        for &crossing in station.crossings_of(k, body, e)? {
+            let x = crossing - centre;
+            let (xa, xb) = (x.dot(a), x.dot(b));
+            let alpha = (xa * bb - xb * ab) / det;
+            let beta = (xb * aa - xa * ab) / det;
+            if alpha < -1.0e-12 || beta < -1.0e-12 {
+                continue;
+            }
+            let inside = if chord {
+                alpha + beta <= 1.0 + 1.0e-12
+            } else {
+                x.length() <= r2.sqrt() + tol
+            };
+            if inside {
+                return Ok(true);
+            }
         }
     }
 
@@ -248,7 +510,16 @@ fn keeps_material_behind(
     let interval = section.natural_interval();
     let ends = body.tolerance();
     let zone = brep_zone_tol_3d(k, body, SmallTopoType::default());
-    for f in crate::topology::brep::p1::faces(body, None)? {
+    let reach = section_bound(k, &section, &interval);
+    let mut i = 0;
+    while let Some(&(f, bound)) = check.faces(k, body)?.get(i) {
+        i += 1;
+        if let (Some(s), Some(b)) = (reach, bound) {
+            if s.are_disjoint(&b, 2.0 * ends) {
+                continue; // no point of the section within the tolerance of the surface
+            }
+        }
+        k.check_cancelled(OP)?;
         // the crossings inside the face's surface's domain, judged after the borrow ends
         let mut on_face: Vec<Point2> = Vec::new();
         {
@@ -257,19 +528,8 @@ fn keeps_material_behind(
             };
             let surface = surface.clone_for_evaluation()?;
             let domain = surface.natural_uv_domain_with_nurb(k)?;
-            // the face's surface solves through its face (its trimmed cache), as upstream's
-            // `GlobalCurveIntersect` reaches the owner's cache
-            let mut services = BrepFaceServices::new(&mut *body);
-            let solutions = surface.global_curve_intersect_with_context::<CacheObject>(
-                k,
-                [None, Some(CacheObject::Surface(f))],
-                None,
-                &mut services,
-                &domain,
-                &section,
-                &interval,
-                ends,
-            )?;
+            let solutions =
+                check.face_solve(k, body, f, &surface, &domain, &section, &interval, ends)?;
             for sol in solutions.as_slice() {
                 if sol.solution_type == SolutionType::RangeOfValues {
                     return Ok(true); // the section runs along the face's surface
@@ -338,6 +598,7 @@ fn keeps(
     k: &Kernel,
     target: &mut Brep,
     solver: &mut SolverObject,
+    check: &mut BandCheck,
     edge_curve: &Curve,
     chord: bool,
     own: f64,
@@ -346,6 +607,7 @@ fn keeps(
     judge: Judge<'_>,
     near: &mut Option<TsectPnt>,
 ) -> Result<Section> {
+    k.check_cancelled(OP)?;
     let mut out = Section {
         found: false,
         keeps: true,
@@ -411,12 +673,13 @@ fn keeps(
     out.found = true;
     let p = edge_curve.evaluate_point(k, t)?;
     out.setback = p.distance(rail1);
+    k.work_counters.add_band_section();
     out.keeps = match judge {
-        Judge::KeepsMaterial(crossings) => {
-            keeps_material_behind(k, target, centre, [rail1, rail2], chord, crossings)?
+        Judge::KeepsMaterial(station) => {
+            keeps_material_behind(k, target, check, station, centre, [rail1, rail2], chord)?
         }
         Judge::StaysInside(faces) => {
-            !section_breaks_through(k, target, centre, [rail1, rail2], chord, faces)?
+            !section_breaks_through(k, target, check, centre, [rail1, rail2], chord, faces)?
         }
     };
     Ok(out)
@@ -425,10 +688,9 @@ fn keeps(
 /// What `keeps` judges at a section: material kept behind it (`sm_KeepsMaterialBehind`,
 /// with the body's edges crossing the station's plane), or (WR-707, not the fork's) the
 /// section not breaking through the part (`section_breaks_through`).
-#[derive(Clone, Copy)]
 enum Judge<'a> {
-    /// `sm_KeepsMaterialBehind` with these plane crossings.
-    KeepsMaterial(&'a [Point3]),
+    /// `sm_KeepsMaterialBehind` with the station's plane and its crossings.
+    KeepsMaterial(&'a mut Station),
     /// `section_breaks_through` false, with these faces.
     StaysInside(&'a ThroughFaces),
 }
@@ -471,6 +733,7 @@ struct ThroughFaces {
 fn section_breaks_through(
     k: &Kernel,
     body: &mut Brep,
+    check: &mut BandCheck,
     centre: Point3,
     rails: [Point3; 2],
     chord: bool,
@@ -511,7 +774,18 @@ fn section_breaks_through(
     // `f` inside it (not on its boundary), whether `f` is judged and whether the blend
     // reaches `f`
     let mut meets: Vec<Meet> = Vec::new();
-    for f in crate::topology::brep::p1::faces(body, None)? {
+    // (as `keeps_material_behind`: a face whose surface's box lies apart from the section's
+    // has no meet)
+    let reach = section_bound(k, &section, &interval);
+    let mut i = 0;
+    while let Some(&(f, bound)) = check.faces(k, body)?.get(i) {
+        i += 1;
+        if let (Some(s), Some(b)) = (reach, bound) {
+            if s.are_disjoint(&b, 2.0 * ends) {
+                continue;
+            }
+        }
+        k.check_cancelled(OP)?;
         let mut on_face: Vec<(f64, Point2)> = Vec::new();
         {
             let Some(surface) = face::p2::surface(body, f)? else {
@@ -519,17 +793,8 @@ fn section_breaks_through(
             };
             let surface = surface.clone_for_evaluation()?;
             let domain = surface.natural_uv_domain_with_nurb(k)?;
-            let mut services = BrepFaceServices::new(&mut *body);
-            let solutions = surface.global_curve_intersect_with_context::<CacheObject>(
-                k,
-                [None, Some(CacheObject::Surface(f))],
-                None,
-                &mut services,
-                &domain,
-                &section,
-                &interval,
-                ends,
-            )?;
+            let solutions =
+                check.face_solve(k, body, f, &surface, &domain, &section, &interval, ends)?;
             for sol in solutions.as_slice() {
                 let params = &sol.start.parameters;
                 let (Some(&t), Some(&u), Some(&v)) = (params.first(), params.get(1), params.get(2))
@@ -725,6 +990,7 @@ pub fn band_cuts_the_part(
     k: &Kernel,
     target: &mut Brep,
     solver: &mut SolverObject,
+    check: &mut BandCheck,
 ) -> Result<Option<BandCut>> {
     let base = solver.base();
     if base.surface(0)?.is_none() || base.surface(1)?.is_none() {
@@ -748,10 +1014,11 @@ pub fn band_cuts_the_part(
         fsg.fillet_surface_generator_type() == FilletSurfaceGeneratorType::Linear
     });
 
-    // each section: its parameter, plane crossings and section found near, and whether it keeps
-    // material behind it (0), takes all of the part between the rails (1), or is not judged (2)
+    // each section: its parameter, station (its plane and crossings) and section found near,
+    // and whether it keeps material behind it (0), takes all of the part between the rails
+    // (1), or is not judged (2)
     let mut ts: Vec<f64> = Vec::new();
-    let mut all_crossings: Vec<Vec<Point3>> = Vec::new();
+    let mut stations: Vec<Option<Station>> = Vec::new();
     let mut nears: Vec<Option<TsectPnt>> = Vec::new();
     let mut states: Vec<u8> = Vec::new();
     let mut near: Option<TsectPnt> = None;
@@ -763,26 +1030,27 @@ pub fn band_cuts_the_part(
             return Err(SolidError::null_pointer(OP));
         };
         if !(tangent.length() > EFF_ZERO) {
-            all_crossings.push(Vec::new());
+            stations.push(None);
             nears.push(None);
             states.push(2);
             continue;
         }
         let normal = tangent.unitize()?;
-        let crossings = edges_crossing_plane(k, target, point, normal)?;
+        let mut station = Station::new(k, check, target, point, normal)?;
         let judged = keeps(
             k,
             target,
             solver,
+            check,
             &curve,
             chord,
             own,
             t,
             0.0,
-            Judge::KeepsMaterial(&crossings),
+            Judge::KeepsMaterial(&mut station),
             &mut near,
         )?;
-        all_crossings.push(crossings);
+        stations.push(Some(station));
         nears.push(near.clone());
         states.push(if judged.found {
             u8::from(!judged.keeps)
@@ -818,7 +1086,10 @@ pub fn band_cuts_the_part(
                 continue;
             }
             let t = ts.get(m).copied().unwrap_or(0.0);
-            let crossings = all_crossings.get(m).map_or(&[][..], Vec::as_slice);
+            // (a section taking all of the part was judged at its station)
+            let Some(station) = stations.get_mut(m).and_then(Option::as_mut) else {
+                continue;
+            };
             // the largest radius that keeps material behind its section here
             let mut at = nears.get(m).cloned().flatten();
             let radius = own;
@@ -829,12 +1100,13 @@ pub fn band_cuts_the_part(
                     k,
                     target,
                     solver,
+                    check,
                     &curve,
                     chord,
                     own,
                     t,
                     tr,
-                    Judge::KeepsMaterial(crossings),
+                    Judge::KeepsMaterial(station),
                     &mut at,
                 )?;
                 if judged.found && judged.keeps {
@@ -852,12 +1124,13 @@ pub fn band_cuts_the_part(
                     k,
                     target,
                     solver,
+                    check,
                     &curve,
                     chord,
                     own,
                     t,
                     mid,
-                    Judge::KeepsMaterial(crossings),
+                    Judge::KeepsMaterial(station),
                     &mut at,
                 )?;
                 if judged.found && judged.keeps {
@@ -897,6 +1170,7 @@ pub fn band_breaks_through_the_part(
     k: &Kernel,
     target: &mut Brep,
     solver: &mut SolverObject,
+    check: &mut BandCheck,
 ) -> Result<Option<BandCut>> {
     let base = solver.base();
     if base.surface(0)?.is_none() || base.surface(1)?.is_none() {
@@ -944,6 +1218,7 @@ pub fn band_breaks_through_the_part(
             k,
             target,
             solver,
+            check,
             &curve,
             chord,
             own,
@@ -964,6 +1239,7 @@ pub fn band_breaks_through_the_part(
                 k,
                 target,
                 solver,
+                check,
                 &curve,
                 chord,
                 own,
@@ -987,6 +1263,7 @@ pub fn band_breaks_through_the_part(
                 k,
                 target,
                 solver,
+                check,
                 &curve,
                 chord,
                 own,
@@ -1011,4 +1288,95 @@ pub fn band_breaks_through_the_part(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::kernel::CancelToken;
+    use crate::primitive::api_primitives::create_box;
+
+    /// A 10 mm cube and the section of a 2 mm round of its top front edge at its middle: the
+    /// station's plane `x = 5`, the ball's centre 2 in from the top and the front.
+    fn cube_section(k: &mut Kernel) -> (Brep, Point3, [Point3; 2]) {
+        let b = create_box(k, Point3::ZERO, 10.0, 10.0, 10.0).unwrap();
+        let centre = Point3::new(5.0, 2.0, 8.0);
+        (
+            b,
+            centre,
+            [Point3::new(5.0, 2.0, 10.0), Point3::new(5.0, 0.0, 8.0)],
+        )
+    }
+
+    /// The section keeps the cube behind it, judged against the faces and edges within its
+    /// reach only (#2648): the top and the front (the section meets them at its rails), no
+    /// edge (the four crossing the plane lie farther than the ball's radius from its centre),
+    /// and each face's cache made once over two judgements.
+    #[test]
+    fn a_section_is_judged_against_the_geometry_within_its_reach() {
+        let mut k = Kernel::default();
+        let (mut b, centre, rails) = cube_section(&mut k);
+        let mut check = BandCheck::new();
+        let mut station = Station::new(
+            &k,
+            &mut check,
+            &b,
+            Point3::new(5.0, 0.0, 10.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        )
+        .unwrap();
+        assert_eq!(station.near.len(), 4, "the edges along x reach the plane");
+        k.work_counters.reset();
+        for _ in 0..2 {
+            assert!(keeps_material_behind(
+                &k,
+                &mut b,
+                &mut check,
+                &mut station,
+                centre,
+                rails,
+                false
+            )
+            .unwrap());
+        }
+        assert_eq!(k.work_counters.band_edge_solves(), 0);
+        assert_eq!(k.work_counters.band_face_solves(), 4);
+        assert_eq!(k.work_counters.band_face_caches(), 2);
+    }
+
+    /// A token fired before a judgement stops it at the band check's own poll, with the
+    /// check's operation (#2648: the phase polled no token before).
+    #[test]
+    fn a_fired_token_stops_a_judgement() {
+        let mut k = Kernel::default();
+        let (mut b, centre, rails) = cube_section(&mut k);
+        let token = CancelToken::new();
+        k.set_cancel_token(token.clone());
+        token.cancel();
+        let mut check = BandCheck::new();
+        let mut station = Station::new(
+            &k,
+            &mut check,
+            &b,
+            Point3::new(5.0, 0.0, 10.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        )
+        .unwrap();
+        for chord in [false, true] {
+            let judged =
+                keeps_material_behind(&k, &mut b, &mut check, &mut station, centre, rails, chord);
+            assert_eq!(
+                judged,
+                Err(SolidError::Cancelled { operation: OP }),
+                "chord {chord}"
+            );
+        }
+        let faces = ThroughFaces {
+            skip: BTreeSet::new(),
+            reached: BTreeSet::new(),
+        };
+        let judged = section_breaks_through(&k, &mut b, &mut check, centre, rails, false, &faces);
+        assert_eq!(judged, Err(SolidError::Cancelled { operation: OP }));
+    }
 }

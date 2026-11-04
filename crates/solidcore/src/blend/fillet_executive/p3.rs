@@ -40,6 +40,7 @@ use std::collections::BTreeMap;
 
 use crate::blend::fillet_executive::p1::ExecutiveObjects;
 use crate::blend::fillet_executive::session::ball_regular::{BallCheck, BallStation};
+use crate::blend::fillet_executive::session::band_cuts::BandCheck;
 use crate::blend::fillet_geom::p1::{FilStatus, FilletCornerType, FilletEdgeType, FilletErrorType};
 use crate::blend::fillet_solver::p1::FilletSurfaceGenerator;
 use crate::blend::fillet_solver::p5::RailsFit;
@@ -2080,6 +2081,7 @@ pub trait BrepCreationAccess<O: ClassObject + SolutionObject + Ord>:
         &mut self,
         k: &mut Kernel,
         solver: O,
+        check: &mut BandCheck,
     ) -> Result<Option<SolverCut<O>>>;
 
     /// Not the fork's (WR-707, #2299): `None` for a concave blend or one whose sections
@@ -2093,6 +2095,7 @@ pub trait BrepCreationAccess<O: ClassObject + SolutionObject + Ord>:
         &mut self,
         k: &mut Kernel,
         solver: O,
+        check: &mut BandCheck,
     ) -> Result<Option<SolverCut<O>>>;
 
     /// `SmFilletSolver::LargestSizeOnItsFaces(pOnly, ...)` (the fork's, 49f393d and
@@ -2219,6 +2222,7 @@ where
         &mut self,
         _k: &mut Kernel,
         _solver: O,
+        _check: &mut BandCheck,
     ) -> Result<Option<SolverCut<O>>> {
         Err(invalid("the band's cut needs a live fillet session"))
     }
@@ -2227,6 +2231,7 @@ where
         &mut self,
         _k: &mut Kernel,
         _solver: O,
+        _check: &mut BandCheck,
     ) -> Result<Option<SolverCut<O>>> {
         Err(invalid(
             "the band's break-through needs a live fillet session",
@@ -3524,9 +3529,12 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         access: &mut impl BrepCreationAccess<O>,
     ) -> Result<()> {
         let mut worst: Option<(SolverCut<O>, O)> = None;
+        // (as `refuse_blends_cutting_the_part`, #2648)
+        let mut check = BandCheck::new();
         let mut index = 0;
         while let Some(solver) = self.solvers.get(index).copied() {
-            if let Some(cut) = access.creation_band_breaks_through(k, solver)? {
+            k.check_cancelled(OP)?;
+            if let Some(cut) = access.creation_band_breaks_through(k, solver, &mut check)? {
                 if worst.is_none_or(|(w, _)| cut.radius < w.radius) {
                     worst = Some((cut, solver));
                 }
@@ -3754,9 +3762,13 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     ) -> Result<()> {
         let mut worst: Option<SolverCut<O>> = None;
         let mut worst_solver: Option<O> = None;
+        // the body is not changed by the check: its faces' caches and boxes are kept from
+        // solver to solver (#2648)
+        let mut check = BandCheck::new();
         let mut index = 0;
         while let Some(solver) = self.solvers.get(index).copied() {
-            if let Some(cut) = access.creation_band_cuts_the_part(k, solver)? {
+            k.check_cancelled(OP)?;
+            if let Some(cut) = access.creation_band_cuts_the_part(k, solver, &mut check)? {
                 if worst.is_none_or(|w| cut.radius < w.radius) {
                     worst = Some(cut);
                     worst_solver = Some(solver);

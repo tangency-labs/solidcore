@@ -3753,6 +3753,7 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         &mut self,
         k: &mut Kernel,
         solver: FilletObject,
+        check: &mut band_cuts::BandCheck,
     ) -> Result<Option<crate::blend::fillet_executive::p3::SolverCut<FilletObject>>> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
@@ -3771,7 +3772,7 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         if crate::blend::fillet_solver::p5::is_concave_edge(k, self.target, edge)? {
             return Ok(None);
         }
-        let Some(cut) = band_cuts::band_cuts_the_part(k, self.target, current)? else {
+        let Some(cut) = band_cuts::band_cuts_the_part(k, self.target, current, check)? else {
             return Ok(None);
         };
         let chamfer = current.base().fsg.as_ref().is_some_and(|fsg| {
@@ -3792,6 +3793,7 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         &mut self,
         k: &mut Kernel,
         solver: FilletObject,
+        check: &mut band_cuts::BandCheck,
     ) -> Result<Option<crate::blend::fillet_executive::p3::SolverCut<FilletObject>>> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
@@ -3810,7 +3812,8 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         if crate::blend::fillet_solver::p5::is_concave_edge(k, self.target, edge)? {
             return Ok(None);
         }
-        let Some(cut) = band_cuts::band_breaks_through_the_part(k, self.target, current)? else {
+        let Some(cut) = band_cuts::band_breaks_through_the_part(k, self.target, current, check)?
+        else {
             return Ok(None);
         };
         let chamfer = current.base().fsg.as_ref().is_some_and(|fsg| {

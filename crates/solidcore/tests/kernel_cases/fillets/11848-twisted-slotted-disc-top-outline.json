@@ -1,0 +1,360 @@
+{
+  "area": "fillets",
+  "bodies": {
+    "b7": {
+      "keeping_splines": false,
+      "trusted": true
+    }
+  },
+  "calls": [
+    {
+      "inputs": [
+        "b7"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b8"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b8"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b9"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b9"
+      ],
+      "op": "tagged",
+      "outputs": [
+        "b10"
+      ],
+      "params": {
+        "operand": 0
+      }
+    },
+    {
+      "error": "SMLib failed (status 1001)",
+      "inputs": [
+        "b10"
+      ],
+      "op": "blend_dropping",
+      "params": {
+        "edges": {
+          "kind": "edge",
+          "picked": [
+            {
+              "at": [
+                [
+                  -20.19682680246862,
+                  22.183060814754246,
+                  14.999999999999998
+                ],
+                [
+                  9.09140951964185,
+                  -28.589268492673355,
+                  14.999999999999998
+                ]
+              ],
+              "index": 1
+            },
+            {
+              "at": [
+                [
+                  -20.19682680246862,
+                  22.183060814754246,
+                  14.999999999999998
+                ],
+                [
+                  -17.541949536281358,
+                  23.00162140113603,
+                  15.0
+                ]
+              ],
+              "index": 27
+            },
+            {
+              "at": [
+                [
+                  11.140753846241862,
+                  -26.72341080042893,
+                  15.000000000000004
+                ],
+                [
+                  9.09140951964185,
+                  -28.589268492673355,
+                  14.999999999999998
+                ]
+              ],
+              "index": 18
+            },
+            {
+              "at": [
+                [
+                  -14.431851652578136,
+                  22.168273184816012,
+                  15.0
+                ],
+                [
+                  -17.541949536281358,
+                  23.00162140113603,
+                  15.0
+                ]
+              ],
+              "index": 26
+            },
+            {
+              "at": [
+                [
+                  11.140753846241862,
+                  -26.72341080042893,
+                  15.000000000000004
+                ],
+                [
+                  11.982361909794955,
+                  -23.582486747189108,
+                  15.0
+                ]
+              ],
+              "index": 17
+            },
+            {
+              "at": [
+                [
+                  -11.982361909794957,
+                  23.582486747189105,
+                  15.0
+                ],
+                [
+                  -14.431851652578136,
+                  22.168273184816012,
+                  15.0
+                ]
+              ],
+              "index": 25
+            },
+            {
+              "at": [
+                [
+                  11.982361909794955,
+                  -23.582486747189108,
+                  15.0
+                ],
+                [
+                  14.431851652578132,
+                  -22.168273184816012,
+                  15.0
+                ]
+              ],
+              "index": 19
+            },
+            {
+              "at": [
+                [
+                  -11.140753846241848,
+                  26.723410800428947,
+                  15.000000000000002
+                ],
+                [
+                  -11.982361909794957,
+                  23.582486747189105,
+                  15.0
+                ]
+              ],
+              "index": 24
+            },
+            {
+              "at": [
+                [
+                  14.431851652578132,
+                  -22.168273184816012,
+                  15.0
+                ],
+                [
+                  17.54194953628136,
+                  -23.00162140113604,
+                  15.0
+                ]
+              ],
+              "index": 20
+            },
+            {
+              "at": [
+                [
+                  -11.140753846241848,
+                  26.723410800428947,
+                  15.000000000000002
+                ],
+                [
+                  -9.091409519641836,
+                  28.589268492673362,
+                  14.999999999999998
+                ]
+              ],
+              "index": 23
+            },
+            {
+              "at": [
+                [
+                  20.196826802468618,
+                  -22.183060814754246,
+                  14.999999999999998
+                ],
+                [
+                  17.54194953628136,
+                  -23.00162140113604,
+                  15.0
+                ]
+              ],
+              "index": 21
+            },
+            {
+              "at": [
+                [
+                  20.196826802468618,
+                  -22.183060814754246,
+                  14.999999999999998
+                ],
+                [
+                  -9.091409519641836,
+                  28.589268492673362,
+                  14.999999999999998
+                ]
+              ],
+              "index": 22
+            }
+          ],
+          "points": [
+            [
+              -25.986324451005885,
+              -14.990324597341509,
+              15.0
+            ],
+            [
+              -18.968709448479384,
+              22.9154866186739,
+              14.999999999999998
+            ],
+            [
+              10.343317793431885,
+              -27.905417389448647,
+              15.000000000000004
+            ],
+            [
+              -15.986900594429747,
+              22.58494729297602,
+              15.0
+            ],
+            [
+              11.561557878018409,
+              -25.15294877380902,
+              15.000000000000002
+            ],
+            [
+              -12.914213562373078,
+              22.368074029825245,
+              14.999999999999998
+            ],
+            [
+              12.91421356237308,
+              -22.36807402982525,
+              15.0
+            ],
+            [
+              -11.561557878018402,
+              25.152948773809026,
+              15.0
+            ],
+            [
+              15.986900594429747,
+              -22.584947292976025,
+              15.0
+            ],
+            [
+              -10.34331779343188,
+              27.905417389448672,
+              15.000000000000002
+            ],
+            [
+              18.96870944847938,
+              -22.915486618673885,
+              14.999999999999998
+            ],
+            [
+              25.9863244510059,
+              14.990324597341488,
+              15.000000000000002
+            ]
+          ],
+          "tolerance": 4.307185699965384
+        },
+        "kind": "round",
+        "sizes": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ],
+        "turn": "mitre"
+      }
+    }
+  ],
+  "case": "11848-twisted-slotted-disc-top-outline",
+  "expected": {
+    "body_count": 1,
+    "method": "every top edge is convex (top plane against the side walls, 90 deg) and the smallest radius of curvature in plan is the slot bottom's 2 mm, so a 2 mm round fits along the whole outline: one closed solid",
+    "outcome": "solid",
+    "source": "invariants",
+    "sources": [
+      "tangency-labs/solidcraft#11848"
+    ],
+    "what": "a 2 mm round of the whole top outline of a twisted (30 deg) slotted disc whose 4 twisted side edges are already rounded 2 mm: runs for tens of seconds (minutes with more slots) in band_cuts_the_part, then fails with status 1001"
+  },
+  "expressible": true,
+  "operation_expressible": true,
+  "outcome": {
+    "engine_error": "step 16 (solid.fillet): SMLib fillet: operation: SMLib failed (status 1001) (tangent propagation blended the picked edges' tangent chain with them; with it off, tangent_chain: false, only the picked edges are blended)",
+    "kernel_error": "SMLib failed (status 1001)",
+    "ran": false
+  },
+  "records": "11848-twisted-slotted-disc-top-outline.bodies.json.gz",
+  "result": [],
+  "rig": {
+    "error": "step 16 (solid.fillet): SMLib fillet: operation: SMLib failed (status 1001) (tangent propagation blended the picked edges' tangent chain with them; with it off, tangent_chain: false, only the picked edges are blended)",
+    "known_failing": null,
+    "measured": null,
+    "refused_with": null,
+    "status": "fail"
+  },
+  "sources": [
+    "tangency-labs/solidcraft#11848"
+  ],
+  "traced_ops": [
+    "sweep_stations",
+    "copy",
+    "copy",
+    "tagged",
+    "blend_dropping",
+    "copy",
+    "copy",
+    "tagged",
+    "blend_dropping"
+  ],
+  "ungraded": [],
+  "what": "a 2 mm round of the whole top outline of a twisted (30 deg) slotted disc whose 4 twisted side edges are already rounded 2 mm: runs for tens of seconds (minutes with more slots) in band_cuts_the_part, then fails with status 1001",
+  "why_not": []
+}
