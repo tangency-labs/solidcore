@@ -1794,9 +1794,11 @@ impl Cone {
     }
 
     /// The STEP domain [`Self::step_inversion_unbounded`] searches for a non-planar
-    /// generator.
+    /// generator: the cone's own [`Self::max_analytic_domain`], which stops at the apex
+    /// (the point is already mirrored onto that nappe), not the base surface of
+    /// revolution's, which runs on over the far one.
     fn step_inversion_unbounded_domain(&self, k: &Kernel) -> Result<Extent2d> {
-        self.rev.max_analytic_domain(k)
+        self.max_analytic_domain(k)
     }
 
     /// `SmSurfOfRevolution::STEPInversion` on the cone's base parts
