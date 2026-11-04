@@ -704,11 +704,7 @@ impl Recovery<'_> {
             let corner_type = self.corners.corner_type(corner)?;
             let closed_join =
                 corner_type == FilletCornerType::NByTwo && self.corners.is_closed_join(corner)?;
-            if !matches!(
-                corner_type,
-                FilletCornerType::NByOneClosed | FilletCornerType::OneByOne
-            ) && !closed_join
-            {
+            if corner_type != FilletCornerType::NByOneClosed && !closed_join {
                 return Err(SolidError::sm_err(OP));
             }
             if unknown0 {

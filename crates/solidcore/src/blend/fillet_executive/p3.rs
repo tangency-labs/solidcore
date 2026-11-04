@@ -1441,8 +1441,8 @@ pub trait ExecutiveAccess<O: ClassObject + SolutionObject + Ord> {
 
     /// `SmFilletCorner::GetTangentFilletSolver(pFS)` (virtual): delegate to the already
     /// ported `blend::fillet_corner::p1::FilletCorner::tangent_fillet_solver` (fillet
-    /// corner p1: the base, `SmFillet1x1Corner`, `SmFillet2x2Corner`; it dispatches the
-    /// `SmFilletNx1ClosedCorner` / `SmFilletNx2Corner` overrides to fillet corner p2).
+    /// corner p1: the base; it dispatches the `SmFilletNx2Corner` override to fillet corner
+    /// p2).
     fn corner_tangent_solver(&self, corner: O, solver: O) -> Result<Option<O>>;
 
     /// Context-aware `SmFilletSolver::GetFilletCorner(lIndex)` for adapters that look up

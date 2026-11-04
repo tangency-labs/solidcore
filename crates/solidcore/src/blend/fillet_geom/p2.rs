@@ -3687,7 +3687,7 @@ mod tests {
             })
         ));
         let corners = [FilletCorner::new(
-            crate::blend::fillet_corner::p3::FilletCornerKind::OneByOne,
+            crate::blend::fillet_corner::p3::FilletCornerKind::FourByThree,
             None,
             None,
             None,
