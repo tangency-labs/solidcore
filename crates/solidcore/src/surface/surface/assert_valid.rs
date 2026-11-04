@@ -2879,6 +2879,47 @@ mod tests {
         assert_eq!(failed, vec![(B_SPLINE_SURFACE_TYPE, 5)], "{failed:?}");
     }
 
+    /// A step below the tolerance carries no direction, so it may not become the step the
+    /// next one is compared against: upstream replaces the last difference with the
+    /// skipped one, and a tolerance as wide as the distance the points are distinct at
+    /// then lets the step after it be skipped too, hiding a reversal across the short
+    /// step. Along `0, 1, 1 + 5e-7, 0` the 180-degree turn is real and has to be refused,
+    /// as the default check refuses it (#2560).
+    #[test]
+    fn issue_2560_a_reversal_after_a_sub_tolerance_step_is_refused() {
+        const TOL: f64 = 1.0e-6;
+        // a real reversal whose two long steps are separated by one below TOL
+        const BACK: [f64; 4] = [0.0, 1.0, 1.0 + 5.0e-7, 0.0];
+        // a plain monotonic neighbour, so only the doubling-back pass can fail
+        const STRAIGHT: [f64; 4] = [0.0, 1.0, 2.0, 3.0];
+
+        let p = |x: f64, y: f64| Point3::new(x, y, 0.0);
+        // down a column: row size 2, so no row holds two steps to compare
+        let col: Vec<Point3> = BACK
+            .iter()
+            .zip(STRAIGHT.iter())
+            .flat_map(|(&back, &straight)| [p(back, 0.0), p(straight, 1.0)])
+            .collect();
+        // along a row: two rows of four, so no column holds two steps to compare
+        let row: Vec<Point3> = BACK
+            .iter()
+            .map(|&x| p(x, 0.0))
+            .chain(STRAIGHT.iter().map(|&x| p(x, 1.0)))
+            .collect();
+
+        for (what, points, row_size) in [("column", col, 2), ("row", row, 4)] {
+            assert!(
+                grid_has_non_monotonic_points(&points, row_size, false, false).unwrap(),
+                "{what}: upstream's absolute SM_EFF_ZERO refuses the reversal"
+            );
+            assert!(
+                grid_has_non_monotonic_points_with_tol(&points, row_size, false, false, TOL)
+                    .unwrap(),
+                "{what}: a step below the tolerance may not replace the last long step"
+            );
+        }
+    }
+
     #[test]
     fn plane_negative_scale() {
         let want = [(PLANE_TYPE, 3, "Scale", "m_vUVScale should be positive in X")];
