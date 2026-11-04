@@ -508,7 +508,9 @@ impl SurfOfRevolution {
     /// curve's STEP start point (with
     /// [`UpstreamFixes::revolution_frame_from_profile_origin`](crate::kernel::UpstreamFixes::revolution_frame_from_profile_origin),
     /// its point at parameter 0 when the STEP interval holds it, WR-738, and its start
-    /// when that is on the axis; or, when that is on the axis, its point at 45%), the
+    /// when that is on the axis; or, when that is on the axis, its point at 45%; a
+    /// point is on the axis within 1 degree of its direction, with the fix by its
+    /// distance from it), the
     /// domain is `[0, 360]` by the curve's STEP interval; the NURB is made by
     /// [`Self::make_nurb`]. A zero axis (squared length below `SM_EFF_ZERO_SQ`) is
     /// taken as `(0, 0, 1)`, as upstream's unchecked `Unitize`.
@@ -541,7 +543,16 @@ impl SurfOfRevolution {
 
         // Vector from SweptCurve Start to RotAxis point
         let mut x_vec = pnt - axis_point;
-        let on_axis = |x_vec: Vec3| x_vec.length() < EFF_ZERO || x_vec.is_parallel_to(z_vec, 1.0);
+        // on the axis: upstream within 1 degree of its direction (which takes a point
+        // far along the axis for one on it); with the fix by the point's distance from
+        // the axis, `|Z x x_vec|`, under the bound the Y axis below is checked against
+        let on_axis = |x_vec: Vec3| {
+            if fix {
+                z_vec.cross(x_vec).length_squared() < crate::math::EFF_ZERO_SQ
+            } else {
+                x_vec.length() < EFF_ZERO || x_vec.is_parallel_to(z_vec, 1.0)
+            }
+        };
 
         // with the fix, a profile origin on the axis gives way to the start first, the
         // point upstream takes (a segment through the axis whose origin and 45% point
