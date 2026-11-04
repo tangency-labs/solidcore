@@ -2,20 +2,21 @@
 //! #1668's thin wall, #2852's U shell), run through [`blend`] with every fix on: the kernel's
 //! `NoRoomReason::BreaksThrough` refuses them as [`Error::TooLarge`] with
 //! [`RoomReason::BreaksThrough`].
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)] // test helpers
+
+mod common;
 
 use solidcore::boolean::api_brep::boolean_difference;
 use solidcore::primitive::api_primitives::create_box;
 use solidcore::Vec3;
 
-use super::tests::{all_fixes, edge_at};
-use super::*;
-use crate::session::run;
-use crate::Body;
+use common::*;
+use solidcore_ops::*;
 
 /// The box `[lo, hi]` less the box `[cut_lo, cut_hi]`.
 fn box_less_box(lo: [f64; 3], hi: [f64; 3], cut_lo: [f64; 3], cut_hi: [f64; 3]) -> Body {
     let v = |a: [f64; 3]| Vec3::new(a[0], a[1], a[2]);
-    let b = run("test", |k| {
+    built(|k| {
         let outer = create_box(k, v(lo), hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])?;
         let inner = create_box(
             k,
@@ -26,8 +27,6 @@ fn box_less_box(lo: [f64; 3], hi: [f64; 3], cut_lo: [f64; 3], cut_hi: [f64; 3]) 
         )?;
         boolean_difference(k, outer, inner)
     })
-    .unwrap();
-    Body::new(b)
 }
 
 /// #1668: a 104 x 64 x 42 box hollowed 2 mm from the inside, open at the bottom.

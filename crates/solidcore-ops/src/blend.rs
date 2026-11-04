@@ -1469,10 +1469,4 @@ pub fn fillet_variable(
 }
 
 #[cfg(test)]
-mod crossing_tests;
-#[cfg(test)]
-mod hollow_tests;
-#[cfg(test)]
-mod room_tests;
-#[cfg(test)]
 mod tests;

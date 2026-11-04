@@ -1,21 +1,23 @@
 //! Rounds that overlap where a wall is thinner than both (SolidCraft #871): a plate with a
 //! narrower block on top and a window through both, rounded along every edge of both end faces.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)] // test helpers
+
+mod common;
 
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::primitive::api_primitives::create_box;
 use solidcore::Vec3;
 
-use super::tests::{all_fixes, edge_at};
-use super::*;
-use crate::session::run;
-use crate::{Body, CheckLevel};
+use common::*;
+use solidcore::kernel::Kernel;
+use solidcore_ops::*;
 
 const A: f64 = 12.744_373_655_385_26;
 const B: f64 = 22.692_759_633_669_36;
 
 /// The part from #871.
 fn part() -> Body {
-    let b = run("test", |k| {
+    built(|k| {
         let bx = |k: &mut Kernel, lo: [f64; 3], hi: [f64; 3]| {
             create_box(
                 k,
@@ -31,8 +33,6 @@ fn part() -> Body {
         let window = bx(k, [9.5, 14.0, 7.0], [23.5, 19.2, 14.1])?;
         boolean_difference(k, joined, window)
     })
-    .unwrap();
-    Body::new(b)
 }
 
 /// The 24 edges of both end faces.

@@ -1,21 +1,22 @@
 //! The band's room through ops (SolidCraft's taper cases): a wedge whose top face closes to a
 //! point, from either end; the kernel's refusals as [`Error`]s; a radius law refused where it
 //! runs out of room.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)] // test helpers
+
+mod common;
 
 use solidcore::curve::curve::Curve;
 use solidcore::primitive::api_curves::create_line_segment;
 use solidcore::sweep::api_brep::create_taper_extrude;
 use solidcore::Vec3;
 
-use super::tests::{all_fixes, edge_at, vertex_at};
-use super::*;
-use crate::session::run;
-use crate::Body;
+use common::*;
+use solidcore_ops::*;
 
 /// The prism of the polygon `pts` (in xy, counter-clockwise) from z = 0 to `h`.
 fn prism(pts: &[(f64, f64)], h: f64) -> Body {
     let pts = pts.to_vec();
-    let b = run("test", move |k| {
+    built(move |k| {
         let n = pts.len();
         let mut curves = Vec::new();
         for i in 0..n {
@@ -28,8 +29,6 @@ fn prism(pts: &[(f64, f64)], h: f64) -> Body {
         let refs: Vec<Option<&Curve>> = curves.iter().map(Some).collect();
         create_taper_extrude(k, &refs, h, 0.0, 3, false)
     })
-    .unwrap();
-    Body::new(b)
 }
 
 fn wedge() -> Body {
