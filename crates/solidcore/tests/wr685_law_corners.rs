@@ -497,6 +497,30 @@ fn law_round(
     (size[0] * size[1] * size[2] - volume(&k, &mut b), faces)
 }
 
+/// The piecewise skin of the fork's 6eecf04, before its law corners (7babe17): each side of
+/// a law corner skinned on its own, between the corner and the round's end, its sections the
+/// balls' touch circles of its own side, and the sides joined C0 at the corner. On the dip
+/// (4 -> 2 -> 4 on the 20 cube's edge y = z = 20, from either end) that removes 39.6456, the
+/// fork's own value at 6eecf04 and 5fbffc9 (WR-685's law-corner addendum), where one surface
+/// skinned across the turn removes 35.0271. The corner ball's zone (7babe17) then makes it
+/// the union of the balls, 39.5421 (`law_dip`).
+#[test]
+fn a_dips_sides_are_skinned_piece_by_piece() {
+    let (a, b) = (Point3::new(0.0, 20.0, 20.0), Point3::new(20.0, 20.0, 20.0));
+    for (from, to) in [(a, b), (b, a)] {
+        let (removed, faces) = law_round(
+            [20.0; 3],
+            from,
+            to,
+            1,
+            &[0.0, 0.0, 0.5, 1.0, 1.0],
+            &[4.0, 2.0, 4.0],
+        );
+        eprintln!("dip, skinned piece by piece: removed {removed}, want 39.6456, {faces} faces");
+        assert!((removed - 39.6456).abs() <= 1e-4 * 39.6456, "{removed}");
+    }
+}
+
 /// The fork's 5e8c9c1 build, through its C API (a scratch driver running the capi cases):
 /// the volume removed at `smlib_brep_volume`'s 1e-7.
 const BLOCKED: &str = "the law's corners are traced through, but the round is not yet skinned \
