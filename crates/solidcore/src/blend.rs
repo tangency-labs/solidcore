@@ -7,6 +7,7 @@
 //! `SM_API/SmApiFillets`.
 
 pub mod blend_corner;
+pub mod blend_refusal;
 pub mod blend_setback;
 pub mod chamfer_side;
 pub mod definition_check;

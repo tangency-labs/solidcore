@@ -93,7 +93,7 @@ impl FilletSession<'_> {
             None
         };
         for (index, &id) in edges.iter().enumerate() {
-            let edgeuse = self.blend_edgeuse(k, id)?.ok_or_else(invalid)?;
+            let edgeuse = self.blendable_edgeuse(k, id)?;
             let approx_tol = 4.0 * edge::tolerance(self.target(), id)?;
             let solver = self.new_constant_radius_solver_with_second(
                 k,
@@ -173,7 +173,7 @@ impl FilletSession<'_> {
         let mut first = Vec::new();
         let mut second = Vec::new();
         for (index, &id) in edges.iter().enumerate() {
-            let u0 = self.blend_edgeuse(k, id)?.ok_or_else(invalid)?;
+            let u0 = self.blendable_edgeuse(k, id)?;
             let target: &mut crate::Brep = &mut *self.objects.target;
             let u1 = eu1::radial(target, u0)?.ok_or_else(invalid)?;
             // the support the first size is along: 1 unless `along` names support 2's face

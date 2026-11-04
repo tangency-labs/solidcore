@@ -110,6 +110,65 @@ pub enum Error {
     /// A step the kernel has not ported yet, refused rather than built another way: what is
     /// missing.
     Unported(&'static str),
+    /// An edge that has no blend (the kernel's `BlendRefusal::EdgeNotBlendable`): its index
+    /// and why.
+    EdgeNotBlendable {
+        /// The edge's index.
+        edge: usize,
+        /// Why it has no blend.
+        reason: Unblendable,
+    },
+    /// A blend that cannot end where its edge runs on tangentially into an edge not blended
+    /// with it (the kernel's `BlendRefusal::ContinuesInto`): blending that edge too, its
+    /// tangent chain ([`crate::blend::tangent_chain`]), runs the blend on.
+    ContinuesInto {
+        /// The blended edge's index.
+        edge: usize,
+        /// The index of the edge it runs on into.
+        continues_into: usize,
+    },
+    /// A round too small to change the part (the kernel's `BlendRefusal::RoundTooSmall`): it
+    /// lies within the edge's tolerance of the edge.
+    RoundTooSmall {
+        /// The edge's index.
+        edge: usize,
+        /// The least turn of its faces' normals across it, radians.
+        turn: f64,
+        /// The edge's tolerance.
+        tolerance: f64,
+        /// The least radius that rounds it.
+        smallest: f64,
+    },
+    /// A corner's setback that stops short of where the rails of the rounds beside an edge
+    /// cross it (the kernel's `BlendRefusal::SetbackTooShort`).
+    SetbackTooShort {
+        /// The corner's vertex index.
+        vertex: usize,
+        /// The least setback.
+        least: f64,
+    },
+    /// A corner's setback that does not fit on its edges (the kernel's
+    /// `BlendRefusal::SetbackTooLong`): one below `largest` fits.
+    SetbackTooLong {
+        /// The corner's vertex index.
+        vertex: usize,
+        /// The bound below which a setback fits.
+        largest: f64,
+    },
+}
+
+/// Why an edge has no blend ([`Error::EdgeNotBlendable`]), as the kernel names it
+/// (`NotBlendable`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unblendable {
+    /// Its faces meet tangentially all along it: nothing to round.
+    Smooth,
+    /// It is not between two faces.
+    NotTwoFaces,
+    /// Its faces are tangent, or folded back on each other, where the blend is set up.
+    Tangent,
+    /// The side to blend cannot be told.
+    Ambiguous,
 }
 
 /// Why a blend has no room, as the kernel names its refusal (`NoRoomReason`).
@@ -212,6 +271,26 @@ impl std::fmt::Display for Error {
             Error::Internal(e) => write!(f, "solidcore failed internally in {e}"),
             Error::Unsupported(what) | Error::Unported(what) => {
                 write!(f, "not supported yet: {what}")
+            }
+            Error::EdgeNotBlendable { edge, reason } => {
+                write!(f, "edge {edge} has no blend ({reason:?})")
+            }
+            Error::ContinuesInto {
+                edge,
+                continues_into,
+            } => write!(
+                f,
+                "the blend of edge {edge} cannot end where it runs on into edge {continues_into}"
+            ),
+            Error::RoundTooSmall { edge, smallest, .. } => write!(
+                f,
+                "the round of edge {edge} is too small to change the part: the smallest is {smallest}"
+            ),
+            Error::SetbackTooShort { vertex, least } => {
+                write!(f, "the setback at vertex {vertex} is shorter than {least}")
+            }
+            Error::SetbackTooLong { vertex, largest } => {
+                write!(f, "the setback at vertex {vertex} does not fit: below {largest} fits")
             }
         }
     }
