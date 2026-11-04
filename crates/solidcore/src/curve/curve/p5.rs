@@ -1962,9 +1962,6 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
     let set_periodic = false; // IsPeriodic( crInterval );
 
     let mut ls = LocalSolve1d::with_interval(*interval, set_periodic);
-    // Not upstream (WR-253, tangency-labs/solidcore#481): opt-in, a failed evaluation
-    // (e.g. the radius of curvature of a straight piece) is no sign change
-    ls.set_failed_guess_no_sign_change(k.fixes.oscillating_skips_failed_guesses);
 
     // select the solver and the desired accuracy.
     if property == CurvePropertyType::MinimizeFirstDerivative
@@ -1994,17 +1991,12 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
     let found_t = outcome.t;
     let pass_on = k.fixes.query_statuses_pass_on;
 
-    // when no solution was found
+    // A search that found nothing has no solution to report. Upstream reports the
+    // parameter the minimisations and maximisations stopped at, with `ls.curr.f` as its
+    // property value, so a search that never had a value to minimise still answers with
+    // one (#2574).
     if !outcome.found {
-        // If we terminate for minimization or maximization problem
-        // for any normal reason then we don't need to fail.
-        if property != CurvePropertyType::MinimizeFirstDerivative
-            && property != CurvePropertyType::MaximizeFirstDerivative
-            && property != CurvePropertyType::MinimizeRadiusOfCurvature
-            && property != CurvePropertyType::MaximizeRadiusOfCurvature
-        {
-            return Ok(false);
-        }
+        return Ok(false);
     } // end no solution check
 
     // else a solution was found - set the outputs
@@ -3105,29 +3097,17 @@ mod tests {
     /// every point the bisection tries below it can.
     const STALL_AT_LAST_GUESS: f64 = 0.989_999_999_999_999_2;
 
-    /// WR-253 (tangency-labs/solidcore#481) through the Kernel: with
-    /// `fixes.oscillating_skips_failed_guesses` the failed last guess is no sign
-    /// change, so the perpendicular solve on a curve whose `F` stays above 0.9
-    /// finds nothing.
+    /// WR-253 (tangency-labs/solidcore#481, #2574): the failed last guess is no sign
+    /// change, so the perpendicular solve on a curve whose `F` stays above 0.9 finds
+    /// nothing. Upstream reads the failed guess's zeroed `F` as a sign change, brackets
+    /// it, and reports a root exactly at the unevaluable point with value 0, although
+    /// `F` is near 1.98 on both sides of it.
     #[test]
-    fn issue_481_kernel_fix_skips_the_failed_last_guess() {
-        let mut k = Kernel::default();
-        k.fixes.oscillating_skips_failed_guesses = true;
+    fn issue_481_the_failed_last_guess_is_no_root() {
+        let k = Kernel::default();
         let (found, _, _) = perpendicular_on_stalled_quartic(&k, STALL_AT_LAST_GUESS).unwrap();
         assert!(!found);
-    }
 
-    /// The default (upstream) reads the failed guess's zeroed `F` as a sign
-    /// change, brackets it, and reports a root exactly at the unevaluable point,
-    /// with value 0, although `F` is near 1.98 on both sides of it.
-    #[test]
-    fn oscillating_failed_guess_is_a_root_by_default() {
-        let k = Kernel::default();
-        assert!(!k.fixes.oscillating_skips_failed_guesses);
-        let (found, t, value) = perpendicular_on_stalled_quartic(&k, STALL_AT_LAST_GUESS).unwrap();
-        assert!(found);
-        assert_eq!(t.to_bits(), STALL_AT_LAST_GUESS.to_bits());
-        assert_eq!(value, 0.0);
         // the point really cannot be evaluated, and its neighbour below is far from 0
         let curve = stalled_quartic(STALL_AT_LAST_GUESS);
         let v = [Vec3::new(1.0, 0.0, 0.0)];
@@ -3148,11 +3128,7 @@ mod tests {
         )
         .unwrap();
         assert!(out.f > 1.9, "{out:?}");
-        // a stall that misses the guess changes nothing: both settings find no root
-        let mut fixed = Kernel::default();
-        fixed.fixes.oscillating_skips_failed_guesses = true;
-        for k in [&Kernel::default(), &fixed] {
-            assert!(!perpendicular_on_stalled_quartic(k, 0.991).unwrap().0);
-        }
+        // a stall that misses the guess finds no root either
+        assert!(!perpendicular_on_stalled_quartic(&k, 0.991).unwrap().0);
     }
 }

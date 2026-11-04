@@ -1656,7 +1656,12 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 let a = c[1].cross(c[2]);
                 let denom = a.length();
                 if is_zero(denom) {
-                    return Err(err()); // No curvature: infinite radius
+                    // No curvature: the radius is unbounded, so this parameter is not a
+                    // minimum of it. Upstream fails here instead (`SM_ERR`), and its
+                    // zeroed `F` then reads as a radius of zero (WR-253, #2574).
+                    out.f = BIG_DOUBLE;
+                    out.f_prime = 0.0;
+                    return Ok(());
                 }
                 out.f = numer / denom;
 
