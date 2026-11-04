@@ -125,6 +125,58 @@ fn invalid(reason: &'static str) -> SolidError {
     SolidError::invalid_input(OP, reason)
 }
 
+/// The refusal of a corner where two rounded edges meet at zero angle.
+const ZERO_ANGLE_REFUSAL: &str = "Fillet Error: two rounded edges meet at zero angle at this vertex (a knife-edge tip): their rounds' contact lines cross before it at any radius, so no radius fits there";
+
+/// The first of two of `edgeuses`' edges that leave `vertex` in one direction, within
+/// `tolerance` radians (a knife-edge tip: the face between them pinched to no width), if
+/// any. Edges that start and end at `vertex` are passed over.
+///
+/// # Errors
+///
+/// Those of the topology queries and the curves' evaluation.
+fn zero_angle_edge(
+    k: &Kernel,
+    b: &Brep,
+    vertex: VertexId,
+    edgeuses: &[EdgeuseId],
+    tolerance: f64,
+) -> Result<Option<EdgeId>> {
+    use crate::topology::edge;
+    let mut leaving: Vec<(EdgeId, crate::math::Vec3)> = Vec::new();
+    for &edgeuse in edgeuses {
+        let Some(e) = crate::topology::edgeuse::p1::edge(b, edgeuse)? else {
+            continue;
+        };
+        let (start, end) = (edge::start_vertex(b, e)?, edge::end_vertex(b, e)?);
+        if start == end || leaving.iter().any(|(seen, _)| *seen == e) {
+            continue;
+        }
+        let Some(curve) = edge::curve(b, e)? else {
+            continue;
+        };
+        let interval = edge::interval(b, e)?;
+        // evaluated from inside the edge
+        let (t, sign, from_left) = if start == Some(vertex) {
+            (interval.min(), 1.0, false)
+        } else {
+            (interval.max(), -1.0, true)
+        };
+        let derivs = curve.evaluate(k, t, 1, from_left, true)?;
+        let Some(Ok(d)) = derivs.get(1).map(|d| (*d * sign).unitize()) else {
+            continue;
+        };
+        leaving.push((e, d));
+    }
+    let cos = tolerance.cos();
+    for (i, (e, d)) in leaving.iter().enumerate() {
+        if leaving.iter().skip(i + 1).any(|(_, g)| d.dot(*g) > cos) {
+            return Ok(Some(*e));
+        }
+    }
+    Ok(None)
+}
+
 pub use crate::blend::fillet_classification::FilletBody;
 
 /// A reference to an actual object in a single executive's object store.
@@ -2188,6 +2240,36 @@ impl<'target> FilletSession<'target> {
                         _ => None,
                     })
                     .collect();
+                // Two rounded edges that leave the vertex in one direction (a knife-edge
+                // tip, the face between them pinched to no width): the rounds' contact
+                // lines on that face cross before the tip at any radius, so no corner fits
+                // there; refused by name (solidcore's, #11360 line 2) instead of the
+                // missing corner the solvers would ask for later.
+                let mut tangency_tol = f64::MAX;
+                for &edgeuse in &edgeuses {
+                    let object =
+                        FilletObject::Topology(FilletBody::Target, EntityRef::Edgeuse(edgeuse));
+                    if let Some(FilletObject::Solver(id)) =
+                        executive.fillet_solver_of_edgeuse(object)
+                    {
+                        if let Some(solver) = solvers.get(id.0 as usize).and_then(Option::as_ref)
+                        {
+                            tangency_tol = tangency_tol.min(solver.base().tangency_tolerance);
+                        }
+                    }
+                }
+                if let Some(edge) = zero_angle_edge(k, target, vertex, &edgeuses, tangency_tol)? {
+                    let location = crate::topology::vertex::point(target, vertex).ok();
+                    return Ok(CornerCreation::Refused {
+                        location,
+                        error: crate::blend::fillet_geom::p1::FilletErrorType::NoRoom,
+                        comment: ZERO_ANGLE_REFUSAL.to_owned(),
+                        fit_edge: Some(FilletObject::Topology(
+                            FilletBody::Target,
+                            EntityRef::Edge(edge),
+                        )),
+                    });
+                }
                 let made = FilletCorner::create_with_solver_lookup(
                     k,
                     target,
