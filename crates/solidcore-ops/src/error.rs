@@ -54,6 +54,34 @@ pub enum Error {
         /// The corner's index among the call's corners.
         corner: usize,
     },
+    /// The rounds would leave a face whose boundary crosses itself (rounds overlapping where
+    /// a wall is thinner than both): the points where it does, and the largest size that
+    /// leaves no crossing, when the kernel finds it.
+    RoundsCross {
+        /// Points where a face's boundary crosses itself.
+        at: Vec<[f64; 3]>,
+        /// The largest size that leaves no crossing.
+        fit: Option<f64>,
+    },
+    /// A band's room is not known at an end of the edge: a face's side there leans away from
+    /// the edge (how far its far end lies past the plane square to the edge), or is not
+    /// straight (no lean). The vertex is a record index.
+    TaperEndUnsupported {
+        /// The edge's vertex at that end.
+        vertex: usize,
+        /// The side's lean past the square, when the side is straight.
+        lean: Option<f64>,
+    },
+    /// The faces of the edge close to a point at both its ends: no band fits there.
+    FacesCloseAtBothEnds,
+    /// A variable round's radius is larger than its band's room at a station of the edge:
+    /// the station (from the start the call named) and the largest radius proved to fit there.
+    RoomRunsOut {
+        /// The station, a fraction of the way along the edge.
+        at: f64,
+        /// The largest radius proved to fit there.
+        largest: f64,
+    },
     /// The kernel reported success but the operation did nothing: a blend that made no face, a
     /// face move or draft that moved no face.
     NoEffect,
@@ -231,6 +259,21 @@ impl std::fmt::Display for Error {
                 write!(f, "a blend corner of this kind is not supported yet")
             }
             Error::CornerRefused { corner } => write!(f, "corner {corner} is not set back"),
+            Error::RoundsCross { at, fit } => write!(
+                f,
+                "the rounds leave a face whose boundary crosses itself at {at:?} (largest {fit:?})"
+            ),
+            Error::TaperEndUnsupported { vertex, lean } => write!(
+                f,
+                "the band's room is not known at vertex {vertex} (its side leans {lean:?})"
+            ),
+            Error::FacesCloseAtBothEnds => {
+                write!(f, "the faces close to a point at both ends of the edge")
+            }
+            Error::RoomRunsOut { at, largest } => write!(
+                f,
+                "the room runs out at {at} along the edge (largest radius there {largest})"
+            ),
             Error::NoEffect => write!(f, "the operation did nothing"),
             Error::NotExact => write!(f, "not exact in the input's geometry"),
             Error::Profile(r) => write!(

@@ -390,6 +390,22 @@ pub enum SolidError {
         refusal: crate::blend::blend_refusal::BlendRefusal,
     },
 
+    /// A round refused for the room it leaves or takes, with what the refusal found
+    /// ([`crate::blend::round_room::RoundRefusal`]): rounds whose result crosses a face's
+    /// boundary over itself, or a variable round along a straight edge between planes whose
+    /// band does not fit its faces. Not upstream (SolidCraft's checks, made the kernel's).
+    /// `code` is the status (`SM_ERR`) so [`SolidError::sm_status`] reads as an ordinary
+    /// failure.
+    #[error("{operation}: upstream status {code}: refused ({refusal:?})")]
+    RoundRefused {
+        /// Operation that refused.
+        operation: &'static str,
+        /// Upstream `SmStatus` value (`SM_ERR`).
+        code: i32,
+        /// Why, and what it found.
+        refusal: crate::blend::round_room::RoundRefusal,
+    },
+
     /// The operation needs an upstream routine whose unit is not ported yet (a
     /// plan back-edge). Returned instead of panicking or faking a result; every
     /// site carries a `// UNPORTED(<unit id>): <C++ symbol>` comment so the
@@ -919,7 +935,8 @@ impl SolidError {
         match self {
             Self::Upstream { code, .. }
             | Self::FilletRefused { code, .. }
-            | Self::BlendRefused { code, .. } => Some(*code),
+            | Self::BlendRefused { code, .. }
+            | Self::RoundRefused { code, .. } => Some(*code),
             Self::Failed(f) => Some(f.status),
             Self::Nlib { .. } => Some(SM_ERR),
             Self::InvalidInput { .. }
@@ -1002,7 +1019,9 @@ impl SolidError {
             Self::PreparationRequired { .. } => ErrorKind::PreparationRequired,
             Self::Cancelled { .. } => ErrorKind::Cancelled,
             Self::FilletRefused { .. } => ErrorKind::FilletTooLarge,
-            Self::BlendRefused { code, .. } => ErrorKind::of_status(*code),
+            Self::BlendRefused { code, .. } | Self::RoundRefused { code, .. } => {
+                ErrorKind::of_status(*code)
+            }
             Self::Failed(f) => f.kind(),
             Self::Unported { .. } => ErrorKind::Unported,
         }
@@ -1076,6 +1095,7 @@ impl SolidError {
             | Self::Upstream { operation, .. }
             | Self::FilletRefused { operation, .. }
             | Self::BlendRefused { operation, .. }
+            | Self::RoundRefused { operation, .. }
             | Self::Nlib { operation, .. }
             | Self::PreparationRequired { operation }
             | Self::FaceTrimsUnavailable { operation, .. }
@@ -1105,6 +1125,7 @@ impl SolidError {
             | Self::Nlib { .. }
             | Self::Unported { .. }
             | Self::Cancelled { .. }
+            | Self::RoundRefused { .. }
             | Self::PreparationRequired { .. } => None,
         }
     }

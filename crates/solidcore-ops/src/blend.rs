@@ -24,6 +24,7 @@ use std::collections::{HashMap, HashSet};
 use solidcore::blend::blend_corner::BlendCornerEvent;
 use solidcore::blend::blend_refusal::{BlendRefusal, NotBlendable};
 use solidcore::blend::chamfer_side::faces_along;
+use solidcore::blend::round_room::rounds_cross;
 use solidcore::blend::fillet_executive::p3::{ErrorInfo, FitKind as KernelFit, NoRoomReason};
 use solidcore::blend::fillet_executive::session::{FilletObject, FilletSession};
 use solidcore::blend::fillet_executive::FilletLaw;
@@ -48,6 +49,8 @@ use crate::body::{finish, Body, Expect};
 use crate::error::status;
 use crate::session::{answer, measure_body, with_body};
 use crate::{Error, FitKind, Result, RoomReason, Unblendable};
+
+mod room;
 
 /// The largest size, setback or radius the operations take.
 pub const MAX_SIZE: f64 = 1e6;
@@ -598,6 +601,14 @@ fn pass(
     if faces.is_empty() {
         return Ok(Err(Refused::Error(Error::NoEffect)));
     }
+    // the rounds' faces and their neighbours: none may cross its own boundary
+    match rounds_cross(k, b, &faces) {
+        Ok(()) => {}
+        Err(e @ SolidError::RoundRefused { .. }) => {
+            return Ok(Err(Refused::Error(room::refusal(b, e, false))))
+        }
+        Err(e) => return Err(e),
+    }
     let mut patches = Vec::new();
     if p.patches {
         // the stitch keeps the faces filleting made: a corner's patch is the faces marked
@@ -871,7 +882,9 @@ fn setbacks_fit(k: &Kernel, b: &Brep, setbacks: &[(VertexId, f64)]) -> solidcore
 /// [`Error::CornerUnsupported`] for a vertex no corner kind handles; [`Error::EdgeNotBlendable`]
 /// for an edge with no blend; [`Error::RoundTooSmall`] for a round within its edge's tolerance;
 /// [`Error::ContinuesInto`] for a blend that cannot end where its edge runs on tangentially;
-/// [`Error::NoEffect`] for a blend that made no face; with [`Corners::Open`], [`Error::NotSolid`] for a body that is no
+/// [`Error::NoEffect`] for a blend that made no face; [`Error::RoundsCross`] for blends that
+/// leave a face whose boundary crosses itself (the kernel's `rounds_cross`, on the blends' faces
+/// and their neighbours); with [`Corners::Open`], [`Error::NotSolid`] for a body that is no
 /// closed solid once blended and [`Error::Unsupported`] for a corner patch that is not a disc
 /// between faces outside every patch; the kernel's other refusals; those of [`finish`].
 pub fn blend(
@@ -1443,3 +1456,5 @@ pub fn fillet_variable(
 mod tests;
 #[cfg(test)]
 mod hollow_tests;
+#[cfg(test)]
+mod crossing_tests;
