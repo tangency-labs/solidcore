@@ -395,19 +395,136 @@ impl EvalSurface {
     }
 
     /// The unit normal at `(u, v)` approached along the parameter direction `dir`, oriented as
-    /// the surface. Whether `(u, v)` is a pole is the one classifier's ([`super::collapse`],
-    /// exactly): off a pole it is the normal ([`EvalSurface::eval`]); at one it is the first
-    /// coefficient of the expansion of `S_u × S_v` along `dir` that does not vanish
-    /// ([`super::pole::normal_along`]), exactly, and [`EvalError::Degenerate`] at a pole of order
-    /// above three.
-    pub fn normal_along(&self, u: f64, v: f64, dir: [f64; 2]) -> Result<Vec3, EvalError> {
-        if super::collapse::collapse(self, [u, v], 0.0)? == super::collapse::Collapse::Neither {
-            return Ok(self.eval(u, v)?.1);
+    /// the surface. Whether `(u, v)` is a pole, exactly or within `reach` mm (a row an importer
+    /// left coinciding only to its tolerance), is the one classifier's ([`super::collapse`]):
+    /// off a pole it is the normal ([`EvalSurface::eval`]); at one, the partials along each
+    /// collapsed direction are set to exact zero and it is the first coefficient of the
+    /// expansion of `S_u × S_v` along `dir` that does not vanish by cancellation
+    /// ([`super::pole::limit_along`]), and [`EvalError::Degenerate`] at a pole of order above
+    /// three.
+    pub fn normal_along(
+        &self,
+        u: f64,
+        v: f64,
+        dir: [f64; 2],
+        reach: f64,
+    ) -> Result<Vec3, EvalError> {
+        Ok(self.limit_along(u, v, dir, reach)?.0)
+    }
+
+    /// [`Self::normal_along`] with the order `k` of the coefficient it is (0 off a pole).
+    pub fn limit_along(
+        &self,
+        u: f64,
+        v: f64,
+        dir: [f64; 2],
+        reach: f64,
+    ) -> Result<(Vec3, usize), EvalError> {
+        let c = super::collapse::collapse(self, [u, v], reach)?;
+        if c == super::collapse::Collapse::Neither {
+            return Ok((self.eval(u, v)?.1, 0));
         }
-        let d = self
-            .partials(u, v)
-            .ok_or_else(|| EvalError::Unevaluable(format!("the surface at ({u}, {v})")))?;
-        Ok(self.oriented(super::pole::normal_along(&d, dir)?))
+        // The partials with the pole point at the origin (a spline's net moved there), so their
+        // rounding is the surface's own, not its offset's.
+        let unevaluable = || EvalError::Unevaluable(format!("the surface at ({u}, {v})"));
+        let at = self.derivs(u, v).ok_or_else(unevaluable)?.0;
+        let moved;
+        let local = match self {
+            EvalSurface::Nurbs(n) => {
+                let ctrl = n
+                    .ctrl()
+                    .iter()
+                    .map(|h| {
+                        [
+                            h[0] - h[3] * at.x,
+                            h[1] - h[3] * at.y,
+                            h[2] - h[3] * at.z,
+                            h[3],
+                        ]
+                    })
+                    .collect();
+                moved = EvalSurface::nurbs_closed(
+                    n.degree(),
+                    n.knots().clone(),
+                    n.count(),
+                    ctrl,
+                    n.closed(),
+                );
+                &moved
+            }
+            _ => self,
+        };
+        let mut d = local.partials(u, v).ok_or_else(unevaluable)?;
+        super::pole::zero_collapsed(&mut d, c.flags());
+        let scale = local.scale([u, v], at).ok_or_else(unevaluable)?;
+        let (n, k) = super::pole::limit_along(&d, dir, scale)?;
+        Ok((self.oriented(n), k))
+    }
+
+    /// The scale of the partials at `uv` for their rounding ([`super::pole::Scale`]): the
+    /// net's (or profile's) largest point from `at` times its weights' spread, and per
+    /// direction `2p / Δ` (the shortest knot span touching the parameter) or 1 for an angle.
+    fn scale(&self, uv: [f64; 2], at: Vec3) -> Option<super::pole::Scale> {
+        // The size of homogeneous points from `at`, times their weights' spread.
+        let size = |ctrl: &[[f64; 4]], at: Vec3| -> Option<f64> {
+            let (mut m, mut lo, mut hi) = (0.0f64, f64::INFINITY, 0.0f64);
+            for h in ctrl {
+                let w = h[3].abs();
+                if !(w > 0.0) {
+                    return None;
+                }
+                m = m.max((Vec3::new(h[0], h[1], h[2]) * (1.0 / h[3]) - at).len());
+                lo = lo.min(w);
+                hi = hi.max(w);
+            }
+            Some(m * hi / lo)
+        };
+        // 2p over the shortest non-empty knot span touching t.
+        let per = |p: usize, knots: &[f64], t: f64| -> Option<f64> {
+            let span = knots
+                .iter()
+                .zip(knots.iter().skip(1))
+                .filter(|(a, b)| **b > **a && **a <= t && t <= **b)
+                .map(|(a, b)| b - a)
+                .fold(f64::INFINITY, f64::min);
+            (span.is_finite() && span > 0.0).then(|| 2.0 * p as f64 / span)
+        };
+        match self {
+            EvalSurface::Plane { .. } => Some(super::pole::Scale {
+                size: 0.0,
+                per: [0.0; 2],
+            }),
+            EvalSurface::Nurbs(n) => {
+                let q = self.wrap(uv);
+                let [pu, pv] = n.degree();
+                let [ku, kv] = n.knots();
+                Some(super::pole::Scale {
+                    size: size(n.ctrl(), at)?,
+                    per: [per(pu, ku, q[0])?, per(pv, kv, q[1])?],
+                })
+            }
+            EvalSurface::Revolved {
+                profile,
+                origin,
+                transform,
+                swap,
+                ..
+            } => {
+                let q = self.wrap(uv);
+                let s = if *swap { q[1] } else { q[0] };
+                let along = per(profile.degree(), profile.knots(), s)?;
+                let norm: f64 = transform
+                    .iter()
+                    .flat_map(|r| r.iter().take(3))
+                    .map(|x| x.abs())
+                    .sum();
+                let per = if *swap { [1.0, along] } else { [along, 1.0] };
+                Some(super::pole::Scale {
+                    size: size(profile.ctrl(), *origin)? * norm.max(1.0),
+                    per,
+                })
+            }
+        }
     }
 
     /// The active parameter interval along `d` (0: u, 1: v) of a spline, or of a revolution's
