@@ -7989,6 +7989,28 @@ mod tests {
     }
 
     #[test]
+    fn retained_end_definition_obeys_geometry_depth_limit() {
+        use crate::surface::procedural_blend::corner::{CornerDefinition, EndDefinition};
+
+        for mut root in [
+            bilinear(),
+            Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z)),
+        ] {
+            root.definition = Some(Box::new(KeptDefinition::Corner(CornerDefinition::End(
+                EndDefinition {
+                    support: Box::new(Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z))),
+                    boundary: Vec::new(),
+                },
+            ))));
+            assert!(root.check_evaluation_copy_depth(MAX_GEOMETRY_NESTING - 1).is_ok());
+            assert!(matches!(
+                root.check_evaluation_copy_depth(MAX_GEOMETRY_NESTING),
+                Err(SolidError::InvalidInput { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn evaluation_copy_bounds_compound_surface_nesting() {
         let mut surface = Surface::from(BSplineSurface::new());
         for _ in 0..MAX_GEOMETRY_NESTING {
