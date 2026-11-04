@@ -341,7 +341,11 @@ fn step4_round_without_the_nd_opt_in_builds_the_same_body() {
     assert!((vol - fork).abs() <= 1e-9 * fork, "V {vol} vs fork {fork}");
     assert!(lines.is_empty(), "{lines:#?}");
     let (_, _, _, with_opt_in, _) = run(true);
-    assert_eq!(vol.to_bits(), with_opt_in.to_bits(), "V {vol} vs {with_opt_in}");
+    assert_eq!(
+        vol.to_bits(),
+        with_opt_in.to_bits(),
+        "V {vol} vs {with_opt_in}"
+    );
 }
 
 /// #2568: the check's curve analysis shortcuts change no report. Without the fix the
