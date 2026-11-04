@@ -508,22 +508,7 @@ impl PathMotion {
         trace: &SweepTrace,
         net: &BSplineSurface,
     ) -> Result<(Self, f64, bool)> {
-        let pc = path.canonical()?;
-        if pc.dim != 3 {
-            return Err(bad("a path is a 3D curve"));
-        }
-        let closed = match (pc.control_points.first(), pc.control_points.last()) {
-            (Some(a), Some(b)) => (*a - *b).length() <= 1e-9 * (1.0 + a.length()),
-            _ => true,
-        };
-        if closed {
-            return Err(bad(
-                "a closed path's frame chain is corrected, not the rule's",
-            ));
-        }
-        let mut path = path.copy();
-        path.set_out_of_bounds_enabled(false);
-        let spans = spans_of(&path, &pc.knots, pc.degree, trace.start_normal)?;
+        let (path, spans) = open_path_spans(path, trace.start_normal)?;
         let mut motion = Self {
             path,
             spans,
@@ -556,20 +541,7 @@ impl PathMotion {
         path: &BSplineCurve,
         start_normal: Vec3,
     ) -> Result<(Self, BSplineSurface, f64)> {
-        let pc = path.canonical()?;
-        if pc.dim != 3 {
-            return Err(bad("a path is a 3D curve"));
-        }
-        let closed = match (pc.control_points.first(), pc.control_points.last()) {
-            (Some(a), Some(b)) => (*a - *b).length() <= 1e-9 * (1.0 + a.length()),
-            _ => true,
-        };
-        if closed {
-            return Err(bad("a closed path's frame is corrected, not the rule's"));
-        }
-        let mut path = path.copy();
-        path.set_out_of_bounds_enabled(false);
-        let spans = spans_of(&path, &pc.knots, pc.degree, start_normal)?;
+        let (path, spans) = open_path_spans(path, start_normal)?;
         let mut nodes: Vec<(f64, f64)> = spans.iter().map(|s| (s.from, s.from)).collect();
         if let Some(last) = spans.last() {
             nodes.push((last.to, last.to));
@@ -1267,6 +1239,26 @@ impl Column {
             }
         }
     }
+}
+
+/// A copy of `path` and its spans, for a 3D path that is not closed: the checks both ways of
+/// making a motion ([`PathMotion::create`], [`PathMotion::create_exact`]) share.
+fn open_path_spans(path: &BSplineCurve, start_normal: Vec3) -> Result<(BSplineCurve, Vec<Span>)> {
+    let pc = path.canonical()?;
+    if pc.dim != 3 {
+        return Err(bad("a path is a 3D curve"));
+    }
+    let closed = match (pc.control_points.first(), pc.control_points.last()) {
+        (Some(a), Some(b)) => (*a - *b).length() <= 1e-9 * (1.0 + a.length()),
+        _ => true,
+    };
+    if closed {
+        return Err(bad("a closed path's frame is corrected, not the rule's"));
+    }
+    let mut path = path.copy();
+    path.set_out_of_bounds_enabled(false);
+    let spans = spans_of(&path, &pc.knots, pc.degree, start_normal)?;
+    Ok((path, spans))
 }
 
 /// The weights `[w0, w1, w2]` of each knot span of `path` as a quadratic rational Bezier
