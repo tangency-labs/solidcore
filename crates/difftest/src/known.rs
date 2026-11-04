@@ -233,6 +233,49 @@ pub fn cpp_defect_records(root: &Path, id: &str) -> Result<String, String> {
     Ok(text)
 }
 
+/// The directory of finding records, relative to the repository root.
+pub const FINDINGS_DIR: &str = "plan/findings";
+
+/// The `plan/findings/<slug>.md` records a `why` cites, in the order they appear.
+///
+/// An ordinary known mismatch has no `cpp_defect` id; what it does carry is its finding,
+/// named in the entry's prose. That record is where a deliberately replaced construction
+/// states each case's measured change.
+#[must_use]
+pub fn findings_cited(why: &str) -> Vec<String> {
+    const NEEDLE: &str = "plan/findings/";
+    const EXT: &str = ".md";
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = why;
+    while let Some(i) = rest.find(NEEDLE) {
+        let tail = &rest[i + NEEDLE.len()..];
+        let Some(e) = tail.find(EXT) else {
+            break;
+        };
+        let slug = &tail[..e + EXT.len()];
+        if !slug.contains('/') && !out.iter().any(|o| o == slug) {
+            out.push(slug.to_string());
+        }
+        rest = &tail[e + EXT.len()..];
+    }
+    out
+}
+
+/// The text of the finding records a `why` cites, joined. Missing files contribute
+/// nothing, so a citation that does not resolve evidences nothing.
+#[must_use]
+pub fn findings_records(root: &Path, why: &str) -> String {
+    let dir = root.join(FINDINGS_DIR);
+    let mut text = String::new();
+    for name in findings_cited(why) {
+        if let Ok(t) = std::fs::read_to_string(dir.join(name)) {
+            text.push_str(&t);
+            text.push('\n');
+        }
+    }
+    text
+}
+
 /// Whether `text` names `case` as a whole word, so `gen052` does not match `gen0528`.
 #[must_use]
 pub fn names_case(text: &str, case: &str) -> bool {
@@ -373,6 +416,28 @@ nothing confirmed here
         .unwrap();
         assert!(check_cpp_defect(&dir, "WR-102").is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A `why` cites its finding by path; that is where an ordinary known mismatch
+    /// keeps its evidence, since it has no upstream-issue id.
+    #[test]
+    fn findings_cited_reads_the_paths_out_of_a_why() {
+        assert_eq!(
+            findings_cited("C++ succeeds, Rust refuses (plan/findings/blend.corner--one-path.md)"),
+            vec!["blend.corner--one-path.md"]
+        );
+        // several, in order, without repeats
+        assert_eq!(
+            findings_cited(
+                "see plan/findings/a.md and plan/findings/b.md, again plan/findings/a.md"
+            ),
+            vec!["a.md", "b.md"]
+        );
+        // nothing to cite
+        assert!(findings_cited("no record named here").is_empty());
+        assert!(findings_cited("plan/findings/").is_empty());
+        // a nested path is not a record name
+        assert!(findings_cited("plan/findings/sub/dir.md").is_empty());
     }
 
     /// The evidence check matches a case as a whole word, so a shorter name does not
