@@ -37,3 +37,15 @@ unit = "heal.face_props"
 check = "ratchet"
 case = "gen0010"
 reason = "#2639, WR-740 (confirmed): parked as cpp_defect, the C++ finds no closest point on a seam circle from about 1 off its axis, so it misses the V seam"
+
+[[waiver]]
+unit = "blend.fillet_executive_p3"
+check = "ratchet"
+case = "big-rad-filleted_box-r2.0-top-edges"
+reason = "#2639, WR-739 (confirmed): parked as cpp_defect, the C++ rounds the top loop r 2 over R1 vertical rounds into self-crossing spindle-torus corner faces; solidcore refuses it naming 1"
+
+[[waiver]]
+unit = "blend.fillet_executive_p3"
+check = "ratchet"
+case = "big-rad-filleted_box-r3.0-top-edges"
+reason = "#2639, WR-739 (confirmed): as r2.0, r 3"
