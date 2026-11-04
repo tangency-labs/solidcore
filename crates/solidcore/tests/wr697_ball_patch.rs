@@ -1093,3 +1093,63 @@ fn a_ball_s_patch_far_from_the_origin_is_certified_as_tightly() {
     off.radius += 1e-7;
     assert!(why(off).contains("sphere"));
 }
+
+/// Hostile numbers never certify: a NaN or infinite control point or weight in the net or
+/// a loop curve, and a point so large that a coefficient overflows, are refused, by the
+/// certificates themselves and through the record.
+#[test]
+fn non_finite_or_overflowing_nets_and_loops_are_refused() {
+    let (k, s) = ball_face_with(true);
+    let ball = s
+        .procedural_blend()
+        .unwrap()
+        .corner()
+        .unwrap()
+        .as_ball()
+        .unwrap();
+    let net = patch(&s).net();
+    let (c, r) = (CENTRE, 3.0);
+    let bad_points = [
+        (Point3::new(f64::NAN, 27.0, 20.0), 1.0),
+        (Point3::new(f64::INFINITY, 27.0, 20.0), 1.0),
+        (Point3::new(37.0, 27.0, 20.0), f64::NAN),
+        (Point3::new(37.0, 27.0, 20.0), f64::INFINITY),
+        (Point3::new(1e200, -1e200, 1e200), 1.0),
+    ];
+    for (pt, w) in bad_points {
+        let mut n = net.copy();
+        if n.set_control_point(ControlPointForm::EuclideanRational, 0, 0, pt, w)
+            .is_ok()
+        {
+            assert!(
+                !BallPatch::is_on_sphere(&n, c, r, ON_SPHERE_REL_TOL).unwrap_or(false),
+                "net {pt:?} {w}"
+            );
+        }
+        let mut curve = ball.boundary()[0].clone();
+        if curve
+            .set_control_point(ControlPointForm::EuclideanRational, 0, pt, w)
+            .is_ok()
+        {
+            assert!(
+                !BallPatch::is_curve_on_sphere(&curve, c, r, ON_SPHERE_REL_TOL).unwrap_or(false),
+                "loop {pt:?} {w}"
+            );
+        }
+    }
+    // through the record: a coefficient that overflows (the numbers themselves finite)
+    let rec = ball_record(&k, &s);
+    let mut off = rec.clone();
+    off.net.points[0] = [1e200, -1e200, 1e200];
+    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
+    let mut off = rec.clone();
+    off.boundary[0].points[0] = [1e200, -1e200, 1e200];
+    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
+    // and numbers that are not finite
+    let mut off = rec.clone();
+    off.net.points[0][0] = f64::NAN;
+    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
+    let mut off = rec;
+    off.boundary[0].weights.as_mut().unwrap()[0] = f64::INFINITY;
+    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
+}
