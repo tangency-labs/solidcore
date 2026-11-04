@@ -245,13 +245,14 @@ pub fn end_at_smooth_vertex(
 /// which leaves its face with little curvature and turns as it goes), and E' turns away only
 /// where its own third order does: E's says how E turns into itself, away from V, not past it.
 ///
-/// Where an edge's curve cannot give its binormal or its third derivative at V (a tangent
-/// field, a short evaluation), the run-on is undecided and the cap stays, as in the other
-/// undecided cases (tangency-labs/solidcore#2679).
+/// Where an edge's curve cannot give the derivatives at V (a tangent field, a composite, a
+/// short evaluation), the run-on is undecided and the cap stays, as in the other undecided
+/// cases (tangency-labs/solidcore#2679).
 ///
 /// # Errors
-/// `SM_ERR_NULL_POINTER` for an edge use without face, radial or edge, or an edge without
-/// curve; those of the topology lookups.
+/// [`SolidError::Cancelled`] when the kernel's token is cancelled; `SM_ERR_NULL_POINTER`
+/// for an edge use without face, radial or edge, or an edge without curve; those of the
+/// binormal and the curve evaluations (their cancels and unported calls included).
 fn run_on_leaves_the_part(
     k: &Kernel,
     target: &mut Brep,
@@ -260,7 +261,9 @@ fn run_on_leaves_the_part(
     other_eu: EdgeuseId,
     leave: Vec3,
 ) -> Result<bool> {
+    use crate::curve::curve::CurveKind;
     use crate::topology::edgeuse::p3::{evaluate_binormal, BinormalOptions};
+    k.check_cancelled(OP)?;
     let fil_radial = eu1::radial(target, fil_eu)?.ok_or_else(nul)?;
     let other_radial = eu1::radial(target, other_eu)?.ok_or_else(nul)?;
     let fil_faces = [face_of(target, fil_eu)?, face_of(target, fil_radial)?];
@@ -290,12 +293,24 @@ fn run_on_leaves_the_part(
             ivl.max()
         })
     };
+    // A curve that cannot give the derivatives the comparison needs leaves the run-on
+    // undecided, and the cap stays (tangency-labs/solidcore#2679): a tangent field, whose
+    // values are cross tangents rather than points and which differentiates only once
+    // (`SmTangentField::Evaluate`'s SM_ERR past the first derivative), and a composite,
+    // which evaluates only through its segments (`Curve::evaluate`'s SM_ERR). Every other
+    // failure of the evaluations below (a cancel, an unported call) is the caller's.
+    for e in [fil_edge, other_edge] {
+        let c = edge::curve(target, e)?.ok_or_else(nul)?;
+        if matches!(
+            c.kind(),
+            CurveKind::TangentField(_) | CurveKind::Composite(_)
+        ) {
+            return Ok(false);
+        }
+    }
     let options = BinormalOptions::default();
     let t_fil = param_at(target, fil_edge)?;
-    // no binormal (the edge's curve gives no tangent there): undecided, the cap stays
-    let Ok(on_a) = evaluate_binormal(k, target, eu_a, t_fil, true, &options) else {
-        return Ok(false);
-    };
+    let on_a = evaluate_binormal(k, target, eu_a, t_fil, true, &options)?;
     let Ok(d) = on_a.binormal.unitize() else {
         return Ok(false);
     };
@@ -305,14 +320,8 @@ fn run_on_leaves_the_part(
     let heights = |target: &Brep, e: EdgeId| -> Result<Option<(f64, f64)>> {
         let start = at_start(target, e)?;
         let c = edge::curve(target, e)?.ok_or_else(nul)?;
-        // A curve that gives no third derivative there (a tangent field, whose values are
-        // cross tangents rather than points and which differentiates once; a composite,
-        // which evaluates only through its segments; a kind that returns fewer
-        // derivatives) leaves the run-on undecided, and the cap stays
-        // (tangency-labs/solidcore#2679).
-        let Ok(ds) = c.evaluate(k, param_at(target, e)?, 3, !start, true) else {
-            return Ok(None);
-        };
+        let ds = c.evaluate(k, param_at(target, e)?, 3, !start, true)?;
+        // a kind that returns fewer derivatives than asked: undecided, the cap stays
         let (Some(&d1), Some(&d2), Some(&d3)) = (ds.get(1), ds.get(2), ds.get(3)) else {
             return Ok(None);
         };

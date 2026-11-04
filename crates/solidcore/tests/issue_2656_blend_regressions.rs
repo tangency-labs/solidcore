@@ -578,3 +578,51 @@ fn a_tangent_field_edge_at_the_smooth_vertex_keeps_the_cap() {
     assert_eq!(r, Ok(()), "the round builds");
     assert_eq!(b.faces().ids().count(), 9, "capped at the smooth vertex");
 }
+
+/// tangency-labs/solidcore#2680's review (`fillet_blend_corner`): the run-on check passes a
+/// cancel through, not as an undecided run-on. fillets/1207's vertex (0, 17, 20) after the r3
+/// round, the end face's top edge blended there: uncancelled, the edge running on into the
+/// r3 round's end arc is no smooth-vertex End (the run-on leaves the part); with the
+/// kernel's token cancelled, the check returns the cancel it observes.
+#[test]
+fn a_cancel_during_the_run_on_check_comes_back() {
+    use solidcore::blend::blend_corner::end::end_at_smooth_vertex;
+    use solidcore::topology::vertex;
+    use solidcore::{CancelToken, SolidError};
+    let mut k = solidcraft_kernel();
+    let mut b = boxed(&mut k, 20.0, 20.0, 20.0);
+    blend(&mut k, &mut b, Kind::Round, &[[10.0, 20.0, 20.0]], 3.0).unwrap();
+    let v = b
+        .vertices()
+        .ids()
+        .find(|&w| {
+            b.vertex(w)
+                .unwrap()
+                .point
+                .distance(Point3::new(0.0, 17.0, 20.0))
+                < 1e-9
+        })
+        .unwrap();
+    let blended = pick(&k, &b, [0.0, 8.5, 20.0]);
+    let fil_eu = edge::edgeuses(&b, blended, None, None).unwrap()[0];
+    let all_eus: Vec<_> = vertex::edges(&b, v, None)
+        .unwrap()
+        .into_iter()
+        .map(|e| edge::edgeuses(&b, e, None, None).unwrap()[0])
+        .collect();
+    let smooth = end_at_smooth_vertex(&k, &mut b, v, fil_eu, &all_eus, 0.01, &[]);
+    assert!(matches!(smooth, Ok(false)), "{smooth:?}");
+    let token = CancelToken::new();
+    token.cancel();
+    k.set_cancel_token(token);
+    let cancelled = end_at_smooth_vertex(&k, &mut b, v, fil_eu, &all_eus, 0.01, &[]);
+    assert!(
+        matches!(
+            cancelled,
+            Err(SolidError::Cancelled {
+                operation: "blend::blend_corner::end"
+            })
+        ),
+        "{cancelled:?}"
+    );
+}
