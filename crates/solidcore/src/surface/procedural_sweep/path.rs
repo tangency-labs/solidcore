@@ -686,7 +686,7 @@ impl PathMotion {
                 }
             }
         }
-        let floor = gamma(96) * (big + reach) * 4.0;
+        let floor = rounding_floor(big, reach);
         let bound = round_up(worst * (1.0 + SLACK) + floor);
         if bound.is_finite() && bound > 0.0 {
             Ok(bound)
@@ -851,6 +851,14 @@ impl Columns {
             swapped,
         })
     }
+}
+
+/// The floor of a path sweep's bound, a forward error bound of evaluating the net and the
+/// definition in doubles: `gamma_96` times four times the sizes of the numbers (`size` the
+/// largest coordinate met, `reach` the profile's). The one function [`PathMotion::certify`] and
+/// [`ProceduralSweep::floor`] both take.
+pub(crate) fn rounding_floor(size: f64, reach: f64) -> f64 {
+    gamma(96) * (size + reach) * 4.0
 }
 
 /// `v` turned right-handed about the unit `axis` by `angle`.

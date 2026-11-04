@@ -963,23 +963,29 @@ impl ProceduralSweep {
 }
 
 impl ProceduralSweep {
+    /// The profile's reach: its largest control point from the frame's origin.
+    fn profile_reach(&self) -> Result<f64> {
+        let c = self.profile.canonical()?;
+        Ok(c.control_points
+            .iter()
+            .fold(0.0_f64, |m, q| m.max(q.length())))
+    }
+
     /// How far a path sweep reaches from the origin: the path's and the profile's.
     fn path_reach(&self) -> Result<f64> {
         let Motion::Path(p) = &self.motion else {
             return Ok(0.0);
         };
-        let c = self.profile.canonical()?;
-        let r = c
-            .control_points
-            .iter()
-            .fold(0.0_f64, |m, q| m.max(q.length()));
-        Ok(p.reach()? + r)
+        Ok(p.reach()? + self.profile_reach()?)
     }
 
-    /// The floor of a path sweep's bound (included in it): a forward error bound of
-    /// evaluating the net and the definition.
+    /// The floor of a path sweep's bound (included in it), [`path::rounding_floor`] at the
+    /// definition's own sizes (the bound's takes the net's control points in as well).
     fn path_floor(&self) -> Result<f64> {
-        Ok(gamma(96) * 4.0 * 2.0 * self.path_reach()?)
+        let Motion::Path(p) = &self.motion else {
+            return Ok(0.0);
+        };
+        Ok(path::rounding_floor(p.reach()?, self.profile_reach()?))
     }
 
     /// The definition of the wall `sweep_scale` fitted: `profile` carried along `path` in the
