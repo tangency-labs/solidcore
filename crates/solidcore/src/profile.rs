@@ -240,23 +240,43 @@ mod enabled {
         }
     }
 
+    /// The profile's clock: nanoseconds since the profiler was made.
+    #[cfg(not(target_arch = "wasm32"))]
     #[derive(Debug)]
+    struct Clock(std::time::Instant);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl Default for Clock {
+        fn default() -> Self {
+            Self(std::time::Instant::now())
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl Clock {
+        fn now_ns(&self) -> Option<u64> {
+            u64::try_from(self.0.elapsed().as_nanos()).ok()
+        }
+    }
+
+    /// No clock on wasm32 (`Instant::now` panics there): the records carry no times.
+    #[cfg(target_arch = "wasm32")]
+    #[derive(Debug, Default)]
+    struct Clock;
+
+    #[cfg(target_arch = "wasm32")]
+    impl Clock {
+        #[allow(clippy::unused_self)] // the clock's signature off wasm32
+        fn now_ns(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    #[derive(Debug, Default)]
     struct Shared {
         state: Mutex<State>,
         counters: [AtomicU64; COUNTERS],
-        #[cfg(not(target_arch = "wasm32"))]
-        origin: std::time::Instant,
-    }
-
-    impl Default for Shared {
-        fn default() -> Self {
-            Self {
-                state: Mutex::default(),
-                counters: Default::default(),
-                #[cfg(not(target_arch = "wasm32"))]
-                origin: std::time::Instant::now(),
-            }
-        }
+        clock: Clock,
     }
 
     impl Shared {
@@ -266,15 +286,8 @@ mod enabled {
             self.state.lock().unwrap_or_else(PoisonError::into_inner)
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
         fn now_ns(&self) -> Option<u64> {
-            u64::try_from(self.origin.elapsed().as_nanos()).ok()
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        #[allow(clippy::unused_self)] // the clock's signature off wasm32
-        fn now_ns(&self) -> Option<u64> {
-            None
+            self.clock.now_ns()
         }
 
         fn counters(&self) -> [u64; COUNTERS] {
