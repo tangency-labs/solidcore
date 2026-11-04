@@ -2,8 +2,8 @@
 //! parameters (an angle, a height, a knot parameter). These carry no state and do no
 //! maths; [`super::SurfaceEval`] and [`super::CurveEval`] evaluate them.
 //!
-//! Applications built on solidcore keep their own records of these kinds and convert at
-//! their boundary.
+//! The record's kinds (`solidcore-record`) become these, and these the record's, in
+//! `solidcore-convert`.
 
 use super::spline::{basis_check, nl_curve2};
 use crate::nurbs::knots::Side;
