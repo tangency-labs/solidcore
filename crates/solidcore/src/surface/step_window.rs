@@ -2363,6 +2363,62 @@ mod tests {
             .is_err());
     }
 
+    /// The circle about (3, 0, 0) of radius 1 in the XZ plane (`tube(0)`) turned about
+    /// Z, a surface of revolution (not a torus), its sweep set to `[0, 90]` (its
+    /// profile keeps `[0, 360]`).
+    fn quarter_revolution_of_a_circle(k: &Kernel) -> Surface {
+        let mut s = SurfOfRevolution::create_canonical(k, tube(k, 0.0), Vec3::ZERO, Vec3::Z, false)
+            .unwrap();
+        s.adjust_step_uv_domain(k, &Extent2d::from_bounds(0.0, 0.0, 90.0, 360.0))
+            .unwrap();
+        Surface::from(s)
+    }
+
+    /// tangency-labs/solidcore#2628 item 6: the rates of the parameters at a point
+    /// outside the surface's current domain are the surface's own there, not those at
+    /// the domain's nearest point. On `quarter_revolution_of_a_circle` the point
+    /// `(u, v) = (200, 90)` (the top of the profile turned by 200 degrees, outside the
+    /// sweep) has `S(u, v) = Rz(u) ((3 + cos v) X + sin v Z)`; along
+    /// `Sv = (pi / 180) Rz(u) (-sin v X + cos v Z)` the rates are `(0, 1)` (u's in
+    /// radians), along `Su = (pi / 180) (3 + cos v) Rz(u) Y` they are `(pi / 180, 0)`.
+    #[test]
+    fn rates_outside_the_domain_are_the_surfaces_own() {
+        let k = k();
+        let s = quarter_revolution_of_a_circle(&k);
+        let map = Map::of(&s, TOL);
+        let (u, v) = (200.0, 90.0);
+        let radial = Vec3::new(rad(u).cos(), rad(u).sin(), 0.0);
+        let along = Vec3::new(-rad(u).sin(), rad(u).cos(), 0.0);
+        let p = (3.0 + rad(v).cos()) * radial + rad(v).sin() * Vec3::Z;
+        let q = map.params(&k, p).unwrap();
+        assert_close(q.u.unwrap(), u);
+        assert_close(q.v, v);
+        let sv = rad(1.0) * (-rad(v).sin() * radial + rad(v).cos() * Vec3::Z);
+        let su = rad(1.0) * (3.0 + rad(v).cos()) * along;
+        let [du, dv] = map.rates(&k, p, sv, &q).unwrap();
+        assert_close(du, 0.0);
+        assert_close(dv, 1.0);
+        let [du, dv] = map.rates(&k, p, su, &q).unwrap();
+        assert_close(du, rad(1.0));
+        assert_close(dv, 0.0);
+    }
+
+    /// The band of `quarter_revolution_of_a_circle` between its profile circles turned
+    /// by 200 and 220 degrees, both outside the sweep, each one closed edge round the
+    /// profile (up v at 220, down at 200, the band on their left): u = [200, 220] and
+    /// v one period from the circles' start, [0, 360].
+    #[test]
+    fn a_band_outside_the_sweep_of_a_revolution() {
+        let k = k();
+        let s = quarter_revolution_of_a_circle(&k);
+        let (a, b) = (tube(&k, 200.0), tube(&k, 220.0));
+        let band = [
+            vec![edge(&b, 0.0, 360.0, true)],
+            vec![edge(&a, 0.0, 360.0, false)],
+        ];
+        assert_window(&window(&k, &s, &band), [200.0, 220.0], [0.0, 360.0]);
+    }
+
     /// A circle of radius 1 extruded by (0, 0, 3): the band over a quarter is u its
     /// profile's angles [0, 90] and v the extrusion's [0, 1].
     #[test]

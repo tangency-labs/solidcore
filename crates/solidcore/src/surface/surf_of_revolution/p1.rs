@@ -2051,7 +2051,8 @@ pub fn test_for_iso_circles(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve::line::Line;
+    use crate::curve::line::{BoundedLineOptions, Line};
+    use crate::math::INFINITE_PARAMETER;
     use crate::nurbs::crv_basic::Curve as NurbCurve;
     use crate::nurbs::math::{CPoint, NOW};
 
@@ -2387,6 +2388,116 @@ mod tests {
             assert_inverts(&k, &s, Vec3::new(2.0, 0.0, 1.0), Point2::new(0.0, 1.0));
             assert_inverts(&k, &s, Vec3::new(0.0, -2.0, 5.0), Point2::new(270.0, 5.0));
         }
+    }
+
+    /// tangency-labs/solidcore#2628 item 7: a profile that crosses the axis lies on
+    /// both sides of it, so a point's circle about the axis meets the generator's
+    /// plane in two points, one on each half plane, and `STEPInversion` must solve
+    /// both. The profile `λ(s) = (1, 0, 0) + s (1, 0, 1)` crosses at `s = -1`;
+    /// `λ(-3) = (-2, 0, -3)` lies on the profile itself, `(u, v) = (0, -3)` (`u = 0` is
+    /// the profile, ISO 10303-42), turned by 90° about Z it is `(0, -2, -3) = (90, -3)`,
+    /// and `λ(1) = (2, 0, 1) = (0, 1)` lies on the other side of the axis. With
+    /// [`UpstreamFixes::revolution_frame_from_profile_origin`] (WR-738) all of them
+    /// invert, whichever way the frame faces: the frame from the profile's origin
+    /// (X = (1, 0, 0)) and upstream's from its start (X = (-1, 0, 0), built here with
+    /// the fix on). Without the fix upstream's frame inverts the side it faces,
+    /// `(-2, 0, -3)` and `(0, -2, -3)`, and refuses `(2, 0, 1)` (`SM_ERR`).
+    #[test]
+    fn profile_crossing_the_axis_inverts_on_both_sides() {
+        let (point, vector) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 1.0));
+        let points = [
+            (Vec3::new(-2.0, 0.0, -3.0), Point2::new(0.0, -3.0)),
+            (Vec3::new(0.0, -2.0, -3.0), Point2::new(90.0, -3.0)),
+            (Vec3::new(2.0, 0.0, 1.0), Point2::new(0.0, 1.0)),
+            (Vec3::new(0.0, 2.0, 1.0), Point2::new(90.0, 1.0)),
+        ];
+
+        let (k, origin_frame) = unbounded_line_revolution(true, point, vector);
+        assert_eq!(origin_frame.position().x_axis(), Vec3::X);
+        let line = Curve::from(Line::create_canonical(point, vector));
+        let domain = Extent2d::from_bounds(0.0, -INFINITE_PARAMETER, 360.0, INFINITE_PARAMETER);
+        let mut start_frame =
+            SurfOfRevolution::new(&k, line, Vec3::ZERO, -Vec3::X, -Vec3::Y, domain, false).unwrap();
+        start_frame.make_nurb(&k).unwrap();
+        for s in [&origin_frame, &start_frame] {
+            for (p, uv) in points {
+                assert_inverts(&k, s, p, uv);
+            }
+        }
+
+        let (k, upstream) = unbounded_line_revolution(false, point, vector);
+        assert_eq!(upstream.position().x_axis(), -Vec3::X);
+        for (p, uv) in points.iter().take(2) {
+            assert_inverts(&k, &upstream, *p, *uv);
+        }
+        let r = upstream.step_inversion(
+            &k,
+            &upstream.step_uv_domain(),
+            Vec3::new(2.0, 0.0, 1.0),
+            1e-9,
+            None,
+        );
+        assert!(
+            matches!(r, Err(SolidError::Upstream { code: SM_ERR, .. })),
+            "{r:?}"
+        );
+    }
+
+    /// tangency-labs/solidcore#2628 item 8: the segment `λ(s) = s (1, 0, 1)` on
+    /// `[-9, 11]` has its point at parameter 0 and the one at 45 % of its interval
+    /// (`-9 + 0.45 * 20 = 0`) both at the origin, on the axis. With the fix the frame
+    /// is taken from the interval's start before the 45 % point:
+    /// `λ(-9) = (-9, 0, -9)`, X = (-1, 0, 0), and `λ(-5) = (-5, 0, -5)` is `(0, -5)`
+    /// (with the two-sided inversion `λ(5) = (5, 0, 5)`, across the axis, is
+    /// `(0, 5)`). Upstream's frame is the start's already; with the fix,
+    /// `create_canonical` fails today (`SM_ERR`: no Y axis from the 45 % point).
+    #[test]
+    fn frame_from_the_interval_start_when_the_origin_is_on_the_axis() {
+        for fix in [false, true] {
+            let mut k = k();
+            k.fixes.revolution_frame_from_profile_origin = fix;
+            let line = Line::bounded(
+                Vec3::ZERO,
+                Vec3::new(1.0, 0.0, 1.0),
+                &Extent1d::from_min_max(-9.0, 11.0),
+                &BoundedLineOptions {
+                    scale: 2.0_f64.sqrt(),
+                    ..BoundedLineOptions::default()
+                },
+            );
+            let s = SurfOfRevolution::create_canonical(
+                &k,
+                Curve::from(line),
+                Vec3::ZERO,
+                Vec3::Z,
+                false,
+            )
+            .unwrap_or_else(|e| panic!("fix {fix}: {e:?}"));
+            assert_eq!(s.position().x_axis(), -Vec3::X, "fix {fix}");
+            assert_inverts(&k, &s, Vec3::new(-5.0, 0.0, -5.0), Point2::new(0.0, -5.0));
+            if fix {
+                // the other side of the axis (item 7)
+                assert_inverts(&k, &s, Vec3::new(5.0, 0.0, 5.0), Point2::new(0.0, 5.0));
+            }
+        }
+    }
+
+    /// tangency-labs/solidcore#2628 item 9: whether the frame's reference point is on
+    /// the axis is decided by its distance from the axis. The profile's origin
+    /// `λ(0) = (1, 0, 1000)` of `(1, 0, 1000) + s (1, 0, 1)` is one unit from the axis,
+    /// but its direction from the axis point is within 1° of the axis (0.057°), the
+    /// test upstream applies. With the fix it is not on the axis, and the frame faces
+    /// it: X = (1, 0, 0), and `λ(1) = (2, 0, 1001)` is `(0, 1)`. Upstream's test takes
+    /// the 45 % point instead, past the crossing: X = (-1, 0, 0).
+    #[test]
+    fn frame_point_on_the_axis_by_its_distance() {
+        let (point, vector) = (Vec3::new(1.0, 0.0, 1000.0), Vec3::new(1.0, 0.0, 1.0));
+        let (k, s) = unbounded_line_revolution(true, point, vector);
+        assert_eq!(s.position().x_axis(), Vec3::X);
+        assert_inverts(&k, &s, Vec3::new(2.0, 0.0, 1001.0), Point2::new(0.0, 1.0));
+
+        let (_, upstream) = unbounded_line_revolution(false, point, vector);
+        assert_eq!(upstream.position().x_axis(), -Vec3::X);
     }
 
     /// A bounded profile whose interval starts at its parameter origin keeps
