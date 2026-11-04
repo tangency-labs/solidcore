@@ -796,7 +796,7 @@ impl<'a> EdgeCurve<'a> {
     }
 
     /// The parameters strictly between `from` and `to` where u or v is stationary (or
-    /// the curve meets the axis), in loop order.
+    /// the curve meets the axis), and the edge's middle, in loop order.
     fn stationary(&self, k: &Kernel, map: &Map<'_>) -> Result<Vec<f64>> {
         let (lo, hi) = (self.from.min(self.to), self.from.max(self.to));
         let mut ts = Vec::new();
@@ -816,6 +816,10 @@ impl<'a> EdgeCurve<'a> {
                 }
                 None => ts.extend(self.certified(k, map, d, lo, hi)?),
             }
+        }
+        // the edge's middle too: an edge from pole to pole has an angle there only
+        if lo < hi {
+            ts.push(0.5 * (lo + hi));
         }
         ts.sort_by(f64::total_cmp);
         ts.dedup();
