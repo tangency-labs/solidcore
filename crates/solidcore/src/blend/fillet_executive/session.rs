@@ -2285,13 +2285,22 @@ impl<'target> FilletSession<'target> {
                         executive: Some(executive),
                     };
                     let all_eus = corner.all_eus.clone().unwrap_or_default();
+                    // a vertex asked to be set back is no Ball, by either door: marked
+                    // (AddSetBackVertex, IsSetBackVertex) or asked a fill (SetSetBackFill,
+                    // which only the Setback builds; solidcore#2365)
+                    let set_back = set_back_vertices.contains(&vertex)
+                        || crate::blend::blend_corner::setback::set_back_fill_of(
+                            set_back_fills,
+                            vertex,
+                        )
+                        .is_some();
                     let event = crate::blend::blend_corner::ball::classify_ball(
                         k,
                         target,
                         vertex,
                         &edgeuses,
                         &all_eus,
-                        set_back_vertices.contains(&vertex),
+                        set_back,
                         &lookup,
                     );
                     match event {
@@ -2776,7 +2785,8 @@ impl<'target> FilletSession<'target> {
 
     /// The fork's `SetSetBackFill` (smlib#104 61547af): the corner at `vertex` set back
     /// `setback` along each of its edges, with an ease `ease` before it (0: none): asked
-    /// before [`Self::do_fillet`], which then makes that corner the blend corner's Setback,
+    /// before [`Self::do_fillet`], which then makes that corner the blend corner's Setback
+    /// (the vertex is no Ball, as one marked with [`Self::add_set_back_vertex`] is not),
     /// filled by the setback split, where it can (with `Kernel::fixes.fillet_blend_corner`).
     /// Left `open`, a G1 corner is the Setback's hole (its spring curves, no fill, ef57570);
     /// only a G2 corner (eased, or curvature-continuous sections) stays the fill's patches

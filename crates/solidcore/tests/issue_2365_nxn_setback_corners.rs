@@ -477,3 +477,75 @@ fn open_setback_with_an_ease_is_the_g2_setback_with_its_patch_marked() {
     );
     assert_eq!(got, (6, Some(((18, 45, 29), true))), "notch");
 }
+
+/// The box corner (60, 40, 20), three r5 rounds, asked a fill of 8 with
+/// `set_set_back_fill` (closed), with or without `add_set_back_vertex`: the corner's event,
+/// and the body's counts and volume, or the error noted.
+fn fill_asked(
+    mark_vertex: bool,
+) -> (
+    Option<solidcore::blend::blend_corner::BlendCornerEvent>,
+    Result<Made, (i32, String)>,
+) {
+    let mut k = solidcraft_fixes();
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 60.0, 40.0, 20.0).unwrap();
+    let edges: Vec<EdgeId> = BOX_EDGES.iter().map(|&p| pick(&k, &b, p)).collect();
+    let v = vertex_at(&b, [60.0, 40.0, 20.0]);
+    let (event, kind, done) = {
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_per_edge_constant_radius(
+            &mut k,
+            &edges,
+            &[5.0; 3],
+            &[FilletSurfaceGeneratorType::Circular],
+            1,
+            1.0,
+        )
+        .unwrap();
+        if mark_vertex {
+            s.add_set_back_vertex(v);
+        }
+        s.set_set_back_fill(v, 8.0, 0.0, false);
+        let mut done = s.create_corners(&mut k, None).is_ok();
+        let (mut event, mut kind) = (None, None);
+        if done {
+            for c in s.fillet_corners().unwrap() {
+                let corner = s.corner(c).unwrap();
+                if corner.vertex == Some(v) {
+                    event = corner.blend.map(|b| b.event);
+                    kind = Some(corner.corner_type());
+                }
+            }
+            done = s.do_filleting(&mut k, None).is_ok();
+        }
+        let info = s.error_info();
+        (
+            event,
+            kind,
+            done.then_some(()).ok_or((info.code, info.comment.clone())),
+        )
+    };
+    (
+        event,
+        done.map(|()| finish(&mut k, b, kind.expect("the corner"), 0)),
+    )
+}
+
+/// A fill asked with `set_set_back_fill` alone keeps the vertex from the Ball, as
+/// `add_set_back_vertex` does (jyviko's and CodeRabbit's review of #2365): three equal
+/// rounds at a box corner are the Setback by either call, the same body. Before, the fill
+/// alone left the vertex to the Ball, which builds no setback, and the corner was refused
+/// `CornerUnsupported`.
+#[test]
+fn a_fill_asked_alone_is_the_setback_as_with_the_vertex_marked() {
+    use solidcore::blend::blend_corner::BlendCornerEvent;
+    let (event, alone) = fill_asked(false);
+    assert_eq!(event, Some(BlendCornerEvent::Setback));
+    let alone = alone.unwrap();
+    let (event, marked) = fill_asked(true);
+    assert_eq!(event, Some(BlendCornerEvent::Setback));
+    let marked = marked.unwrap();
+    assert_eq!(alone.counts, marked.counts);
+    assert_eq!(alone.volume.to_bits(), marked.volume.to_bits());
+    assert_eq!(alone.counts.0, 6 + 3 + 6); // the box's faces, the rounds, the fill's six
+}
