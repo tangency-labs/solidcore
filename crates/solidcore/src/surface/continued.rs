@@ -256,9 +256,6 @@ impl Surface {
     }
 }
 
-/// A face box's STEP rows: the STEP u (a revolution's sweep) and v (its generator) ranges,
-/// the side's middle in STEP, and the held coordinate's value there (the end of its row the
-
 impl Surface {
     /// For a cone, sphere or torus and side `side` of the face box `dom` (in its NURBS
     /// parameters) across which the surface runs round its axis: the arc length, at the side's
@@ -282,7 +279,12 @@ impl Surface {
                 if side.is_u() == swap {
                     return Ok(None);
                 }
-                let rows = step_rows(&|uv| c.convert_uv_from_nurbs_to_step(k, uv), dom, side, swap)?;
+                let rows = step_rows(
+                    &|uv| c.convert_uv_from_nurbs_to_step(k, uv),
+                    dom,
+                    side,
+                    swap,
+                )?;
                 let rho = c.radius(rows.mid.y);
                 (rows, rho)
             }
@@ -292,7 +294,12 @@ impl Surface {
                     return Ok(None);
                 }
                 let (o, z) = (sp.base.position.origin(), sp.base.position.z_axis());
-                let rows = step_rows(&|uv| sp.convert_uv_from_nurbs_to_step(k, uv), dom, side, swap)?;
+                let rows = step_rows(
+                    &|uv| sp.convert_uv_from_nurbs_to_step(k, uv),
+                    dom,
+                    side,
+                    swap,
+                )?;
                 let rho = axis_distance(sp.evaluate_step_point(rows.mid)?, o, z);
                 (rows, rho)
             }
@@ -302,7 +309,12 @@ impl Surface {
                     return Ok(None);
                 }
                 let (o, z) = (t.base.position.origin(), t.base.position.z_axis());
-                let rows = step_rows(&|uv| t.convert_uv_from_nurbs_to_step(k, uv), dom, side, swap)?;
+                let rows = step_rows(
+                    &|uv| t.convert_uv_from_nurbs_to_step(k, uv),
+                    dom,
+                    side,
+                    swap,
+                )?;
                 let rho = axis_distance(t.evaluate_step_point(rows.mid)?, o, z);
                 (rows, rho)
             }
@@ -318,6 +330,9 @@ impl Surface {
         Ok(Some(0.25 * room_distance(open, rho)))
     }
 }
+
+/// A face box's STEP rows: the STEP u (a revolution's sweep) and v (its generator) ranges,
+/// the side's middle in STEP, and the held coordinate's value there (the end of its row the
 /// side is at: the STEP image of the box's side is that row's end exactly).
 pub(super) struct Rows {
     pub(super) sweep: [f64; 2],
