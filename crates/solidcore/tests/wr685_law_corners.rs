@@ -721,25 +721,25 @@ fn a_law_cornered_rounds_pieces_are_its_balls_envelope() {
 
 /// The split of the fork's 6eecf04 (`NoteRadiusCornerSurfaces`,
 /// `SplitFilletFacesAtRadiusCorners`): a round joined C0 at its law's corner is split there
-/// into one face per side, each smooth (no C0 knot inside its surface), with an edge along
-/// the turn, which SMLib's check refuses inside a face. On the dip from either end and on a
-/// peak: the box's six faces and the round's two, the edge between them on the corner's
-/// plane (x = 10 on the cube, y = 10 on the box), and the body clean at check level 2.
+/// into one face per side, each smooth (no C0 knot inside its surface), which SMLib's check
+/// refuses inside a face; the corner is then built (7babe17), with a dip's zone between the
+/// sides. On the dip from either end and on a peak: no turn inside any face, the box's six
+/// faces, one per side and the dip's zone, and the body clean at check level 2.
 #[test]
 fn a_law_cornered_round_is_split_at_its_corner() {
     let (a, b) = (Point3::new(0.0, 20.0, 20.0), Point3::new(20.0, 20.0, 20.0));
     let cases = [
-        ([20.0; 3], a, b, [4.0, 2.0, 4.0], 0usize),
-        ([20.0; 3], b, a, [4.0, 2.0, 4.0], 0),
+        ([20.0; 3], a, b, [4.0, 2.0, 4.0], 1usize),
+        ([20.0; 3], b, a, [4.0, 2.0, 4.0], 1),
         (
             [10.0, 20.0, 30.0],
             Point3::new(10.0, 0.0, 30.0),
             Point3::new(10.0, 20.0, 30.0),
             [2.0, 3.0, 2.0],
-            1,
+            0,
         ),
     ];
-    for (size, from, to, radii, axis) in cases {
+    for (size, from, to, radii, zones) in cases {
         let (mut k, mut body, _) = law_body(size, from, to, 1, &[0.0, 0.0, 0.5, 1.0, 1.0], &radii);
         let lines = check_brep(&mut k, &mut body, CheckLevel::Level2)
             .unwrap()
@@ -748,46 +748,23 @@ fn a_law_cornered_round_is_split_at_its_corner() {
         for f in body.faces().ids() {
             let s = body.face(f).unwrap().surface.clone().unwrap();
             if !matches!(s.kind(), SurfaceKind::Plane(_)) {
-                rounds.push((f, s));
+                rounds.push(s);
             }
         }
         let mut turns = 0;
-        for (_, s) in &rounds {
+        for s in &rounds {
             let (u, v) = s
                 .find_knots_by_max_continuity(&k, ContinuityType::C0, false)
                 .unwrap();
             turns += u.len() + v.len();
         }
-        // the edge the two round faces share, on the corner's plane
-        let shared: Vec<EdgeId> = solidcore::topology::brep::p1::edges(&body, None)
-            .unwrap()
-            .into_iter()
-            .filter(|&e| {
-                let faces = edge::faces(&body, e, None).unwrap();
-                rounds.iter().filter(|(f, _)| faces.contains(f)).count() == 2
-            })
-            .collect();
-        let mut off = 0.0_f64;
-        for &e in &shared {
-            let c = edge::curve(&body, e).unwrap().unwrap();
-            let ivl = edge::interval(&body, e).unwrap();
-            for i in 0..=8 {
-                let p = c
-                    .evaluate_point(&k, ivl.evaluate(f64::from(i) / 8.0))
-                    .unwrap();
-                off = off.max(((if axis == 0 { p.x } else { p.y }) - 10.0).abs());
-            }
-        }
         let faces = body.faces().ids().count();
         eprintln!(
-            "split {radii:?} from {from:?}: {faces} faces, {} round faces, {turns} turns inside, {} shared edges off the corner's plane by {off:.3e}; {lines:?}",
+            "split {radii:?} from {from:?}: {faces} faces, {} round faces, {turns} turns inside; {lines:?}",
             rounds.len(),
-            shared.len()
         );
         assert!(lines.is_empty(), "{lines:?}");
-        assert_eq!((faces, rounds.len(), turns), (8, 2, 0));
-        assert_eq!(shared.len(), 1);
-        assert!(off <= 1e-9, "{off}");
+        assert_eq!((faces, rounds.len(), turns), (8 + zones, 2 + zones, 0));
     }
 }
 
@@ -922,8 +899,9 @@ struct LawCase {
 /// radius r(t) ([`LawEdge::ball`]). On the dip 4 -> 2 -> 4 from either end and as a
 /// quadratic, the peak 2 -> 3 -> 2, and the dip then peak 4, 2, 4, 2:
 /// - every point inside every round face is on the boundary of the union of all the balls
-///   (`min_t |p - c(t)| - r(t)` zero to the solvers' tolerance): on its side's envelope and
-///   never inside a ball of the other side, so at a peak each side ends where they cross;
+///   (`min_t |p - c(t)| - r(t)` zero to the solvers' tolerance, the law's end spans carried
+///   on past the edge's ends as the round is): on its side's envelope and never inside a
+///   ball of the other side, so at a peak each side ends where they cross;
 /// - at a dip, the corner ball's zone is a face of its own (a ball patch) on the corner
 ///   ball, and the faces either side meet it G1: at every point of its two circles both
 ///   faces' normals are the corner ball's, to the kernel's angle between parallel vectors;
@@ -993,6 +971,11 @@ fn a_law_cornered_round_is_its_balls_union() {
             case.radii,
         );
         let ball = |t: f64| case.edge.ball(t, piecewise_linear(law, t));
+        // the balls the round's points touch: past the edge's ends too, where the round runs
+        // on with its law's end spans (cut by the end faces); a touching ball's centre is
+        // within its radius of the point, so its t within the largest radius of the point's
+        let reach = law.iter().map(|&(_, r)| r).fold(0.0, f64::max);
+        let (lo, hi) = (law[0].0 - reach, law[law.len() - 1].0 + reach);
         let lines = check_brep(&mut k, &mut body, CheckLevel::Level2)
             .unwrap()
             .lines();
@@ -1042,7 +1025,7 @@ fn a_law_cornered_round_is_its_balls_union() {
         let mut worst = 0.0_f64;
         for (_, points, _) in &rounds {
             for &p in points {
-                worst = worst.max(off_the_balls(p, 0.0, 20.0, ball).abs());
+                worst = worst.max(off_the_balls(p, lo, hi, ball).abs());
             }
         }
         eprintln!("{name}: worst {worst:.3e} off the balls' union");
@@ -1086,7 +1069,6 @@ fn a_law_cornered_round_is_its_balls_union() {
         }
 
         // each peak's sides crossing at the balls' crease
-        let (lo, hi) = (law[0].0, law[law.len() - 1].0);
         for &t in &peaks {
             // the faces either side of the peak, the one before first
             let side = |before: bool| {
@@ -1131,6 +1113,15 @@ fn a_law_cornered_round_is_its_balls_union() {
             assert!(crease_lo > 2.0 * tols.angle, "{name}: {crease_lo}");
         }
 
+        // every face the round made is in the blend face log, so none escapes the check
+        let made = k.blend_face_log.as_ref().unwrap().last();
+        for (f, _, _) in &rounds {
+            assert!(
+                made.iter().any(|m| m.face == *f),
+                "{name}: face {} is not in the blend face log",
+                f.index()
+            );
+        }
         assert_definitions_or_listed(name, &k, &body);
     }
 }
