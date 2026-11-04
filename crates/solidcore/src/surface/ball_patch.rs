@@ -114,6 +114,13 @@ fn gamma(k: usize) -> f64 {
     ku / (1.0 - ku)
 }
 
+/// Whether the residual `f` is decided zero within `bound`: both finite and `|f| <= bound`.
+/// A NaN or an infinity (a hostile number, or a coefficient that overflowed) is never
+/// within: a comparison with NaN is false, so the test is written to accept, not refuse.
+fn within(f: f64, bound: f64) -> bool {
+    f.is_finite() && bound.is_finite() && f.abs() <= bound
+}
+
 /// `|x| + |y| + |z|`.
 fn l1(v: Vec3) -> f64 {
     v.x.abs() + v.y.abs() + v.z.abs()
@@ -357,7 +364,7 @@ impl BallPatch {
                         }
                         let (f, rounding) =
                             f.finish(binomial(2 * p, i) * binomial(2 * q, j), 2 * p.max(q));
-                        if f.abs() > geometric + rounding {
+                        if !within(f, geometric + rounding) {
                             return Ok(false);
                         }
                     }
@@ -443,7 +450,7 @@ impl BallPatch {
                     f.add(c, at(b + a)?, at(b + i - a)?, centre, radius, k_h);
                 }
                 let (f, rounding) = f.finish(binomial(2 * p, i), 2 * p);
-                if f.abs() > geometric + rounding {
+                if !within(f, geometric + rounding) {
                     return Ok(false);
                 }
             }
