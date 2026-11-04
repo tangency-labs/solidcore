@@ -541,3 +541,261 @@ fn planar_profiles_become_the_kernel_kinds_and_come_back() {
     assert_eq!(k.holes.len(), 2);
     assert_eq!(record_region2(&k), region);
 }
+
+// ---- #2357: a ball patch is made from the record only once it is certified on its sphere ----
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)] // test helpers
+mod ball_patch {
+    use solidcore::blend::fillet_executive::session::FilletSession;
+    use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
+    use solidcore::curve::curve::p2::CurveKind;
+    use solidcore::kernel::{KernelOptions, UpstreamFixes};
+    use solidcore::math::Point3;
+    use solidcore::nurbs::b_spline_curve::BSplineCurve;
+    use solidcore::nurbs::math::{NOW, NOZ};
+    use solidcore::primitive::api_primitives::create_box;
+    use solidcore::query::api_queries::{get_edges, get_faces};
+    use solidcore::surface::ball_patch::BallPatch;
+    use solidcore::surface::surface::p2::SurfaceKind;
+    use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
+    use solidcore::topology::edge;
+    use solidcore::topology::face::p2 as face2;
+    use solidcore::topology::topology_traverser::face_edges;
+    use solidcore::Kernel;
+    use solidcore_convert::ball_patch;
+    use solidcore_record::brep::{
+        Brep, Curve, Curve2, Edge, Face, Loop, OrientedEdge, Surface, VERSION,
+    };
+
+    /// A 40 x 30 x 60 box, every edge rounded r 1.5: eight Ball corners.
+    fn rounded_box() -> (Kernel, solidcore::Brep) {
+        let mut k = Kernel::new(&KernelOptions::default());
+        k.fixes = UpstreamFixes::all();
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 60.0).unwrap();
+        let edges = get_edges(&b).unwrap();
+        let xs = vec![FilletSurfaceGeneratorType::Circular; edges.len()];
+        {
+            let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+            s.prepare_per_edge_constant_radius(&mut k, &edges, &[1.5; 12], &xs, 1, 1.0)
+                .unwrap();
+            s.do_fillet(&mut k).unwrap();
+        }
+        stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+        (k, b)
+    }
+
+    /// A kernel NURBS curve as the record's: its full knot vector and homogeneous points.
+    fn record_nurbs_curve(c: &BSplineCurve) -> Curve {
+        let (unique, mults) = c.knots(None).unwrap();
+        let knots = unique
+            .iter()
+            .zip(&mults)
+            .flat_map(|(&k, &m)| std::iter::repeat_n(k, m))
+            .collect();
+        let homogeneous = c
+            .control_points()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                let w = if p.w == NOW { 1.0 } else { p.w };
+                [p.x, p.y, if p.z == NOZ { 0.0 } else { p.z }, w]
+            })
+            .collect();
+        Curve::RationalSpline { knots, homogeneous }
+    }
+
+    fn record_curve(c: &solidcore::curve::curve::Curve) -> Curve {
+        match c.kind() {
+            CurveKind::BSpline(b) => record_nurbs_curve(b),
+            CurveKind::Ellipse(e) => record_nurbs_curve(e.base()),
+            CurveKind::Line(l) => record_nurbs_curve(l.base()),
+            other => panic!("a loop curve of kind {other:?}"),
+        }
+    }
+
+    /// The record of the box's ball patches: each face its `BallPatch` label over its net, its
+    /// loop the face's edges with their curves (the rest of the record is not read), and the
+    /// kernel's patches in the same order.
+    fn ball_record(b: &solidcore::Brep) -> (Brep, Vec<BallPatch>) {
+        let mut rec = Brep {
+            version: VERSION,
+            tolerance: 1e-6,
+            regions: Vec::new(),
+            shells: Vec::new(),
+            faces: Vec::new(),
+            edges: Vec::new(),
+            vertices: Vec::new(),
+        };
+        let mut patches = Vec::new();
+        for f in get_faces(b).unwrap() {
+            let s = face2::surface(b, f).unwrap().unwrap();
+            let SurfaceKind::BallPatch(bp) = s.kind() else {
+                continue;
+            };
+            let n = bp.net().gw_nurb().unwrap();
+            let w = |c: &solidcore::nurbs::math::CPoint| if c.w == NOW { 1.0 } else { c.w };
+            let net = Surface::RationalSpline {
+                u_knots: n.u_knots().to_vec(),
+                v_knots: n.v_knots().to_vec(),
+                homogeneous: n
+                    .rows()
+                    .map(|r| r.iter().map(|c| [c.x, c.y, c.z, w(c)]).collect())
+                    .collect(),
+            };
+            let mut edges = Vec::new();
+            for e in face_edges(b, f).unwrap() {
+                let curve = record_curve(edge::curve(b, e).unwrap().unwrap());
+                let index = u32::try_from(rec.edges.len()).unwrap();
+                rec.edges.push(Edge {
+                    curve,
+                    nurbs: None,
+                    interval: [0.0, 1.0],
+                    vertices: [0, 0],
+                    tolerance: 1e-6,
+                    uses: Vec::new(),
+                });
+                edges.push(OrientedEdge {
+                    edge: index,
+                    forward: true,
+                    pcurve: Curve2::Spline {
+                        knots: vec![0.0, 0.0, 1.0, 1.0],
+                        points: vec![[0.0, 0.0], [1.0, 1.0]],
+                    },
+                });
+            }
+            let c = bp.centre();
+            rec.faces.push(Face {
+                surface: Surface::BallPatch {
+                    center: [c.x, c.y, c.z],
+                    radius: bp.radius(),
+                },
+                nurbs: Some(net),
+                domain: [[0.0, 1.0], [0.0, 1.0]],
+                loops: vec![Loop::Edges { edges }],
+            });
+            patches.push(bp.copy());
+        }
+        (rec, patches)
+    }
+
+    fn same_bits(a: &BallPatch, b: &BallPatch) -> bool {
+        let bits = |p: Point3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+        let (na, nb) = (
+            a.net().control_point_net().unwrap(),
+            b.net().control_point_net().unwrap(),
+        );
+        bits(a.centre()) == bits(b.centre())
+            && a.radius().to_bits() == b.radius().to_bits()
+            && na
+                .points
+                .iter()
+                .map(|&p| bits(p))
+                .eq(nb.points.iter().map(|&p| bits(p)))
+            && na
+                .weights
+                .iter()
+                .map(|w| w.to_bits())
+                .eq(nb.weights.iter().map(|w| w.to_bits()))
+    }
+
+    /// The eight corners (each centre r in from its three faces, R = 1.5) come back from the
+    /// record as certified ball patches, bit for bit the kernel's.
+    #[test]
+    fn the_rounded_box_s_corners_come_back_certified() {
+        let (_k, b) = rounded_box();
+        let (rec, patches) = ball_record(&b);
+        assert_eq!(rec.faces.len(), 8);
+        for (i, want) in patches.iter().enumerate() {
+            let got = ball_patch(&rec, i).unwrap();
+            assert!(same_bits(&got, want), "face {i}");
+            let c = got.centre();
+            for (x, side) in [(c.x, 40.0), (c.y, 30.0), (c.z, 60.0)] {
+                let near = (x - 1.5).abs().min((x - (side - 1.5)).abs());
+                assert!(near <= 1e-12, "face {i}: {c:?}");
+            }
+            assert_eq!(got.radius(), 1.5);
+        }
+    }
+
+    /// A sphere 1e-9 larger, a NaN centre, a loop curve moved 1e-7 are refused, naming the face
+    /// and, for the sphere, the coefficient off it against its bound.
+    #[test]
+    fn a_ball_patch_off_its_sphere_is_refused() {
+        let (_k, b) = rounded_box();
+        let (rec, _) = ball_record(&b);
+        for i in 0..rec.faces.len() {
+            let mut off = rec.clone();
+            if let Surface::BallPatch { radius, .. } = &mut off.faces[i].surface {
+                *radius += 1e-9;
+            }
+            let why = ball_patch(&off, i).unwrap_err().to_string();
+            assert!(
+                why.contains(&format!("face {i}")) && why.contains("bound"),
+                "{why}"
+            );
+            let mut off = rec.clone();
+            if let Surface::BallPatch { center, .. } = &mut off.faces[i].surface {
+                center[0] = f64::NAN;
+            }
+            assert!(ball_patch(&off, i).is_err());
+        }
+        let mut off = rec.clone();
+        let Loop::Edges { edges } = &off.faces[0].loops[0] else {
+            panic!("an edge loop");
+        };
+        let e = edges[0].edge as usize;
+        if let Curve::RationalSpline { homogeneous, .. } = &mut off.edges[e].curve {
+            for h in homogeneous.iter_mut() {
+                let w = h[3];
+                for x in &mut h[..3] {
+                    *x += 1e-7 * w;
+                }
+            }
+        }
+        let why = ball_patch(&off, 0).unwrap_err().to_string();
+        assert!(why.contains("loop edge"), "{why}");
+    }
+
+    /// Far from the origin the certificate is as tight: the corners moved to about
+    /// (1e5, -7e4, 3e4) are accepted, and a sphere 1e-9 larger there is still refused.
+    #[test]
+    fn a_ball_patch_far_from_the_origin_is_accepted() {
+        let (_k, b) = rounded_box();
+        let (mut rec, _) = ball_record(&b);
+        let t = [1e5, -7e4, 3e4];
+        let shift = |h: &mut [f64; 4]| {
+            let w = h[3];
+            for (x, d) in h.iter_mut().zip(t) {
+                *x += d * w;
+            }
+        };
+        for f in &mut rec.faces {
+            if let Surface::BallPatch { center, .. } = &mut f.surface {
+                for (c, d) in center.iter_mut().zip(t) {
+                    *c += d;
+                }
+            }
+            if let Some(Surface::RationalSpline { homogeneous, .. }) = &mut f.nurbs {
+                homogeneous.iter_mut().flatten().for_each(shift);
+            }
+        }
+        for e in &mut rec.edges {
+            if let Curve::RationalSpline { homogeneous, .. } = &mut e.curve {
+                homogeneous.iter_mut().for_each(shift);
+            }
+        }
+        for i in 0..rec.faces.len() {
+            ball_patch(&rec, i).unwrap_or_else(|e| panic!("face {i}: {e}"));
+            let mut off = rec.clone();
+            if let Surface::BallPatch { radius, .. } = &mut off.faces[i].surface {
+                *radius += 1e-9;
+            }
+            assert!(ball_patch(&off, i).is_err(), "face {i}");
+        }
+    }
+}
