@@ -15,11 +15,11 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p1 as brep_p1;
 use solidcore::topology::brep::sheet::sheet_on;
 use solidcore::topology::face::{p1 as face_p1, p2 as face_p2, p4 as face_p4};
-use solidcore::topology::{Brep, EdgeId, FaceId};
+use solidcore::topology::{Brep, EdgeId};
 use solidcore::{EntityRef, SolidError};
 use solidcore_convert::brep::Order;
 
-use crate::body::{finish, Body, Expect};
+use crate::body::{copy_attributes, finish, upward, Body, Expect};
 use crate::error::status;
 use crate::session::read_body;
 use crate::{Error, Result};
@@ -110,35 +110,6 @@ fn side_edge(
         }
     }
     Ok(best.map(|(_, e)| e))
-}
-
-/// `to` (in `into`) takes a copy of each attribute of `from` (in `src`).
-fn copy_attributes(
-    src: &Brep,
-    from: EntityRef,
-    into: &mut Brep,
-    to: EntityRef,
-) -> solidcore::Result<()> {
-    let copies: Vec<_> = src
-        .entity_attributes(from)
-        .into_iter()
-        .map(|(_, a)| a.make_copy())
-        .collect();
-    for a in copies {
-        into.add_attribute(to, a)?;
-    }
-    Ok(())
-}
-
-/// The orientation of `f`'s upward faceuse.
-fn upward(
-    b: &Brep,
-    f: FaceId,
-) -> solidcore::Result<Option<solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType>> {
-    Ok(match face_p2::upward_faceuse(b, f)? {
-        Some(fu) => Some(b.faceuse(fu)?.orientation),
-        None => None,
-    })
 }
 
 /// The kernel's refusal as the operation's: a weight vanishing, a pole, the apex or a full turn
@@ -373,6 +344,46 @@ mod tests {
             "{d:?}"
         );
         assert!((d.max().x - d.min().x - 90.0).abs() < 1e-12, "{d:?}");
+    }
+
+    /// The corpus's `cov-extend-quarter-cylinder-along-its-axis`: the record's quarter cylinder
+    /// sheet, its top arc (record edge 3) extended naturally by 5: the cylinder continued to 25
+    /// high, (pi / 2) 10 25 = 392.70, one face with four edges, as the rig measured.
+    #[test]
+    fn the_corpus_quarter_cylinder_continues_as_the_rig_measured() {
+        use crate::test_corpus::{area, entry, operand, raw_counts, rel, rig, rig_fixes, valid};
+        let case = "surfaces/cov-extend-quarter-cylinder-along-its-axis";
+        rig_fixes();
+        let e = entry(case);
+        let call = e["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["op"] == "extend_sheet")
+            .unwrap();
+        let p = &call["params"];
+        let edge = usize::try_from(p["edge"]["picked"][0]["index"].as_u64().unwrap()).unwrap();
+        assert_eq!(p["how"], "natural");
+        let (sheet, order) = operand(case, "b2");
+        let out = extend_sheet(
+            &sheet,
+            &order,
+            edge,
+            p["distance"].as_f64().unwrap(),
+            Continuation::Natural,
+        )
+        .unwrap();
+        valid(case, &out);
+        let (a, m) = (area(&out), rig(&e));
+        println!(
+            "{case}: area {a} (rig {}), counts {:?}",
+            m.area,
+            out.counts().unwrap()
+        );
+        assert!(rel(a, m.area) < 1e-9, "area {a} vs rig {}", m.area);
+        assert!(rel(a, 125.0 * std::f64::consts::PI) < 1e-9, "area {a}");
+        assert_eq!(out.counts().unwrap(), raw_counts(&e));
+        assert!(matches!(step_box(&out).0, SurfaceKind::Cone(_)));
     }
 
     #[test]
