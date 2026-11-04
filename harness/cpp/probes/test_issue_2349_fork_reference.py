@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Wire-format and diagnostic regressions for the independent fork probe."""
 import unittest
+import tempfile
+import json
+import hashlib
+from pathlib import Path
 
-from issue_2349_fork_reference import decode_record, differences
+from issue_2349_fork_reference import decode_record, differences, validate_case_names, verify_archive_stamp
 
 
 class RecordTests(unittest.TestCase):
@@ -33,6 +37,37 @@ class RecordTests(unittest.TestCase):
     def test_missing_fields_and_lengths_cannot_pass(self):
         self.assertTrue(differences({'x': [1]}, {'x': [1, 2]}))
         self.assertTrue(differences({'x': []}, {}))
+
+
+class EvidenceTests(unittest.TestCase):
+    def test_report_requires_each_fixture_exactly_once(self):
+        cases = {'a': {}, 'b': {}}
+        validate_case_names([{'name': 'b'}, {'name': 'a'}], cases)
+        for names in [[], ['a'], ['a', 'a', 'b'], ['a', 'b', 'unknown']]:
+            with self.subTest(names=names), self.assertRaises(ValueError):
+                validate_case_names([{'name': name} for name in names], cases)
+
+    def test_archive_stamp_binds_every_archive_and_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            libraries = [root / 'libsmlib_api.a', root / 'libsmlib_core.a']
+            for library in libraries:
+                library.write_bytes(library.name.encode())
+            stamp = root / 'build.json'
+            manifest = {'fork_commit': 'revision', 'libraries': {
+                p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in libraries}}
+            stamp.write_text(json.dumps(manifest))
+            self.assertEqual(verify_archive_stamp(stamp, libraries, 'revision'), manifest)
+            with self.assertRaises(ValueError):
+                verify_archive_stamp(stamp, libraries, 'wrong-revision')
+            del manifest['libraries'][libraries[0].name]
+            stamp.write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                verify_archive_stamp(stamp, libraries, 'revision')
+            manifest['libraries'][libraries[0].name] = '0' * 64
+            stamp.write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                verify_archive_stamp(stamp, libraries, 'revision')
 
 
 if __name__ == '__main__':
