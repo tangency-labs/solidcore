@@ -785,6 +785,94 @@ fn curve_jets_are_exact_on_every_kind() {
     }
 }
 
+/// A nest of curves taken apart one level at a time: dropped whole, it would recurse as deep as
+/// it is nested.
+fn take_apart(c: Curve) {
+    let mut stack = vec![c];
+    while let Some(c) = stack.pop() {
+        if let Curve::SurfaceIntersection {
+            surfaces, leader, ..
+        } = c
+        {
+            stack.push(*leader);
+            for s in surfaces {
+                if let Surface::PlacedRevolution { profile, .. } = *s {
+                    stack.push(*profile);
+                }
+            }
+        }
+    }
+}
+
+/// An intersection's leader is a polyline or a spline, and a revolution's profile is never an
+/// intersection: either nested in another is refused at its own level, before the evaluator
+/// descends into it, so a record nested as deep as its producer likes cannot exhaust the stack.
+#[test]
+fn a_nested_intersection_is_refused_without_descending_into_it() {
+    const DEPTH: usize = 100_000;
+    let plane = || {
+        Box::new(Surface::Plane {
+            origin: [0.; 3],
+            u_axis: [1., 0., 0.],
+            v_axis: [0., 1., 0.],
+        })
+    };
+    let leaf = || Curve::Polyline {
+        points: vec![[0.; 3], [1., 0., 0.]],
+    };
+    let mut through_leader = leaf();
+    for _ in 0..DEPTH {
+        through_leader = Curve::SurfaceIntersection {
+            surfaces: [plane(), plane()],
+            leader: Box::new(through_leader),
+            tolerance: 1e-6,
+        };
+    }
+    let mut through_profile = leaf();
+    for _ in 0..DEPTH {
+        through_profile = Curve::SurfaceIntersection {
+            surfaces: [
+                Box::new(Surface::PlacedRevolution {
+                    profile: Box::new(through_profile),
+                    origin: [0.; 3],
+                    axis: [0., 0., 1.],
+                    matrix: [
+                        [1., 0., 0., 0.],
+                        [0., 1., 0., 0.],
+                        [0., 0., 1., 0.],
+                        [0., 0., 0., 1.],
+                    ],
+                    forward: true,
+                }),
+                plane(),
+            ],
+            leader: Box::new(leaf()),
+            tolerance: 1e-6,
+        };
+    }
+    // A small stack, so that descending even a fraction of the nest would overflow it.
+    let (leader, profile, through_leader, through_profile) = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || {
+            (
+                CurveEval::new(&through_leader).err(),
+                CurveEval::new(&through_profile).err(),
+                through_leader,
+                through_profile,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    take_apart(through_leader);
+    take_apart(through_profile);
+    assert!(matches!(leader, Some(EvalError::Invalid(_))), "{leader:?}");
+    assert!(
+        matches!(profile, Some(EvalError::Unsupported(_))),
+        "{profile:?}"
+    );
+}
+
 /// A line extends for ever past its knots, as a B-spline curve continues its end span.
 #[test]
 fn a_spline_curve_continues_past_its_knots() {
