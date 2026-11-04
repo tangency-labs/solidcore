@@ -14,11 +14,11 @@
 
 - **Three cases measured per report and per step.** The extra C++ report is `SmBSplineSurface` test #5, `Bad NonMonotonic CPts`, and the step it reads as a direction is one ulp of the coordinate, far inside the rounding of the two points it lies between:
 
-| case | collapsed row | `\|step\|` | bound | `\|P0\|` | step / `SM_EFF_ZERO` | bound / step |
-|---|---|---|---|---|---|---|
-| gen0528 | apex column, 8 steps | 3.638e-12 | 3.864e-11 | 3.480e4 | 3.6 | 10.6 |
-| ovf0276 | pole row, 8 steps | 3.638e-12 | 3.046e-11 | 2.743e4 | 3.6 | 8.4 |
-| ovf0160 | pole column, 8 steps | 1.164e-10 | 2.723e-9 | 2.453e6 | 116 | 23 |
+| case | collapsed row | step | bound | distance from origin | bound / step |
+|---|---|---|---|---|---|
+| gen0528 | apex column, 8 steps | 3.638e-12 | 3.864e-11 | 3.480e4 | 10.6 |
+| ovf0276 | pole row, 8 steps | 3.638e-12 | 3.046e-11 | 2.743e4 | 8.4 |
+| ovf0160 | pole column, 8 steps | 1.164e-10 | 2.723e-9 | 2.453e6 | 23 |
 
   `gen0528` is the clearest: the C++ emits two reports, test #5 and `Bad Cone Radius` (`15012`, test 0, value `-1.8189894035458565e-12`); solidcore emits only `Bad Cone Radius`, with the same value. The single difference is test #5. So these three are this entry's defect, reached from surfaces the case generator builds rather than from a moved record: a cone whose apex row and a sphere whose pole row are collapsed, placed far enough out that one ulp of a coordinate is above an absolute `SM_EFF_ZERO`.
 - **Two cases not measured that far.** For `gen0812` and `gen1016` an isolated harness (`ffi::eval` on the case's block, then `assert_valid` on the same surface) reports **no** report from either side and finds no step inside the bound, where the difftest run over the same block gives `cpp=149 / rust=3`. That harness therefore does not reproduce the difftest's C++ answer for these two, and the reason is not known; a setup step the harness makes per case is the candidate (`crates/difftest/README.md` names latched C++ process state as the reason every unit gets its own child process). For these two the lengths above are measured and **which report is missing, and how long the step is, is not**. It is not inferred from the other three.
