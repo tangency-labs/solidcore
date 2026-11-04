@@ -1,25 +1,31 @@
-//! The general-path motion of a [`ProceduralSweep`](super::ProceduralSweep) (#2572, slice 2,
-//! not upstream): the profile carried along a path with a frame, and the certified distance
-//! of the net `sweep_scale` fits to it.
+//! The path motion of a [`ProceduralSweep`](super::ProceduralSweep) (#2572, slice 2, not
+//! upstream): the profile carried along a path in the path's rotation-minimizing frame, and
+//! the certified distance of the net `sweep_scale` fits to it.
 //!
 //! **The definition.** `S(w, t) = T(t) + x(t) C_x(w) + y(t) C_y(w) + z(t) C_z(w)`, `T` the
 //! path, `C` the profile in the frame's own coordinates and `t` the path's parameter. The
-//! frame is the projection normal method of `N_CreateBVectors` in closed form: `x = T' /
-//! |T'|`, and from the last station `j` of the frame chain (a parameter `t_j <= t`, with the
-//! unit normal `z_j` the chain holds there)
+//! frame is a property of the path alone, its rotation-minimizing (parallel transport)
+//! frame: `x = T' / |T'|`, `z` the unit normal that turns with `x` and no further, `y = z x
+//! x`, started from the unit normal the sweep starts from. It does not depend on how the
+//! sweep sampled the path. In closed form where the path is made of
 //!
-//! `z(t) = (z_j - (z_j . x) x) / |z_j - (z_j . x) x|`, `y = z x x`.
+//! - lines: the frame is constant;
+//! - circular arcs: the frame turns about the arc's axis `n` by the angle the tangent has
+//!   turned from the span's start, `z = R_n(phi) z_0`, `phi = atan2((x_0 x x) . n, x_0 . x)`;
 //!
-//! At each station this is the net's own frame (the chain is that rule applied from one
-//! station to the next); between them it is the frame the rule gives from the last, so `S`
-//! is continuous and its sections are everywhere perpendicular to the path. On a straight
-//! `x` is constant and so is the frame. The chain is the net's, not a curve's: a frame taken
-//! from a curve or a closed path has no definition.
+//! each knot span of the path being one or the other, and the frame at a span's start the
+//! previous span's frame at its end (the joints are G1). A span is classified by sampling
+//! it at 12 parameters (a line to `1e-9` of the path's size for degree up to 3, a circle for
+//! a conic), the classification's error added to the bound. A path with any other span (a
+//! general spline: the rotation-minimizing equation has no closed form there, and its
+//! certified enclosure is not here yet) or a closed one has no definition: the #2505
+//! ledger's `path-spline` and `path-closed`.
 //!
 //! **The map.** The net's parameter across the sweep is the skin's chord length, not the
 //! path's `t`. The definition carries nodes `(v_k, t_k)`, the net's parameter at each
-//! placed section (found by a foot point search, whose result is data: the bound below holds
-//! for whatever map is stored), and reads `t` by interpolating them linearly.
+//! placed section (the skin's own, replayed; the bound below holds for whatever map is
+//! stored), and reads `t` by interpolating them linearly: the bound is that of
+//! `|B(u, v) - S(u, t(v))|`.
 //!
 //! **The bound.** Every section of the net is the profile's control points moved by one
 //! motion, in the same rational basis `R_i(u)` (non-negative, summing to 1) for every `v`,
@@ -30,18 +36,12 @@
 //! of `v` about its middle `c`, half width `h`, by its Taylor expansion,
 //! `|f_i| <= |f_i(c)| + |f_i'(c)| h + (M_P + M_S) h^2 / 2`, `M_P` the largest `|P_i''|` in the
 //! cell (its second derivative's control points, a B-spline's convex hull) and `M_S` that of
-//! `S_i''`, from bounds of `|T''|`, `|T'''|`, `|T'|` over the path's span (control polygons of
-//! its derivatives) and of the frame's derivatives (below). Cells never cross a knot of the
-//! net, of the path, a node or a station, where `P_i''` or `S_i''` jump, and are split until
-//! the second order term is small or the budget [`MAX_CELLS`] is spent (the bound is then
-//! looser, never wrong).
-//!
-//! With `a = |T''| / |T'|_min` and `b = |T'''| / |T'|_min + 3 a^2`, `|x'| <= a`, `|x''| <= b`;
-//! for `z = u / |u|`, `u = z_j - (z_j . x) x`, `|u| >= n = cos(alpha)` for the angle
-//! `alpha` the path's tangent has turned from station `j` (at most the station's span times
-//! the largest `a`), `|u'| <= a (1 + sin alpha)`, `|u''| <= b (1 + sin alpha) + 2 a^2`,
-//! `|z'| <= 2 |u'| / n`, `|z''| <= 2 |u''| / n + 6 |u'|^2 / n^2`, and for `y = z x x`
-//! `|y''| <= |z''| + 2 |z'| a + b`.
+//! `S_i''`: `(dt/dv)^2 (|T''| + |C_i| (phi'' + phi'^2))` on an arc, `|T''|` on a line, with
+//! `phi' <= |T'| / r`, `phi'' <= |T''| / r` and `|T'|`, `|T''|` bounded over the path's span
+//! from the control polygons of its derivatives (the path is `N / w`, quotient rule). Cells
+//! never cross a knot of the net, of the path or a node, where `P_i''` or `S_i''` jump, and
+//! are split until the second order term is small or the budget [`MAX_CELLS`] is spent (the
+//! bound is then looser, never wrong).
 //!
 //! The floor adds a forward error bound of evaluating both in floating point, `gamma_K`
 //! times the sizes of the numbers, and a slack of `2^-30` relative on the cell bounds (they
@@ -67,9 +67,6 @@ pub const MAX_CELLS: usize = 400_000;
 
 /// The deepest a cell is halved.
 const MAX_DEPTH: u32 = 40;
-
-/// The most the tangent may turn from a station (radians): `cos(0.6) > 0.82`.
-const MAX_TURN: f64 = 0.6;
 
 /// Slack on the doubles' cell bounds, relative.
 const SLACK: f64 = 1.0 / 1_073_741_824.0;
@@ -262,12 +259,43 @@ impl Frame {
     }
 }
 
-/// A general path and the frame it carries the profile in (module docs).
+/// What one knot span of the path is: the rotation-minimizing frame has a closed form on
+/// each.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SpanKind {
+    /// A straight line: the frame is constant.
+    Line,
+    /// A circular arc of `radius` in the plane square to the unit `axis`: the frame turns
+    /// about the axis by the angle the tangent has turned.
+    Arc {
+        /// The unit normal of the arc's plane.
+        axis: Vec3,
+        /// The arc's radius.
+        radius: f64,
+    },
+}
+
+/// One knot span of the path, with the frame it starts in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    /// The span's parameters.
+    pub from: f64,
+    /// The span's end.
+    pub to: f64,
+    /// What the span is.
+    pub kind: SpanKind,
+    /// The unit tangent at its start.
+    pub x0: Vec3,
+    /// The frame's unit normal at its start, carried from the previous span's end.
+    pub z0: Vec3,
+}
+
+/// A path and the rotation-minimizing frame it carries the profile in (module docs).
 #[derive(Debug, Clone)]
 pub struct PathMotion {
     path: BSplineCurve,
-    /// The frame chain: parameter `t_j` and the unit normal `z_j`, ascending.
-    chain: Vec<(f64, Vec3)>,
+    /// The path's knot spans, ascending, each a line or an arc.
+    spans: Vec<Span>,
     /// The net's parameter across the sweep and the path's, at each section, both strictly
     /// ascending.
     nodes: Vec<(f64, f64)>,
@@ -280,10 +308,10 @@ impl PathMotion {
         &self.path
     }
 
-    /// The frame chain: the parameter of each station and the unit normal there.
+    /// The path's knot spans: what each is and the frame it starts in.
     #[must_use]
-    pub fn chain(&self) -> &[(f64, Vec3)] {
-        &self.chain
+    pub fn spans(&self) -> &[Span] {
+        &self.spans
     }
 
     /// The net's parameter and the path's at each placed section, both ascending: the path's
@@ -318,12 +346,21 @@ impl PathMotion {
         }
     }
 
-    /// The frame at the path's parameter `t` (clamped to the path's domain).
+    /// The span holding the path's parameter `t`.
+    fn span_at(&self, t: f64) -> Option<&Span> {
+        self.spans.get(
+            self.spans
+                .partition_point(|s| s.from <= t)
+                .saturating_sub(1),
+        )
+    }
+
+    /// The frame at the path's parameter `t` (clamped to the path's domain): the
+    /// rotation-minimizing frame of the path, which depends on the path alone.
     ///
     /// # Errors
     ///
-    /// `InvalidInput` where the path's tangent vanishes or turned too far from its station;
-    /// those of evaluating the path.
+    /// `InvalidInput` where the path's tangent vanishes; those of evaluating the path.
     pub fn frame(&self, t: f64) -> Result<Frame> {
         let d = self.path.evaluate(t, 2, true, false)?;
         let (Some(&point), Some(&t1), Some(&t2)) = (d.first(), d.get(1), d.get(2)) else {
@@ -342,22 +379,23 @@ impl PathMotion {
         let x = t1 * (1.0 / speed);
         let dx = (t2 - x * t2.dot(x)) * (1.0 / speed);
         let j = self
-            .chain
-            .partition_point(|&(tj, _)| tj <= t)
+            .spans
+            .partition_point(|s| s.from <= t)
             .saturating_sub(1);
-        let zj = self.chain.get(j).map_or(Vec3::Z, |c| c.1);
-        let s = zj.dot(x);
-        let u = zj - x * s;
-        let du = -(x * zj.dot(dx)) - dx * s;
-        let n = u.length();
-        if !(n.is_finite() && n > 1e-6) {
-            return Err(SolidError::invalid_input(
-                OP_EVAL,
-                "the frame's normal vanishes: the path turned too far from its station",
-            ));
-        }
-        let z = u * (1.0 / n);
-        let dz = (du - z * z.dot(du)) * (1.0 / n);
+        let span = self
+            .spans
+            .get(j)
+            .ok_or_else(|| SolidError::invalid_input(OP_EVAL, "the path has no spans"))?;
+        let (z, dz, dx) = match span.kind {
+            SpanKind::Line => (span.z0, Vec3::ZERO, Vec3::ZERO),
+            SpanKind::Arc { axis, .. } => {
+                // turned by the angle the tangent has turned about the axis
+                let angle = span.x0.cross(x).dot(axis).atan2(span.x0.dot(x));
+                let rate = axis.dot(x.cross(dx));
+                let z = rodrigues(span.z0, axis, angle);
+                (z, axis.cross(z) * rate, dx)
+            }
+        };
         let y = z.cross(x);
         let dy = dz.cross(x) + z.cross(dx);
         Ok(Frame {
@@ -380,8 +418,14 @@ impl PathMotion {
         scale: Option<Vec3>,
     ) -> Result<()> {
         self.path.transform(rotate_n_move, scale)?;
-        for (_, z) in &mut self.chain {
-            *z = rotate_n_move.transform_vector(*z);
+        let factor = scale.map_or(1.0, |s| s.x);
+        for s in &mut self.spans {
+            s.x0 = rotate_n_move.transform_vector(s.x0);
+            s.z0 = rotate_n_move.transform_vector(s.z0);
+            if let SpanKind::Arc { axis, radius } = &mut s.kind {
+                *axis = rotate_n_move.transform_vector(*axis);
+                *radius *= factor;
+            }
         }
         Ok(())
     }
@@ -401,9 +445,11 @@ impl PathMotion {
     /// # Errors
     ///
     /// `InvalidInput` for a net that is not the profile's sections moved along the path (its
-    /// control points per section, its weights or its knots differ), a path that is rational
-    /// or has a vanishing tangent, a frame chain that turns too far between stations, a
-    /// section whose net parameter is not found or a bound that is not finite.
+    /// control points per section, its weights or its knots differ), a closed path, a path
+    /// with a span that is neither a line nor a circular arc (the frame of a general spline
+    /// has no closed form yet: the #2505 ledger's `path-spline`) or a vanishing tangent or a
+    /// joint that is not G1, a section whose net parameter is not found or a bound that is
+    /// not finite.
     pub(crate) fn create(
         profile: &BSplineCurve,
         path: &BSplineCurve,
@@ -425,42 +471,10 @@ impl PathMotion {
         }
         let mut path = path.copy();
         path.set_out_of_bounds_enabled(false);
-        // the frame chain, from the rule
-        let mut chain: Vec<(f64, Vec3)> = Vec::with_capacity(trace.chain.len());
-        for &t in &trace.chain {
-            let tangent = path
-                .evaluate(t, 1, true, false)?
-                .get(1)
-                .copied()
-                .unwrap_or(Vec3::ZERO);
-            let l = tangent.length();
-            if !(l.is_finite() && l > 0.0) {
-                return Err(bad("the path's tangent vanishes at a station"));
-            }
-            let x = tangent * (1.0 / l);
-            let z = match chain.last() {
-                None => trace.start_normal,
-                Some(&(_, z)) => {
-                    let u = z - x * z.dot(x);
-                    let n = u.length();
-                    if !(n.is_finite() && n > 0.0) {
-                        return Err(bad("the frame chain's normal vanishes"));
-                    }
-                    u * (1.0 / n)
-                }
-            };
-            chain.push((t, z));
-        }
-        if chain.len() < 2
-            || chain
-                .windows(2)
-                .any(|w| matches!(w, [a, b] if !(a.0 < b.0)))
-        {
-            return Err(bad("a frame chain has at least two ascending stations"));
-        }
+        let spans = spans_of(&path, &pc.knots, pc.degree, trace.start_normal)?;
         let mut motion = Self {
             path,
-            chain,
+            spans,
             nodes: Vec::new(),
         };
         let columns = Columns::read(profile, net)?;
@@ -590,7 +604,6 @@ impl PathMotion {
         // cells never cross a knot of the net, a node, a station or a knot of the path
         let mut cuts: Vec<f64> = cols.unique_knots.clone();
         cuts.extend(self.nodes.iter().map(|n| n.0));
-        cuts.extend(self.chain.iter().filter_map(|c| to_v(c.0)));
         cuts.extend(bounds.unique_knots.iter().filter_map(|&k| to_v(k)));
         cuts.retain(|&v| v >= v0 && v <= v1);
         cuts.push(v0);
@@ -621,43 +634,18 @@ impl PathMotion {
                 let c = 0.5 * (lo + hi);
                 let h = 0.5 * (hi - lo);
                 let (t, m) = self.path_parameter(c);
-                let dt = m.abs() * h;
                 let frame = self.frame(t)?;
-                // the path's derivative bounds over the cell's span, and the tangent's lower
-                // bound there
-                let (_, d2, d3) = bounds.derivative_bounds(t);
-                let smin = frame.tangent.length() - d2 * dt;
-                if !(smin > 0.0) {
-                    return Err(bad("a path's tangent is not bounded away from zero"));
-                }
-                // the angle the tangent has turned from the station's, at most
-                let j = self
-                    .chain
-                    .partition_point(|&(tj, _)| tj <= t)
-                    .saturating_sub(1);
-                let tj = self.chain.get(j).map_or(t, |c| c.0);
-                let xj = self.path.evaluate(tj, 1, true, false)?;
-                let xj = xj.get(1).copied().unwrap_or(Vec3::ZERO);
-                let xj = xj * (1.0 / xj.length());
-                let a1 = d2 / smin;
-                let turned = frame.axes[0].dot(xj).clamp(-1.0, 1.0).acos() + a1 * dt;
-                let can_split = depth < MAX_DEPTH && cells + stack.len() < MAX_CELLS;
-                if !(turned <= MAX_TURN) {
-                    if can_split {
-                        stack.push((c, hi, depth + 1));
-                        stack.push((lo, c, depth + 1));
-                        continue;
+                // the path's derivative bounds over the cell's span, and what the frame's
+                // turn adds: on an arc `R'' C` is at most `|C| (phi'' + phi'^2)` for the
+                // angle `phi` of the tangent, `phi' <= |T'| / r` and `phi'' <= |T''| / r`
+                let (d1, d2, _) = bounds.derivative_bounds(t);
+                let turn = match self.span_at(t).map(|s| s.kind) {
+                    Some(SpanKind::Arc { radius, .. }) => {
+                        d2 / radius + (d1 / radius) * (d1 / radius)
                     }
-                    return Err(bad("the path turns too far between frame stations"));
-                }
-                let sin_a = turned.sin();
-                let n = turned.cos();
-                let a2 = d3 / smin + 3.0 * a1 * a1;
-                let u1 = a1 * (1.0 + sin_a);
-                let u2 = a2 * (1.0 + sin_a) + 2.0 * a1 * a1;
-                let z1 = 2.0 * u1 / n;
-                let z2 = 2.0 * u2 / n + 6.0 * u1 * u1 / (n * n);
-                let y2 = z2 + 2.0 * z1 * a1 + a2;
+                    _ => 0.0,
+                };
+                let can_split = depth < MAX_DEPTH && cells + stack.len() < MAX_CELLS;
                 let mut cell = 0.0_f64;
                 let mut split = false;
                 for (((p, p1), p2), cc) in cols
@@ -670,7 +658,7 @@ impl PathMotion {
                     let f = p.eval(c) - frame.place(*cc);
                     let df = p1.eval(c) - frame.rate(*cc) * m;
                     let mp = p2.largest(c);
-                    let ms = m * m * (d2 + cc.x.abs() * a2 + cc.y.abs() * y2 + cc.z.abs() * z2);
+                    let ms = m * m * (d2 + cc.length() * turn);
                     let rem = 0.5 * (mp + ms) * h * h;
                     if rem > goal && can_split {
                         split = true;
@@ -687,7 +675,8 @@ impl PathMotion {
             }
         }
         let floor = gamma(96) * (big + reach) * 4.0;
-        let bound = round_up(worst * (1.0 + SLACK) + floor);
+        let classified = 1e-11 * (1.0 + big) * (1.0 + reach);
+        let bound = round_up(worst * (1.0 + SLACK) + floor + classified);
         if bound.is_finite() && bound > 0.0 {
             Ok(bound)
         } else {
@@ -851,4 +840,122 @@ impl Columns {
             swapped,
         })
     }
+}
+
+/// `v` turned right-handed about the unit `axis` by `angle`.
+fn rodrigues(v: Vec3, axis: Vec3, angle: f64) -> Vec3 {
+    v * angle.cos() + axis.cross(v) * angle.sin() + axis * (axis.dot(v) * (1.0 - angle.cos()))
+}
+
+/// The unit tangent of `path` at `t`, from the left or the right.
+fn unit_tangent(path: &BSplineCurve, t: f64, from_left: bool) -> Result<Vec3> {
+    let d = path.evaluate(t, 1, from_left, false)?;
+    let t1 = d.get(1).copied().unwrap_or(Vec3::ZERO);
+    let l = t1.length();
+    if l.is_finite() && l > 0.0 {
+        Ok(t1 * (1.0 / l))
+    } else {
+        Err(bad("the path's tangent vanishes"))
+    }
+}
+
+/// What the knot span `[from, to]` of `path` of degree `degree` is, by 12 samples: a line
+/// (collinear within `1e-9` of the path's size; any degree up to 3 is then that line) or a
+/// circular arc (degree up to 2, so a conic, which 12 points on a circle make that circle).
+fn classify(path: &BSplineCurve, from: f64, to: f64, degree: usize) -> Result<SpanKind> {
+    const N: u32 = 11;
+    let mut pts = Vec::with_capacity(12);
+    for i in 0..=N {
+        let t = from + (to - from) * f64::from(i) / f64::from(N);
+        pts.push(path.evaluate_point(t)?);
+    }
+    let size = pts.iter().fold(0.0_f64, |m, p| m.max(p.length()));
+    let tol = 1e-11 * (1.0 + size);
+    let (Some(&a), Some(&m), Some(&c)) = (pts.first(), pts.get(5), pts.last()) else {
+        return Err(bad("a span has samples"));
+    };
+    let chord = c - a;
+    let length = chord.length();
+    if !(length > tol) {
+        return Err(bad("a span is a point or closed"));
+    }
+    let dir = chord * (1.0 / length);
+    let straight = pts
+        .iter()
+        .all(|&p| (p - a - dir * (p - a).dot(dir)).length() <= tol);
+    if straight && degree <= 3 {
+        return Ok(SpanKind::Line);
+    }
+    let (u, v) = (m - a, c - a);
+    let w = u.cross(v);
+    let w2 = w.dot(w);
+    if degree > 2 || !(w2.sqrt() > tol * length) {
+        return Err(bad(
+            "a span is neither a line nor a circular arc: the frame of a general spline has no closed form",
+        ));
+    }
+    let center = a + (w.cross(u) * v.dot(v) + v.cross(w) * u.dot(u)) * (0.5 / w2);
+    let radius = (center - a).length();
+    let axis = w * (1.0 / w2.sqrt());
+    let circle = pts.iter().all(|&p| {
+        ((p - center).length() - radius).abs() <= tol && (p - center).dot(axis).abs() <= tol
+    });
+    if circle && radius.is_finite() && radius > tol {
+        Ok(SpanKind::Arc { axis, radius })
+    } else {
+        Err(bad(
+            "a span is neither a line nor a circular arc: the frame of a general spline has no closed form",
+        ))
+    }
+}
+
+/// The spans of `path` between its unique `knots`, each classified, with the frame carried
+/// from the start normal across the joints (which must be G1).
+fn spans_of(
+    path: &BSplineCurve,
+    knots: &[f64],
+    degree: usize,
+    start_normal: Vec3,
+) -> Result<Vec<Span>> {
+    let mut spans: Vec<Span> = Vec::new();
+    for w in knots.windows(2) {
+        let &[from, to] = w else { continue };
+        if !(to > from) {
+            continue;
+        }
+        let kind = classify(path, from, to, degree)?;
+        let x0 = unit_tangent(path, from, false)?;
+        let z_in = match spans.last() {
+            None => start_normal,
+            Some(prev) => {
+                let x_end = unit_tangent(path, prev.to, true)?;
+                if (x_end - x0).length() > 1e-8 {
+                    return Err(bad("a joint of the path is not G1"));
+                }
+                match prev.kind {
+                    SpanKind::Line => prev.z0,
+                    SpanKind::Arc { axis, .. } => {
+                        let angle = prev.x0.cross(x_end).dot(axis).atan2(prev.x0.dot(x_end));
+                        rodrigues(prev.z0, axis, angle)
+                    }
+                }
+            }
+        };
+        let u = z_in - x0 * z_in.dot(x0);
+        let n = u.length();
+        if !(n.is_finite() && n > 0.5) {
+            return Err(bad("the frame's normal is not square to the path"));
+        }
+        spans.push(Span {
+            from,
+            to,
+            kind,
+            x0,
+            z0: u * (1.0 / n),
+        });
+    }
+    if spans.is_empty() {
+        return Err(bad("a path has spans"));
+    }
+    Ok(spans)
 }

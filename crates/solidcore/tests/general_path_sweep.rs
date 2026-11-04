@@ -24,7 +24,7 @@ use solidcore::curve::line::Line;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::math::{Point2, Point3, Vec3};
-use solidcore::nurbs::b_spline_curve::BSplineCurve;
+use solidcore::nurbs::b_spline_curve::{BSplineCurve, NurbCircleParam};
 use solidcore::nurbs::b_spline_surface::SurfParamType;
 use solidcore::nurbs::crv_fit::p1::ParamMethod;
 use solidcore::primitive::api_curves::create_arc;
@@ -343,37 +343,180 @@ fn a_circle_along_a_line_then_an_arc_has_one_definition() {
     }
 }
 
-/// The balance wire: a circle along a fitted 3D spline of straights and R2 rounds reports
-/// its definition and its bound; the definition's points are the circle of `RADIUS` about
-/// the path's point, and the net lies within the bound of them off its knots.
+/// A battery pack's balance wire path: straights joined by R2 rounds (lines and circular
+/// arcs, G1), in mm.
+fn wire_path(k: &Kernel) -> BSplineCurve {
+    let p = |x: f64, y: f64, z: f64| Point3::new(x, y, z);
+    let line =
+        |a: Point3, b: Point3| Curve::from(BSplineCurve::create_line_segment(3, a, b).unwrap());
+    let arc = |c: Point3, a: Point3, b: Point3| {
+        Curve::from(
+            BSplineCurve::create_arc_from_points(c, a, b, NurbCircleParam::Quadratic).unwrap(),
+        )
+    };
+    let pieces = vec![
+        line(p(128.855, 22.2, 63.309), p(135.1, 22.2, 63.309)),
+        arc(
+            p(135.1, 22.2, 61.309),
+            p(135.1, 22.2, 63.309),
+            p(137.1, 22.2, 61.309),
+        ),
+        line(p(137.1, 22.2, 61.309), p(137.1, 22.2, 59.1)),
+        arc(
+            p(137.1, 20.2, 59.1),
+            p(137.1, 22.2, 59.1),
+            p(137.1, 20.2, 57.1),
+        ),
+        line(p(137.1, 20.2, 57.1), p(137.1, -35.9, 57.1)),
+        arc(
+            p(137.1, -35.9, 55.1),
+            p(137.1, -35.9, 57.1),
+            p(137.1, -37.9, 55.1),
+        ),
+        line(p(137.1, -37.9, 55.1), p(137.1, -37.9, 52.55)),
+    ];
+    solidcore::curve::composite_curve::CompositeCurve::build_composites_from_curves(
+        k, pieces, 1e-6, 0.0,
+    )
+    .unwrap()
+    .composites
+    .into_iter()
+    .next()
+    .unwrap()
+    .make_composite_nurb()
+    .unwrap()
+}
+
+/// The path with each of its knot spans split into `parts` (same curve, same parameters).
+fn sampled(path: &BSplineCurve, parts: u32) -> BSplineCurve {
+    let mut p = path.clone();
+    let knots = path.canonical().unwrap().knots;
+    let extra: Vec<f64> = knots
+        .windows(2)
+        .flat_map(|w| {
+            (1..parts).map(move |i| w[0] + (w[1] - w[0]) * f64::from(i) / f64::from(parts))
+        })
+        .collect();
+    p.insert_knots(&extra).unwrap();
+    p
+}
+
+/// The balance wire (straights and R2 rounds): every wall is a definition, the
+/// definition's points are the circle of `RADIUS` about the path's point, and the net lies
+/// within the bound of them off its knots, whatever number of points the path is given.
 #[test]
-fn a_circle_sweeps_along_a_fitted_3d_spline_with_straights_and_rounds() {
+fn a_circle_sweeps_along_a_wire_of_straights_and_rounds() {
     let mut k = Kernel::default();
-    let b = create_pipe_sweep(&mut k, RADIUS, Some(&spline_path()), false).unwrap();
-    let wall = only_wall(&b);
-    let sweep = wall.procedural_sweep().unwrap();
-    let bound = sweep.bound();
-    assert!(bound.is_finite() && bound > 0.0);
-    let d = sweep.definition();
-    assert!(d.path().is_some() && d.screw().is_none());
-    assert!(d.path().unwrap().chain().len() > 60);
-    let dom = sweep.net().natural_uv_domain();
-    for i in 0..30 {
-        for j in 0..500 {
-            let uv = Point2::new(
-                dom.u_interval().min()
-                    + (dom.u_interval().max() - dom.u_interval().min()) * (f64::from(i) + 0.3)
-                        / 30.0,
-                dom.v_interval().min()
-                    + (dom.v_interval().max() - dom.v_interval().min()) * (f64::from(j) + 0.4)
-                        / 500.0,
+    let wire = wire_path(&k);
+    for parts in [1, 2, 4] {
+        let path = Curve::from(sampled(&wire, parts));
+        let b = create_pipe_sweep(&mut k, RADIUS, Some(&path), false).unwrap();
+        let all = walls(&b);
+        assert!(!all.is_empty());
+        for wall in &all {
+            let sweep = wall.procedural_sweep().expect("every wall is a definition");
+            let d = sweep.definition();
+            assert!(d.path().is_some() && d.screw().is_none());
+            assert!(sweep.bound().is_finite() && sweep.bound() > 0.0);
+            let dom = sweep.net().natural_uv_domain();
+            for i in 0..30 {
+                for j in 0..200 {
+                    let uv = Point2::new(
+                        dom.u_interval().min()
+                            + (dom.u_interval().max() - dom.u_interval().min())
+                                * (f64::from(i) + 0.3)
+                                / 30.0,
+                        dom.v_interval().min()
+                            + (dom.v_interval().max() - dom.v_interval().min())
+                                * (f64::from(j) + 0.4)
+                                / 200.0,
+                    );
+                    assert!((on_tube(d, uv) - RADIUS).abs() <= 1e-9);
+                }
+            }
+            let far = deviation(&sweep, 3001);
+            assert!(
+                far <= sweep.bound(),
+                "{parts}: {far} past {}",
+                sweep.bound()
             );
-            let gap = on_tube(d, uv);
-            assert!((gap - RADIUS).abs() <= 1e-9, "{gap}");
         }
     }
-    let far = deviation(&sweep, 6001);
-    assert!(far <= bound, "{far} past {bound}");
+}
+
+/// The definition's frame is the path's: the same at a parameter whether the path is
+/// sampled once, twice or four times as densely.
+#[test]
+fn the_frame_does_not_depend_on_how_the_path_is_sampled() {
+    let mut k = Kernel::default();
+    let wire = wire_path(&k);
+    let mut motion = |parts: u32| {
+        let path = Curve::from(sampled(&wire, parts));
+        let b = create_pipe_sweep(&mut k, RADIUS, Some(&path), false).unwrap();
+        let wall = walls(&b).into_iter().next().unwrap();
+        let sweep = wall.procedural_sweep().unwrap();
+        sweep.definition().path().unwrap().clone()
+    };
+    let (m1, m2, m4) = (motion(1), motion(2), motion(4));
+    assert_eq!(m2.spans().len(), 2 * m1.spans().len());
+    assert_eq!(m4.spans().len(), 4 * m1.spans().len());
+    let ivl = m1.path().natural_interval();
+    for i in 0..400 {
+        let t = ivl.min() + (ivl.max() - ivl.min()) * (f64::from(i) + 0.37) / 400.0;
+        let f1 = m1.frame(t).unwrap();
+        for m in [&m2, &m4] {
+            let f = m.frame(t).unwrap();
+            for (a, b) in f1.axes.iter().zip(&f.axes) {
+                assert!((*a - *b).length() <= 1e-9, "t = {t}");
+            }
+        }
+    }
+}
+
+/// Across every joint of the wire the frame is continuous; along a straight it does not
+/// twist, and a round turns it with the tangent and no more.
+#[test]
+fn the_frame_is_continuous_across_joints_and_does_not_twist_on_a_straight() {
+    let mut k = Kernel::default();
+    let wire = wire_path(&k);
+    let path = Curve::from(wire);
+    let b = create_pipe_sweep(&mut k, RADIUS, Some(&path), false).unwrap();
+    let wall = walls(&b).into_iter().next().unwrap();
+    let m = wall
+        .procedural_sweep()
+        .unwrap()
+        .definition()
+        .path()
+        .unwrap()
+        .clone();
+    assert_eq!(m.spans().len(), 7);
+    for pair in m.spans().windows(2) {
+        let t = pair[0].to;
+        let (a, b) = (m.frame(t - 1e-9).unwrap(), m.frame(t + 1e-9).unwrap());
+        for (u, v) in a.axes.iter().zip(&b.axes) {
+            assert!((*u - *v).length() <= 1e-6, "joint at {t}");
+        }
+    }
+    for s in m.spans() {
+        let (f0, f1) = (
+            m.frame(s.from + 1e-9).unwrap(),
+            m.frame(s.to - 1e-9).unwrap(),
+        );
+        match s.kind {
+            solidcore::surface::procedural_sweep::path::SpanKind::Line => {
+                assert!(
+                    (f0.axes[2] - f1.axes[2]).length() <= 1e-6,
+                    "twist on a straight"
+                );
+                assert!(f0.rates[2].length() <= 1e-12);
+            }
+            solidcore::surface::procedural_sweep::path::SpanKind::Arc { axis, .. } => {
+                // no twist about the tangent: the normal's turn is about the arc's axis
+                assert!(f0.rates[2].dot(f0.axes[1]).abs() <= 1e-9);
+                assert!((f0.axes[2].dot(axis) - f1.axes[2].dot(axis)).abs() <= 1e-9);
+            }
+        }
+    }
 }
 
 /// The definition follows its net: a rigid motion moves both, a reversal, a swap and a
@@ -473,6 +616,7 @@ fn issue_2572_every_path_wall_is_a_definition_or_in_the_ledger() {
         Line::create_line_segment(3, Vec3::new(0.0, 1.0, 0.0), Vec3::new(10.0, 2.0, 0.0), None)
             .unwrap(),
     );
+    let wire = Curve::from(wire_path(&k));
     let closed = Curve::from(create_arc(Point3::new(0.0, 0.0, 0.0), 10.0, 0.0, 360.0).unwrap());
     // (the kind its bare walls are listed as, the body)
     let cases: Vec<(&str, Brep)> = vec![
@@ -485,8 +629,12 @@ fn issue_2572_every_path_wall_is_a_definition_or_in_the_ledger() {
             create_pipe_sweep(&mut k, RADIUS, Some(&arc_path()), false).unwrap(),
         ),
         (
-            "path-b-spline",
+            "path-spline",
             create_pipe_sweep(&mut k, RADIUS, Some(&spline_path()), false).unwrap(),
+        ),
+        (
+            "path-b-spline",
+            create_pipe_sweep(&mut k, RADIUS, Some(&wire), false).unwrap(),
         ),
         (
             "path-b-spline",
@@ -547,7 +695,7 @@ fn issue_2572_every_path_wall_is_a_definition_or_in_the_ledger() {
             bare.insert((*kind).to_owned());
         }
     }
-    assert!(definitions >= 4, "{definitions}");
+    assert!(definitions >= 5, "{definitions}");
     let unlisted: Vec<&String> = bare.iter().filter(|kd| !ledger.contains_key(*kd)).collect();
     assert!(
         unlisted.is_empty(),
