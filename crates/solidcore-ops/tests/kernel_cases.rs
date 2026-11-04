@@ -316,6 +316,13 @@ fn within(got: f64, want: f64, tol: &Value) -> bool {
 /// Runs a case's calls and grades the result against `rig` (or, for a hand-written case
 /// without one, `expected`): `Ok(deviation)` for a match.
 fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
+    run_case_with_records(e, || records(entry, e))
+}
+
+fn run_case_with_records(
+    e: &Value,
+    records: impl FnOnce() -> serde_json::Map<String, Value>,
+) -> Result<Option<f64>, Stop> {
     let calls = e["calls"].as_array().unwrap();
     // Check the entire trace before a terminal refusal or an unsupported import can
     // stop replay. A later malformed marker must not turn into an unchecked pass.
@@ -348,7 +355,7 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
             Ok(continued)
         })
         .collect::<Result<Vec<_>, Stop>>()?;
-    let recs = records(entry, e);
+    let recs = records();
     let mut bodies: HashMap<String, Slot> = HashMap::new();
     for (name, how) in e["bodies"].as_object().into_iter().flatten() {
         let record: Record = serde_json::from_value(recs[name].clone())
@@ -568,6 +575,99 @@ fn a_terminal_refusal_cannot_hide_later_invalid_markers() {
             matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("continued"))
         );
     }
+}
+
+fn check_discarded_edit(record: Record, op: &str, params: Value, made: Value, retained: Value) {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let mut records = serde_json::Map::new();
+    records.insert("input".to_owned(), serde_json::to_value(record).unwrap());
+    let mut e = serde_json::json!({
+        "bodies": {"input": {"trusted": true}},
+        "calls": [{"op": op, "inputs": ["input"], "params": params,
+                   "outputs": ["discarded"]}],
+        "result": [{"made": "discarded"}],
+        "expected": made
+    });
+    e["expected"]["tolerance"] = serde_json::json!({"rel": 1e-9});
+    // First establish that the operation really builds its different, closed-form result.
+    assert!(run_case_with_records(&e, || records.clone())
+        .unwrap()
+        .is_some());
+    // The application can discard that result and keep its original operand instead.
+    e["result"] = serde_json::json!([{"operand": "input"}]);
+    e["expected"] = retained;
+    e["expected"]["tolerance"] = serde_json::json!({"rel": 1e-9});
+    run_case_with_records(&e, || records.clone()).unwrap();
+}
+
+#[test]
+fn a_discarded_shell_preserves_the_retained_box() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let record = solidcore_ops::make_box([0.0; 3], [30.0, 20.0, 10.0])
+        .unwrap()
+        .to_record()
+        .unwrap()
+        .0;
+    check_discarded_edit(
+        record,
+        "shell",
+        serde_json::json!({"open_faces": {"picked": []}, "thickness": -2.0}),
+        serde_json::json!({"body_count": 1, "volume_mm3": 6000.0 - 26.0 * 16.0 * 6.0}),
+        serde_json::json!({"body_count": 1, "volume_mm3": 6000.0}),
+    );
+}
+
+#[test]
+fn a_discarded_face_offset_preserves_the_retained_box() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let record = solidcore_ops::make_box([0.0; 3], [30.0, 20.0, 10.0])
+        .unwrap()
+        .to_record()
+        .unwrap()
+        .0;
+    let top = record
+        .faces
+        .iter()
+        .position(|f| matches!(f.surface, solidcore_record::brep::Surface::Plane { origin, .. } if origin[2] == 10.0))
+        .unwrap();
+    check_discarded_edit(
+        record,
+        "offset_faces",
+        serde_json::json!({"faces": {"picked": [{"index": top}]}, "distance": 2.0}),
+        serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 12.0}),
+        serde_json::json!({"body_count": 1, "volume_mm3": 6000.0}),
+    );
+}
+
+#[test]
+fn a_discarded_thicken_preserves_the_retained_sheet() {
+    let mut k = solidcore::Kernel::default();
+    let line = solidcore::curve::line::Line::create_line_segment(
+        3,
+        solidcore::Vec3::ZERO,
+        solidcore::Vec3::new(30.0, 0.0, 0.0),
+        None,
+    )
+    .unwrap();
+    let curve = solidcore::curve::curve::Curve::from(line);
+    let mut sheet = solidcore::sweep::api_brep::create_linear_sweep(
+        &mut k,
+        &[Some(&curve)],
+        solidcore::Vec3::new(0.0, 1.0, 0.0),
+        20.0,
+        false,
+    )
+    .unwrap();
+    let record = solidcore_convert::brep::to_record(&mut k, &mut sheet)
+        .unwrap()
+        .0;
+    check_discarded_edit(
+        record,
+        "thicken",
+        serde_json::json!({"thickness": 2.0, "symmetric": false}),
+        serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 2.0}),
+        serde_json::json!({"body_count": 1, "faces": 1, "edges": 4, "vertices": 4}),
+    );
 }
 
 fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> Graded {
