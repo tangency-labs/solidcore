@@ -3253,7 +3253,14 @@ mod tests {
                 run_shell_offset(
                     &mut kernel,
                     &mut original,
-                    ShellOptions::default(),
+                    // a thickness the input resolves, so the call reaches the shell helper
+                    ShellOptions {
+                        offset: OffsetOptions {
+                            distance: 0.25,
+                            ..OffsetOptions::default()
+                        },
+                        ..ShellOptions::default()
+                    },
                     &[],
                     &mut notifications.context(),
                 )
@@ -3266,7 +3273,11 @@ mod tests {
                 offset_brep(
                     &mut kernel,
                     &mut original,
-                    OffsetOptions::default(),
+                    // a distance the input resolves, so the call reaches the status collapse
+                    OffsetOptions {
+                        distance: 0.25,
+                        ..OffsetOptions::default()
+                    },
                     &mut notifications.context(),
                 )
             },
@@ -4346,7 +4357,11 @@ mod tests {
                 offset_brep(
                     &mut kernel,
                     &mut original,
-                    OffsetOptions::default(),
+                    // a distance the input resolves, so the call reaches the status collapse
+                    OffsetOptions {
+                        distance: 0.25,
+                        ..OffsetOptions::default()
+                    },
                     &mut notifications.context(),
                 )
             },
