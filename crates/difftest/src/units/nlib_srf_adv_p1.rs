@@ -10,7 +10,8 @@
 //! number, `1000` for upstream's bare error flag; `-1` on the Rust side for any other
 //! error, which never matches), then on success the results: the surface
 //! (`dims = [n, m, p, q, r, s]`, `net` x y z w row-major, `u`, `v`) for
-//! `extend_by_dist`, `skin_spine` (followed by every profile after the call,
+//! `extend_by_dist` (the exact extension, `Surface::extended_by_distance`: N_SrfExtendByDist
+//! has no counterpart since #2730), `skin_spine` (followed by every profile after the call,
 //! `c<i>dims = [n, p, m]`, `c<i>net`, `c<i>u`, since upstream modifies them in place)
 //! and `vector_field`; `max = [Muu, Muv, Mvv]` for `max_deriv`. `unbounded` runs a
 //! sequence of evaluations sharing the extension (`esur` / `gflg` upstream): per
@@ -428,11 +429,6 @@ fn status<T>(r: &SolidResult<T>) -> f64 {
         Ok(_) => 0.0,
         Err(SolidError::Nlib { code, .. }) => f64::from(code.code()),
         Err(SolidError::InvalidInput { reason, .. } | SolidError::PortInvariant { reason, .. }) if *reason == BARE_FLAG_REASON => BARE_FLAG,
-        Err(SolidError::NotConverged { operation, .. })
-            if operation.ends_with("srf_adv::p2::extend_by_dist_at_depth") =>
-        {
-            BARE_FLAG
-        }
         Err(_) => -1.0,
     }
 }

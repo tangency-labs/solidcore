@@ -428,8 +428,7 @@ fn status(e: &SolidError) -> f64 {
         SolidError::Nlib { code, .. } => f64::from(code.code()),
         SolidError::NotConverged { operation, .. }
             if operation.starts_with("nurbs::bezier")
-                || operation.ends_with("extend_by_param_dist_at_depth")
-                || (operation.ends_with("extend_by_dist_at_depth")) =>
+                || operation.ends_with("extend_by_param_dist_at_depth") =>
         {
             1000.0
         }
