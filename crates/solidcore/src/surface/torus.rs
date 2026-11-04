@@ -108,6 +108,7 @@ use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{max2, min2, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQRT, PI, UNDEF_DOUBLE};
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{
     BSplineSurface, BSplineSurfaceForm, IsoCurveOptions, SurfParamType,
 };
@@ -1483,6 +1484,22 @@ impl Torus {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
+        self.transform_notifying(k, rotate_n_move, scale, &mut |_| Ok(()))
+    }
+
+    /// [`Torus::transform`] with the edit notifications of the base surface of revolution's NURB transform sent through
+    /// `notify`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Torus::transform`] and of `notify`.
+    pub(crate) fn transform_notifying(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        notify: &mut EditNotify<'_>,
+    ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
         // no work - identity transform
@@ -1507,12 +1524,13 @@ impl Torus {
         // finish the call in the parent function (status ignored upstream), whose
         // polar-converter rebuild reaches the torus's iso circles
         let shape = self.shape();
-        ignore_status(
-            self.base
-                .transform_using(k, rotate_n_move, scale, &|s, k, p, t| {
-                    Ok(iso_curve(s, shape, k, p, t, None, false)?.curve)
-                }),
-        )?;
+        ignore_status(self.base.transform_using(
+            k,
+            rotate_n_move,
+            scale,
+            &|s, k, p, t| Ok(iso_curve(s, shape, k, p, t, None, false)?.curve),
+            notify,
+        ))?;
 
         // all done
         Ok(())
@@ -2231,6 +2249,54 @@ mod tests {
         assert!(Torus::is_nurb_surface_torus(&k, &bent, 1.0)
             .unwrap()
             .is_none());
+    }
+
+    /// A half torus of minor radius 0.1 at coordinates of about 200: the minor circles at its
+    /// two ends lie in one plane to rounding, which `iso_circle_planes_parallel_within_angle_tolerance`
+    /// takes for parallel (not a line off the axis), so it is found.
+    #[test]
+    fn small_far_half_torus_is_found_with_near_parallel_iso_planes() {
+        let mut k = Kernel::default();
+        let frame = Axis2Placement::new(
+            Vec3::new(197.06, 33.35, 56.318),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        let dom = Extent2d::from_bounds(0.0, 0.0, 180.0, 90.0);
+        let t = Torus::create_canonical(&k, &frame, 5.8, 0.1, TorusOptions::default(), Some(&dom))
+            .unwrap();
+        let nurbs = plain(&t);
+        assert!(Torus::is_nurb_surface_torus(&k, &nurbs, 1.0)
+            .unwrap()
+            .is_none());
+        k.fixes.iso_circle_planes_parallel_within_angle_tolerance = true;
+        assert!(Torus::is_nurb_surface_torus(&k, &nurbs, 1.0)
+            .unwrap()
+            .is_some());
+    }
+
+    /// A torus with a very short sweep (1e-4 rad) has end circles whose normals differ by less than
+    /// the angle tolerance but whose planes cross at the axis: they are not one plane, so the
+    /// option must leave them to the intersection and the torus is found either way.
+    #[test]
+    fn short_sweep_torus_is_found_with_near_parallel_iso_planes() {
+        let mut k = Kernel::default();
+        let frame = Axis2Placement::new(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1e-4_f64.to_degrees(), 90.0);
+        let t = Torus::create_canonical(&k, &frame, 5.8, 0.1, TorusOptions::default(), Some(&dom))
+            .unwrap();
+        let nurbs = plain(&t);
+        assert!(Torus::is_nurb_surface_torus(&k, &nurbs, 1000.0)
+            .unwrap()
+            .is_some());
+        k.fixes.iso_circle_planes_parallel_within_angle_tolerance = true;
+        assert!(Torus::is_nurb_surface_torus(&k, &nurbs, 1000.0)
+            .unwrap()
+            .is_some());
     }
 
     /// tangency-labs/solidcore#1470 and #1471 (WR-501, WR-408): a torus R 13.1934, r 1.25,

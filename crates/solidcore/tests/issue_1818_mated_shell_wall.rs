@@ -27,7 +27,7 @@ mod offset_fixture;
 use offset_fixture::{planar_faces_at, volume, Notifications};
 use solidcore::curve::curve::Curve;
 use solidcore::curve::ellipse::Ellipse;
-use solidcore::error::{SolidError, SM_ERR};
+use solidcore::error::SM_ERR;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::kernel::UpstreamFixes;
@@ -123,11 +123,9 @@ fn mated() -> UpstreamFixes {
 
 fn assert_sm_err(result: solidcore::Result<Brep>, operation: &str, label: &str) {
     match result {
-        Err(SolidError::Upstream {
-            code, operation: o, ..
-        }) => {
-            assert_eq!(code, SM_ERR, "{label}");
-            assert_eq!(o, operation, "{label}");
+        Err(e) if e.sm_status().is_some() => {
+            assert_eq!(e.sm_status(), Some(SM_ERR), "{label}");
+            assert_eq!(e.operation(), operation, "{label}");
         }
         Err(other) => panic!("{label}: SM_ERR expected, got {other}"),
         Ok(mut wall) => {
@@ -358,7 +356,6 @@ fn solidcraft_fixes() -> UpstreamFixes {
     f.fillet_point_step_per_point = true;
     f.analytic_copy_keeps_parameterization = true;
     f.fillet_point_bigger_step_retry = true;
-    f.fillet_through_extended_rail_end = true;
     f.precise_properties_body_length_scale = true;
     f.offset_extension_from_base = true;
     f.corner_blend_stays_inside_neighbours = true;

@@ -270,6 +270,7 @@ never returns "no kind": a configuration the table does not name is a Setback.
 | **Join** | two blends meeting G1 and continuing each other | one shared section |
 | **Turn** | two blends sharing a face, turning at a sharp unrounded side edge (a boss base, a pocket's floor or rim) | **Mitre** (default) or **Swept** (option) |
 | **Ball** | three equal rounds of one convexity at a vertex of three faces | the corner ball's sphere |
+| **Chamfer** | every edge at the vertex chamfered, each chamfer a plane between two planes | **Mitre** (default): the chamfer planes run on to their common point; or **Facet** (option): one plane through the rails' crossings |
 | **Setback** | everything else: unequal radii, four or more blends, mixed convexity, and any corner where G2 is selected | the setback hole and its certified convex fill |
 
 ![Plan views of the four corner kinds: mitre crease, swept torus, ball sphere patch, setback hole.](generic-blend/corner-events.svg)
@@ -291,6 +292,20 @@ ball's sphere. Setback: the rounds stop short and a 2n-sided hole is filled.*
 - **Ball.** Three equal rounds at three faces end on the corner ball's sphere [37, 6]. The corner
   face is always one rational patch exactly on the sphere, of degree (4, 2) by stereographic
   construction [8], with no analytic sphere special case: one code path.
+- **Chamfer.** Where every edge at the vertex is chamfered and every chamfer is a plane, the
+  chamfer planes close the corner exactly. The Mitre runs each plane on until it meets the others:
+  three meet at one point M (a 3x3 solve), pairwise along the exact lines from the rails' crossings
+  X_i to M, with no corner face. The Facet cuts the corner off with the plane through the X_i; its
+  edges are the chamfers' end sections. Validity is sign tests on linear forms at the part-scale
+  rounding gate. A mitre point outside the corner is refused, naming the largest size of the
+  too-wide chamfer that keeps it inside. Four or more chamfers build the facet where their
+  crossings are coplanar (their mitre is refused, naming why); where they are not, the corner is a
+  patch whichever type was asked: the chamfers stop at their crossings and n bilinear
+  quadrilaterals round the crossings' centroid close the skew polygon of their end sections, G0
+  to each other and to each chamfer (at four sides, the one bilinear patch of the crossings).
+  Chamfer planes so nearly coplanar
+  that the points where they meet are not determined to the part's rounding are refused, naming
+  that. The corner keeps its definition: its chamfers and the points they meet in (opt-in, WR-716).
 - **Setback** [44, 43]. Each blend stops at a setback distance from the vertex. The hole has 2n
   sides: n profile curves (the blends' end sections) alternating with n spring curves on the faces.
   Plain trimlines that simply meet give poor shapes for unequal radii, edges far from 90° and
@@ -352,6 +367,18 @@ continued cliff face, so the rim moves down.*
 
 Keeping the edge instead (the ball rolling on the rim, the spine continuing as the other offset
 meeting the rim's pipe) is a possible future option, never the default.
+
+A round bigger than the wall it rolls on ends on the body's outline (#2541, opt-in
+`fillet_round_ends_on_outline`, WR-730). This applies where the round on the continued wall
+would pass inside the wall's rim, cutting into the material beyond the face it leaves. The
+ball then touches the rim and stays tangent to the face it keeps. It rolls on the surface
+tangent to it along the rim: the wall's plane turned about the rim, or its cylinder leaned
+into a cone. Where the kept face is too narrow as well, the ball touches both rims.
+
+This is built for a lone round along a straight edge between planes, or along a circular
+edge between a plane square to its axis and a coaxial cylinder
+(`crate::blend::fillet_outline`). A round that passes the rim within the tolerance, or
+whose rail stays on its wall, is trimmed at its crease as above.
 
 ### 3.5 Refusals name the size that fits
 
@@ -836,15 +863,16 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 **Origin.** The blend was designed and first built in the SolidCraft fork of SMLib (2026-10 to
 2026-11-02, v1.1.0-alpha), where its constructions replaced SMLib's fillet code. solidcore is based on
 SMLib and continues from there on its own path: new construction is designed on its solidcore issue
-and lands here. The fork's results are the baseline the brought-over steps match, bit for bit, and
-the difftest shows it when the maintainers run it; the issues below link back to where each step
-started.
+and lands here. A step brought over from the fork unchanged keeps the fork's results bit for bit;
+a step written or changed in solidcore sets its own baseline, graded by closed forms, geometric
+checks and invariants, with the fork's numbers at most a cross-check. The issues below link back to
+where each step started.
 
 **The new construction replaces the old one; the old code is deleted.**
-- A step lands behind its `UpstreamFixes` flag only while it is being brought over, so its results can
-  be checked case by case.
-- Once it is in and matches, the flag becomes the default, and the old path is deleted along with
-  the flags and patches made to it. Nothing is kept as a fallback.
+- A step lands as the default, with no `UpstreamFixes` flag (`AGENTS.md` §4b): the cases whose
+  results change are listed in its pull request with why the new result is right.
+- The old path is deleted in the same change, along with the flags and patches made to it. Nothing
+  is kept as a fallback.
 - Don't extend an old path; improve the construction that replaces it. Where the old path is still
   reached, bring over what changes behaviour now and name the pending deletion in the pull request.
 

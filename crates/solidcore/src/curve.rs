@@ -24,6 +24,7 @@ pub mod crv_on_surf;
 pub mod curve;
 pub mod curve_cache;
 pub mod ellipse;
+pub mod from_parameters;
 pub mod hermite_curve;
 pub mod hyperbola;
 pub mod iso_curve;
@@ -31,6 +32,7 @@ pub mod line;
 pub mod offset_curve;
 pub mod parabola;
 pub mod projected_curve;
+pub mod step_edge;
 pub mod tangent_field;
 
 use crate::error::{Result, SolidError};

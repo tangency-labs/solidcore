@@ -46,7 +46,7 @@ use crate::kernel::Kernel;
 use crate::math::Vec3;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
-use crate::nurbs::math::NOW;
+use crate::nurbs::math::{gamma, NOW};
 use crate::nurbs::srf_tool::p1::decompose_to_bez;
 use crate::surface::procedural_blend::ProceduralBlend;
 use crate::surface::surface::Surface;
@@ -150,17 +150,6 @@ pub(crate) fn net_distance(b: &[Vec<Hpt>], h: &[Vec<Hpt>]) -> Result<f64> {
     } else {
         Err(SolidError::invalid_input(OP, "the net is not finite"))
     }
-}
-
-/// `u`, the unit roundoff of `f64`.
-const UNIT_ROUNDOFF: f64 = f64::EPSILON / 2.0;
-
-/// `gamma_k = k u / (1 - k u)`: the relative error bound of k floating operations in a
-/// chain (Higham, the standard model).
-fn gamma(k: usize) -> f64 {
-    #[allow(clippy::cast_precision_loss)]
-    let ku = k as f64 * UNIT_ROUNDOFF;
-    ku / (1.0 - ku)
 }
 
 /// A NURBS surface's derivative bounds `(max |S_u|, max |S_v|)`: degree times the largest
@@ -563,7 +552,7 @@ fn recertify_in_frame(k: &Kernel, pb: &ProceduralBlend, bound: f64, shift: f64) 
     // the stations the pieces need, on the pieces after them and (but the first) before
     let stations = definition_stations(k, &system, [seed0, seed1], &sigma, &used)?;
     let solved: Vec<GnStation> = stations.iter().flatten().copied().collect();
-    let mut vary = varying(n, r[0] * r[1], &solved, equal_area);
+    let mut vary = varying(n, r, &solved, equal_area);
 
     // span by span: the nets compared, then the certificate for what the bound leaves
     let mut achieved = 0.0_f64;
@@ -802,7 +791,7 @@ pub(crate) fn net_of_definition(
         .into_iter()
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| SolidError::sm_err(OP))?;
-    let mut vary = varying(n, r[0] * r[1], &solved, equal_area);
+    let mut vary = varying(n, r, &solved, equal_area);
     let mut spans = Vec::new();
     let mut certified = 0.0_f64;
     for pair in solved.windows(2) {
