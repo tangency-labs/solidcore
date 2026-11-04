@@ -5,7 +5,7 @@
 //! tolerance passes through C++'s `SmZoneTol3d` conversion, which takes fabs; and
 //! fuzz00035 / fuzz00108 / fuzz00117: `SetTolerance` turns that magnitude, when zero,
 //! into `SM_ZONE_TOL_3D` times the empty B-rep's box size (1).
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 #[path = "support/offset_fixture.rs"]
 mod offset_fixture;

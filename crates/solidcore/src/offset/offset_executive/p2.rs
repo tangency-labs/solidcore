@@ -256,9 +256,9 @@ fn refuse_folding_offset(
     let uv_box = [domain.min.x, domain.max.x, domain.min.y, domain.max.y];
     match certify_regular(kernel, base, offset.offset_distance(), Some(uv_box))? {
         Regularity::Regular => Ok(()),
-        Regularity::Folds { largest } => Err(crate::error::Failure::new(
+        Regularity::Folds { largest } => Err(Failure::new(
             operation,
-            crate::error::offset::OffsetFailure::Folds {
+            OffsetFailure::Folds {
                 face,
                 distance: offset.offset_distance(),
                 largest,
