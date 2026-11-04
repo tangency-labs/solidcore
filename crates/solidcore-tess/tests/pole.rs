@@ -33,14 +33,17 @@ fn face_triangles(m: &Mesh, face: u32) -> Vec<[u32; 3]> {
         .collect()
 }
 
+/// The angle between `a` and `b` (rad), exact to rounding at any angle (`atan2` of the cross
+/// and dot products; `acos` of the dot would lose half the digits near 0).
 fn angle(a: Vec3, b: [f64; 3]) -> f64 {
     let b = Vec3::new(b[0], b[1], b[2]);
-    let (la, lb) = (
-        (a.x * a.x + a.y * a.y + a.z * a.z).sqrt(),
-        (b.x * b.x + b.y * b.y + b.z * b.z).sqrt(),
+    let cross = Vec3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
     );
-    let c = (a.x * b.x + a.y * b.y + a.z * b.z) / (la * lb);
-    c.clamp(-1.0, 1.0).acos()
+    let sin = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z).sqrt();
+    sin.atan2(a.x * b.x + a.y * b.y + a.z * b.z)
 }
 
 /// The parameters of `f`'s pole nodes.
@@ -210,4 +213,78 @@ fn the_cone_apex_of_third_order_is_meshed_on_its_592_triangles() {
         assert_eq!(f.triangles.len(), 592, "face {}", f.face);
         assert_eq!(face_triangles(&m, f.face).len(), 592, "face {}", f.face);
     }
+}
+
+/// A cone on one spline closed along its turn, its face across the interval's end: the plan
+/// holds the parameters in the interval, so a triangle there has corners near both ends (0.98
+/// and 0.02). Its foot is between them, not on the far side of the pole: every copy has the
+/// closed-form limit normal at its own point of the pole, to rounding.
+#[test]
+fn a_pole_across_a_closed_spline_s_end_has_the_limit_normal_between_its_corners() {
+    let b = pole_faces::closed_cone();
+    if let Err(e) = b.validate() {
+        panic!("closed cone: {e:?}");
+    }
+    let size = L * 3f64.sqrt();
+    let (p, stats) = match plan(&b, &MeshTolerance::display_of(size), size) {
+        Ok(p) => p,
+        Err(e) => panic!("closed cone: {e}"),
+    };
+    assert!(stats.unmeshed.is_empty(), "{:?}", stats.unmeshed);
+    assert!(
+        stats.averaged_poles.is_empty(),
+        "{:?}",
+        stats.averaged_poles
+    );
+    let (m, refused) = p.evaluate();
+    assert!(refused.is_empty(), "{refused:?}");
+    let (mut across, mut worst) = (0, 0.0f64);
+    for f in &p.faces {
+        let poles = pole_nodes(f);
+        assert!(
+            !poles.is_empty()
+                && f.poles
+                    .iter()
+                    .all(|q| matches!(q.rule, PoleRule::Limit { .. })),
+            "face {}: {:?}",
+            f.face,
+            f.poles
+        );
+        let tris = face_triangles(&m, f.face);
+        assert_eq!(tris.len(), f.triangles.len(), "face {}", f.face);
+        let sign = if f.flip { -1.0 } else { 1.0 };
+        for (t, mt) in f.triangles.iter().zip(&tris) {
+            for (c, &node) in t.iter().enumerate() {
+                if !poles.contains(&node) {
+                    continue;
+                }
+                let mut vs: Vec<f64> = t
+                    .iter()
+                    .filter(|j| !poles.contains(j))
+                    .map(|&j| f.uv[j as usize][1])
+                    .collect();
+                // Corners near both ends of the turn: the low ones a turn on.
+                let (lo, hi) = vs
+                    .iter()
+                    .fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+                if hi - lo > 0.5 {
+                    across += 1;
+                    for v in &mut vs {
+                        if *v < 0.5 {
+                            *v += 1.0;
+                        }
+                    }
+                }
+                let th = pole_faces::closed_angle(vs.iter().sum::<f64>() / vs.len() as f64);
+                let r = std::f64::consts::FRAC_1_SQRT_2;
+                let exact = [-th.cos() * r, -th.sin() * r, r].map(|x| x * sign);
+                worst = worst.max(angle(m.normals[mt[c] as usize], exact));
+            }
+        }
+    }
+    assert!(
+        across > 0,
+        "no triangle at the pole lies across the interval's end"
+    );
+    assert!(worst < 1e-12, "{worst:e} rad off the limit");
 }

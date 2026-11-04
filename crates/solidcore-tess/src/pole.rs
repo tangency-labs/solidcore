@@ -67,16 +67,27 @@ pub struct AveragedPole {
 /// one of them (an end of the collapsed side). The triangle meets the pole where its other
 /// corners `others` lie along `d`: the foot is `q` with its parameter `d` their mean, and the
 /// direction runs from the foot to their mean (across the collapsed side, into the face).
-/// `None` when no corner is off the pole.
-fn foot(q: [f64; 2], d: usize, others: &[[f64; 2]]) -> Option<([f64; 2], [f64; 2])> {
-    if others.is_empty() {
-        return None;
-    }
+/// Where the surface closes on itself along `d` (`period`), the plan holds every parameter in
+/// its active interval, so corners either side of the interval's end lie a period apart: each
+/// is first moved by whole periods next to the first, so the mean is between them, not on the
+/// far side of the pole. `None` when no corner is off the pole.
+fn foot(
+    q: [f64; 2],
+    d: usize,
+    period: Option<f64>,
+    others: &[[f64; 2]],
+) -> Option<([f64; 2], [f64; 2])> {
+    let first = others.first()?.get(d).copied()?;
     let n = others.len() as f64;
-    let mean = [
-        others.iter().map(|p| p[0]).sum::<f64>() / n,
-        others.iter().map(|p| p[1]).sum::<f64>() / n,
-    ];
+    let along = |p: &[f64; 2], k: usize| {
+        let x = p.get(k).copied().unwrap_or_default();
+        if k == d {
+            solidcore::eval::uv::unwrap(x, first, period)
+        } else {
+            x
+        }
+    };
+    let mean = [0, 1].map(|k| others.iter().map(|p| along(p, k)).sum::<f64>() / n);
     let mut at = q;
     if let (Some(x), Some(m)) = (at.get_mut(d), mean.get(d)) {
         *x = *m;
@@ -104,7 +115,12 @@ pub(crate) fn limit_normal(
         .filter(|j| !poles.contains(j))
         .filter_map(|&j| f.uv.get(j as usize).copied())
         .collect();
-    let (at, dir) = foot(q, along, &others)
+    let period = solidcore::eval::uv::domain(s)
+        .period
+        .get(along)
+        .copied()
+        .flatten();
+    let (at, dir) = foot(q, along, period, &others)
         .ok_or_else(|| "a triangle with no corner off the pole".to_string())?;
     s.normal_along(at[0], at[1], dir)
         .map(solidcore_convert::record_vec3)
