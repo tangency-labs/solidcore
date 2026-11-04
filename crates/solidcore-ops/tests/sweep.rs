@@ -508,7 +508,7 @@ fn check(name: &str) {
             );
         }
         (Expect::Sheet(_), Ok(b)) => {
-            assert_eq!(b.counts().unwrap()[0], 1, "{name}: one planar face")
+            assert_eq!(b.counts().unwrap()[0], 1, "{name}: one planar face");
         }
         (Expect::Corner(why), Err(Error::DraftCornerRefused { why: got, at })) => {
             assert_eq!(&got, why, "{name}");
