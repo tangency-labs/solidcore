@@ -169,7 +169,12 @@ impl Roots {
             .file_name()
             .ok_or_else(|| refuse(path, "has no file name"))?;
         let resolved = canonical(parent)?.join(name);
-        if resolved.components().any(|c| c.as_os_str() == ".git") {
+        // Conservatively refuse case variants even where .GIT is distinct from .git.
+        if resolved.components().any(|c| {
+            c.as_os_str()
+                .to_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(".git"))
+        }) {
             return Err(refuse(path, "is inside a .git directory"));
         }
         if self.forbidden.iter().any(|f| f == &resolved) {
