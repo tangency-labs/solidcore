@@ -285,14 +285,13 @@ fn a_round_within_the_tolerance_of_its_edge_is_refused() {
     assert_eq!(b.face_list().len(), faces + 1);
 }
 
-/// #2223's rim and corner arc rounded together, without its fix and the blend corner: the
+/// #2223's rim and corner arc rounded together, without its fix: the
 /// round of the arc cannot end at the vertices where it runs on into the straight top and the
 /// tab's side, and the refusal names the first such edge. The arc alone builds.
 #[test]
 fn a_round_that_cannot_end_where_its_edge_runs_on_names_the_edge() {
     let set = |f: &mut UpstreamFixes| {
         f.fillet_section_end_trim_at_creases = false;
-        f.fillet_blend_corner = false;
     };
     let mut k = kernel(set);
     let mut b = plate(&mut k);
