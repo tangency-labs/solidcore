@@ -206,7 +206,7 @@ fn the_blend_corner_ends_the_round_at_the_smooth_vertices() {
 /// The straight edges next to the corner and the rim, each rounded alone. The tab's side
 /// and its top run on tangentially into the corner arcs, which are not picked. The fork
 /// (41a39ec) ends each there at the smooth vertex, on the plane square to it. With
-/// tangency-labs/solidcore#2656 (`fillet_blend_corner`) each runs on past the vertex, the
+/// tangency-labs/solidcore#2656 each runs on past the vertex, the
 /// arc turning into the top face away from it, until it leaves the part: past each such end
 /// the round's section, cut by the corner arc's wall `R - sqrt(R^2 - s^2)` in from the
 /// straight side at `s` past the vertex (R = 2), takes off `RUN_ON` more

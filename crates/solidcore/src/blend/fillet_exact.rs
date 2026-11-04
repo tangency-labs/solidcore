@@ -41,7 +41,7 @@
 //!   ([`classify_ball_on_collapsed_offset`]): the round along an earlier round's end curve,
 //!   where that round has the ball's radius, is a piece of the ball.
 //! - **An offset collapsed by its geometry (solidcore #2652, not in the fork).** With
-//!   `fillet_blend_corner` and a constant ball, a round on a face of no natural quadric (a
+//!   a constant ball, a round on a face of no natural quadric (a
 //!   B-spline, as a round of the ball's radius built by a trace) and a surface quadric is
 //!   the ball's piece ([`BlendSpine::Point`]) where the geometry says the face is as wide as
 //!   the ball: the ball's centre is the same at every point of the round and the ball lies
@@ -1496,7 +1496,7 @@ pub fn classify_exact_blend(
     ops.setup_offset_values(tsect, Some(&mut radius))?;
     // Not the fork (solidcore #2652): with a constant ball, a face of no natural quadric is
     // read on (`classify_faces`: the ball's piece where its centre stays put)
-    let any_faces = k.fixes.fillet_blend_corner && !ops.offset_radii_can_change()?;
+    let any_faces = !ops.offset_radii_can_change()?;
     let mut faces = [BlendQuadric::default(); 2];
     let mut uvs = [Point2::new(0.0, 0.0); 2];
     let mut offs = [0.0; 2];

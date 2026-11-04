@@ -1,7 +1,7 @@
-# blend.fillet_corner_p3: with the blend corner the default, 13 units disagree with C++ v1.0.1 on 384 cases (2026-11-04)
+# blend.fillet_corner_p3: with the blend corner the default, 13 units disagree with C++ v1.0.1 on 381 cases (2026-11-04)
 
 - **Units:** `blend.fillet_corner_p2` (2 cases), `blend.fillet_corner_p3` (95),
-  `blend.fillet_executive_p3` (158), `blend.fillet_geom_p4` (23), `intersect.api_intersectors`
+  `blend.fillet_executive_p3` (155), `blend.fillet_geom_p4` (23), `intersect.api_intersectors`
   (1), `intersect.surface_intersector_p2` (40), `primitive.api_trim_ops` (9), `surface.torus`
   (12), `topology.api_files` (2), `topology.api_projection` (5), `topology.brep_cutting` (19),
   `topology.brep_local_operation` (6), `topology.brep_planar_section` (12).

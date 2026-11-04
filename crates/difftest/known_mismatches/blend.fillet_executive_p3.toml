@@ -3,7 +3,7 @@
 
 # Known mismatches of blend.fillet_executive_p3 (format: crates/difftest/src/known.rs).
 
-# The default kernel's blend corner (#2400; plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md): 158 cases.
+# The default kernel's blend corner (#2400; plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md): 155 cases.
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "big-rad-filleted_box-r2.0-top-edges"
@@ -165,16 +165,6 @@ why = "old corner code deleted, #2400: the blend corner is the default now; main
 unit = "blend.fillet_executive_p3"
 case = "real-box-fillet12-r3-shell-open-top-issue-460"
 why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.shell_geometry[1]: cpp=2.9999999999999982e0 rust=1.6999999999999986e1)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "issue-880-half-arc-rim-0-setbacks-1-2"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.mass_properties[0]: cpp=8.688314897972207e2 rust=8.582004070038355e2)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "issue-880-half-arc-rim-1-setbacks-1-1"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.mass_properties[0]: cpp=8.688314897972207e2 rust=8.568979724712793e2)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
@@ -375,11 +365,6 @@ why = "old corner code deleted, #2400: the blend corner is the default now; main
 unit = "blend.fillet_executive_p3"
 case = "source-box-difference-all-edges"
 why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.mass_properties[0]: cpp=1.305179394450937e3 rust=1.3051793161840712e3)"
-
-[[mismatch]]
-unit = "blend.fillet_executive_p3"
-case = "source-file-box_with_large_fillet-edge0"
-why = "old corner code deleted, #2400: the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.mass_properties[0]: cpp=5.382227848348099e2 rust=5.381369451275867e2)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
