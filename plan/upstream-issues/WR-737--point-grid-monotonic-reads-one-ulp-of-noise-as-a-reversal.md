@@ -1,4 +1,4 @@
-#### WR-733. `SmPointGrid::SetUpMonotonic` reads one ulp of noise along a collapsed row as a reversal
+#### WR-737. `SmPointGrid::SetUpMonotonic` reads one ulp of noise along a collapsed row as a reversal
 
 - **Severity:** Wrong result
 - **Area:** Surfaces and volumes
