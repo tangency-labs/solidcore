@@ -801,7 +801,9 @@ impl OffsetExecutive {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 // The obsolete offset-specific `else` at cpp:2158 is unreachable:
                 // NER(pBase) already established pOrigSurf == pBase != NULL.
-                let dist = self.offset_distance * 5.0;
+                // a size: five times the offset either way (an inward offset's distance is
+                // negative)
+                let dist = (self.offset_distance * 5.0).abs();
                 let extension = match base.kind() {
                     // Not upstream (WR-532), opt-in `offset_extends_cones_as_themselves`
                     SurfaceKind::Cone(cone) if kernel.fixes.offset_extends_cones_as_themselves => {

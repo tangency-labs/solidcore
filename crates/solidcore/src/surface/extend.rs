@@ -97,6 +97,12 @@ const BISECTIONS: usize = 60;
 /// span of the last span's length `h` a step).
 const MAX_STEPS: usize = 4096;
 
+/// A budget on the control points of one row of a Tangent or Curvature extension: each
+/// Tangent step mirrors the whole piece, so the row grows with the ask over the source's
+/// parameter range, and an ask the distance solve scales up (a length across that is near
+/// zero) would grow it without bound.
+const MAX_ROW_POINTS: usize = 1 << 16;
+
 /// How a surface continues past its side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Continuity {
@@ -1068,6 +1074,12 @@ impl Local {
                     let step = left.min(most);
                     cur = cur.mirrored(step, how == Continuity::Curvature)?;
                     left -= step;
+                    if cur.rows.first().map_or(0, Vec::len) > MAX_ROW_POINTS {
+                        return Err(SolidError::Unsupported {
+                            operation: OP,
+                            reason: "the extension needs more control points than its budget",
+                        });
+                    }
                 }
                 cur
             }

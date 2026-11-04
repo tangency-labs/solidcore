@@ -109,7 +109,7 @@ impl Surface {
 
     /// The surface extended `distance` past each side of its natural box in `asked`, as
     /// `how` says, exactly (module docs), a side whose direction closes or that is not proved
-    /// longer than a point left as it is.
+    /// longer than a point left as it is. A distance of zero is the surface itself.
     ///
     /// # Errors
     ///
@@ -122,6 +122,14 @@ impl Surface {
         how: Continuity,
         distance: f64,
     ) -> Result<ExtendedSides> {
+        // extended by nothing: the surface itself, every side as it is
+        if distance == 0.0 {
+            return Ok(ExtendedSides {
+                surface: self.copy(k)?,
+                sides: [SideExtension::NotAsked; 4],
+                extension: 0.0,
+            });
+        }
         let mut current: Option<Extended> = None;
         // the side of the current result each side of the source's box is on
         let mut on = BoxSide::ALL;
