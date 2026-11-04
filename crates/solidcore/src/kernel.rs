@@ -1151,8 +1151,11 @@ pub struct UpstreamFixes {
     /// point: a sphere moved by 1e5 through its
     /// homogeneous control points (`[x w + w t, w]`, as a rigid move of a record does)
     /// divides by `w` again, its collapsed pole rows alternate by one ulp, and the check
-    /// refuses the sphere. A step of real length is unaffected (WR-732, #2560). Off by
-    /// default for pinned C++ parity.
+    /// refuses the sphere. A skipped step also no longer becomes the difference the next
+    /// one is compared against, so a reversal across a step below the tolerance is still
+    /// reported, which is the gap the source's own note at `SmPointSet.cpp:2239` names:
+    /// `gwc: could look for nonmonotonicity accross coincident CPts`. A step of real
+    /// length is unaffected (WR-732, #2560). Off by default for pinned C++ parity.
     pub grid_monotonic_skips_coincident_to_tolerance: bool,
     /// `SmSurfOfExtrusion::AssertValid` test 8 point-solves the origin on the generating curve with an unscaled `SM_EFF_ZERO`, so an origin evaluated on the curve at coordinates of about 10 (a text outline's quadratic Bezier) resolves to a few 1e-12 and is reported missing; with this fix that solve uses the issue's coordinate-aware zero `SM_EFF_ZERO * (1.0 + origin.max_dimension())`, its own factor rather than the factor 100 of the neighbouring point tests (WR-511, #1508; tangency-labs/smlib#31).
     pub extrusion_origin_scaled_zero: bool,

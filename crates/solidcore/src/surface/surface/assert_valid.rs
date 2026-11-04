@@ -803,21 +803,21 @@ fn b_spline_surface_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) 
 
         // (bClosedRow is passed as the grid's bClosedCol and bClosedCol as its
         // bClosedRow, as upstream)
-        // the same tolerance tests 2 and 3 recognise coincident points by; upstream's
-        // monotonicity pass skips a step only below an absolute SM_EFF_ZERO, although it
-        // is given dTol * 1000 as the distance its points are distinct at (WR-732, #2560)
-        let grid_tol = if k.fixes.grid_monotonic_skips_coincident_to_tolerance {
-            tol
+        let non_monotonic = if k.fixes.grid_monotonic_skips_coincident_to_tolerance {
+            // the same tolerance tests 2 and 3 recognise coincident points by; upstream's
+            // monotonicity pass skips a step only below an absolute SM_EFF_ZERO, although
+            // it is given dTol * 1000 as the distance its points are distinct at
+            // (WR-732, #2560)
+            grid_has_non_monotonic_points_with_tol(
+                &net.points,
+                net.v_count,
+                closed_row,
+                closed_col,
+                tol,
+            )?
         } else {
-            EFF_ZERO
+            grid_has_non_monotonic_points(&net.points, net.v_count, closed_row, closed_col)?
         };
-        let non_monotonic = grid_has_non_monotonic_points_with_tol(
-            &net.points,
-            net.v_count,
-            closed_row,
-            closed_col,
-            grid_tol,
-        )?;
         rtn &= r.report(B_SPLINE_SURFACE_TYPE, 5, 0, !non_monotonic, UNDEF, UNDEF)?;
     }
 
@@ -1111,12 +1111,13 @@ pub fn grid_has_non_monotonic_points(
     closed_col: bool,
     closed_row: bool,
 ) -> Result<bool> {
-    grid_has_non_monotonic_points_with_tol(points, row_size, closed_col, closed_row, EFF_ZERO)
+    grid_non_monotonic(points, row_size, closed_col, closed_row, EFF_ZERO_SQ, false)
 }
 
 /// [`grid_has_non_monotonic_points`] taking a pair of points for coincident when their
 /// difference is shorter than `tol` (`tol <= 0`: `SM_EFF_ZERO`), instead of upstream's
-/// absolute `SM_EFF_ZERO`.
+/// absolute `SM_EFF_ZERO`, and keeping the last difference of real length as the one the
+/// next is compared against.
 ///
 /// `SmPointGrid` is given the distance its points are distinct at (`dTol3d`) and the
 /// monotonicity pass ignores it, testing an absolute `SM_EFF_ZERO` instead. One ulp of a
@@ -1124,6 +1125,12 @@ pub fn grid_has_non_monotonic_points(
 /// repeated row that carries one-ulp noise there reads as a zigzag reversing at every
 /// point, where the whole row is one point to any tolerance the check uses (WR-732,
 /// #2560).
+///
+/// Upstream replaces the last difference with the skipped one, which costs nothing at an
+/// absolute `SM_EFF_ZERO` but at this width would make the step after a skipped one be
+/// skipped too, so a reversal across a short step would go unseen. A step below the
+/// tolerance carries no direction, so it is passed over instead and the last one that
+/// had a direction is kept (#2560).
 ///
 /// # Errors
 ///
@@ -1136,6 +1143,19 @@ pub fn grid_has_non_monotonic_points_with_tol(
     tol: f64,
 ) -> Result<bool> {
     let zero_sq = if tol > 0.0 { tol * tol } else { EFF_ZERO_SQ };
+    grid_non_monotonic(points, row_size, closed_col, closed_row, zero_sq, true)
+}
+
+/// [`grid_has_non_monotonic_points`] over a squared coincidence distance, passing over a
+/// step below it instead of making it the last difference when `keep_last_step`.
+fn grid_non_monotonic(
+    points: &[Point3],
+    row_size: usize,
+    closed_col: bool,
+    closed_row: bool,
+    zero_sq: f64,
+    keep_last_step: bool,
+) -> Result<bool> {
     if row_size == 0 {
         return Err(invalid("point grid row size is zero"));
     }
@@ -1184,8 +1204,14 @@ pub fn grid_has_non_monotonic_points_with_tol(
 
             // skip coincident control points
             if len_sq0 < zero_sq || len_sq1 < zero_sq {
-                vec0 = vec1;
-                len_sq0 = len_sq1;
+                // a step below the tolerance has no direction, so with `keep_last_step`
+                // it does not become the difference the next step is compared against
+                // (upstream carries it forward, and a reversal across it goes unseen);
+                // until a step of real length has been seen there is nothing to keep
+                if !keep_last_step || len_sq0 < zero_sq {
+                    vec0 = vec1;
+                    len_sq0 = len_sq1;
+                }
                 j1 += 1;
                 j0 = j1 - 1;
                 continue;
@@ -1229,10 +1255,12 @@ pub fn grid_has_non_monotonic_points_with_tol(
             let vec1 = at(i1)? - at(i0)?;
             let len_sq1 = vec1.length_squared();
 
-            // skip coincident control points
+            // skip coincident control points (as in the row pass above)
             if len_sq0 < zero_sq || len_sq1 < zero_sq {
-                vec0 = vec1;
-                len_sq0 = len_sq1;
+                if !keep_last_step || len_sq0 < zero_sq {
+                    vec0 = vec1;
+                    len_sq0 = len_sq1;
+                }
                 i1 += row_size;
                 i0 = i1 - row_size;
                 continue;
