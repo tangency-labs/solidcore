@@ -1290,6 +1290,8 @@ pub struct UpstreamFixes {
     pub offset_closed_curve_trim_arc: bool,
     /// `TrimExtendedEdge` never takes an open edge's first trim point again as its second, by point as well as by parameter: on the closed curve a rim half of a sphere cap lifts onto (the whole offset circle), the first point's twin across the curve's seam (another parameter, the same point, often the far end of the coincident range the other rim half's offset gives) is refused, so the half no longer gets the whole circle (or nothing) and its offset loop no gap. Thickening the cap above z = 5 of a sphere whose rim is two half circles placed against its seam (the sphere cut by a turned box) failed with `SM_ERR_OFFSET_EDGE_VANISHES` (1043) under `offset_closes_loop_gaps`, and gave a non-manifold body without it (WR-673, #2174; the fork's tangency-labs/smlib@7ee0876, for #1502).
     pub offset_open_edge_second_trim_point: bool,
+    /// `TrimExtendedEdge` ends a lamina edge's offset (a thickened sheet's free edge), at a vertex whose next edge is lamina or a tangent sector, at the vertex's own image `V + d n(V)` on its face's offset, where the offset curve passes nearest that image, not where the two edges' UV trim curves cross (nor at the neighbour's offset vertex snapped to within ten tolerances). The crossing is a parameter of the UV curve, which the lifted 3D curve does not keep, so a corner landed up to 4.3e-5 (four tolerances) from its neighbour's; between tangent edges the crossing is also ill-conditioned (6e-6 along the curve). The merge of the thickened sheet's side walls then failed with 1001 (`TopologyIntersector::Relate`: a vertex already has a different mate) or split slivers off them and left no closed solid. A half pipe trimmed along an arc thickens to its closed-form volume at every arc radius and thickness tried (WR-736, #2611).
+    pub offset_lamina_corner_at_vertex_image: bool,
     /// The offset builds a vertex where more than three faces meet (a floor of four facets falling 1 degree to a drain, and its corners where two walls meet two facets) as the two vertices and the new edge the four offset planes give, where upstream fails the shell (1001): `SmOffsetGeometryCreation`'s tangency tolerance is half a degree, not two (the facets, 1.2 degrees apart, are intersected, not left to meet by extending their trims); `TrimExtendedEdge` keeps a trim point within 5 degrees of tangent where the curve crosses the surface (only a touch is dropped); and, where two faces' offsets cut the edge at a vertex all of whose edges are convex (or all concave), the edge ends at the cut it reaches first from its other end, not at the one nearest the vertex. It has no effect without `offset_closes_loop_gaps`, which closes the loop gaps the split leaves on the faces round the vertex (alone, the split returns a solid with those loops cut short, of the wrong volume) (WR-666, #2052; the fork's tangency-labs/smlib@2e1bb8c).
     pub offset_four_face_vertex_split: bool,
     /// `SmCone::CreateCanonical` (`Cone::create_canonical_with_semi_angle` and `Cone::create_canonical`) passes `inside_out` as the bounded cone constructor's `bInsideOut` and `false` as `bMakeNurbGenCurve` when `height` is `Some` (where upstream passes `FALSE` for `bInsideOut` and the caller's `bInsideOut` for `bMakeNurbGenCurve`, dropping an inside-out request), and rejects `height <= 0.0` in the two-radius overload with `SolidError::InvalidInput` (`SM_ERR_INVALID_INPUT`) instead of forwarding `top_radius` as the semi-angle in degrees of an unbounded cone (WR-63, #2207; see `plan/upstream-issues/WR-63--addendum-2026-11-01-cone-create-canonical-args.md`).
@@ -1558,6 +1560,34 @@ pub struct UpstreamFixes {
     pub fillet_round_ends_on_outline: bool,
     /// With `fillet_blend_corner`, a vertex of three constant circular rounds of one convexity where a face is a natural quadric (a cylinder, cone or sphere; the others planes) is the blend corner's Setback too ([`crate::blend::blend_corner::setback`]; the fork's 37c9e1d, smlib#85 part C, built in solidcore). Each round is set back from the vertex, at least to where the rails cross on the faces as they are. The hole is filled by a G1 fill with spring curves exact on the faces, each patch G1 to its face by construction and certified no more concave than what it is G1 to (`II >= k G`), its control net never turning back (`check_brep`'s test #5) and contained; the fill's programme also minimises the net's own thin-plate energy. A fill not certified grows its setbacks to the least scale on the grid of thousandths that is certified by more than its own rounding bound, and an asked setback that certifies only grown is refused naming the setback that builds. With `fillet_round_as_definition` the fill's patches are its definition, the curved faces kept as their quadrics. Off: such a corner is the corner `fillet_blend_corner` builds without it (the N-by-N convex corner), unchanged (WR-697 addendum 2026-11-03, #2343; solidcore-native, no fork commit).
     pub fillet_setback_beside_curved_faces: bool,
+    /// Chamfers meeting at a vertex where every edge is chamfered, each chamfer a plane
+    /// between two planes, are closed by the chamfer planes themselves, exactly: the blend
+    /// corner's chamfer event ([`crate::blend::blend_corner::chamfer`]), in place of the
+    /// pinned 3x3 corner's chamfer branch (`SmFilletConvexNxNCorner` with `SetChamfer`,
+    /// convex and concave alike). The corner type is the session's
+    /// (`FilletSession::set_chamfer_corner`): the Mitre (the default), where each chamfer
+    /// runs on to the others and three of them meet at the point M of their 3x3 solve,
+    /// pairwise along the exact lines from the rails' crossings to M, with no corner face;
+    /// or the Facet, one plane through the rails' crossings whose edges are the chamfers'
+    /// end sections, exact lines in their planes. A mitre point outside the corner (a
+    /// chamfer much wider than the others) is refused with `FilletErrorType::NoRoom`,
+    /// naming the largest size of that chamfer that keeps it inside, less the fit margin,
+    /// as the refusal's fit; the facet is refused there too, its plane leaving the
+    /// chamfers. Four or more chamfers whose crossings lie in one plane build the facet
+    /// (their mitre is refused, naming why); where their crossings are not in one plane the
+    /// corner is a patch, whichever type was asked: the chamfers stop at their crossings and
+    /// n bilinear quadrilaterals round the crossings' centroid close the skew polygon of
+    /// their end sections, G0 to each other and to each chamfer (at four, the one bilinear
+    /// patch of the crossings), within the crossings' convex hull and so in the corner.
+    /// Chamfer planes so nearly coplanar that the points where they
+    /// meet are not determined to the part's rounding are refused with
+    /// `FilletErrorType::CornerUnsupported`, naming that. The pinned corner marches the
+    /// mitre's edges as surface intersections, refuses a mitre of four or more chamfers with
+    /// no reason, and builds its corner face as a Coons patch where the chamfers are unequal
+    /// (WR-716, #2345; own design, smlib#89's brief, the owner's answers on #2345). For the
+    /// port in progress only: at parity it becomes the default and the pinned corner's
+    /// chamfer branch is deleted (WR-716's retirement plan).
+    pub fillet_chamfer_corner: bool,
 }
 }
 
