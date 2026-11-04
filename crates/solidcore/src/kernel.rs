@@ -1139,6 +1139,27 @@ pub struct UpstreamFixes {
     pub found_torus_sphere_keep_tested_nurb: bool,
     /// `SmBSplineSurface::HasInternalPole` tests the row through each interior knot (`knots - 1 - degree`), not one row further for each repeated copy of the knot, so a horn torus's corner rows on its axis are not taken for an internal pole (WR-505, #1515; tangency-labs/smlib#41).
     pub internal_pole_row_through_knot: bool,
+    /// `SmPointGrid::SetUpMonotonic` (`SmBSplineSurface::AssertValid` test #5,
+    /// [`crate::surface::surface::assert_valid::grid_has_non_monotonic_points_to_rounding`])
+    /// takes a step between two neighbouring control points for no step when it is within
+    /// the rounding of those two points, not when it is shorter than an absolute
+    /// `SM_EFF_ZERO`. The bound is the one the layer split's pole classifier certifies
+    /// (`eval::collapse` of #2629): a Euclidean control point `x / w` is rounded within
+    /// `2 u |x / w|`, so a step is zero when
+    /// `|P1 - P0| <= 2 u (|P0| + |P1|) + gamma_3 (|P0| + |P1|)`; it grows with the
+    /// coordinates and takes the weight into account. Upstream's absolute `SM_EFF_ZERO`
+    /// is below one ulp of a coordinate past about 8192 mm from the origin, so a
+    /// collapsed or repeated row carrying one-ulp noise there reads as a zigzag that
+    /// reverses at every point: a sphere moved by 1e5 through its homogeneous control
+    /// points (`[x w + w t, w]`, as a rigid move of a record does) divides by `w` again,
+    /// its collapsed pole rows alternate by one ulp, and the check refuses the sphere. A
+    /// step that carries no direction also no longer becomes the difference the next one
+    /// is compared against, so a reversal across a step of rounding is still reported,
+    /// which is the gap the source's own note at `SmPointSet.cpp:2239` names:
+    /// `gwc: could look for nonmonotonicity accross coincident CPts`. A step of real
+    /// length is unaffected, down to a reversal of 1e-7 mm (WR-737, #2560). Off by
+    /// default for pinned C++ parity.
+    pub grid_monotonic_zero_from_rounding: bool,
     /// `SmSurfOfExtrusion::AssertValid` test 8 point-solves the origin on the generating curve with an unscaled `SM_EFF_ZERO`, so an origin evaluated on the curve at coordinates of about 10 (a text outline's quadratic Bezier) resolves to a few 1e-12 and is reported missing; with this fix that solve uses the issue's coordinate-aware zero `SM_EFF_ZERO * (1.0 + origin.max_dimension())`, its own factor rather than the factor 100 of the neighbouring point tests (WR-511, #1508; tangency-labs/smlib#31).
     pub extrusion_origin_scaled_zero: bool,
     /// `SmSurfaceIntersector::IsPointOnCurve` (`SmSurfaceIntersector.cpp:7376`, `:7391`,
