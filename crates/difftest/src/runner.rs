@@ -1544,6 +1544,38 @@ mod tests {
         assert_eq!(r.cases[3].outcome(), CaseOutcome::Rejected);
     }
 
+    #[test]
+    fn heap_reruns_reject_incomplete_outputs() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Incomplete { calls: AtomicUsize, values: bool, deferred: bool }
+        impl UnitDiff for Incomplete {
+            fn id(&self) -> &'static str { "test.incomplete" }
+            fn cases(&self, _: &CaseContext) -> Result<Vec<Case>, HarnessError> {
+                Ok(vec![Case { unit: self.id().into(), name: "case".into(), source: CaseSource::Inline, inputs: Value::Null }])
+            }
+            fn run_cpp(&self, _: &Case) -> Result<Output, HarnessError> {
+                if self.calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                    Ok(if self.values { Output::new().values("v", vec![1.0]) } else { Output::new() })
+                } else if self.deferred { Ok(Output::deferred("unit", "symbol")) }
+                else { Ok(Output::rejected("fixture")) }
+            }
+            fn run_rust(&self, _: &Case) -> Result<Output, HarnessError> {
+                Ok(if self.values { Output::new().values("v", vec![1.0]) } else { Output::new() })
+            }
+        }
+        for values in [false, true] {
+            for deferred in [false, true] {
+                let unit = Incomplete { calls: AtomicUsize::new(0), values, deferred };
+                let ctx = CaseContext { root: std::path::PathBuf::new(), seeds: 0 };
+                let r = run_unit(&unit, &ctx, &RunOptions { heap_pads: (1..=10).collect(), ..RunOptions::default() });
+                assert_eq!(r.heap_check.rerun_errors.len(), 1, "values={values} deferred={deferred}");
+                let o = &r.heap_check.observations[0];
+                assert_eq!(o.observed, 1);
+                assert!(o.divergence.is_some());
+            }
+        }
+    }
+
     /// Fake unit for `--heap-pads`: the C++ side of `drift` returns how often it has
     /// run, as an address-dependent result would change between runs; `stable` does
     /// not change. The Rust side returns the first C++ value, so both cases pass.
