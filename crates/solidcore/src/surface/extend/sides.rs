@@ -122,6 +122,7 @@ impl Surface {
         how: Continuity,
         distance: f64,
     ) -> Result<ExtendedSides> {
+        crate::profile::profile_scope!(k, "surface::extended_sides");
         // extended by nothing: the surface itself, every side as it is
         if distance == 0.0 {
             return Ok(ExtendedSides {
