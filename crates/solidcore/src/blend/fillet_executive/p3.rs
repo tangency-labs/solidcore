@@ -189,14 +189,13 @@ pub enum NoRoomReason {
     /// A rail of a constant ball's round or chamfer along an arc would have its ends
     /// within the part's resolution of each other (two vertex tolerances) without closing
     /// to a point: a chamfer just short of the corner rounds it runs round, its corner
-    /// arcs on the bottom face shorter than the part resolves (not the fork's, #2546;
-    /// `fixes.fillet_refuse_rails_below_resolution`, WR-739).
+    /// arcs on the bottom face shorter than the part resolves (not the fork's, #2546,
+    /// WR-739).
     RailBelowResolution,
     /// A rail of a constant ball's round or chamfer along an arc would lie on the far side
     /// of the arc's axis from the edge: its section runs through the axis (a chamfer wider
     /// than the round it runs round). The size at which the rail closes to a point on the
-    /// axis builds (not the fork's, #2546; `fixes.fillet_refuse_rails_below_resolution`,
-    /// WR-739).
+    /// axis builds (not the fork's, #2546, WR-739).
     RailPastAxis,
 }
 
@@ -2159,11 +2158,12 @@ pub trait BrepCreationAccess<O: ClassObject + SolutionObject + Ord>:
 
     /// Not the fork's (#2546): for a constant ball, its rail whose ends lie within the
     /// part's resolution of each other without closing to a point
-    /// (`blend::fillet_exact::rail_below_resolution`); `None` otherwise, and for a solver
-    /// that rolls no constant ball.
+    /// (`blend::fillet_exact::rail_below_resolution`); `None` otherwise, for a solver
+    /// that rolls no constant ball, and from the adapter over [`ExecutiveAccess`], which
+    /// holds no solver geometry.
     ///
     /// # Errors
-    /// The judging's own errors; the adapter over [`ExecutiveAccess`] has no solvers.
+    /// The judging's own errors.
     fn creation_rail_below_resolution(
         &mut self,
         k: &mut Kernel,
@@ -2289,7 +2289,8 @@ where
         _k: &mut Kernel,
         _solver: O,
     ) -> Result<Option<crate::blend::fillet_exact::RailBelowResolution>> {
-        Err(invalid("a rail's length needs a live fillet session"))
+        // the adapter over ExecutiveAccess holds no solver geometry: no rail to judge
+        Ok(None)
     }
 
     fn creation_circle_tops(&mut self, _k: &mut Kernel, _solver: O) -> Result<Vec<(f64, O)>> {
@@ -3745,12 +3746,12 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         Err(failure())
     }
 
-    /// Not the fork's (#2546; `fixes.fillet_refuse_rails_below_resolution`, WR-739):
+    /// Not the fork's (#2546, WR-739):
     /// before the corners look for the rails' ends, a constant ball's round or chamfer
     /// whose rail would have its ends within the part's resolution of each other, without
     /// closing to a point, is refused with [`FilletErrorType::NoRoom`]
     /// ([`NoRoomReason::RailBelowResolution`]), naming the largest size whose rails the
-    /// part resolves (open) and the size at which the rail closes to a point, which builds
+    /// part resolves (open) and the size at which the rail closes to a point
     /// ([`crate::blend::fillet_exact::rail_below_resolution`]). A rail on the far side of
     /// the axis is refused whatever its length ([`NoRoomReason::RailPastAxis`]), naming the
     /// size at which it closes to a point, on the edge's side. The least fit of the refused
@@ -3780,7 +3781,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             return self.record_no_room(
                 NoRoomReason::RailPastAxis,
                 &format!(
-                    "Fillet Error: a rail of the blend would lie on the far side of its arc's axis, its section through the axis: the blend is wider than the face it rolls on allows. A size of at most {} builds, where the rail closes to a point",
+                    "Fillet Error: a rail of the blend would lie on the far side of its arc's axis, its section through the axis: the blend is wider than the face it rolls on allows. A size of at most {} keeps the rail on the edge's side, closing it to a point at that size",
                     g(rail.point_size)
                 ),
             );
@@ -3788,7 +3789,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         self.record_no_room(
             NoRoomReason::RailBelowResolution,
             &format!(
-                "Fillet Error: a rail of the blend would be an arc whose ends are {} apart, within the part's resolution {}: they would be one vertex. A size below {} builds, or exactly {}, where the rail closes to a point",
+                "Fillet Error: a rail of the blend would be an arc whose ends are {} apart, within the part's resolution {}: they would be one vertex. The part resolves the rail below {}, and at exactly {} it closes to a point",
                 g(rail.chord),
                 g(rail.resolution),
                 g(rail.fit),
@@ -3945,10 +3946,9 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             }
         }
 
-        // Not the fork's (#2546, WR-739): a rail whose ends would be one vertex
-        if k.fixes.fillet_refuse_rails_below_resolution {
-            self.refuse_rails_below_resolution(k, access)?;
-        }
+        // Not the fork's (#2546, WR-739): a rail whose ends would be one vertex, or that
+        // lies past its arc's axis
+        self.refuse_rails_below_resolution(k, access)?;
 
         self.create_corner_vertices(k, access)?;
         self.adjust_corner_topology(k, access)?;

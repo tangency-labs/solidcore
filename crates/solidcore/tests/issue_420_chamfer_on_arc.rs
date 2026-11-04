@@ -224,12 +224,10 @@ use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 
 /// The cube of #9522 (x, y -15..15, z 0..30) with its four vertical edges rounded R5, then
 /// its bottom loop of four lines and four arcs chamfered `d` with
-/// `fillet_chamfer_cone_on_arc`, and with `fixes` the two of #2546: the kernel, the body and
-/// the chamfer's result.
-fn chamfered_rounded_cube(d: f64, fixes: bool) -> (Kernel, Brep, solidcore::Result<()>) {
+/// `fillet_chamfer_cone_on_arc`: the kernel, the body and the chamfer's result.
+fn chamfered_rounded_cube(d: f64) -> (Kernel, Brep, solidcore::Result<()>) {
     let mut k = Kernel::default();
     k.fixes.fillet_chamfer_cone_on_arc = true;
-    k.fixes.fillet_refuse_rails_below_resolution = fixes;
     let mut cube = create_box(&mut k, Point3::new(-15.0, -15.0, 0.0), 30.0, 30.0, 30.0).unwrap();
     let corners = edges_where(&k, &cube, |m| (m.z - 15.0).abs() < 1e-6);
     assert_eq!(corners.len(), 4);
@@ -250,7 +248,7 @@ fn chamfered_rounded_cube_volume(d: f64) -> f64 {
 /// The chamfer built: one valid manifold solid of the closed-form volume, 18 faces (the
 /// box's six, four rounds, four plane and four cone chamfers).
 fn assert_builds(d: f64) {
-    let (mut k, mut b, r) = chamfered_rounded_cube(d, true);
+    let (mut k, mut b, r) = chamfered_rounded_cube(d);
     r.unwrap_or_else(|e| panic!("d {d}: {e}"));
     assert_eq!(b.face_list().len(), 18, "d {d}");
     let check = check_brep(&mut k, &mut b, CheckLevel::Level2).unwrap();
@@ -293,7 +291,7 @@ const APPROX_TOL: f64 = 1.6e-4;
 fn issue_2546_chamfers_within_the_resolution_of_the_rounds_are_refused_naming_the_limit() {
     let limit = 5.0 - 2.0 * APPROX_TOL / std::f64::consts::SQRT_2;
     for d in [4.9998, 4.9999, 4.999999, limit + 1e-7] {
-        let (_, _, r) = chamfered_rounded_cube(d, true);
+        let (_, _, r) = chamfered_rounded_cube(d);
         let err = r.unwrap_err();
         let text = err.to_string();
         let SolidError::FilletRefused { reason, fit, .. } = err else {
@@ -311,7 +309,6 @@ fn issue_2546_chamfers_within_the_resolution_of_the_rounds_are_refused_naming_th
     // the session's note names both sizes
     let mut k = Kernel::default();
     k.fixes.fillet_chamfer_cone_on_arc = true;
-    k.fixes.fillet_refuse_rails_below_resolution = true;
     let mut cube = create_box(&mut k, Point3::new(-15.0, -15.0, 0.0), 30.0, 30.0, 30.0).unwrap();
     let corners = edges_where(&k, &cube, |m| (m.z - 15.0).abs() < 1e-6);
     fillet_edges(&mut k, &mut cube, &corners, 5.0, 1, 1, 1.0).unwrap();
@@ -324,7 +321,9 @@ fn issue_2546_chamfers_within_the_resolution_of_the_rounds_are_refused_naming_th
         s.error_info().comment.clone()
     };
     assert!(
-        comment.contains("A size below 4.999774 builds, or exactly 5"),
+        comment.contains(
+            "The part resolves the rail below 4.999774, and at exactly 5 it closes to a point"
+        ),
         "{comment}"
     );
     // just below the limit it builds
@@ -340,7 +339,7 @@ fn issue_2546_chamfers_within_the_resolution_of_the_rounds_are_refused_naming_th
 #[test]
 fn issue_2546_chamfers_past_the_rounds_radius_are_refused_naming_it() {
     for d in [5.0001, 5.0002, 5.1] {
-        let (_, _, r) = chamfered_rounded_cube(d, true);
+        let (_, _, r) = chamfered_rounded_cube(d);
         let err = r.unwrap_err();
         let SolidError::FilletRefused { reason, fit, .. } = err else {
             panic!("d {d}: {err:?}");

@@ -387,10 +387,9 @@
   },
   {
    "name": "chamfer_4_9999_within_the_resolution_is_refused",
-   "note": "Chamfer 4.9999 on the bottom loop: the bottom face's corner arcs (the cones' rails there) would have radius 0.0001, their ends 1.414e-4 apart, within the part's resolution (two of the blend's approximation tolerances, 2 x 1.6e-4): their end vertices would be one. Refused before the corners (`fillet_refuse_rails_below_resolution`, WR-739, tangency-labs/solidcore#2546), naming the largest size whose arcs the part resolves, 5 - 2 x 1.6e-4 / sqrt(2), and that exactly 5 builds; it failed with a bare 1001.",
+   "note": "Chamfer 4.9999 on the bottom loop: the bottom face's corner arcs (the cones' rails there) would have radius 0.0001, their ends 1.414e-4 apart, within the part's resolution (two of the blend's approximation tolerances, 2 x 1.6e-4): their end vertices would be one. Refused before the corners (WR-739, tangency-labs/solidcore#2546), naming the largest size whose arcs the part resolves, 5 - 2 x 1.6e-4 / sqrt(2), and that exactly 5 builds; it failed with a bare 1001.",
    "fixes": [
-    "fillet_chamfer_cone_on_arc",
-    "fillet_refuse_rails_below_resolution"
+    "fillet_chamfer_cone_on_arc"
    ],
    "steps": [
     {
@@ -500,8 +499,7 @@
    "name": "chamfer_4_999999_within_the_resolution_is_refused",
    "note": "Chamfer 4.999999 on the bottom loop: the corner arcs would have radius 1e-6. Refused as chamfer_4_9999_within_the_resolution_is_refused, naming the same limit.",
    "fixes": [
-    "fillet_chamfer_cone_on_arc",
-    "fillet_refuse_rails_below_resolution"
+    "fillet_chamfer_cone_on_arc"
    ],
    "steps": [
     {

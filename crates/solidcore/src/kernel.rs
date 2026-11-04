@@ -1602,22 +1602,6 @@ pub struct UpstreamFixes {
     /// fillet session classifies against such faces). Classifications outside editing
     /// are unchanged (WR-732, #2503; solidcore-native, no fork commit).
     pub brep_ray_classifies_current_trims: bool,
-    /// Before the corners look for the rails' ends, a constant ball's round or chamfer
-    /// along an arc between coaxial faces (a plane square to the axis, a cylinder, a cone)
-    /// whose rail would be an arc with its ends within the part's resolution of each other
-    /// (two of the blend's approximation tolerances: its two end vertices would be one)
-    /// without closing to a point is refused with `FilletErrorType::NoRoom`
-    /// (`NoRoomReason::RailBelowResolution`), naming the largest size whose rails the part
-    /// resolves (open; on the error, `SolidError::FilletRefused`) and the size at which the
-    /// rail closes to a point, which builds; a rail on the far side of the arc's axis from
-    /// the edge (its section through the axis: a chamfer wider than the round it runs
-    /// round, which built a body of more volume than the round's own size) is refused
-    /// whatever its length (`NoRoomReason::RailPastAxis`), naming that size. Both in closed
-    /// form: the rails' radii move linearly with the ball's. Without it a chamfer just short of the corner rounds it
-    /// runs round (d 4.9998 to 4.999999 on R5, the bottom face's corner arcs of radius
-    /// 5 - d) builds a body of no volume or fails with a bare status 1001 (WR-739, #2546;
-    /// solidcore-native; owner ruling on #2546: refused, never collapsed).
-    pub fillet_refuse_rails_below_resolution: bool,
 }
 }
 

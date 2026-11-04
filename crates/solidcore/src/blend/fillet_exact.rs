@@ -1704,7 +1704,8 @@ pub struct RailBelowResolution {
     /// The largest ball radius on this side of the collapse whose rail is longer than the
     /// resolution (an open bound).
     pub fit: f64,
-    /// The ball radius at which the rail closes to a point on the axis, which builds.
+    /// The ball radius at which the rail closes to a point on the axis (the cone's apex
+    /// on it: no rail to resolve).
     pub point_size: f64,
     /// The rail lies on the far side of the axis from the edge (its section runs through
     /// the axis): refused whatever its length, `fit` is then `point_size`.
@@ -1762,7 +1763,7 @@ fn foot_on(line: ([f64; 2], [f64; 2]), m: [f64; 2]) -> [f64; 2] {
     [px + s * dx, py + s * dy]
 }
 
-/// Not the fork's (#2546; `fixes.fillet_refuse_rails_below_resolution`, WR-739): a
+/// Not the fork's (#2546, WR-739): a
 /// constant ball's round or chamfer along an arc whose faces are coaxial quadrics that
 /// trace lines in the meridian half-plane (a plane square to the axis, a cylinder, a
 /// cone) has its spine on a circle about the axis, and each rail is the circle of the
@@ -1780,7 +1781,8 @@ fn foot_on(line: ([f64; 2], [f64; 2]), m: [f64; 2]) -> [f64; 2] {
 /// is not refused: it builds as the cone's apex. A rail on the far side of the axis from
 /// the edge (`r_i < 0`: the ball's section runs through the axis, a chamfer wider than the
 /// round it runs round) is no blend of the edge whatever its length: it is reported
-/// `past_axis`, with `t0` as its fit, the largest size on the edge's side, which builds.
+/// `past_axis`, with `t0` as its fit, the largest size that keeps the rail on the edge's
+/// side.
 /// `None` for a closed edge, faces of other kinds or placements, and rails on the edge's
 /// side longer than the resolution.
 ///
