@@ -310,6 +310,55 @@ fn b_spline_part(c: &Curve) -> Option<&BSplineCurve> {
 }
 
 const OP_EXT_EDGE: &str = "blend::fillet_geom::p5::FilletBrep::calc_edge_on_extended_edge";
+
+/// Whether two faces of `faces` can meet tangentially at `vertex`: the angle between their
+/// surfaces' normal lines at the vertex (dropped onto each surface, read only) is at most
+/// `bound_deg`. A necessary condition of `check_tangential_edgeuse_at_vertex` with a margin
+/// in `bound_deg`, cheap enough to run before copying the B-rep for it; `true` wherever it
+/// cannot tell (fewer than two faces, a missing surface, a drop that fails).
+fn may_meet_tangentially(
+    k: &Kernel,
+    target: &Brep,
+    faces: &[FaceId],
+    vertex: VertexId,
+    bound_deg: f64,
+) -> Result<bool> {
+    let (Some(&f1), Some(&f2)) = (faces.first(), faces.get(1)) else {
+        return Ok(true);
+    };
+    let point = target.vertex(vertex)?.point;
+    let mut normals = [Vec3::ZERO; 2];
+    for (f, n) in [f1, f2].into_iter().zip(normals.iter_mut()) {
+        let face = target.face(f)?;
+        let Some(surface) = face.surface.as_ref() else {
+            return Ok(true);
+        };
+        let dropped = surface.drop_point::<crate::surface::surface::p4::NoObject>(
+            k,
+            point,
+            &face.uv_domain,
+            &crate::surface::surface::p5::DropPointOptions::default(),
+        );
+        let Ok(dropped) = dropped else {
+            return Ok(true);
+        };
+        if !dropped.success {
+            return Ok(true);
+        }
+        match surface.evaluate_normal(k, dropped.result_uv, Side::Left, Side::Left) {
+            Ok(normal) => *n = normal,
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+            Err(_) => return Ok(true),
+        }
+    }
+    let [n1, n2] = normals;
+    let (l1, l2) = (n1.length(), n2.length());
+    if l1 <= EFF_ZERO || l2 <= EFF_ZERO {
+        return Ok(true);
+    }
+    let cos = (n1.dot(n2) / (l1 * l2)).abs().min(1.0);
+    Ok(crate::math::rad_to_deg(cos.acos()) <= bound_deg)
+}
 const OP_MAKE_EDGE: &str = "blend::fillet_geom::p5::FilletBrep::make_fillet_edge";
 const OP_COPY: &str = "blend::fillet_geom::p5::FilletBrep::copy_fillet_geom";
 const OP_RAIL_EDGE: &str = "blend::fillet_geom::p5::FilletBrep::make_rail_edge";
@@ -1637,17 +1686,23 @@ impl FilletBrep {
             edge::edgeuses(target, orig_edge, None, None)?.first(),
             the_corner.vertex,
         ) {
-            // `EvaluateBinormal` may build a missing UV trim (a cached member upstream);
-            // the check runs on a scratch copy so the target stays as it is.
-            let mut scratch = target.clone();
-            if crate::blend::fillet_corner::topology::check_tangential_edgeuse_at_vertex(
-                k,
-                &mut scratch,
-                seam_eu,
-                vertex,
-                crate::math::rad_to_deg(the_corner.tangency_tol_radians),
-            )? {
-                return self.calc_edge_on_tangent_seam(k, e, the_corner, target, orig_edge);
+            let tol_deg = crate::math::rad_to_deg(the_corner.tangency_tol_radians);
+            // `EvaluateBinormal` may build a missing UV trim (a cached member upstream), so
+            // the check runs on a scratch copy of the target, which stays as it is. Only
+            // where the faces can meet tangentially at the vertex at all: their surfaces'
+            // normal lines there within the tolerance and a degree more, the margin for
+            // the trim's accuracy the check's normals come from.
+            if may_meet_tangentially(k, target, &faces, vertex, tol_deg + 1.0)? {
+                let mut scratch = target.clone();
+                if crate::blend::fillet_corner::topology::check_tangential_edgeuse_at_vertex(
+                    k,
+                    &mut scratch,
+                    seam_eu,
+                    vertex,
+                    tol_deg,
+                )? {
+                    return self.calc_edge_on_tangent_seam(k, e, the_corner, target, orig_edge);
+                }
             }
         }
         // Past a tangent side edge (`make_nx1_corner_topology`), the extended edge
@@ -3393,5 +3448,48 @@ mod tests {
         assert_eq!(snap(&to_knot, true, 1.0 - 1e-8), 1.0 - 1e-8);
         let from_knot = Extent1d::from_min_max(1.0, 2.0);
         assert_eq!(snap(&from_knot, false, 1.0 + 1e-8), 1.0 + 1e-8);
+    }
+
+    /// The read-only pre-filter of the tangent-seam check on an extended edge: a box's
+    /// edge meets its faces at 90 degrees, so it never can be a tangent seam and the
+    /// B-rep is not copied for it; the edge where a round runs tangentially into a face
+    /// can, and is checked in full.
+    #[test]
+    fn only_faces_meeting_near_tangentially_are_checked_in_full() {
+        let mut k = Kernel::default();
+        let mut b =
+            crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 4.0, 3.0, 2.0)
+                .unwrap();
+        let top_x = crate::topology::brep::p1::edges(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&e| {
+                let [s, f] = b.edge(e).unwrap().vertices;
+                let (s, f) = (b.vertex(s).unwrap().point, b.vertex(f).unwrap().point);
+                s.z == 2.0 && f.z == 2.0 && s.y == 0.0 && f.y == 0.0
+            })
+            .unwrap();
+        let sharp = |k: &Kernel, b: &Brep, e: EdgeId| {
+            let faces = edge::faces(b, e, None).unwrap();
+            let v = b.edge(e).unwrap().vertices[0];
+            may_meet_tangentially(k, b, &faces, v, 11.0).unwrap()
+        };
+        assert!(!sharp(&k, &b, top_x));
+        crate::blend::fillet_executive::api::fillet_edges(&mut k, &mut b, &[top_x], 0.5, 1, 1, 1.0)
+            .unwrap();
+        // the round's edge on the top face z = 2 (the line y = 0.5) meets it tangentially
+        let seam = crate::topology::brep::p1::edges(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&e| {
+                let [s, f] = b.edge(e).unwrap().vertices;
+                let (s, f) = (b.vertex(s).unwrap().point, b.vertex(f).unwrap().point);
+                (s.z - 2.0).abs() < 1e-9
+                    && (f.z - 2.0).abs() < 1e-9
+                    && (s.y - 0.5).abs() < 1e-9
+                    && (f.y - 0.5).abs() < 1e-9
+            })
+            .unwrap();
+        assert!(sharp(&k, &b, seam));
     }
 }
