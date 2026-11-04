@@ -2060,6 +2060,12 @@ pub fn test_for_iso_circles(
                     out.common_axis = false;
                 }
             } else {
+                // not upstream (WR-739): a plane with no line (parallel, not coincident) has no common
+                // line with the others; `this_common_line_*` are then the last `Line` answer's, stale
+                if !success && !coincident {
+                    out.common_axis = false;
+                    continue;
+                }
                 // compare subsequent common lines against 1st common line
                 let line_point = out.common_line_point.unwrap_or(Vec3::UNDEF);
                 let line_vec = out.common_line_vec.unwrap_or(Vec3::UNDEF);
@@ -2603,5 +2609,51 @@ mod tests {
         assert!(r.found_circles && r.parallel_planes);
         assert!(!r.common_axis);
         assert!(r.common_line_point.is_none());
+    }
+
+    /// WR-739: iso circles in `z = 0` (first), in `y = 0` (its plane meets the first
+    /// along the X axis, which is saved as the common line), and then, last, in `z = 5`,
+    /// parallel to the first plane and not coincident with it. That plane has no common
+    /// line with the others, so there is no common axis (it stayed true: the comparison
+    /// used the stale line of the last `Line` answer, the saved one). The surface is
+    /// degree 1 in `v` with doubled interior knots, three constant pieces.
+    #[test]
+    fn a_later_parallel_non_coincident_plane_has_no_common_axis() {
+        use crate::nurbs::srf_basic::Surface as NurbSurface;
+        let k = k();
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        // quarter circle of radius 1 about (0, 0, z) in the plane `z = z0`, or in `y = 0`
+        let arc = |plane_y0: bool, z0: f64| {
+            let q = |x: f64, y: f64| {
+                let (y, z) = if plane_y0 { (0.0, y) } else { (y, z0) };
+                CPoint::new(x, y, z, 1.0)
+            };
+            [
+                q(1.0, 0.0),
+                CPoint::new(
+                    w,
+                    if plane_y0 { 0.0 } else { w },
+                    if plane_y0 { w } else { z0 * w },
+                    w,
+                ),
+                q(0.0, 1.0),
+            ]
+        };
+        let pieces = [arc(false, 0.0), arc(true, 0.0), arc(false, 5.0)];
+        let net: Vec<Vec<CPoint>> = (0..3)
+            .map(|i| pieces.iter().flat_map(|a| [a[i], a[i]]).collect())
+            .collect();
+        let nurb = NurbSurface::new(
+            net,
+            2,
+            1,
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0],
+        )
+        .unwrap();
+        let s = BSplineSurface::from_nurb(nurb, false);
+        let r = test_for_iso_circles(&k, &s, SurfParamType::V, 1e-9, 1e-9).unwrap();
+        assert!(r.found_circles);
+        assert!(!r.common_axis);
     }
 }
