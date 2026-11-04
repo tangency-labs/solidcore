@@ -1602,19 +1602,6 @@ pub struct UpstreamFixes {
     /// fillet session classifies against such faces). Classifications outside editing
     /// are unchanged (WR-732, #2503; solidcore-native, no fork commit).
     pub brep_ray_classifies_current_trims: bool,
-    /// `SmFindPCExtremaEFO::Evaluate` of a minimisation (the point/curve closest-point
-    /// Newton step of `SmCurve::LocalPointSolve`) limits the second order term of
-    /// `F' = C'.C' + (C - P).C''` only where the full `F'` is not positive, so the step keeps
-    /// the sign of a step towards a minimum ([B52]'s purpose) and is Newton's elsewhere.
-    /// Upstream limits it to `-0.95 C'.C'` wherever it is lower, which near a centre of
-    /// curvature (a point `rho` from the centre of an arc of radius `R`, true
-    /// `F' = C'.C' rho / R`) cuts every step to `(rho / R) / 0.05` of Newton's: the solve
-    /// runs out of iterations and finds no closest point from a point within about
-    /// `R / 100` of the centre. A chamfer just short of the corner rounds it runs round
-    /// (d 4.99 on R5, its ball's centre 0.01 from the round's axis) found no start on its
-    /// side edge and failed with a bare status 1001 (WR-740, #2546; solidcore-native).
-    /// Maximisation keeps upstream's limit.
-    pub curve_point_minimize_full_newton: bool,
     /// Before the corners look for the rails' ends, a constant ball's round or chamfer
     /// along an arc between coaxial faces (a plane square to the axis, a cylinder, a cone)
     /// whose rail would be an arc with its ends within the part's resolution of each other

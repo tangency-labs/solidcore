@@ -229,7 +229,6 @@ use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 fn chamfered_rounded_cube(d: f64, fixes: bool) -> (Kernel, Brep, solidcore::Result<()>) {
     let mut k = Kernel::default();
     k.fixes.fillet_chamfer_cone_on_arc = true;
-    k.fixes.curve_point_minimize_full_newton = fixes;
     k.fixes.fillet_refuse_rails_below_resolution = fixes;
     let mut cube = create_box(&mut k, Point3::new(-15.0, -15.0, 0.0), 30.0, 30.0, 30.0).unwrap();
     let corners = edges_where(&k, &cube, |m| (m.z - 15.0).abs() < 1e-6);
@@ -278,12 +277,6 @@ fn issue_2546_chamfers_just_short_of_the_rounds_build_at_the_closed_form() {
     }
     // and exactly as wide as the rounds, the cones' apexes on the rounds' axes
     assert_builds(5.0);
-    // upstream: the bare 1001
-    let (_, _, r) = chamfered_rounded_cube(4.99, false);
-    assert!(
-        matches!(r, Err(SolidError::Upstream { code: 1001, .. })),
-        "{r:?}"
-    );
 }
 
 /// The blend's approximation tolerance on this part (its solvers' `approx_tol_3d`): two
@@ -318,7 +311,6 @@ fn issue_2546_chamfers_within_the_resolution_of_the_rounds_are_refused_naming_th
     // the session's note names both sizes
     let mut k = Kernel::default();
     k.fixes.fillet_chamfer_cone_on_arc = true;
-    k.fixes.curve_point_minimize_full_newton = true;
     k.fixes.fillet_refuse_rails_below_resolution = true;
     let mut cube = create_box(&mut k, Point3::new(-15.0, -15.0, 0.0), 30.0, 30.0, 30.0).unwrap();
     let corners = edges_where(&k, &cube, |m| (m.z - 15.0).abs() < 1e-6);

@@ -902,17 +902,16 @@ impl EvalFunction for FindPcExtremaEfo<'_, Curve> {
         // limited so that it cannot change the sign of the step. [B52]
         let lim_2d_deriv = 0.95; // Smaller values can slow down convergence.
 
-        // Not upstream (WR-740, #2546, `fixes.curve_point_minimize_full_newton`): when
-        // minimising, the limit applies only where the full derivative does not keep the
-        // step's sign (F' <= 0: the point at or beyond the centre of curvature, where the
-        // stationary point is not a minimum). Upstream limits it wherever the second order
-        // term is below -0.95 C'.C', so near a centre of curvature, where the true F' is
-        // C'.C' (rho / R) for a point rho from the centre of a circle of radius R, the step
-        // is cut to (rho / R) / 0.05 of Newton's and the solve runs out of iterations
-        // (from rho < R / 100 or so): no closest point on an arc from near its centre.
-        let full_newton = self.kernel.fixes.curve_point_minimize_full_newton
-            && self.solver_operation == SolverOperation::Minimize
-            && tan_dot_tan + v_dot_2nd > 0.0;
+        // Not upstream (WR-740, #2546): when minimising, the limit applies only where the
+        // full derivative does not keep the step's sign (F' <= 0: the point at or beyond
+        // the centre of curvature, where the stationary point is not a minimum). Upstream
+        // limits it wherever the second order term is below -0.95 C'.C', so near a centre
+        // of curvature, where the true F' is C'.C' (rho / R) for a point rho from the
+        // centre of a circle of radius R, the step is cut to (rho / R) / 0.05 of Newton's
+        // and the solve runs out of iterations (from rho < R / 100 or so): no closest point
+        // on an arc from near its centre.
+        let full_newton =
+            self.solver_operation == SolverOperation::Minimize && tan_dot_tan + v_dot_2nd > 0.0;
         if !full_newton && v_dot_2nd < -tan_dot_tan * lim_2d_deriv {
             v_dot_2nd = -tan_dot_tan * lim_2d_deriv;
         }
@@ -2567,8 +2566,8 @@ mod tests {
     /// #2546 (WR-740): the closest point of an arc to a point `rho` from its centre is the
     /// arc's point at the point's angle, `5 - rho` away. Newton's derivative there is
     /// `C'.C' rho / 5`; upstream's limit holds it at `0.05 C'.C'` and the solve runs out of
-    /// iterations, from within about R / 100 of the centre. With
-    /// `fixes.curve_point_minimize_full_newton` it is Newton's, down to rho = 1e-6.
+    /// iterations, from within about R / 100 of the centre. Here it is Newton's, and the
+    /// point is found down to rho = 1e-6.
     #[test]
     fn issue_2546_closest_point_from_near_an_arcs_centre() {
         let c = quarter_circle();
@@ -2576,9 +2575,8 @@ mod tests {
         let angle = 30f64.to_radians();
         for rho in [1e-2, 1e-4, 1e-6] {
             let p = Vec3::new(rho * angle.cos(), rho * angle.sin(), 0.0);
-            for fix in [false, true] {
-                let mut k = Kernel::default();
-                k.fixes.curve_point_minimize_full_newton = fix;
+            {
+                let k = Kernel::default();
                 let (found, sol): (bool, Solution<()>) = c
                     .local_point_solve(
                         &k,
@@ -2589,10 +2587,6 @@ mod tests {
                         0.05,
                     )
                     .unwrap();
-                if !fix {
-                    assert!(!found, "rho {rho}: upstream runs out of iterations");
-                    continue;
-                }
                 assert!(found, "rho {rho}");
                 let q = c.evaluate_point(&k, sol.start.parameters[0]).unwrap();
                 let at = q.y.atan2(q.x);

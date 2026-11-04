@@ -1755,7 +1755,6 @@ fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
         "fillet_refuse_crossing_rails" => &mut k.fixes.fillet_refuse_crossing_rails,
         "fillet_refuse_ball_not_fitting" => &mut k.fixes.fillet_refuse_ball_not_fitting,
         "fillet_torus_rail_on_axis" => &mut k.fixes.fillet_torus_rail_on_axis,
-        "curve_point_minimize_full_newton" => &mut k.fixes.curve_point_minimize_full_newton,
         "fillet_refuse_rails_below_resolution" => &mut k.fixes.fillet_refuse_rails_below_resolution,
         "cone_parallel_line_midpoint" => &mut k.fixes.cone_parallel_line_midpoint,
         "fillet_trace_from_tangent_point_toward_next" => {
