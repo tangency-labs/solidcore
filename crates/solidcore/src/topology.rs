@@ -850,9 +850,12 @@ pub(crate) struct Snapshot(Brep);
 /// when first notified). It owns copies of the
 /// topology, the geometry values and the attributes ([`Brep::add_attribute`]). It is
 /// safe for reading the topology and the geometry values (counts, points, parameters,
-/// attributes) and as a value to restore, not for queries, edits or operations.
+/// attributes), not for queries, edits or operations, and not as a value to restore: a
+/// B-rep put back from a clone owns none of its geometry (#2715).
 ///
 /// Use instead:
+/// - `Brep::snapshot` and `Brep::restore` (crate-internal) for an operation's rollback:
+///   the B-rep put back is the value it was, its geometry's owners included;
 /// - [`brep::p3::brep_copy`] (`SmApiBrepCopy`) for an independent body that is
 ///   queried or edited later (undo, history, preview, an operand of every operation):
 ///   the copy owns its geometry, under the B-rep's own naming, without namings or a
