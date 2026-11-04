@@ -3240,7 +3240,7 @@ mod tests {
         ));
         // a corner in the table: no fillet/fillet edge at the vertex
         let corners = [FilletCorner::new(
-            crate::blend::fillet_corner::p3::FilletCornerKind::TwoByTwo,
+            crate::blend::fillet_corner::p3::FilletCornerKind::FourByThree,
             None,
             None,
             None,
