@@ -1593,15 +1593,6 @@ fn generator_scale_tolerance(line_scale: f64, half_angle: f64) -> f64 {
     (1.0 + line_scale) * EFF_ZERO + conditioning * angle_rounding
 }
 
-/// Whether the stored half angle still fixes `1/cos` to half the digits of a double. The angle
-/// carries a relative rounding of `4 eps |angle|`, which moves `1/cos` by `tan * that`
-/// relative; above `sqrt(eps)` the scale is undetermined (the angle may have rounded to 90
-/// degrees), the propagated tolerance would exceed the scale itself, and no line scale can be
-/// compared against it, so test 5 must refuse instead of accepting anything.
-fn angle_fixes_generator_scale(half_angle: f64) -> bool {
-    half_angle.tan().abs() * 4.0 * f64::EPSILON * half_angle.abs() <= f64::EPSILON.sqrt()
-}
-
 fn cone_of(s: &Surface) -> Result<&Cone> {
     match s.kind() {
         SurfaceKind::Cone(c) => Ok(c),
@@ -2256,11 +2247,14 @@ fn cone_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) -> Result<bo
         let half_angle = cone.semi_angle_deg() * (PI / 180.0);
         let cone_scale = 1.0 / half_angle.cos();
         let tol = generator_scale_tolerance(line_scale, half_angle);
+        // A tolerance at least as large as the scale it checks means the stored angle no
+        // longer fixes even the magnitude of `1/cos` (it may have rounded to 90 degrees), so
+        // the comparison would accept any line scale: refuse instead.
         rtn &= r.report(
             CLASS,
             5,
             0,
-            angle_fixes_generator_scale(half_angle) && are_same_to_tol(line_scale, cone_scale, tol),
+            tol < cone_scale && are_same_to_tol(line_scale, cone_scale, tol),
             tol,
             line_scale - cone_scale,
         )?;
@@ -3158,7 +3152,32 @@ mod tests {
             false,
             false,
         ));
-        assert!(!failures(&s, 0).0, "accepted");
+        let (ok, failed) = failures(&s, 0);
+        assert!(
+            !ok && failed.iter().any(|f| (f.0, f.1) == (CONE_TYPE, 5)),
+            "{failed:?}"
+        );
+    }
+
+    /// Radial width 1000 over height 1000 * tan(1e-6 degrees): a consistent cone at 89.999999
+    /// degrees, where the propagated tolerance is about 1e-7 of the scale, not a refusal.
+    #[test]
+    fn consistent_cone_at_89_999999_degrees_is_accepted() {
+        let height = 1000.0 * (1e-6_f64).to_radians().tan();
+        let s = Surface::from(Cone::new_bounded(
+            O,
+            X,
+            Y,
+            1.0,
+            1.0 + 1000.0,
+            0.0,
+            360.0,
+            height,
+            false,
+            false,
+            false,
+        ));
+        assert_clean(&s);
     }
 
     #[test]
