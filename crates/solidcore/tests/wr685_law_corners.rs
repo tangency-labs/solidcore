@@ -28,6 +28,7 @@ use solidcore::blend::law_corners::{
 use solidcore::curve::curve::Curve;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::extent1d::Extent1d;
+use solidcore::geom::geom_utility::p2::ContinuityType;
 use solidcore::geom::vector2d::Point2;
 use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
@@ -37,7 +38,8 @@ use solidcore::nurbs::b_spline_curve::p1::{
 };
 use solidcore::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use solidcore::primitive::api_primitives::create_box;
-use solidcore::surface::surface::Surface;
+use solidcore::surface::surface::{Surface, SurfaceKind};
+use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::{edge, EdgeId};
 use solidcore::{Brep, Kernel};
 
@@ -676,6 +678,79 @@ fn a_law_cornered_rounds_pieces_are_its_balls_envelope() {
     assert_eq!(pieces.len(), 2);
     assert!(points > 100, "{points}");
     assert!(worst <= tol, "{worst}");
+}
+
+/// The split of the fork's 6eecf04 (`NoteRadiusCornerSurfaces`,
+/// `SplitFilletFacesAtRadiusCorners`): a round joined C0 at its law's corner is split there
+/// into one face per side, each smooth (no C0 knot inside its surface), with an edge along
+/// the turn, which SMLib's check refuses inside a face. On the dip from either end and on a
+/// peak: the box's six faces and the round's two, the edge between them on the corner's
+/// plane (x = 10 on the cube, y = 10 on the box), the body clean at check level 2, and the
+/// volume the split does not change (the faces cover what the one face did).
+#[test]
+fn a_law_cornered_round_is_split_at_its_corner() {
+    let (a, b) = (Point3::new(0.0, 20.0, 20.0), Point3::new(20.0, 20.0, 20.0));
+    let cases = [
+        ([20.0; 3], a, b, [4.0, 2.0, 4.0], 0usize),
+        ([20.0; 3], b, a, [4.0, 2.0, 4.0], 0),
+        (
+            [10.0, 20.0, 30.0],
+            Point3::new(10.0, 0.0, 30.0),
+            Point3::new(10.0, 20.0, 30.0),
+            [2.0, 3.0, 2.0],
+            1,
+        ),
+    ];
+    for (size, from, to, radii, axis) in cases {
+        let (mut k, mut body) = law_body(size, from, to, 1, &[0.0, 0.0, 0.5, 1.0, 1.0], &radii);
+        let lines = check_brep(&mut k, &mut body, CheckLevel::Level2)
+            .unwrap()
+            .lines();
+        let mut rounds = Vec::new();
+        for f in body.faces().ids() {
+            let s = body.face(f).unwrap().surface.clone().unwrap();
+            if !matches!(s.kind(), SurfaceKind::Plane(_)) {
+                rounds.push((f, s));
+            }
+        }
+        let mut turns = 0;
+        for (_, s) in &rounds {
+            let (u, v) = s
+                .find_knots_by_max_continuity(&k, ContinuityType::C0, false)
+                .unwrap();
+            turns += u.len() + v.len();
+        }
+        // the edge the two round faces share, on the corner's plane
+        let shared: Vec<EdgeId> = solidcore::topology::brep::p1::edges(&body, None)
+            .unwrap()
+            .into_iter()
+            .filter(|&e| {
+                let faces = edge::faces(&body, e, None).unwrap();
+                rounds.iter().filter(|(f, _)| faces.contains(f)).count() == 2
+            })
+            .collect();
+        let mut off = 0.0_f64;
+        for &e in &shared {
+            let c = edge::curve(&body, e).unwrap().unwrap();
+            let ivl = edge::interval(&body, e).unwrap();
+            for i in 0..=8 {
+                let p = c
+                    .evaluate_point(&k, ivl.evaluate(f64::from(i) / 8.0))
+                    .unwrap();
+                off = off.max(((if axis == 0 { p.x } else { p.y }) - 10.0).abs());
+            }
+        }
+        let faces = body.faces().ids().count();
+        eprintln!(
+            "split {radii:?} from {from:?}: {faces} faces, {} round faces, {turns} turns inside, {} shared edges off the corner's plane by {off:.3e}; {lines:?}",
+            rounds.len(),
+            shared.len()
+        );
+        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!((faces, rounds.len(), turns), (8, 2, 0));
+        assert_eq!(shared.len(), 1);
+        assert!(off <= 1e-9, "{off}");
+    }
 }
 
 /// The fork's 5e8c9c1 build, through its C API (a scratch driver running the capi cases):
