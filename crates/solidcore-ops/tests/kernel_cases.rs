@@ -18,6 +18,8 @@
 //! The corpus's rules: `transform` is a copy, then the copy moved in place; `tagged` changes no
 //! geometry and its history is not graded; picks are record indices, passed to the operations
 //! with the body's record [`Order`] (the one face index convention).
+//! Shell, face offset and thicken copy their inputs before editing, as SolidCraft does.
+//! A copy gets its own entity IDs, so its pick order is read from its own record.
 //!
 //! The test is `#[ignore]`d, out of the workspace run: run it with `--ignored`.
 //!
@@ -149,6 +151,19 @@ struct Slot {
     order: Option<Order>,
 }
 
+impl Slot {
+    fn copy_for_edit(&self) -> Result<Self, String> {
+        self.body
+            .copy()
+            .map(|body| Self {
+                body: Arc::new(body),
+                // The source's Order contains source IDs, not the copy's IDs.
+                order: None,
+            })
+            .map_err(|e| e.to_string())
+    }
+}
+
 /// Why a case stopped before grading.
 #[derive(Debug)]
 enum Stop {
@@ -246,23 +261,30 @@ fn call(c: &Value, ins: &mut [Slot]) -> Result<Result<Slot, String>, Stop> {
                 .map_err(|e| e.to_string())
         }
         "shell" => {
-            let s = ins.first_mut().ok_or_else(|| bad("input"))?;
-            let (open, order) = faces(s, &p["open_faces"])?;
+            let mut s = match first()?.copy_for_edit() {
+                Ok(s) => s,
+                Err(e) => return Ok(Err(e)),
+            };
+            let (open, order) = faces(&mut s, &p["open_faces"])?;
             let t = p["thickness"].as_f64().ok_or_else(|| bad("thickness"))?;
-            let s = s.clone();
             let r = offset::shell(&s.body, &order, &open, t);
             in_place(Slot { order: None, ..s }, r)
         }
         "offset_faces" => {
-            let s = ins.first_mut().ok_or_else(|| bad("input"))?;
-            let (picked, order) = faces(s, &p["faces"])?;
+            let mut s = match first()?.copy_for_edit() {
+                Ok(s) => s,
+                Err(e) => return Ok(Err(e)),
+            };
+            let (picked, order) = faces(&mut s, &p["faces"])?;
             let d = p["distance"].as_f64().ok_or_else(|| bad("distance"))?;
-            let s = s.clone();
             let r = offset::offset_faces(&s.body, &order, &picked, d);
             in_place(Slot { order: None, ..s }, r)
         }
         "thicken" => {
-            let s = first()?;
+            let s = match first()?.copy_for_edit() {
+                Ok(s) => s,
+                Err(e) => return Ok(Err(e)),
+            };
             let t = p["thickness"].as_f64().ok_or_else(|| bad("thickness"))?;
             let sym = p["symmetric"].as_bool().ok_or_else(|| bad("symmetric"))?;
             let r = offset::thicken(&s.body, t, sym);
@@ -577,7 +599,7 @@ fn a_terminal_refusal_cannot_hide_later_invalid_markers() {
     }
 }
 
-fn check_discarded_edit(record: Record, op: &str, params: Value, made: Value, retained: Value) {
+fn check_discarded_edit(record: Record, op: &str, params: &Value, made: &Value, retained: Value) {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let mut records = serde_json::Map::new();
     records.insert("input".to_owned(), serde_json::to_value(record).unwrap());
@@ -611,8 +633,8 @@ fn a_discarded_shell_preserves_the_retained_box() {
     check_discarded_edit(
         record,
         "shell",
-        serde_json::json!({"open_faces": {"picked": []}, "thickness": -2.0}),
-        serde_json::json!({"body_count": 1, "volume_mm3": 6000.0 - 26.0 * 16.0 * 6.0}),
+        &serde_json::json!({"open_faces": {"picked": []}, "thickness": -2.0}),
+        &serde_json::json!({"body_count": 1, "volume_mm3": 6000.0 - 26.0 * 16.0 * 6.0}),
         serde_json::json!({"body_count": 1, "volume_mm3": 6000.0}),
     );
 }
@@ -633,8 +655,8 @@ fn a_discarded_face_offset_preserves_the_retained_box() {
     check_discarded_edit(
         record,
         "offset_faces",
-        serde_json::json!({"faces": {"picked": [{"index": top}]}, "distance": 2.0}),
-        serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 12.0}),
+        &serde_json::json!({"faces": {"picked": [{"index": top}]}, "distance": 2.0}),
+        &serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 12.0}),
         serde_json::json!({"body_count": 1, "volume_mm3": 6000.0}),
     );
 }
@@ -664,8 +686,8 @@ fn a_discarded_thicken_preserves_the_retained_sheet() {
     check_discarded_edit(
         record,
         "thicken",
-        serde_json::json!({"thickness": 2.0, "symmetric": false}),
-        serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 2.0}),
+        &serde_json::json!({"thickness": 2.0, "symmetric": false}),
+        &serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 2.0}),
         serde_json::json!({"body_count": 1, "faces": 1, "edges": 4, "vertices": 4}),
     );
 }
