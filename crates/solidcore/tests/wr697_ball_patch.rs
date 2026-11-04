@@ -876,11 +876,11 @@ fn a_box_rounded_all_round_shells_in_and_out_after_a_round_trip() {
     assert!(got.is_err());
 }
 
-// ---- #2357: the Ball's patch keeps its definition through the record ----
+// ---- #2357: the Ball's patch keeps its definition, certified on its sphere ----
+// (the record's path, the B-rep record's ball patch face read back certified, is
+// solidcore-convert's `ball_patch`, tested in its tests/round_trip.rs)
 
-use solidcore::surface::procedural_blend::convert::{corner_rebuild, corner_to_record};
 use solidcore::surface::procedural_blend::corner::CornerKind;
-use solidcore::surface::procedural_blend::record::CornerRecord;
 use solidcore::surface::procedural_blend::BlendNet;
 
 /// The box corner's Ball face with `fillet_round_as_definition` on or off.
@@ -906,17 +906,6 @@ fn ball_face_with(definition: bool) -> (Kernel, Surface) {
         .collect();
     assert_eq!(balls.len(), 1, "one ball patch");
     (k, balls.remove(0))
-}
-
-/// The Ball's record, its definition the corner ball's sphere in closed form.
-fn ball_record(
-    k: &Kernel,
-    s: &Surface,
-) -> solidcore::surface::procedural_blend::record::BallCornerRecord {
-    let CornerRecord::Ball(rec) = corner_to_record(k, s).unwrap() else {
-        panic!("not a ball record");
-    };
-    rec
 }
 
 /// The Ball's face is its definition: the sphere (centre r in from each face, radius r),
@@ -954,78 +943,6 @@ fn the_ball_s_patch_is_its_definition() {
     assert!(same_bits(patch(&s), patch(&bare)));
 }
 
-/// The record round-trips through JSON, re-certified, back to a ball patch on the same
-/// sphere, bit for bit; its record is the one it was rebuilt from.
-#[test]
-fn a_ball_s_patch_round_trips_through_its_record() {
-    let (k, s) = ball_face_with(true);
-    let rec = ball_record(&k, &s);
-    assert_eq!(rec.centre, [37.0, 27.0, 17.0]);
-    assert_eq!(rec.radius, 3.0);
-    assert_eq!(rec.boundary.len(), 3);
-    let json = serde_json::to_string(&CornerRecord::Ball(rec.clone())).unwrap();
-    let back = corner_rebuild(&k, &serde_json::from_str(&json).unwrap()).unwrap();
-    assert!(same_bits(patch(&back), patch(&s)));
-    assert_eq!(
-        corner_to_record(&k, &back).unwrap(),
-        CornerRecord::Ball(rec)
-    );
-    let d = back.procedural_blend().unwrap();
-    assert_eq!(d.corner().unwrap().kind(), CornerKind::Ball);
-    assert_eq!(d.recertify(&k).unwrap(), 0.0);
-}
-
-/// A record whose sphere, net or loop is off the others is refused on rebuild, naming
-/// what is off: a radius 1e-9 larger, a centre moved 1e-7, the net moved 1e-7, a section
-/// moved 1e-7; and hostile numbers by the structural check.
-#[test]
-fn a_ball_s_patch_off_its_sphere_is_refused() {
-    let (k, s) = ball_face_with(true);
-    let rec = ball_record(&k, &s);
-    let why = |r: solidcore::surface::procedural_blend::record::BallCornerRecord| {
-        corner_rebuild(&k, &CornerRecord::Ball(r))
-            .unwrap_err()
-            .to_string()
-    };
-    let mut off = rec.clone();
-    off.radius += 1e-9;
-    assert!(why(off).contains("sphere"));
-    let mut off = rec.clone();
-    off.centre[0] += 1e-7;
-    assert!(why(off).contains("sphere"));
-    let mut off = rec.clone();
-    let w = off.net.weights.clone().unwrap();
-    for (p, wi) in off.net.points.iter_mut().zip(&w) {
-        p[1] += 1e-7 * wi;
-    }
-    assert!(why(off).contains("sphere"));
-    let mut off = rec.clone();
-    let w = off.boundary[1].weights.clone().unwrap();
-    // (along (1, 1, 1): this section lies in the plane z = 17, which a move along z
-    // alone leaves on the sphere to second order)
-    for (p, wi) in off.boundary[1].points.iter_mut().zip(&w) {
-        for x in p.iter_mut() {
-            *x += 1e-7 * wi;
-        }
-    }
-    let msg = why(off);
-    assert!(msg.contains("loop"), "{msg}");
-    for bad in [0.0, -3.0, f64::NAN, f64::INFINITY] {
-        let mut off = rec.clone();
-        off.radius = bad;
-        assert!(
-            corner_rebuild(&k, &CornerRecord::Ball(off)).is_err(),
-            "{bad}"
-        );
-    }
-    let mut off = rec.clone();
-    off.centre[2] = f64::NAN;
-    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
-    let mut off = rec;
-    off.boundary.clear();
-    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
-}
-
 /// A moved patch (rigid, and by a uniform scale) carries its definition with it and is
 /// certified again; its sphere is the patch's own, bit for bit.
 #[test]
@@ -1050,8 +967,8 @@ fn a_moved_ball_s_patch_is_certified_again() {
 
 /// Far from the origin the certificate is as tight as at it: its tolerance is the sphere's
 /// own size plus the rounding of computing the coefficients, not `(R + |C|)^2`. The ball
-/// corner moved to (1e5, -7e4, 3e4) still certifies, through its record too; a loop curve,
-/// the net or the radius 1e-7 off its sphere there is still refused.
+/// corner moved to (1e5, -7e4, 3e4) still certifies; a loop curve, the net or the radius
+/// 1e-7 off its sphere there is still refused.
 #[test]
 fn a_ball_s_patch_far_from_the_origin_is_certified_as_tightly() {
     let (k, s) = ball_face_with(true);
@@ -1062,44 +979,55 @@ fn a_ball_s_patch_far_from_the_origin_is_certified_as_tightly() {
     m.transform(&k, &place, None).unwrap();
     assert!(patch(&m).centre().distance(far) <= 1e-10);
     assert_eq!(m.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
-    let rec = ball_record(&k, &m);
-    let back = corner_rebuild(&k, &CornerRecord::Ball(rec.clone())).unwrap();
-    assert!(same_bits(patch(&back), patch(&m)));
-    let why = |r: solidcore::surface::procedural_blend::record::BallCornerRecord| {
-        corner_rebuild(&k, &CornerRecord::Ball(r))
-            .unwrap_err()
-            .to_string()
-    };
-    for i in 0..rec.boundary.len() {
-        let mut off = rec.clone();
-        let w = off.boundary[i].weights.clone().unwrap();
-        for (p, wi) in off.boundary[i].points.iter_mut().zip(&w) {
-            for x in p.iter_mut() {
-                *x += 1e-7 * wi;
-            }
+    // a loop curve, the net or the radius 1e-7 off the sphere there is still refused
+    let ball = m
+        .procedural_blend()
+        .unwrap()
+        .corner()
+        .unwrap()
+        .as_ball()
+        .unwrap();
+    let (c, r) = (ball.centre(), ball.radius());
+    let shifted = |p: Point3| p + Vec3::new(1e-7, 1e-7, 1e-7);
+    for curve in ball.boundary() {
+        assert!(BallPatch::is_curve_on_sphere(curve, c, r, ON_SPHERE_REL_TOL).unwrap());
+        let mut off = curve.clone();
+        for i in 0..off.number_control_points().unwrap() {
+            let (pt, w) = off
+                .control_point(ControlPointForm::EuclideanRational, i)
+                .unwrap();
+            off.set_control_point(ControlPointForm::EuclideanRational, i, shifted(pt), w)
+                .unwrap();
         }
-        let msg = why(off);
-        assert!(msg.contains("loop"), "{i}: {msg}");
+        assert!(!BallPatch::is_curve_on_sphere(&off, c, r, ON_SPHERE_REL_TOL).unwrap());
     }
-    let mut off = rec.clone();
-    let w = off.net.weights.clone().unwrap();
-    for (p, wi) in off.net.points.iter_mut().zip(&w) {
-        for x in p.iter_mut() {
-            *x += 1e-7 * wi;
+    let net = patch(&m).net();
+    assert!(BallPatch::is_on_sphere(net, c, r, ON_SPHERE_REL_TOL).unwrap());
+    assert!(!BallPatch::is_on_sphere(net, c, r + 1e-7, ON_SPHERE_REL_TOL).unwrap());
+    let mut off = net.copy();
+    let cpn = net.control_point_net().unwrap();
+    for i in 0..cpn.u_count {
+        for j in 0..cpn.v_count {
+            let at = i * cpn.v_count + j;
+            off.set_control_point(
+                ControlPointForm::EuclideanRational,
+                i,
+                j,
+                shifted(cpn.points[at]),
+                cpn.weights[at],
+            )
+            .unwrap();
         }
     }
-    assert!(why(off).contains("sphere"));
-    let mut off = rec;
-    off.radius += 1e-7;
-    assert!(why(off).contains("sphere"));
+    assert!(!BallPatch::is_on_sphere(&off, c, r, ON_SPHERE_REL_TOL).unwrap());
 }
 
 /// Hostile numbers never certify: a NaN or infinite control point or weight in the net or
-/// a loop curve, and a point so large that a coefficient overflows, are refused, by the
-/// certificates themselves and through the record.
+/// a loop curve, and a point so large that a coefficient overflows, are refused by the
+/// certificates.
 #[test]
 fn non_finite_or_overflowing_nets_and_loops_are_refused() {
-    let (k, s) = ball_face_with(true);
+    let (_k, s) = ball_face_with(true);
     let ball = s
         .procedural_blend()
         .unwrap()
@@ -1137,19 +1065,4 @@ fn non_finite_or_overflowing_nets_and_loops_are_refused() {
             );
         }
     }
-    // through the record: a coefficient that overflows (the numbers themselves finite)
-    let rec = ball_record(&k, &s);
-    let mut off = rec.clone();
-    off.net.points[0] = [1e200, -1e200, 1e200];
-    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
-    let mut off = rec.clone();
-    off.boundary[0].points[0] = [1e200, -1e200, 1e200];
-    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
-    // and numbers that are not finite
-    let mut off = rec.clone();
-    off.net.points[0][0] = f64::NAN;
-    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
-    let mut off = rec;
-    off.boundary[0].weights.as_mut().unwrap()[0] = f64::INFINITY;
-    assert!(corner_rebuild(&k, &CornerRecord::Ball(off)).is_err());
 }
