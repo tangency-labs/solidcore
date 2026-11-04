@@ -59,6 +59,41 @@ pub enum Error {
     NoEffect,
     /// The answer is not exact in the input's geometry.
     NotExact,
+    /// The geometry has no value where one is needed (the kernel's `Degenerate`): a normal
+    /// at a pole or an apex, a zero-length vector, a collapsed edge.
+    Degenerate,
+    /// The kernel is unsure whether a region is material, and the answer depends on it (a
+    /// point's class, mass properties): refused, never read as material or void. The
+    /// region, by its kernel id's index.
+    UnsureRegion {
+        /// The kernel region's id index.
+        region: u32,
+    },
+    /// A drafted extrusion's corner its rule cannot close (the kernel's taper refusal): why, and
+    /// where when the kernel's point is finite. Not a blend's [`Error::CornerRefused`], which
+    /// names a corner of a fillet's call that is not set back.
+    DraftCornerRefused {
+        /// Why.
+        why: crate::sweep::CornerRefusal,
+        /// The corner's point.
+        at: Option<[f64; 3]>,
+    },
+    /// A sweep path the kernel leaves undecided for every exact shape it is read as (a
+    /// comparison within its rounding bound of the path tolerance): the first such piece of the
+    /// path and its comparison.
+    PathUndecided {
+        /// The piece's index in the path.
+        piece: usize,
+        /// The comparison.
+        check: crate::sweep::PathCheck,
+    },
+    /// A sweep path whose pieces `join` and `join + 1` are not proved to meet to the path gap; for
+    /// the last join (`join + 1` the path's length), its end and its start, neither proved to meet
+    /// (closed) nor proved apart (open).
+    PathGap {
+        /// The join's index: after piece `join`.
+        join: usize,
+    },
     /// The kernel found its own state inconsistent part way through a call, or was called
     /// before the preparation it needs.
     Exception,
@@ -137,6 +172,22 @@ impl std::fmt::Display for Error {
             Error::CornerRefused { corner } => write!(f, "corner {corner} is not set back"),
             Error::NoEffect => write!(f, "the operation did nothing"),
             Error::NotExact => write!(f, "not exact in the input's geometry"),
+            Error::Degenerate => write!(f, "degenerate geometry where a value is needed"),
+            Error::UnsureRegion { region } => {
+                write!(f, "unsure whether region {region} is material")
+            }
+            Error::DraftCornerRefused { why, at } => {
+                write!(f, "the draft corner at {at:?} is refused: {why:?}")
+            }
+            Error::PathUndecided { piece, check } => write!(
+                f,
+                "the sweep path is undecided at piece {piece} ({check:?})"
+            ),
+            Error::PathGap { join } => write!(
+                f,
+                "the sweep path's pieces {join} and {} do not meet",
+                join.saturating_add(1)
+            ),
             Error::Exception => write!(f, "solidcore raised an internal exception"),
             Error::Cancelled => write!(f, "cancelled"),
             Error::Reentered => write!(
@@ -166,7 +217,11 @@ pub(crate) fn status(e: SolidError) -> Error {
     match e {
         SolidError::InvalidInput { .. } => Error::Status(SM_ERR_INVALID_INPUT),
         SolidError::NotConverged { .. } => Error::Status(SM_ERR_NOT_CONVERGING),
-        SolidError::NotFound { .. } | SolidError::Degenerate { .. } => Error::Status(SM_ERR),
+        SolidError::NotFound { .. } => Error::Status(SM_ERR),
+        SolidError::Degenerate { .. } => Error::Degenerate,
+        SolidError::UnsureRegion { region, .. } => Error::UnsureRegion {
+            region: region.index(),
+        },
         SolidError::Unsupported { reason, .. } => Error::Unsupported(reason),
         SolidError::Unported { upstream, .. } => Error::Unported(upstream),
         SolidError::Cancelled { .. } => Error::Cancelled,
