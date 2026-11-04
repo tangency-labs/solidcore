@@ -1,7 +1,7 @@
 //! Regression test for tangency-labs/solidcore#2574: the radius test of
 //! `SmBSplineCurve::AssertValid` (13 in 2D, 14 in 3D, read with
-//! `Kernel::fixes.bspline_check_min_radius`) reports a cusp on a trim that is a straight
-//! line, because its `SM_CP_MINIMIZE_RADIUS_OF_CURVATURE` search returns a radius of 0
+//! `Kernel::fixes.bspline_check_min_radius`) reported a cusp on a trim that is a straight
+//! line, because its `SM_CP_MINIMIZE_RADIUS_OF_CURVATURE` search returned a radius of 0
 //! where its objective cannot be evaluated.
 //!
 //! The curve is the mapped UV trim of a face of `issue_1945_fork_1207_step4`'s result
@@ -15,18 +15,17 @@
 //! so C' x C'' vanishes and the radius of curvature is infinite at every parameter: no
 //! point of this trim is a cusp. Measured over 41 parameters, y stays within one unit in
 //! the last place of 2 sqrt 2, the speed stays between 33.9571 and 35.2679 (never zero),
-//! and |C' x C''| / |C'|^3 stays below 4.7e-15, a radius above 2.1e14.
+//! and |C' x C''| / |C'|^3 stays below 4.7e-15, a radius above 2.1e14 — eleven orders of
+//! magnitude above the radius tolerance 3.46062814695851e-3 the check compares against.
 //!
-//! The search returns a solution of radius 0 at t = 0.00583189 anyway:
-//! `CurvePropertyEfo::evaluate` zeroes `out.f` and then fails where |C' x C''| is zero,
-//! which is every point of a straight piece; `LocalSolve1d::eval_into` keeps that 0 as
-//! the iteration value; and `local_property_analysis` reads it back as the solution value
-//! of a minimisation that found nothing. The check compares 0 against its radius
-//! tolerance 3.46062814695851e-3 and reports the cusp. With `oscillating_skips_failed_guesses`
-//! (WR-253, tangency-labs/solidcore#481) the failed evaluations are not taken as values
-//! and the same curve checks clean.
-//!
-//! The three tests named `_today` hold that defect and turn round when #2574 is fixed.
+//! The search used to return a solution of radius 0 at t = 0.00583189 anyway:
+//! `CurvePropertyEfo::evaluate` zeroed `out.f` and then failed where |C' x C''| is zero,
+//! which is every point of a straight piece; `LocalSolve1d::eval_into` kept that 0 as the
+//! iteration value; and `local_property_analysis` read it back as the solution value of a
+//! minimisation that found nothing. The check compared 0 against its radius tolerance and
+//! reported the cusp. The three sites now answer the closed form, take no value from a
+//! failed evaluation, and report no solution, so the search finds no finite minimum and
+//! both checks pass.
 //! Written with Claude Code (Anthropic).
 #![allow(
     clippy::unwrap_used,
@@ -79,9 +78,6 @@ const SEP: f64 = 0.23523262107999368;
 /// The radius tolerance the check compares against for this trim.
 const RADIUS_TOL: f64 = 3.460628146958512e-3;
 
-/// The parameter the search reports its radius of 0 at.
-const CUSP_T: f64 = 5.831894412731113e-3;
-
 /// Parameters sampled by [`straight_line`].
 const SAMPLES: usize = 40;
 
@@ -128,12 +124,12 @@ impl SolutionObject for TrimCurve {
     }
 }
 
-/// A kernel whose only opt-in fixes are the two the radius test needs: it reads the
-/// search's minimum radius (WR-382), and takes or skips failed evaluations as values.
-fn check_kernel(skip_failed_guesses: bool) -> Kernel {
+/// A kernel whose only opt-in fix is the one the radius test needs: it reads the search's
+/// minimum radius (WR-382). The search itself takes no value from a failed evaluation by
+/// default since #2574, so `oscillating_skips_failed_guesses` stays off here.
+fn check_kernel() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     k.fixes.bspline_check_min_radius = true;
-    k.fixes.oscillating_skips_failed_guesses = skip_failed_guesses;
     k
 }
 
@@ -154,8 +150,9 @@ fn radius_report(k: &Kernel, curve: &BSplineCurve) -> (bool, Option<(u64, f64, f
 
 /// **The trim is a straight line, so its radius of curvature is infinite.** Every
 /// control point shares one y, so the curve is a segment of the line y = 2 sqrt 2
-/// traversed forward at a speed that never vanishes. Its curvature is therefore zero,
-/// and this holds independently of the defect below.
+/// traversed forward at a speed that never vanishes. Its curvature is therefore zero, the
+/// radius everywhere is far above the tolerance the check compares against, and this
+/// holds independently of the search below.
 #[test]
 fn the_trim_is_a_straight_line_without_curvature() {
     let (off, slow, fast, kappa) = straight_line(&trim(2));
@@ -168,20 +165,21 @@ fn the_trim_is_a_straight_line_without_curvature() {
         kappa < 1e-14,
         "curvature {kappa:e}: the trim is not straight"
     );
+    assert!(
+        1.0 / kappa > 1e6 * RADIUS_TOL,
+        "radius {:e} against the tolerance {RADIUS_TOL:e}",
+        1.0 / kappa
+    );
     assert!(XS.windows(2).all(|w| w[0] < w[1]), "x is not increasing");
 }
 
-/// **The minimum-radius search returns a radius of 0 on the straight trim.** The search
-/// reports one solution, at t = 0.00583189 with the value 0, although the trim has no
-/// curvature anywhere.
-///
-/// Right would be no solution at all (no curvature, so no finite radius to minimise).
-/// When the search no longer takes a failed evaluation as a value, this test becomes
-/// that check.
+/// **The minimum-radius search finds no finite minimum on the straight trim.** Its
+/// objective is the radius of curvature, which is unbounded at every parameter of a
+/// straight piece, so there is no minimum to report and the search returns no solution.
 #[test]
-fn the_min_radius_search_returns_a_zero_radius_today() {
+fn the_min_radius_search_finds_no_finite_minimum() {
     let curve = trim(2);
-    let k = check_kernel(false);
+    let k = check_kernel();
     let opts: PropertyAnalysisOptions<'_, TrimCurve> = PropertyAnalysisOptions::default();
     let found = Curve::from(curve.clone())
         .global_property_analysis(
@@ -193,85 +191,26 @@ fn the_min_radius_search_returns_a_zero_radius_today() {
         )
         .unwrap();
     let sols = found.solutions.as_slice();
-    assert_eq!(
+    assert!(
+        sols.is_empty(),
+        "{} solutions on a curve without curvature, first value {:e} at t = {:e}",
         sols.len(),
-        1,
-        "the search returns {} solutions now: turn this test into the no-solution check",
-        sols.len()
-    );
-    let sol = &sols[0].start;
-    assert_eq!(
-        sol.solution_value, 0.0,
-        "solution value {:e}",
-        sol.solution_value
-    );
-    assert!(
-        (sol.parameters[0] - CUSP_T).abs() < 1e-9,
-        "radius 0 reported at t = {:e}",
-        sol.parameters[0]
+        sols[0].start.solution_value,
+        sols[0].start.parameters[0]
     );
 }
 
-/// **The check reports the straight 2D trim as a cusp (test 13).** `AssertValid` reads
-/// the search's first solution as the minimum radius, compares 0 against its radius
-/// tolerance 3.46e-3 and fails.
-///
-/// Right would be a clean check. When the search no longer returns that 0, this test
-/// becomes that check.
+/// **The check passes on the straight 2D trim (test 13).** `AssertValid` reads the
+/// search's first solution as the minimum radius; with no solution there is no radius
+/// below the tolerance, and no test fails.
 #[test]
-fn the_check_reports_the_straight_2d_trim_as_a_cusp_today() {
-    let (ok, failed) = radius_report(&check_kernel(false), &trim(2));
-    assert!(
-        !ok,
-        "the straight trim checks clean now: turn this test round"
-    );
-    let (index, value, tol) = failed.expect("a failed test");
-    assert_eq!(index, 13, "failed test {index}, not the 2D radius test");
-    assert_eq!(value, 0.0, "reported radius {value:e}");
-    assert!((tol - RADIUS_TOL).abs() < 1e-15, "radius tolerance {tol:e}");
+fn the_check_passes_on_the_straight_2d_trim() {
+    assert_eq!(radius_report(&check_kernel(), &trim(2)), (true, None));
 }
 
-/// **The same straight curve in 3D is reported as a cusp by test 14.** The defect is in
-/// the search, not in the 2D path: the trim put in the plane z = 0 fails the 3D radius
-/// test with the same value and tolerance.
-///
-/// Right would be a clean check, as for the 2D trim above.
+/// **The same straight curve in 3D passes test 14.** The fix is in the search, not in the
+/// 2D path: the trim put in the plane z = 0 checks clean as well.
 #[test]
-fn the_check_reports_the_straight_3d_curve_as_a_cusp_today() {
-    let (ok, failed) = radius_report(&check_kernel(false), &trim(3));
-    assert!(
-        !ok,
-        "the straight curve checks clean now: turn this test round"
-    );
-    let (index, value, tol) = failed.expect("a failed test");
-    assert_eq!(index, 14, "failed test {index}, not the 3D radius test");
-    assert_eq!(value, 0.0, "reported radius {value:e}");
-    assert!((tol - RADIUS_TOL).abs() < 1e-15, "radius tolerance {tol:e}");
-}
-
-/// **Skipping failed guesses leaves the straight trim without a radius.** With
-/// `oscillating_skips_failed_guesses` the search finds no solution on the straight trim,
-/// and both the 2D and the 3D check pass. This is the result the fix of #2574 has to
-/// reach without the flag.
-#[test]
-fn skipping_failed_guesses_leaves_the_straight_trim_uncurved() {
-    let curve = trim(2);
-    let k = check_kernel(true);
-    let opts: PropertyAnalysisOptions<'_, TrimCurve> = PropertyAnalysisOptions::default();
-    let found = Curve::from(curve.clone())
-        .global_property_analysis(
-            &k,
-            &curve.natural_interval(),
-            CurvePropertyType::MinimizeRadiusOfCurvature,
-            SEP,
-            &opts,
-        )
-        .unwrap();
-    assert!(
-        found.solutions.as_slice().is_empty(),
-        "{} solutions on a curve without curvature",
-        found.solutions.as_slice().len()
-    );
-    assert_eq!(radius_report(&k, &curve), (true, None));
-    assert_eq!(radius_report(&k, &trim(3)), (true, None));
+fn the_check_passes_on_the_straight_3d_curve() {
+    assert_eq!(radius_report(&check_kernel(), &trim(3)), (true, None));
 }
