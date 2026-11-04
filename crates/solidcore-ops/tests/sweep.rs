@@ -855,7 +855,10 @@ fn a_segment_projects_onto_a_box_s_record_face_at_its_index() {
         })
         .collect();
     heights.sort_by(f64::total_cmp);
-    assert!((heights[0] - 0.0).abs() < 1e-9 && (heights[1] - 10.0).abs() < 1e-9, "{heights:?}");
+    assert!(
+        (heights[0] - 0.0).abs() < 1e-9 && (heights[1] - 10.0).abs() < 1e-9,
+        "{heights:?}"
+    );
     let at = |i, d| project_curves(&b, &order, i, &seg, d, 1e-6);
     assert_eq!(at(6, Z), Err(Error::Argument), "an index past the faces");
     assert_eq!(
