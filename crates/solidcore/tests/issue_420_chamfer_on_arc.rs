@@ -265,7 +265,7 @@ fn assert_builds(d: f64) {
     assert!((v - want).abs() < 1e-9 * want, "d {d}: {v} vs {want}");
 }
 
-/// #2546 (WR-738): a chamfer just short of the rounds' radius builds. Each arc's chamfer
+/// #2546 (WR-740): a chamfer just short of the rounds' radius builds. Each arc's chamfer
 /// is the cone about its round's axis whose apex is 5 - d below the bottom face, and its
 /// ball's centre is 5 - d from that axis: the corners' search for where the rails meet the
 /// rounds' seams starts from that centre's closest point on the arc, which upstream's

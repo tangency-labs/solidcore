@@ -1612,7 +1612,7 @@ pub struct UpstreamFixes {
     /// runs out of iterations and finds no closest point from a point within about
     /// `R / 100` of the centre. A chamfer just short of the corner rounds it runs round
     /// (d 4.99 on R5, its ball's centre 0.01 from the round's axis) found no start on its
-    /// side edge and failed with a bare status 1001 (WR-738, #2546; solidcore-native).
+    /// side edge and failed with a bare status 1001 (WR-740, #2546; solidcore-native).
     /// Maximisation keeps upstream's limit.
     pub curve_point_minimize_full_newton: bool,
     /// Before the corners look for the rails' ends, a constant ball's round or chamfer

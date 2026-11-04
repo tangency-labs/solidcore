@@ -902,7 +902,7 @@ impl EvalFunction for FindPcExtremaEfo<'_, Curve> {
         // limited so that it cannot change the sign of the step. [B52]
         let lim_2d_deriv = 0.95; // Smaller values can slow down convergence.
 
-        // Not upstream (WR-738, #2546, `fixes.curve_point_minimize_full_newton`): when
+        // Not upstream (WR-740, #2546, `fixes.curve_point_minimize_full_newton`): when
         // minimising, the limit applies only where the full derivative does not keep the
         // step's sign (F' <= 0: the point at or beyond the centre of curvature, where the
         // stationary point is not a minimum). Upstream limits it wherever the second order
@@ -2564,7 +2564,7 @@ mod tests {
         Curve::from(BSplineCurve::from_nurb(nurb, 3, false))
     }
 
-    /// #2546 (WR-738): the closest point of an arc to a point `rho` from its centre is the
+    /// #2546 (WR-740): the closest point of an arc to a point `rho` from its centre is the
     /// arc's point at the point's angle, `5 - rho` away. Newton's derivative there is
     /// `C'.C' rho / 5`; upstream's limit holds it at `0.05 C'.C'` and the solve runs out of
     /// iterations, from within about R / 100 of the centre. With

@@ -1,4 +1,4 @@
-#### WR-738. The point/curve closest-point Newton step stalls near a centre of curvature, so no closest point on an arc is found from near its centre
+#### WR-740. The point/curve closest-point Newton step stalls near a centre of curvature, so no closest point on an arc is found from near its centre
 - **Severity:** Wrong result
 - **Area:** Curves
 - **Location:** `SmFindPCExtremaEFO::Evaluate`, the function `SmCurve::LocalPointSolve` solves for `SM_SO_MINIMIZE` (and so every `GlobalPointSolve` of a B-spline curve through its leaf spans): the second order term of `F' = C'.C' + (C - P).C''` is limited to `-0.95 C'.C'` wherever it is lower ([B52], "so that it cannot change the sign of the step").
