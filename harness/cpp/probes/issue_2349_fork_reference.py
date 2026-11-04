@@ -5,7 +5,10 @@
 Run the normal runner independently first:
   nice -n 10 bin/difftest/difftest --unit blend.fillet_executive_p3 \
     --filter issue-2349 --digest-dir reports/difftest/issue-2349-fork-rust --digest-debug
-Then invoke this script with --fork-source, --fork-lib-dir and --rust-debug.
+Then invoke this script with --fork-source, --fork-lib-dir, --build-stamp and --rust-debug.
+The build producer must supply a JSON stamp containing fork_commit and libraries
+(archive basenames mapped to SHA256 digests), generated with the archives from
+the clean revision. Do not create a retrospective stamp for unidentified binaries.
 The fork directory must be the clean a18bbe523b9c source; its existing
 libsmlib_api.a / libsmlib_core.a are reused, never rebuilt. No shared pin changes.
 
@@ -49,6 +52,7 @@ def decode_record(values, checkpoint):
     fields = {}
 
     def take(count):
+        """Consume a bounded span of the wire record."""
         nonlocal cursor
         if count < 0 or cursor + count > len(values):
             raise ValueError('short native record')
@@ -57,6 +61,7 @@ def decode_record(values, checkpoint):
         return result
 
     def section(name):
+        """Decode one length-prefixed observation field."""
         count, = take(1)
         if not math.isfinite(count) or count < 0 or int(count) != count:
             raise ValueError('invalid section length')
@@ -118,13 +123,43 @@ def differences(left, right):
     return result
 
 
+def validate_case_names(records, cases):
+    """Reject partial, duplicate or foreign fixture records before comparison."""
+    names = [record['name'] for record in records]
+    if len(names) != len(set(names)) or set(names) != set(cases):
+        raise ValueError('saved report must contain each fixture case exactly once')
+
+
+def digest(path):
+    """Hash the archive bytes without loading the entire library into memory."""
+    with path.open('rb') as source:
+        return hashlib.file_digest(source, 'sha256').hexdigest()
+
+
+def verify_archive_stamp(stamp_path, libraries, revision):
+    """Verify a producer-supplied revision and archive hash manifest before linking."""
+    stamp = json.loads(Path(stamp_path).read_text())
+    if stamp.get('fork_commit') != revision:
+        raise ValueError('archive build stamp revision does not match checked source')
+    expected = {path.name: digest(path) for path in libraries}
+    if stamp.get('libraries') != expected:
+        raise ValueError('archive build stamp must match every linked archive SHA256')
+    return stamp
+
+
 def analyze_report(report_path, rust_debug, output):
     """Analyze saved native records without rebuilding or rerunning C++."""
     report = json.loads(Path(report_path).read_text())
     if report['fork_commit'] != FORK:
         raise ValueError('unexpected fork revision in saved report')
+    stamp = report.get('build_stamp', {})
+    archives = {Path(path).name: sha for path, sha in report.get('libraries', {}).items()}
+    if (stamp.get('fork_commit') != FORK or set(archives) != {'libsmlib_api.a', 'libsmlib_core.a'}
+            or stamp.get('libraries') != archives):
+        raise ValueError('saved report lacks verified archive build provenance')
     debug = dict(line.split('\t', 1) for line in Path(rust_debug).read_text().splitlines())
     cases = {case['name']: case for case in json.loads(FIXTURE.read_text())['cases']}
+    validate_case_names(report['records'], cases)
     summary = []
     for record in report['records']:
         name = record['name']
@@ -179,9 +214,11 @@ def native(shim, index):
 
 
 def allocation(values, checkpoint):
+    """Extract the complete split allocation checkpoint from a native record."""
     cursor = 0
 
     def section():
+        """Consume one length-prefixed allocation section."""
         nonlocal cursor
         count = int(values[cursor])
         result = values[cursor + 1:cursor + 1 + count]
@@ -200,6 +237,7 @@ def allocation(values, checkpoint):
 
 
 def checked_allocation(state, vertex_state, geometry):
+    """Assert split ownership and zero tolerance while retaining all five values."""
     # This operand has one corner, two original corner vertices and two split
     # vertices. Snapshot records seven integers per corner vertex, including its
     # owning-list label. -2 means present in the corner, absent from owning list.
@@ -220,7 +258,9 @@ def checked_allocation(state, vertex_state, geometry):
 
 
 def rust_allocation(line):
+    """Read independent Rust split allocation observations from its debug line."""
     def field(key):
+        """Require and decode a named Rust observation array."""
         match = re.search(r'"' + key + r'": (\[[^\]]*\])', line)
         if not match:
             raise ValueError(f'missing Rust field {key}')
@@ -231,15 +271,18 @@ def rust_allocation(line):
 
 
 def bits(value):
+    """Encode nested numeric records for bitwise allocation comparison."""
     if isinstance(value, list) or isinstance(value, tuple):
         return [bits(v) for v in value]
     return struct.pack('!d', float(value)).hex()
 
 
 def main():
+    """Verify build provenance, compile the shim and run isolated native cases."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fork-source', type=Path, required=True)
     parser.add_argument('--fork-lib-dir', type=Path, required=True)
+    parser.add_argument('--build-stamp', type=Path, required=True)
     parser.add_argument('--rust-debug', type=Path, required=True)
     parser.add_argument('--out-dir', type=Path, required=True)
     parser.add_argument('--pinned-shim', type=Path)
@@ -249,6 +292,8 @@ def main():
     assert revision == FORK, revision
     assert not subprocess.check_output(['git', '-C', str(args.fork_source),
                                        'status', '--porcelain'], text=True).strip()
+    libraries = [args.fork_lib_dir / f'libsmlib_{name}.a' for name in ['api', 'core']]
+    stamp = verify_archive_stamp(args.build_stamp, libraries, revision)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     source = (ROOT / 'harness/cpp/shim/blend_fillet_executive_p3.cpp').read_text()
     unrelated = '#include "blend_fillet_executive_p3_two_offset_chamfer.inc"'
@@ -258,7 +303,6 @@ def main():
     translation_unit = args.out_dir / 'executive.cpp'
     translation_unit.write_text('#include <SmAttribute.h>\n' + source.replace(unrelated, ''))
     shim = (args.out_dir / 'fork-shim.so').resolve()
-    libraries = [args.fork_lib_dir / f'libsmlib_{name}.a' for name in ['api', 'core']]
     command = ['nice', '-n', '10', 'g++', '-std=c++17', '-O2', '-ffp-contract=off',
                '-fno-fast-math', '-fPIC', '-shared', '-DNDEBUG', '-DNOMINMAX', '-DSM_STATIC',
                '-I', str(args.fork_source / 'source/SM_API/inc'),
@@ -273,6 +317,7 @@ def main():
     full_differences = 0
     for i, case in enumerate(json.loads(FIXTURE.read_text())['cases']):
         def run(shim_path):
+            """Run a single fixture in a fresh native worker process."""
             result = subprocess.run([sys.executable, __file__, '--worker',
                                      str(shim_path.resolve()), str(i)],
                                     check=True, capture_output=True, text=True)
@@ -294,11 +339,7 @@ def main():
             print(f'{"PASS" if equal else "DIFF"} complete record {case["name"]}')
         records.append(record)
     assert allocation_passes == 2
-    def digest(path):
-        with path.open('rb') as source:
-            return hashlib.file_digest(source, 'sha256').hexdigest()
-
-    report = {'fork_commit': revision, 'compile_command': command,
+    report = {'fork_commit': revision, 'build_stamp': stamp, 'compile_command': command,
               'libraries': {str(p): digest(p) for p in libraries},
               'allocation_passes': allocation_passes, 'records': records}
     (args.out_dir / 'checkpoints.json').write_text(json.dumps(report, indent=2))

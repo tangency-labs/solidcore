@@ -6,7 +6,7 @@ import json
 import hashlib
 from pathlib import Path
 
-from issue_2349_fork_reference import decode_record, differences, validate_case_names, verify_archive_stamp
+from issue_2349_fork_reference import decode_record, differences, validate_case_names, verify_archive_stamp, analyze_report, FORK, FIXTURE
 
 
 class RecordTests(unittest.TestCase):
@@ -46,6 +46,23 @@ class EvidenceTests(unittest.TestCase):
         for names in [[], ['a'], ['a', 'a', 'b'], ['a', 'b', 'unknown']]:
             with self.subTest(names=names), self.assertRaises(ValueError):
                 validate_case_names([{'name': name} for name in names], cases)
+
+    def test_analyzer_rejects_partial_reports_before_comparison(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / 'report.json'
+            debug = root / 'rust.debug'
+            debug.write_text('')
+            cases = json.loads(FIXTURE.read_text())['cases']
+            names = [case['name'] for case in cases]
+            archives = {'libsmlib_api.a': 'a' * 64, 'libsmlib_core.a': 'b' * 64}
+            for selected in [[], names[:-1], names + [names[0]], names + ['unknown']]:
+                report.write_text(json.dumps({
+                    'fork_commit': FORK, 'libraries': archives,
+                    'build_stamp': {'fork_commit': FORK, 'libraries': archives},
+                    'records': [{'name': name} for name in selected]}))
+                with self.subTest(names=selected), self.assertRaisesRegex(ValueError, 'exactly once'):
+                    analyze_report(report, debug, root / 'output.json')
 
     def test_archive_stamp_binds_every_archive_and_revision(self):
         with tempfile.TemporaryDirectory() as directory:
