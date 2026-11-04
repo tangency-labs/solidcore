@@ -40,12 +40,13 @@
 //!   asks whether some face's surface carries the mark. Surfaces here carry no attributes,
 //!   and the local operation's extended offset copies them, so a face is taken to lie on a
 //!   new surface when nine points of its surface over its UV domain drop onto that
-//!   surface within the B-rep's tolerance.
+//!   surface within the B-rep's tolerance. With WR-748, those targets are the actual constructed replacement supports,
+//!   including their retained continuations, captured before the boolean merge.
 //! - **Not exact.** The fork's fillet executive can fail with `SM_FILERR_NOT_EXACT`
 //!   (`SM_OFR_NOT_EXACT` then); the port's has no such code, so that branch of step 5
 //!   is never taken.
 //! - **The local operation** runs with notification identities of its own
-//!   ([`local_operation_simple`]), as the fork calls it on the B-rep directly.
+//!   ([`crate::offset::offset_executive::p2::local_operation_simple`]), as the fork calls it on the B-rep directly.
 //! - **Marks.** `SmFollowedBlendMark` is an application attribute
 //!   ([`crate::geom::attribute::AttributeHandlers`]) whose merge unions the two objects'
 //!   codes, as the fork's `Merge`. A code added to an object that already has a mark
@@ -82,7 +83,6 @@ use crate::geom::global_solver::SolverOperation;
 use crate::kernel::Kernel;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::knots::Side;
-use crate::offset::offset_executive::p2::local_operation_simple;
 use crate::offset::offset_geometry_creation::{FaceOffsetBrep, OffsetGeometryCreation};
 use crate::surface::plane::Plane;
 use crate::surface::surface::p4::NoObject;
@@ -800,8 +800,16 @@ impl FaceOffsetBrep<MoveHandle> for MoveBrep<'_> {
 
 /// Whether face `f` lies on one of `targets` (the fork marks the target surfaces and
 /// asks whether a face's surface carries the mark; see the module deviations): nine
-/// points of the face's surface over its UV domain within `tol` of a target.
-fn on_target(k: &Kernel, b: &Brep, f: FaceId, targets: &[Surface], tol: f64) -> Result<bool> {
+/// points of the face's surface over its UV domain within `tol` of a target's
+/// retained parameter domain, with a parameter hint only when its corresponding
+/// point has first been verified in model space.
+fn on_target(
+    k: &Kernel,
+    b: &Brep,
+    f: FaceId,
+    targets: &[crate::offset::offset_executive::p1::RetainedLocalSurface],
+    tol: f64,
+) -> Result<bool> {
     let Some(s) = crate::topology::face::p2::surface(b, f)? else {
         return Ok(false);
     };
@@ -810,14 +818,33 @@ fn on_target(k: &Kernel, b: &Brep, f: FaceId, targets: &[Surface], tol: f64) -> 
     for i in 0..3u32 {
         for j in 0..3u32 {
             let uv = domain.evaluate(f64::from(i) / 2.0, f64::from(j) / 2.0);
-            points.push(s.evaluate_point(k, uv)?);
+            points.push((uv, s.evaluate_point(k, uv)?));
         }
     }
-    for t in targets {
-        let t_domain = t.natural_uv_domain_with_nurb(k)?;
+    for target in targets {
+        let t = &target.surface;
+        let t_domain = target.domain;
         let mut all = true;
-        for &p in &points {
-            let d = t.drop_point::<NoObject>(k, p, &t_domain, &DropPointOptions::default())?;
+        for &(uv, p) in &points {
+            // The construction often retains parameter correspondence. Supply an
+            // inverse-solver hint only after verifying it in model space; an
+            // unrelated/reparameterized support receives no such assumption.
+            let guess_uv = if t_domain.contains_point(uv, 0.0) {
+                crate::error::ignored(t.evaluate_point(k, uv))?
+                    .filter(|point| point.distance(p) <= tol)
+                    .map(|_| uv)
+            } else {
+                None
+            };
+            let d = t.drop_point::<NoObject>(
+                k,
+                p,
+                &t_domain,
+                &DropPointOptions {
+                    guess_uv,
+                    ..DropPointOptions::default()
+                },
+            )?;
             if !(d.success && d.gap <= tol) {
                 all = false;
                 break;
@@ -884,9 +911,13 @@ impl OffsetFacesExecutive {
             faces.push(f);
             surfaces.push(surface);
         }
-        let targets: Vec<Surface> = surfaces.clone();
         // The local operation takes the surfaces over, also when it fails.
-        local_operation_simple(k, b, &faces, surfaces)?;
+        // Its retained supports can extend beyond the finite input domains.
+        let targets = {
+            crate::offset::offset_executive::p2::local_operation_simple_with_targets(
+                k, b, &faces, surfaces,
+            )?
+        };
 
         if k.fixes.local_operation_closes_walls_to_nothing {
             return self.join_across_closed_walls(k, b, &targets, tol);
@@ -924,7 +955,7 @@ impl OffsetFacesExecutive {
         &mut self,
         k: &mut Kernel,
         b: &mut Brep,
-        targets: &[Surface],
+        targets: &[crate::offset::offset_executive::p1::RetainedLocalSurface],
         tol: f64,
     ) -> Result<()> {
         let mut moved_any = false;
@@ -1441,6 +1472,297 @@ mod tests {
     use crate::math::{Point3, Vec3};
     use crate::primitive::api_primitives::{create_box, create_cylinder};
     use crate::topology::vertex;
+
+    #[test]
+    fn local_operation_returns_the_selected_constructed_supports() {
+        use crate::geom::extent2d::Extent2d;
+        use crate::geom::object::ObjectRef;
+        use crate::nurbs::b_spline_surface::p1::BSplineSurface;
+        use crate::nurbs::math::CPoint;
+        use crate::surface::offset_surface::OffsetSurface;
+        use crate::topology::brep::p2::ArenaNotifyState;
+        use crate::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
+        use crate::topology::brep::validation::{check_brep, CheckLevel};
+        use crate::topology::loopuse::notify_ref;
+        use crate::topology::topology_traverser::Marks;
+
+        let mut k = Kernel {
+            fixes: crate::kernel::UpstreamFixes::all(),
+            ..Kernel::default()
+        };
+        // A bilinear ruled patch; no thread, imported body or special offset case.
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, 1.0),
+                CPoint::new(0.0, 10.0, 0.0, 1.0),
+            ],
+            vec![
+                CPoint::new(10.0, 0.0, 0.0, 1.0),
+                CPoint::new(10.0, 10.0, 1.0, 1.0),
+            ],
+        ];
+        let base = Surface::from(
+            BSplineSurface::from_data(
+                1,
+                1,
+                1,
+                1,
+                3,
+                3,
+                &net,
+                &[0.0, 0.0, 1.0, 1.0],
+                &[0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap(),
+        );
+        let domain = base.natural_uv_domain_with_nurb(&k).unwrap();
+        let mut b = crate::topology::brep::p3::new_brep(
+            &mut k,
+            crate::geom::tol::USE_DEFAULT,
+            crate::geom::tol::USE_DEFAULT,
+        )
+        .unwrap();
+        {
+            let this_face = |f: FaceId| -> ObjectRef { notify_ref(EntityRef::Face(f)) };
+            let mut state = ArenaNotifyState::new(&b);
+            let mut env = state.env(None);
+            let mut marks = Marks::default();
+            let mut fenv = FaceBuildEnv {
+                env: &mut env,
+                marks: &mut marks,
+                this_face: &this_face,
+            };
+            create_face_from_surface(&mut k, &mut b, Some(base.clone()), &domain, &mut fenv)
+                .unwrap();
+        }
+        b.refresh_cached_topology();
+        assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
+            .unwrap()
+            .is_valid());
+        let faces: Vec<_> = b.faces().ids().collect();
+        let mut target_base = base.clone();
+        let mut restricted =
+            Extent2d::from_points(domain.evaluate(0.25, 0.25), domain.evaluate(0.75, 0.75));
+        target_base.trim_with_domain(&k, &mut restricted).unwrap();
+        let target = Surface::from(OffsetSurface::new(&k, 0.1, target_base, true, 0).unwrap());
+        let retained = crate::offset::offset_executive::p2::local_operation_simple_with_targets(
+            &mut k,
+            &mut b,
+            &faces,
+            vec![target.clone()],
+        )
+        .unwrap();
+        assert_eq!(retained.len(), 1);
+        assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
+            .unwrap()
+            .is_valid());
+        let unchanged = crate::offset::offset_executive::p1::RetainedLocalSurface {
+            domain,
+            surface: base,
+        };
+        for face in b.faces().ids() {
+            assert!(on_target(&k, &b, face, &retained, b.tolerance()).unwrap());
+            assert!(!on_target(
+                &k,
+                &b,
+                face,
+                std::slice::from_ref(&unchanged),
+                b.tolerance()
+            )
+            .unwrap());
+        }
+    }
+
+    #[test]
+    fn target_membership_verifies_its_corresponding_parameter_hint() {
+        use crate::geom::extent2d::Extent2d;
+        use crate::geom::geom_utility::p2::ContinuityType;
+        use crate::math::Point2;
+        use crate::offset::offset_executive::p1::RetainedLocalSurface;
+        use crate::surface::offset_surface::OffsetSurface;
+        use crate::topology::brep::validation::{check_brep, CheckLevel};
+        use crate::topology::loopuse::notify_ref;
+        let mut k = Kernel {
+            fixes: crate::kernel::UpstreamFixes::all(),
+            ..Kernel::default()
+        };
+        let offset = Surface::from(
+            OffsetSurface::new(&k, 0.1, membership_ruled_surface(), true, 0).unwrap(),
+        );
+        let extended = offset
+            .create_extended_surface(&k, 40.0, ContinuityType::G1R)
+            .unwrap();
+        let domain = Extent2d::from_points(Point2::new(1.0, 0.2), Point2::new(31.0, 0.8));
+        let wide = RetainedLocalSurface {
+            domain: extended.natural_uv_domain_with_nurb(&k).unwrap(),
+            surface: extended.clone(),
+        };
+        let retained = RetainedLocalSurface {
+            domain,
+            surface: extended.clone(),
+        };
+        let mut face_support = offset;
+        let mut trim = domain;
+        face_support.trim_with_domain(&k, &mut trim).unwrap();
+        let mut b = crate::topology::brep::p3::new_brep(
+            &mut k,
+            crate::geom::tol::USE_DEFAULT,
+            crate::geom::tol::USE_DEFAULT,
+        )
+        .unwrap();
+        {
+            use crate::curve::curve::Curve;
+            use crate::math::Point3;
+            use crate::nurbs::b_spline_curve::BSplineCurve;
+            use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+            let corners = [
+                domain.min(),
+                Point2::new(domain.max().x, domain.min().y),
+                domain.max(),
+                Point2::new(domain.min().x, domain.max().y),
+            ];
+            let uv: Vec<_> = (0..4)
+                .map(|i| {
+                    let a = corners[i];
+                    let z = corners[(i + 1) % 4];
+                    Curve::from(
+                        BSplineCurve::create_line_segment(
+                            2,
+                            Point3::new(a.x, a.y, 0.),
+                            Point3::new(z.x, z.y, 0.),
+                        )
+                        .unwrap(),
+                    )
+                })
+                .collect();
+            let input = crate::topology::brep::p7::FaceCurvesInput {
+                loops: vec![4],
+                curves_3d: None,
+                uv_curves: Some(uv),
+                orientations: vec![OrientType::Same; 4],
+                loop_points: vec![],
+            };
+            let mut attributes = AttributeStore::default();
+            let mut records = crate::topology::topology::NotifyRecords::new();
+            let mut stores = edge::NotificationStores {
+                records: &mut records,
+                attributes: &mut attributes,
+                key_of: &notify_ref,
+            };
+            crate::topology::brep::p7::make_face_with_curves_with_kernel_context(
+                &mut k,
+                &mut b,
+                None,
+                input,
+                face_support,
+                &domain,
+                OrientType::Same,
+                Some(true),
+                &|f| notify_ref(EntityRef::Face(f)),
+                &mut stores,
+            )
+            .unwrap();
+        }
+        b.refresh_cached_topology();
+        let check = check_brep(&mut k, &mut b, CheckLevel::Level2).unwrap();
+        assert!(check.is_valid(), "{:?}", check.lines());
+        let face = b.faces().ids().next().unwrap();
+        // Without a verified hint, the global query chooses an unused continuation
+        // at this corner even though its true distance to the support is zero.
+        let corner = domain.max();
+        let point = wide.surface.evaluate_point(&k, corner).unwrap();
+        let unseeded = wide
+            .surface
+            .drop_point::<NoObject>(&k, point, &wide.domain, &DropPointOptions::default())
+            .unwrap();
+        assert!(unseeded.gap > 0.1);
+        assert!(on_target(&k, &b, face, &[wide], b.tolerance()).unwrap());
+        assert!(on_target(&k, &b, face, &[retained], b.tolerance()).unwrap());
+
+        for reversed in [false, true] {
+            let mut base = membership_ruled_surface();
+            let (query_domain, offset_distance) = if reversed {
+                base.reverse(&k, crate::nurbs::b_spline_surface::SurfParamType::U)
+                    .unwrap();
+                (domain, -0.1)
+            } else {
+                base.reparameterize(
+                    &k,
+                    &Extent2d::from_points(Point2::new(7.0, 11.0), Point2::new(39.0, 12.0)),
+                )
+                .unwrap();
+                (
+                    Extent2d::from_points(
+                        domain.min() + Point2::new(7.0, 11.0),
+                        domain.max() + Point2::new(7.0, 11.0),
+                    ),
+                    0.1,
+                )
+            };
+            let surface =
+                Surface::from(OffsetSurface::new(&k, offset_distance, base, true, 0).unwrap())
+                    .create_extended_surface(&k, 40.0, ContinuityType::G1R)
+                    .unwrap();
+            let target = RetainedLocalSurface {
+                surface,
+                domain: query_domain,
+            };
+            assert!(on_target(&k, &b, face, &[target], b.tolerance()).unwrap());
+        }
+        let wrong = RetainedLocalSurface {
+            surface: Surface::from(
+                OffsetSurface::new(&k, 0.2, membership_ruled_surface(), true, 0).unwrap(),
+            )
+            .create_extended_surface(&k, 40.0, ContinuityType::G1R)
+            .unwrap(),
+            domain,
+        };
+        assert!(!on_target(&k, &b, face, &[wrong], b.tolerance()).unwrap());
+    }
+
+    fn membership_ruled_surface() -> Surface {
+        use crate::nurbs::b_spline_surface::p1::BSplineSurface;
+        use crate::nurbs::math::CPoint;
+        let quarters = 32usize;
+        let mut points = Vec::new();
+        for i in 0..=2 * quarters {
+            let a = i as f64 * std::f64::consts::FRAC_PI_4;
+            let w = if i % 2 == 0 {
+                1.0
+            } else {
+                std::f64::consts::FRAC_1_SQRT_2
+            };
+            let z = i as f64 * 2.5 / 8.0;
+            points.push(vec![
+                CPoint::new(
+                    8.646835306586816 * a.cos(),
+                    8.646835306586816 * a.sin(),
+                    z * w,
+                    w,
+                ),
+                CPoint::new(10.0 * a.cos(), 10.0 * a.sin(), (z - 0.78125) * w, w),
+            ]);
+        }
+        let mut knots = vec![0.0; 3];
+        for i in 1..quarters {
+            knots.extend([i as f64, i as f64]);
+        }
+        knots.extend([quarters as f64; 3]);
+        Surface::from(
+            BSplineSurface::from_data(
+                2 * quarters,
+                1,
+                2,
+                1,
+                2 * quarters + 3,
+                3,
+                &points,
+                &knots,
+                &[0., 0., 1., 1.],
+            )
+            .unwrap(),
+        )
+    }
 
     /// The codes of `e`'s mark (empty without one).
     fn codes(b: &Brep, e: EntityRef) -> Vec<i64> {

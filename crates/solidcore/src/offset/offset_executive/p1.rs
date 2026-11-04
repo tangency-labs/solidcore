@@ -442,6 +442,16 @@ pub struct OffsetExecutive {
     /// `m_vSurfaces`).
     pub(super) local_faces: Vec<FaceId>,
     pub(super) local_surfaces: Vec<Surface>,
+    observed_local_faces: Vec<FaceId>,
+    retained_local_surfaces: Vec<RetainedLocalSurface>,
+}
+
+/// A constructed replacement support and the parameter region actually retained
+/// by its face. Lazy evaluation may grow the support's natural domain later.
+#[derive(Debug)]
+pub(crate) struct RetainedLocalSurface {
+    pub(crate) surface: Surface,
+    pub(crate) domain: Extent2d,
 }
 
 impl OffsetExecutive {
@@ -491,6 +501,8 @@ impl OffsetExecutive {
             unmated_edgeuses: BTreeSet::new(),
             local_faces: Vec::new(),
             local_surfaces: Vec::new(),
+            observed_local_faces: Vec::new(),
+            retained_local_surfaces: Vec::new(),
         }
     }
 
@@ -609,6 +621,42 @@ impl OffsetExecutive {
     pub fn relate_edgeuses(&mut self, original: EdgeuseId, offset: EdgeuseId) {
         // ManyToMany has no cardinality error and typed ids cannot be null.
         let _ = self.edgeuse_to_edgeuses.relate_pair(original, offset);
+    }
+
+    /// Requests the actual retained supports of these local-operation replacements.
+    pub(crate) fn observe_local_faces(&mut self, faces: &[FaceId]) {
+        self.observed_local_faces = faces.to_vec();
+        self.retained_local_surfaces.clear();
+    }
+
+    /// Takes the selected supports recorded before merging their offset faces.
+    pub(crate) fn take_retained_local_surfaces(&mut self) -> Vec<RetainedLocalSurface> {
+        core::mem::take(&mut self.retained_local_surfaces)
+    }
+
+    fn observed_offset_faces(&self, original: &Brep) -> Result<BTreeSet<FaceId>> {
+        let mut faces = BTreeSet::new();
+        if !self.observed_local_faces.is_empty() {
+            for faceuse in self.faceuse_to_faces.all_firsts() {
+                let face = required(eu::faceuse_face(original, faceuse)?)?;
+                if self.observed_local_faces.contains(&face) {
+                    faces.extend(self.faceuse_to_faces.seconds(faceuse));
+                }
+            }
+        }
+        Ok(faces)
+    }
+
+    fn retain_observed_surfaces(&mut self, faces: &BTreeSet<FaceId>) -> Result<()> {
+        for &face in faces {
+            let face = self.required_offset_brep()?.face(face)?;
+            let domain = face.uv_domain;
+            let mut surface = required(face.surface.as_ref())?.clone_for_evaluation()?;
+            surface.set_owner(None);
+            self.retained_local_surfaces
+                .push(RetainedLocalSurface { surface, domain });
+        }
+        Ok(())
     }
 
     /// Relates an original face use to a newly constructed offset face.
@@ -1842,7 +1890,9 @@ impl OffsetExecutive {
         original: &mut Brep,
         notifications: Option<&mut OffsetNotifications<'_>>,
     ) -> Result<Brep> {
+        let observed = self.observed_offset_faces(original)?;
         if !self.merge_results {
+            self.retain_observed_surfaces(&observed)?;
             self.clear_relations();
             let mut result = required(self.offset_brep.take())?;
             // the stitch statuses are ignored upstream. Its edits notify the offset's
@@ -1980,6 +2030,7 @@ impl OffsetExecutive {
         self.clear_relations();
         // Shrink the geometry - this helps some for self intersections
         shrink_geometry(kernel, required(self.offset_brep.as_mut())?)?;
+        self.retain_observed_surfaces(&observed)?;
         // Now Get things ready for piecewise merge (cpp:2453–2474)
         let notifications = notifications.ok_or_else(|| {
             SolidError::invalid_input(OP, "a merging PiecewiseMerge needs notification stores")

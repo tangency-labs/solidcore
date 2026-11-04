@@ -225,6 +225,130 @@ const OP_EDGEUSE: &str = "offset::offset_geometry_creation::edgeuse_offset";
 const OP_EXACT_PIECE: &str = "offset::offset_geometry_creation::exact_piece";
 const OP_ANALYTICS_EXACT: &str = "offset::offset_geometry_creation::make_edges_on_analytics_exact";
 
+/// Rank a candidate over its retained interval. WR-744 compares geometric
+/// distance, which is independent of the intersection curve's parameterization.
+fn mating_curve_distance(
+    k: &Kernel,
+    curve: &Curve,
+    interval: &Extent1d,
+    reference: Point3,
+    tolerance: f64,
+) -> Result<f64> {
+    let solutions = curve.global_point_solve(
+        k,
+        interval,
+        SolverOperation::Minimize,
+        reference,
+        tolerance,
+        SolutionRequested::Single,
+        &GlobalPointSolveOptions::<NoObject>::default(),
+    )?;
+    let solution = solutions.get(0).ok_or_else(|| sm_err(OP_MATE))?;
+    let parameter = solution.start.param(0)?;
+    Ok(distance(curve.evaluate_point(k, parameter)?, reference))
+}
+
+/// Place a fitted intersection curve's cut at the joint of its three exact
+/// supports. The local foot keeps the same intersection branch and leaves the
+/// curve's approximation error unamplified by the angle of the third support.
+fn refine_intersection_cut(
+    k: &Kernel,
+    curve: &Curve,
+    parameter: f64,
+    surfaces: [&Surface; 3],
+    domains: [&Extent2d; 3],
+    guesses: [Point2; 3],
+) -> Result<Option<(f64, Point2, f64)>> {
+    let [s1, s2, s3] = surfaces;
+    let [d1, d2, d3] = domains;
+    let [uv1, uv2, uv3] = guesses;
+    let Some(joint) = s1.local_surface_surface_intersect(k, d1, s2, d2, s3, d3, uv1, uv2, uv3)?
+    else {
+        return Ok(None);
+    };
+    let point = s1.evaluate_point(k, joint.uv1)?;
+    let (found, closest) = curve.local_point_solve::<NoObject>(
+        k,
+        &curve.natural_interval(),
+        SolverOperation::Minimize,
+        point,
+        &crate::curve::curve::p3::PointSolveOptions::default(),
+        parameter,
+    )?;
+    if !found {
+        return Ok(None);
+    }
+    let parameter = closest.start.param(0)?;
+    Ok(Some((
+        parameter,
+        joint.uv3,
+        curve.evaluate_point(k, parameter)?.distance(point),
+    )))
+}
+
+/// Whether an established trim point satisfies an adjacent support constraint.
+fn point_satisfies_surface(
+    k: &Kernel,
+    surface: &Surface,
+    domain: &Extent2d,
+    point: Point3,
+    tolerance: f64,
+) -> Result<bool> {
+    let solutions = surface.global_point_solve::<NoObject>(
+        k,
+        None,
+        domain,
+        SolverOperation::Minimize,
+        point,
+        tolerance,
+        None,
+        SolutionRequested::Single,
+    )?;
+    let Some(solution) = solutions.get(0) else {
+        return Ok(false);
+    };
+    let uv = Point2::new(solution.start.param(0)?, solution.start.param(1)?);
+    Ok(surface.evaluate_point(k, uv)?.distance(point) <= tolerance)
+}
+
+/// Keep established seam points that satisfy every independent support.
+fn apply_tangent_constraints<O: SolutionObject>(
+    k: &Kernel,
+    curve: &Curve,
+    constraints: &SolutionArray<O>,
+    supports: &[(Surface, Extent2d, f64)],
+    candidates: &mut SolutionArray<O>,
+) -> Result<bool> {
+    let mut retained = SolutionArray::new();
+    for solution in constraints.as_slice() {
+        let point = curve.evaluate_point(k, solution.start.param(0)?)?;
+        let mut satisfies_all = true;
+        for (surface, domain, tolerance) in supports {
+            if !point_satisfies_surface(k, surface, domain, point, *tolerance)? {
+                satisfies_all = false;
+                break;
+            }
+        }
+        if satisfies_all {
+            retained.add(solution);
+        }
+    }
+    if !retained.is_empty() {
+        *candidates = retained;
+        return Ok(true);
+    }
+    // Failed seam constraints cannot remain eligible when the independent cuts
+    // are collected next. Preserve unrelated (for example lamina) candidates.
+    let mut other = SolutionArray::new();
+    for candidate in candidates.as_slice() {
+        if !constraints.as_slice().contains(candidate) {
+            other.add(candidate);
+        }
+    }
+    *candidates = other;
+    Ok(false)
+}
+
 /// The most whole turns `exact_piece` moves a conic's angle by (a guard: the angles
 /// are within a few turns of each other).
 const MAX_EXACT_PIECE_TURNS: u32 = 1 << 16;
@@ -2379,6 +2503,89 @@ impl OffsetGeometryCreation {
         Ok(out)
     }
 
+    /// Place an isolated cut at the joint of the exact supports before trimming
+    /// their fitted intersection curve. A shallow cut amplifies that curve's small
+    /// fitting error when each edge independently intersects the third surface.
+    #[allow(clippy::too_many_arguments)]
+    fn refine_trim_corner<O: ClassObject + SolutionObject>(
+        k: &Kernel,
+        brep: &mut impl OffsetBrep<O>,
+        executive: &mut impl OffsetExecutive<O>,
+        offset_edgeuse: Option<O>,
+        other_offset_edgeuse: Option<O>,
+        uv_curve_base: Option<O>,
+        uv_curve_other_base: Option<O>,
+        curve_3d: O,
+        adjacent_surface: O,
+        adjacent_domain: &Extent2d,
+        candidate: &crate::geom::solution_array::Solution<O>,
+    ) -> Result<Option<crate::geom::solution_array::Solution<O>>> {
+        let (Some(eu1), Some(eu2), Some(uv1_curve), Some(uv2_curve)) = (
+            offset_edgeuse,
+            other_offset_edgeuse,
+            uv_curve_base,
+            uv_curve_other_base,
+        ) else {
+            return Ok(Some(*candidate));
+        };
+        if !matches!(
+            candidate.solution_type,
+            SolutionType::SingleValue | SolutionType::PolySingleValue
+        ) {
+            return Ok(Some(*candidate));
+        }
+        let face1 = brep
+            .edgeuse_face(eu1)?
+            .ok_or(dangling("edge use without face"))?;
+        let face2 = brep
+            .edgeuse_face(eu2)?
+            .ok_or(dangling("edge use without face"))?;
+        let surface1 = brep
+            .face_surface(face1)?
+            .ok_or(dangling("face without surface"))?;
+        let surface2 = brep
+            .face_surface(face2)?
+            .ok_or(dangling("face without surface"))?;
+        let (extended1, domain1) = executive.get_create_extended_surface(k, brep, surface1)?;
+        let (extended2, domain2) = executive.get_create_extended_surface(k, brep, surface2)?;
+        let parameter = candidate.start.param(0)?;
+        let uv1 = curve_of(brep, uv1_curve)?.evaluate_point(k, parameter)?;
+        let uv2 = curve_of(brep, uv2_curve)?.evaluate_point(k, parameter)?;
+        let uv1 = Point2::new(uv1.x, uv1.y);
+        let uv2 = Point2::new(uv2.x, uv2.y);
+        let uv3 = Point2::new(candidate.start.param(1)?, candidate.start.param(2)?);
+        let s1 = surface_of(brep, extended1)?;
+        let s2 = surface_of(brep, extended2)?;
+        let s3 = surface_of(brep, adjacent_surface)?;
+        let normals = [
+            s1.evaluate_normal(k, uv1, Side::Left, Side::Left)?,
+            s2.evaluate_normal(k, uv2, Side::Left, Side::Left)?,
+            s3.evaluate_normal(k, uv3, Side::Left, Side::Left)?,
+        ];
+        let [n1, n2, n3] = normals;
+        // Dependent supports describe a seam/contact, not an isolated corner.
+        if n1.dot(n2.cross(n3)).abs() <= EFF_ZERO {
+            return Ok(Some(*candidate));
+        }
+        let Some((parameter, third_uv, residual)) = refine_intersection_cut(
+            k,
+            curve_of(brep, curve_3d)?,
+            parameter,
+            [s1, s2, s3],
+            [&domain1, &domain2, adjacent_domain],
+            [uv1, uv2, uv3],
+        )?
+        else {
+            return Ok(None);
+        };
+        let mut result = *candidate;
+        *result.start.param_mut(0)? = parameter;
+        *result.start.param_mut(1)? = third_uv.x;
+        *result.start.param_mut(2)? = third_uv.y;
+        result.start.solution_value = residual;
+        Ok(Some(result))
+    }
+
     /// `TrimExtendedEdge(ctx, exec, pBaseEdgeuse, pOtherBaseEdgeuse, pOffsetEdgeuse,
     /// pOtherOffsetEdgeuse, p3DCurve, pUVCurveBase, pUVCurveOtherBase, ..)`: the trim
     /// interval of the extended intersection curve, found end by end (the start vertex
@@ -2390,7 +2597,8 @@ impl OffsetGeometryCreation {
     /// only); or, without candidates, the drop of the base vertex onto the curve. The
     /// candidate closest to the base vertex (and not the start already chosen) wins.
     /// `None` (`bGoodEdge == FALSE`) when an end has no candidate or the interval is
-    /// zero length. `offset_edgeuse` and `other_offset_edgeuse` are `NotUsed`.
+    /// zero length. With WR-747, the offset edge uses identify the exact supports
+    /// for refining isolated corner cuts before trimming their fitted curves.
     ///
     /// # Errors
     ///
@@ -2412,14 +2620,14 @@ impl OffsetGeometryCreation {
         uv_curve_other_base: Option<O>,
         mark: MarkType,
     ) -> Result<Option<Extent1d>> {
-        let _ = (offset_edgeuse, other_offset_edgeuse);
-
         // locals
         let mut trim_ivl = Extent1d::new();
         let tan_tol_deg = self.tangency_tol_degrees();
         let base_edge = brep
             .edgeuse_edge(base_edgeuse)?
             .ok_or(dangling("edge use without edge"))?;
+        let refine_corners = !brep.edge_is_lamina(base_edge)?
+            && !brep.edgeuse_is_tangent_sector(k, base_edgeuse, tan_tol_deg)?;
 
         // for two iterations - find a one 3DCurve trim point
         for i in 0..2 {
@@ -2578,11 +2786,13 @@ impl OffsetGeometryCreation {
                 )?;
                 solutions.append(&on_curve);
             }
+            let mut tangent_constraints: SolutionArray<O> = SolutionArray::new();
             // Tangent sector handling - extend parameter space and intersect it for one or two curves.
             for (itry, &tan_eu) in tan_eus.iter().enumerate() {
                 if vertex_image {
                     break;
                 }
+                let first_tangent_solution = solutions.len();
                 let tan_uv = tan_uvs.get(itry).copied().flatten();
                 let mut uv_curve = brep.edgeuse_uv_trim_curve(tan_eu)?;
 
@@ -2656,6 +2866,19 @@ impl OffsetGeometryCreation {
                     }
                 } // end pTanEu and its mate are marked checks
 
+                // A previously mated tangent seam is a known geometric constraint.
+                // Lamina boundaries share this code path but are not tangent seams.
+                if found_3d_vertex {
+                    let tan_edge = brep
+                        .edgeuse_edge(tan_eu)?
+                        .ok_or(dangling("edge use without edge"))?;
+                    if !brep.edge_is_lamina(tan_edge)? {
+                        for solution in solutions.as_slice().iter().skip(first_tangent_solution) {
+                            tangent_constraints.add(solution);
+                        }
+                    }
+                }
+
                 // If we didn't find a 3D vertex from the offset close enough then we need to do
                 // UV curve extension and intersections to solve for this tangency case.
                 if let (false, Some(tan_uv)) = (found_3d_vertex, tan_uv) {
@@ -2725,6 +2948,35 @@ impl OffsetGeometryCreation {
                     solutions.append(&sols2);
                 }
             } // end iter every sTanEU/sTanUV pair of members
+
+            // WR-745: retain a known seam point when it satisfies every remaining
+            // adjacent support. Intersections of redundant extended supports must not
+            // move that point off the seam. A genuinely independent corner constraint
+            // that misses it remains part of the normal intersection construction.
+            if !tangent_constraints.is_empty() {
+                let mut supports = Vec::new();
+                for &off_adj_eu in &off_adj_eus {
+                    let face = brep
+                        .edgeuse_face(off_adj_eu)?
+                        .ok_or(dangling("edge use without face"))?;
+                    let tolerance = brep.brep_tolerance(face)?;
+                    let support = brep
+                        .face_surface(face)?
+                        .ok_or(dangling("face without surface"))?;
+                    let (extended, domain) =
+                        executive.get_create_extended_surface(k, brep, support)?;
+                    supports.push((surface_of(brep, extended)?.clone(), domain, tolerance));
+                }
+                if apply_tangent_constraints(
+                    k,
+                    curve_of(brep, curve_3d)?,
+                    &tangent_constraints,
+                    &supports,
+                    &mut solutions,
+                )? {
+                    off_adj_eus.clear();
+                }
+            }
 
             // Now handle intersecting faces if there are any
 
@@ -2806,23 +3058,43 @@ impl OffsetGeometryCreation {
                     // on either side of the surface just before and just after the point.
                     let mut crosses = false;
                     if four_face && !(angle_deg < 85.0 || angle_deg > 95.0) {
-                        let c_ivl = curve_of(brep, curve_3d)?.natural_interval();
-                        let step = 1.0e-3 * c_ivl.length();
-                        let t = sol.start.param(0)?;
-                        let (before, after) = (t - step, t + step);
-                        if before >= c_ivl.min() && after <= c_ivl.max() {
-                            let on = surface_of(brep, ext_surface)?.evaluate_point(k, uv)?;
-                            let curve = curve_of(brep, curve_3d)?;
-                            let b_pnt = curve.evaluate_point(k, before)?;
-                            let a_pnt = curve.evaluate_point(k, after)?;
-                            let d_b = (b_pnt - on).dot(normal);
-                            let d_a = (a_pnt - on).dot(normal);
-                            let least =
-                                10.0 * EFF_ZERO * (1.0 + distance(on, Point3::new(0.0, 0.0, 0.0)));
-                            crosses = d_b * d_a < 0.0 && d_b.abs() > least && d_a.abs() > least;
-                        }
+                        let curve = curve_of(brep, curve_3d)?;
+                        let classification = crate::surface::surface::p4::classify_curve_surface_xsect_point_with_tolerances(
+                            k, surface_of(brep, ext_surface)?, &ext_domain,
+                            curve, &curve.natural_interval(), uv, sol.start.param(0)?,
+                            self.this_approx_tol_3d, tol_3d,
+                        )?;
+                        crosses = matches!(
+                            classification.point_type,
+                            TsectCurveType::Crossing | TsectCurveType::NearTangent
+                        );
                     }
                     if angle_deg < 85.0 || angle_deg > 95.0 || crosses {
+                        // Classify the original intersection event before placing its
+                        // cut on the joint of the three exact supports.
+                        let refined;
+                        let sol = if refine_corners {
+                            let Some(solution) = Self::refine_trim_corner(
+                                k,
+                                brep,
+                                executive,
+                                offset_edgeuse,
+                                other_offset_edgeuse,
+                                uv_curve_base,
+                                uv_curve_other_base,
+                                curve_3d,
+                                ext_surface,
+                                &ext_domain,
+                                sol,
+                            )?
+                            else {
+                                continue;
+                            };
+                            refined = solution;
+                            &refined
+                        } else {
+                            sol
+                        };
                         // save solution as possible trimPoint
                         solutions.add(sol);
                         if let Some(range) = face_solutions.last_mut() {
@@ -3770,6 +4042,10 @@ impl OffsetGeometryCreation {
     /// piece that lies on an exact line or conic of analytic copies of the two face
     /// surfaces is first replaced by that curve, with UV curves dropped from it.
     ///
+    /// With [`crate::kernel::UpstreamFixes::offset_mate_edges_nearest_curve`] (WR-744),
+    /// each retained branch is ranked by its exact closest-point distance from the
+    /// original reference point, independent of its parameterization.
+    ///
     /// # Errors
     ///
     /// `SM_ERR_NULL_POINTER` for a null edge use or a missing UV curve; `SM_ERR`
@@ -3980,12 +4256,17 @@ impl OffsetGeometryCreation {
             if let Some(my_trim) = my_trim {
                 // when there is more than 1 intersection curve to check
                 if curves_3d.len() > 1 {
-                    // save the trimmed XSectCurve that has the smallest change from the original 3DCurve.
-                    let mid_pnt = curve_of(brep, c3)?.evaluate_point(k, my_trim.evaluate(0.5))?;
+                    // Keep the nearest retained intersection branch.
                     let orig_mid =
                         edgeuse_normalized_evaluate(k, brep, edgeuse, 0.5, false, false, true)?; // FALSE = 3d Eval
 
-                    let dist = distance(mid_pnt, orig_mid);
+                    let dist = mating_curve_distance(
+                        k,
+                        curve_of(brep, c3)?,
+                        &my_trim,
+                        orig_mid,
+                        self.this_approx_tol_3d,
+                    )?;
 
                     if dist < min_dist {
                         min_curve = Some(ii);
@@ -4005,8 +4286,8 @@ impl OffsetGeometryCreation {
             return Err(sm_err(OP_MATE));
         };
 
-        // arrive here after finding the XSectCurve result whose midpoint that is closest
-        // to the pEdgeuse->Curve->midPoint
+        // The nearest retained intersection branch, measured from the original
+        // edge's reference point (parameter midpoint in the legacy path).
         let curve_3d_found = *curves_3d.get(min_curve).ok_or(dangling("curve index"))?;
         let uv_curve1_found = surface1_uv_curves
             .get(min_curve)
@@ -5184,6 +5465,163 @@ mod tests {
             .unwrap();
             assert_eq!(gap, !skip);
         }
+    }
+
+    /// Multiplying homogeneous quadratic control points by alpha^i gives the
+    /// same rational quarter circle with u=alpha*t/(1+(alpha-1)*t).
+    fn reparameterized_quarter_circle(alpha: f64, start: f64, end: f64, z: f64) -> Curve {
+        use crate::nurbs::math::CPoint;
+        let c = std::f64::consts::FRAC_1_SQRT_2;
+        let weights = [1.0, alpha * c, alpha * alpha];
+        let points = [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
+        let pw: Vec<_> = points
+            .into_iter()
+            .zip(weights)
+            .map(|((x, y), w)| CPoint::new(x * w, y * w, z * w, w))
+            .collect();
+        Curve::from(
+            BSplineCurve::from_data(3, 2, 5, 2, &pw, &[start, start, start, end, end, end])
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn mating_branch_selection_is_independent_of_curve_parameterization() {
+        let c = std::f64::consts::FRAC_1_SQRT_2;
+        let reference = Point3::new(c, c, 0.0);
+        let other = reparameterized_quarter_circle(1.0, 0.0, 1.0, 0.1);
+        let k = Kernel::default();
+        for (alpha, start, end) in [(1.0, 0.0, 1.0), (4.0, 0.0, 1.0), (4.0, 7.0, 11.0)] {
+            let candidate = reparameterized_quarter_circle(alpha, start, end, 0.0);
+            let interval = candidate.natural_interval();
+            let distances = [
+                mating_curve_distance(&k, &candidate, &interval, reference, 1e-9).unwrap(),
+                mating_curve_distance(&k, &other, &other.natural_interval(), reference, 1e-9)
+                    .unwrap(),
+            ];
+            assert!((distances[1] - 0.1).abs() < 1e-8);
+            let chosen = usize::from(distances[1] < distances[0]);
+            assert_eq!(chosen, 0);
+            {
+                assert!(distances[0] < 1e-8, "{distances:?}");
+                // The full curve contains the reference point, but this retained
+                // sub-arc stops before it. Only that sub-arc may rank as a candidate.
+                let trim = Extent1d::from_min_max(start, start + (end - start) * 0.05);
+                let distance =
+                    mating_curve_distance(&k, &candidate, &trim, reference, 1e-9).unwrap();
+                let expected = candidate
+                    .evaluate_point(&k, trim.max())
+                    .unwrap()
+                    .distance(reference);
+                assert!((distance - expected).abs() < 1e-8);
+                assert!(distance > distances[1]);
+            }
+        }
+    }
+
+    #[test]
+    fn shallow_corner_cuts_preserve_the_intersection_fitting_error() {
+        use crate::surface::plane::Plane;
+        let k = Kernel::default();
+        let error = 1e-6;
+        let fitted = Curve::from(
+            BSplineCurve::create_line_segment(
+                3,
+                Point3::new(-1.0, error, 0.0),
+                Point3::new(1.0, error, 0.0),
+            )
+            .unwrap(),
+        );
+        let domain = Extent2d::from_points(Point2::new(-2.0, -2.0), Point2::new(2.0, 2.0));
+        for sign in [-1.0, 1.0] {
+            let slope = sign * 0.6_f64.to_radians().tan();
+            let planes = [
+                Plane::from_normal(Point3::ZERO, Vec3::Z),
+                Plane::from_normal(Point3::ZERO, Vec3::Y),
+                Plane::from_normal(Point3::ZERO, Vec3::new(-slope, 1.0, 0.0)),
+            ];
+            let surfaces = planes.clone().map(Surface::from);
+            // Intersecting the fitted C3 with the third plane displaces the cut
+            // by error / tan(angle), although the true three-plane joint is zero.
+            let old_point = Point3::new(error / slope, error, 0.0);
+            let old_parameter = (old_point.x + 1.0) / 2.0;
+            assert!(old_point.distance(Point3::ZERO) > 90.0 * error);
+            let guesses = planes.map(|plane| plane.project_point_to_uv_domain(old_point));
+            let (parameter, uv3, residual) = refine_intersection_cut(
+                &k,
+                &fitted,
+                old_parameter,
+                [&surfaces[0], &surfaces[1], &surfaces[2]],
+                [&domain, &domain, &domain],
+                guesses,
+            )
+            .unwrap()
+            .unwrap();
+            let point = fitted.evaluate_point(&k, parameter).unwrap();
+            assert!(point.x.abs() < 1e-10, "{point:?}");
+            assert!((residual - error).abs() < 1e-10, "{residual}");
+            assert!(
+                surfaces[2]
+                    .evaluate_point(&k, uv3)
+                    .unwrap()
+                    .distance(Point3::ZERO)
+                    < 1e-10
+            );
+            // Refinement changes the cut parameter, never the fitted curve.
+            assert!(
+                (fitted
+                    .evaluate_point(&k, old_parameter)
+                    .unwrap()
+                    .distance(old_point))
+                    < 1e-10
+            );
+        }
+    }
+
+    #[test]
+    fn established_seam_constraints_are_retained_only_when_all_supports_agree() {
+        use crate::geom::solution_array::Solution;
+        use crate::surface::plane::Plane;
+        let k = Kernel::default();
+        let curve = Curve::from(
+            BSplineCurve::create_line_segment(3, Point3::ZERO, Point3::new(1.0, 0.0, 0.0)).unwrap(),
+        );
+        let mut constraints = SolutionArray::<NoObject>::new();
+        for t in [0.0, 1.0] {
+            let mut solution = Solution::new();
+            solution.solution_type = SolutionType::SingleValue;
+            solution.num_variables = 1;
+            solution.start.parameters[0] = t;
+            constraints.add(&solution);
+        }
+        let domain = Extent2d::from_points(Point2::new(-2.0, -2.0), Point2::new(2.0, 2.0));
+        let coplanar = Surface::from(Plane::from_normal(Point3::ZERO, Vec3::Z));
+        let corner = Surface::from(Plane::from_normal(Point3::ZERO, Vec3::X));
+        let supports = [(coplanar.clone(), domain, 1e-7), (corner, domain, 1e-7)];
+        let mut candidates = constraints.clone();
+        assert!(
+            apply_tangent_constraints(&k, &curve, &constraints, &supports, &mut candidates)
+                .unwrap()
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates.get(0).unwrap().start.param(0).unwrap(), 0.0);
+        // A nearer intersection of a redundant continuation must not replace the
+        // established seam. An independently moved support, however, makes that
+        // seam invalid and must leave the independent corner construction active.
+        let moved = Surface::from(Plane::from_normal(Point3::new(0.1, 0.0, 0.0), Vec3::X));
+        let supports = [(coplanar, domain, 1e-7), (moved, domain, 1e-7)];
+        candidates = constraints.clone();
+        let mut independent = Solution::new();
+        independent.solution_type = SolutionType::SingleValue;
+        independent.num_variables = 1;
+        independent.start.parameters[0] = 0.1;
+        candidates.add(&independent);
+        assert!(
+            !apply_tangent_constraints(&k, &curve, &constraints, &supports, &mut candidates)
+                .unwrap()
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates.get(0).unwrap().start.param(0).unwrap(), 0.1);
     }
 
     #[test]

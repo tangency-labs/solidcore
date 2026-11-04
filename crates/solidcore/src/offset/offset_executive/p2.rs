@@ -100,6 +100,36 @@ const OP_EXTENDED: &str = "offset::offset_executive::p2::do_extended_offset";
 const OP_API_SHELL: &str = "offset::offset_executive::p2::api_shell_brep_full";
 const OP_API_OFFSET: &str = "offset::offset_executive::p2::api_offset_brep_full";
 
+/// Save paired intersection curves before a same-parameter support swap.
+fn paired_uv_trims(b: &Brep, f: FaceId) -> Result<Vec<(EdgeuseId, crate::curve::curve::Curve)>> {
+    let mut trims = Vec::new();
+    for eu in crate::topology::face::p4::upward_edgeuses(b, f, false, None)? {
+        if let Some(curve) = crate::topology::edgeuse::p1::uv_trim_curve(b, eu)?.0 {
+            trims.push((eu, curve.clone()));
+        }
+    }
+    Ok(trims)
+}
+
+/// Restore only the preserved UV representation; normal geometry notifications
+/// have already invalidated the other caches. These curves have not moved.
+fn restore_paired_uv_trims(
+    b: &mut Brep,
+    trims: Vec<(EdgeuseId, crate::curve::curve::Curve)>,
+) -> Result<()> {
+    for (eu, curve) in trims {
+        crate::topology::edgeuse::p1::set_uv_trim_curve(
+            b,
+            eu,
+            crate::topology::edgeuse::p1::UvTrimCurveArg::New(Box::new(curve)),
+            0.0,
+            true,
+            None,
+        )?;
+    }
+    Ok(())
+}
+
 /// Caller-owned notification capability for an offset operation.
 ///
 /// Source and result identities must be disjoint, even when their arena-local ids
@@ -1099,6 +1129,11 @@ impl OffsetExecutive {
                     result.region_mut(region)?.is_void = i32::from(is_void);
                 }
             }
+            // Not upstream (WR-742): construction extends the supports to find the
+            // final boundaries. After all topology edits, remove their unused parts;
+            // those continuations may fold outside an otherwise regular offset face.
+            // This exact trim preserves the retained geometry and topology identities.
+            shrink_geometry(kernel, &mut result)?;
             let _ = self.take_offset_brep();
             Ok(result)
         })?
@@ -1454,6 +1489,7 @@ impl OffsetExecutive {
                     .get_create_extended_surface(kernel, key.key.0, surface)?
                     .clone();
                 let extension_domain = extension.natural_uv_domain_with_nurb(kernel)?;
+                let preserved = paired_uv_trims(&temporary, id)?;
                 // cpp:1639: UNSURE retains the original; FALSE suppresses UV trim
                 // creation. The optional modified-face list is not requested.
                 let (original_surface, _) =
@@ -1477,6 +1513,7 @@ impl OffsetExecutive {
                             )
                         },
                     )??;
+                restore_paired_uv_trims(&mut temporary, preserved)?;
                 let trim_domain =
                     crate::topology::face::p1::calculate_uv_domain_from_uv_trim_curves(
                         kernel,
@@ -1496,6 +1533,7 @@ impl OffsetExecutive {
                     crate::math::EFF_ZERO,
                     || {
                         let original_surface = required(original_surface.take(), OP_EXTENDED)?;
+                        let preserved = paired_uv_trims(&temporary, id)?;
                         let restored = crate::geom::context::Context::with_notification_context(
                             kernel,
                             |kernel, context| {
@@ -1517,6 +1555,7 @@ impl OffsetExecutive {
                             },
                         )?;
                         drop(restored);
+                        restore_paired_uv_trims(&mut temporary, preserved)?;
                         Ok(())
                     },
                 )?;
@@ -1773,6 +1812,26 @@ pub fn local_operation_simple(
     faces: &[FaceId],
     surfaces: Vec<crate::surface::surface::Surface>,
 ) -> Result<()> {
+    local_operation_simple_impl(kernel, b, faces, surfaces, false).map(|_| ())
+}
+
+/// Local operation with its actual retained replacement supports, for membership checks.
+pub(crate) fn local_operation_simple_with_targets(
+    kernel: &mut Kernel,
+    b: &mut Brep,
+    faces: &[FaceId],
+    surfaces: Vec<crate::surface::surface::Surface>,
+) -> Result<Vec<super::p1::RetainedLocalSurface>> {
+    local_operation_simple_impl(kernel, b, faces, surfaces, true)
+}
+
+fn local_operation_simple_impl(
+    kernel: &mut Kernel,
+    b: &mut Brep,
+    faces: &[FaceId],
+    surfaces: Vec<crate::surface::surface::Surface>,
+    observe: bool,
+) -> Result<Vec<super::p1::RetainedLocalSurface>> {
     let saved_key = b.key();
     b.set_key(attributes::original_key(EntityRef::Brep(BrepId::from_index(0))).key);
     let mut records = attributes::simple_records(b);
@@ -1788,15 +1847,17 @@ pub fn local_operation_simple(
         result_brep: attributes::result_key(EntityRef::Brep(BrepId::from_index(0))),
         merge_identities: Some(&attributes::SimpleIdentities),
     };
-    let result = crate::topology::brep::local_operation::local_operation(
+    let mut targets = Vec::new();
+    let result = crate::topology::brep::local_operation::local_operation_with_targets(
         kernel,
         b,
         faces,
         surfaces,
         &mut notifications,
+        observe.then_some(&mut targets),
     );
     b.set_key(saved_key);
-    result
+    result.map(|()| targets)
 }
 
 /// (not upstream) [`api_shell_brep_full`] with notification identities of its own,

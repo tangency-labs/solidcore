@@ -135,3 +135,124 @@ fn wr599_default_has_no_seam_vertex_on_the_bar() {
     let (joined, _, _) = peg(false);
     assert!(!has_vertex_at(&joined, Point3::new(CX + R, 0.0, 0.0)));
 }
+
+/// Generic cleanup uses the same periodic cover as boolean postprocessing. The
+/// seam must continue through the half-round when cleanup removes their join.
+#[test]
+fn wr599_cleanup_completes_the_merged_wall_seam() {
+    cleanup_peg(false);
+}
+
+#[test]
+fn wr599_cleanup_reports_the_boundary_split_through_the_callers_notifications() {
+    cleanup_peg(true);
+}
+
+fn cleanup_peg(notified: bool) {
+    use solidcore::topology::brep::p5::remove_topological_edges_and_vertices;
+    use solidcore::topology::brep::validation::{check_brep, CheckLevel};
+
+    let (mut joined, _, _) = peg(false);
+    let mut k = Kernel::default();
+    k.fixes.cover_wraps_across_closed_seam = true;
+    assert!(check_brep(&mut k, &mut joined, CheckLevel::Level2)
+        .unwrap()
+        .is_valid());
+    if notified {
+        use solidcore::geom::context::NotifyCallback;
+        use solidcore::geom::object::{NotifyOperation, ObjectRef};
+        use solidcore::topology::brep::p3::with_kernel_callbacks;
+        use solidcore::topology::brep::p5::remove_topological_with_notifications;
+        use solidcore::EntityRef;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Debug)]
+        struct Splits(Arc<Mutex<Vec<[Option<ObjectRef>; 3]>>>);
+        impl NotifyCallback for Splits {
+            fn execute(
+                &mut self,
+                operation: NotifyOperation,
+                _: ObjectRef,
+                data1: Option<ObjectRef>,
+                data2: Option<ObjectRef>,
+                data3: Option<ObjectRef>,
+            ) -> solidcore::Result<()> {
+                if operation == NotifyOperation::SplitInBrep {
+                    self.0.lock().unwrap().push([data1, data2, data3]);
+                }
+                Ok(())
+            }
+        }
+
+        // A caller lending its notification environment must receive both children
+        // of the arc crossing the new seam, under that environment's identities.
+        // This is the same edit scope that carries body attributes and history.
+        let arc = p1::edges(&joined, None)
+            .unwrap()
+            .into_iter()
+            .find(|&e| {
+                let edge = joined.edge(e).unwrap();
+                edge.curve
+                    .as_ref()
+                    .unwrap()
+                    .evaluate_point(&k, edge.interval.mid())
+                    .unwrap()
+                    .distance(Point3::new(CX + R, 0.0, 0.0))
+                    < 1e-9
+            })
+            .unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        k.context
+            .set_user_notify_callback(Some(Box::new(Splits(Arc::clone(&events)))));
+        let (original, children) = with_kernel_callbacks(&mut k, &mut joined, |k, b, env| {
+            let original = (env.key_of)(EntityRef::Edge(arc));
+            remove_topological_with_notifications(k, b, None, None, Some(&mut *env))?;
+            let children: Vec<_> = p1::edges(b, None)?
+                .into_iter()
+                .map(|e| (env.key_of)(EntityRef::Edge(e)))
+                .collect();
+            Ok((original, children))
+        })
+        .unwrap();
+        let events = events.lock().unwrap();
+        let split = events
+            .iter()
+            .find(|event| event[0] == Some(original))
+            .expect("the bottom arc's split reaches the caller");
+        assert_ne!(split[1], split[2]);
+        for child in &split[1..] {
+            assert!(
+                children.contains(&child.unwrap()),
+                "split child must survive: {child:?}"
+            );
+        }
+    } else {
+        remove_topological_edges_and_vertices(&mut k, &mut joined, None, None).unwrap();
+    }
+    let check = check_brep(&mut k, &mut joined, CheckLevel::Level2).unwrap();
+    assert!(check.is_valid(), "{:?}", check.lines());
+    assert_eq!(p1::faces(&joined, None).unwrap().len(), 7);
+    assert!(has_vertex_at(&joined, Point3::new(CX + R, 0.0, 0.0)));
+    assert!(is_manifold_solid(&joined).unwrap());
+    let store = AttributeStore::default();
+    let attrs = PropertyAttributes {
+        store: &store,
+        key_of: &|_| ObjectKey(0),
+    };
+    let volume = brep_volume(&k, &mut joined, 1e-6, &attrs).unwrap();
+    let want = want_volume();
+    assert!((volume - want).abs() <= 1e-6 * want, "{volume} vs {want}");
+    // A second cleanup must preserve the seam just constructed, including its
+    // split boundary edges, instead of removing or recreating them.
+    let topology = (
+        p1::faces(&joined, None).unwrap(),
+        p1::edges(&joined, None).unwrap(),
+        p1::vertices(&joined, None).unwrap(),
+    );
+    remove_topological_edges_and_vertices(&mut k, &mut joined, None, None).unwrap();
+    let check = check_brep(&mut k, &mut joined, CheckLevel::Level2).unwrap();
+    assert!(check.is_valid(), "second cleanup: {:?}", check.lines());
+    assert_eq!(p1::faces(&joined, None).unwrap(), topology.0);
+    assert_eq!(p1::edges(&joined, None).unwrap(), topology.1);
+    assert_eq!(p1::vertices(&joined, None).unwrap(), topology.2);
+}

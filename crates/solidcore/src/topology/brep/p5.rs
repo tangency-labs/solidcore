@@ -2288,6 +2288,17 @@ pub fn remove_topological_with_notifications(
                 delete_edge_keep_surface(k, b, edge, keep, notifications.as_deref_mut())?;
             let domain = topological.merged_face_domain.unwrap_or_default();
             crate::topology::face::p2::set_uv_domain(b, current_face, &domain)?;
+            if k.fixes.cover_wraps_across_closed_seam {
+                // A wrapped cover can take in trims crossing the kept surface's seam.
+                // Complete that seam, just as boolean postprocessing does, before
+                // testing another edge of the merged face.
+                crate::topology::face::p1::split_merged_face_at_seam(
+                    k,
+                    b,
+                    notifications.as_deref_mut(),
+                    current_face,
+                )?;
+            }
         }
         for vertex in brep_vertices(b)? {
             if vertex::is_loop_vertex(b, vertex)? {

@@ -2466,6 +2466,43 @@ pub fn split_at_seam<O: LoopObject>(
     )
 }
 
+/// WR-599 (`Kernel::fixes.cover_wraps_across_closed_seam`): `pMerged->HasSeamProblem(..)`
+/// (its classification status propagated, as the fork's `SER`), then, when a seam is
+/// crossed or missing (the fork's static `SmFace::HasSeamProblem(eCrossed, eMissing)`),
+/// `pMerged->SplitAtSeam(..)` with its optional arguments left out, notifying through
+/// the merge's `notifications` when it has them.
+pub(crate) fn split_merged_face_at_seam(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    notifications: Option<&mut crate::topology::edge::NotifyEnv<'_>>,
+    face: FaceId,
+) -> Result<()> {
+    use crate::topology::brep::p1::HealLoopHandle;
+    let check = crate::topology::face::p4::has_seam_problem_in_brep_mut::<HealLoopHandle>(
+        k,
+        brep,
+        face,
+        crate::topology::face::p4::HasSeamProblemOptions::default(),
+    )?;
+    let problem = check.problem;
+    if problem.crossed == SurfParamType::Neither && problem.missing == SurfParamType::Neither {
+        return Ok(());
+    }
+    let (mut class_u, mut class_v) = (check.class_u, check.class_v);
+    split_at_seam_notified(
+        k,
+        brep,
+        notifications,
+        face,
+        &mut class_u,
+        &mut class_v,
+        problem,
+        None,
+        &|o: HealLoopHandle| o.as_topology(),
+    )?;
+    Ok(())
+}
+
 /// [`split_at_seam`] notifying its `MergeIntervals` edits through `env` when given
 /// (upstream's `SmObject::Notify` reaches the context's system callback, e.g. a
 /// healer's `SmTrackTopologyChanges`).

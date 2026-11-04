@@ -25,7 +25,9 @@
 //! tangency-labs/smlib@a1ee273): the box that sizes the executive's offset distance also
 //! holds the replacement surfaces. (not upstream) The B-rep's cached topology fields are
 //! refreshed before the operation returns ([`Brep::refresh_cached_topology`]), as every
-//! public operation leaves them.
+//! public operation leaves them. With WR-743, orientation compares normals
+//! at corresponding positions, minimizing the old face's reference point onto the
+//! replacement surface instead of comparing unrelated domain midpoints.
 
 use std::collections::BTreeSet;
 
@@ -79,6 +81,19 @@ pub fn local_operation(
     surfaces: Vec<Surface>,
     notifications: &mut OffsetNotifications<'_>,
 ) -> Result<()> {
+    local_operation_with_targets(k, b, faces, surfaces, notifications, None)
+}
+
+/// Runs a local operation and optionally returns its constructed replacement supports.
+/// These include the exact continuations retained beyond the inputs' finite domains.
+pub(crate) fn local_operation_with_targets(
+    k: &mut Kernel,
+    b: &mut Brep,
+    faces: &[FaceId],
+    surfaces: Vec<Surface>,
+    notifications: &mut OffsetNotifications<'_>,
+    targets: Option<&mut Vec<crate::offset::offset_executive::p1::RetainedLocalSurface>>,
+) -> Result<()> {
     if surfaces.len() < faces.len() {
         return Err(null());
     }
@@ -98,10 +113,33 @@ pub fn local_operation(
                 .get_mut(index)
                 .and_then(Option::take)
                 .ok_or_else(null)?;
-            let domain = new.natural_uv_domain_if_built();
+            let domain = new.natural_uv_domain_with_nurb(k)?;
             // (`EvaluateNormal(uv, TRUE, TRUE, ..)`: from the left)
-            let new_normal =
-                new.evaluate_normal(k, domain.evaluate(0.5, 0.5), Side::Left, Side::Left)?;
+            let normal_uv = {
+                // WR-743: a support's midpoint need not be near the old face (a
+                // full cylinder and one of its trimmed quadrants, for example).
+                // Match positions in 3D, so differently parameterized replacements
+                // also preserve the face's orientation.
+                let old = face_ops::surface(b, face)?.ok_or_else(null)?;
+                let reference = old.evaluate_point(k, b.face(face)?.uv_domain.mid())?;
+                let solutions = new.global_point_solve::<crate::surface::surface::p4::NoObject>(
+                    k,
+                    None,
+                    &domain,
+                    crate::geom::global_solver::SolverOperation::Minimize,
+                    reference,
+                    b.face(face)?.tolerance,
+                    None,
+                    crate::geom::global_solver::SolutionRequested::Single,
+                )?;
+                let solution = solutions.get(0).ok_or_else(|| SolidError::sm_err(OP))?;
+                let parameters = &solution.start.parameters;
+                crate::math::Point2::new(
+                    *parameters.first().ok_or_else(null)?,
+                    *parameters.get(1).ok_or_else(null)?,
+                )
+            };
+            let new_normal = new.evaluate_normal(k, normal_uv, Side::Left, Side::Left)?;
             let old = face_ops::surface(b, face)?.ok_or_else(null)?;
             let old_normal = old.evaluate_normal(
                 k,
@@ -155,6 +193,9 @@ pub fn local_operation(
     // (the geometry creator's constructor tolerance, half a degree under WR-666's opt-in)
     executive.use_creator_tangency_tol(k);
     executive.set_local_surfaces(&all_faces, new_list);
+    if targets.is_some() {
+        executive.observe_local_faces(faces);
+    }
     // the shell faces get copied without being offset: none
     executive.set_shell_faces(&[]);
     // extend/intersect to fill new convex edge gaps rather than adding a fillet
@@ -185,6 +226,9 @@ pub fn local_operation(
                 SolidError::failed_after(OP, "the offset of the moved faces could not be built", e)
             }
         });
+    if let Some(targets) = targets {
+        *targets = executive.take_retained_local_surfaces();
+    }
     drop(executive);
     let new_brep = offset.and_then(|mut new_brep| {
         // the offset B-rep's objects carry what the offset gave them

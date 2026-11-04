@@ -1903,6 +1903,75 @@ pub fn classify_curve_surface_xsect_point_with(
     current_t: f64,
     edge_tolerance: Option<f64>,
 ) -> Result<XsectClassification> {
+    classify_curve_surface_xsect_point_impl(
+        k,
+        surface,
+        uv_domain,
+        curve,
+        interval,
+        current_uv,
+        current_t,
+        edge_tolerance,
+        None,
+    )
+}
+
+/// Classifies a curve/surface contact with the caller's actual geometric tolerances.
+/// Temporary offset supports have no topology owner; their curvature radii must not
+/// substitute for the known edge and face tolerances. Unlike the legacy classifier,
+/// a transverse contact between local linear sections stays crossing at shallow angles.
+///
+/// # Errors
+///
+/// As [`classify_curve_surface_xsect_point`]; invalid input for negative or non-finite
+/// tolerances.
+#[allow(clippy::too_many_arguments)]
+pub fn classify_curve_surface_xsect_point_with_tolerances(
+    k: &Kernel,
+    surface: &Surface,
+    uv_domain: &Extent2d,
+    curve: &Curve,
+    interval: &Extent1d,
+    current_uv: Point2,
+    current_t: f64,
+    curve_tolerance: f64,
+    surface_tolerance: f64,
+) -> Result<XsectClassification> {
+    if [curve_tolerance, surface_tolerance]
+        .into_iter()
+        .any(|tol| !tol.is_finite() || tol < 0.0)
+        || !(curve_tolerance + surface_tolerance).is_finite()
+    {
+        return Err(SolidError::invalid_input(
+            OP_CLASSIFY,
+            "invalid contact tolerance",
+        ));
+    }
+    classify_curve_surface_xsect_point_impl(
+        k,
+        surface,
+        uv_domain,
+        curve,
+        interval,
+        current_uv,
+        current_t,
+        None,
+        Some([curve_tolerance, surface_tolerance]),
+    )
+}
+
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn classify_curve_surface_xsect_point_impl(
+    k: &Kernel,
+    surface: &Surface,
+    uv_domain: &Extent2d,
+    curve: &Curve,
+    interval: &Extent1d,
+    current_uv: Point2,
+    current_t: f64,
+    edge_tolerance: Option<f64>,
+    explicit_tolerances: Option<[f64; 2]>,
+) -> Result<XsectClassification> {
     // (the fork's `SER`s, with the opt-in fix: WR-663, tangency-labs/smlib 21dcf69)
     let pass = k.fixes.query_statuses_pass_on;
     let mut out = XsectClassification {
@@ -2117,40 +2186,56 @@ pub fn classify_curve_surface_xsect_point_with(
         surface_circle_normal = curve_binormal;
     }
 
-    // We need a tolerance for line and circle intersections.  They're purely geometric,
-    // but could well have tolerance issues.  Look to topology first, otherwise use
-    // heuristics.
-    let mut curve_tol = EFF_ZERO_SQRT; // default values, if nothing else to use.
-    let mut surface_tol = EFF_ZERO_SQRT;
-    if curve.owner().is_some_and(|o| o.type_code == EDGE_TYPE) {
-        // pCurveOwner->GetTolerance(), as the caller resolves it
-        curve_tol = edge_tolerance.ok_or_else(|| {
-            // UNPORTED(topology.edge): SmEdge::GetTolerance (a caller without the edge)
-            // Proof (unreachable): the plain wrapper passes None, the library callers
-            // (surface p9, p10) use classify_curve_surface_xsect_point_with with the
-            // caller's edge tolerance; 0 hits in the green difftest sweep.
-            SolidError::unported("SmEdge::GetTolerance", "topology.edge")
-        })?;
-    } else if !curve_line {
-        curve_tol = curve_radius / 1000.0;
-    }
-    if surface.owner().is_some_and(|o| o.type_code == FACE_TYPE) {
-        // pSurfaceOwner->GetTolerance(): the direct owner is the face, so the face the
-        // surface reaches; its tolerance as cached by the B-rep
-        surface_tol = surface.owner_zone_tol_3d().ok_or_else(|| {
-            // UNPORTED(topology.face_p2): SmFace::GetTolerance (a bare face handle)
-            // Proof (unreachable): a B-rep face's surface carries the face tolerance
-            // (Brep::sync_face_surface_tolerance invariant, see Surface::face_zone_tol_3d);
-            // 0 hits in the green difftest sweep.
-            SolidError::unported("SmFace::GetTolerance", "topology.face_p2")
-        })?;
-    } else if !surface_line {
-        surface_tol = surface_radius / 1000.0;
-    }
-    let tol_3d = curve_tol + surface_tol;
+    let tol_3d = if let Some([curve_tol, surface_tol]) = explicit_tolerances {
+        curve_tol + surface_tol
+    } else {
+        // We need a tolerance for line and circle intersections.  They're purely geometric,
+        // but could well have tolerance issues.  Look to topology first, otherwise use
+        // heuristics.
+        let mut curve_tol = EFF_ZERO_SQRT; // default values, if nothing else to use.
+        let mut surface_tol = EFF_ZERO_SQRT;
+        if curve.owner().is_some_and(|o| o.type_code == EDGE_TYPE) {
+            // pCurveOwner->GetTolerance(), as the caller resolves it
+            curve_tol = edge_tolerance.ok_or_else(|| {
+                // UNPORTED(topology.edge): SmEdge::GetTolerance (a caller without the edge)
+                // Proof (unreachable): the plain wrapper passes None, the library callers
+                // (surface p9, p10) use classify_curve_surface_xsect_point_with with the
+                // caller's edge tolerance; 0 hits in the green difftest sweep.
+                SolidError::unported("SmEdge::GetTolerance", "topology.edge")
+            })?;
+        } else if !curve_line {
+            curve_tol = curve_radius / 1000.0;
+        }
+        if surface.owner().is_some_and(|o| o.type_code == FACE_TYPE) {
+            // pSurfaceOwner->GetTolerance(): the direct owner is the face, so the face the
+            // surface reaches; its tolerance as cached by the B-rep
+            surface_tol = surface.owner_zone_tol_3d().ok_or_else(|| {
+                // UNPORTED(topology.face_p2): SmFace::GetTolerance (a bare face handle)
+                // Proof (unreachable): a B-rep face's surface carries the face tolerance
+                // (Brep::sync_face_surface_tolerance invariant, see Surface::face_zone_tol_3d);
+                // 0 hits in the green difftest sweep.
+                SolidError::unported("SmFace::GetTolerance", "topology.face_p2")
+            })?;
+        } else if !surface_line {
+            surface_tol = surface_radius / 1000.0;
+        }
+        curve_tol + surface_tol
+    };
 
     // when both curve and surface shapes are lines
     if curve_line && surface_line {
+        if explicit_tolerances.is_some() && !surface_two_lines {
+            // A line crossing a planar normal section has no second contact to
+            // confuse with a tangency. Its normal component decides transversality;
+            // a fixed angular threshold would discard shallow, genuine cuts.
+            out.point_type = if curve_vec.dot(surface_normal).abs() > EFF_ZERO * curve_vec.length()
+            {
+                TsectCurveType::Crossing
+            } else {
+                TsectCurveType::Coincident
+            };
+            return Ok(out);
+        }
         // classify the point as crossing or coincident
         out.point_type = if (surface_two_lines && curve_vec.is_parallel_to(surface_vec2, 2.0))
             || (surface_line && curve_vec.is_parallel_to(surface_vec, 2.0))
@@ -2507,6 +2592,101 @@ mod tests {
         .unwrap();
         assert_eq!(r.point_type, TsectCurveType::Crossing);
         assert!(!r.found_guess);
+    }
+
+    #[test]
+    fn explicit_contact_tolerances_keep_shallow_planar_crossings() {
+        let k = Kernel::default();
+        let s = plane();
+        let slope = 0.6_f64.to_radians().tan();
+        let c = Curve::from(Line::from_points(
+            Point3::new(-1.0, 0.0, -slope),
+            Point3::new(1.0, 0.0, slope),
+            3,
+        ));
+        let interval = Extent1d::from_min_max(0.0, 1.0);
+        let domain = s.natural_uv_domain_if_built();
+        let legacy = classify_curve_surface_xsect_point(
+            &k,
+            &s,
+            &domain,
+            &c,
+            &interval,
+            Point2::new(0.0, 0.0),
+            0.5,
+        )
+        .unwrap();
+        assert_eq!(legacy.point_type, TsectCurveType::Coincident);
+        let actual = classify_curve_surface_xsect_point_with_tolerances(
+            &k,
+            &s,
+            &domain,
+            &c,
+            &interval,
+            Point2::new(0.0, 0.0),
+            0.5,
+            1e-6,
+            1e-6,
+        )
+        .unwrap();
+        assert_eq!(actual.point_type, TsectCurveType::Crossing);
+        for invalid in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(classify_curve_surface_xsect_point_with_tolerances(
+                &k,
+                &s,
+                &domain,
+                &c,
+                &interval,
+                Point2::new(0.0, 0.0),
+                0.5,
+                invalid,
+                1e-6,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn explicit_contact_tolerances_apply_to_unowned_curved_geometry() {
+        use crate::nurbs::{b_spline_curve::BSplineCurve, math::CPoint};
+        let k = Kernel::default();
+        let s = plane();
+        let radius = 10.0;
+        let angle = 0.1_f64.to_radians();
+        let height = radius * angle.cos();
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        let pw = [
+            CPoint::new(0.0, 0.0, height - radius, 1.0),
+            CPoint::new(radius * w, 0.0, (height - radius) * w, w),
+            CPoint::new(radius, 0.0, height, 1.0),
+        ];
+        let c = Curve::from(
+            BSplineCurve::from_data(3, 2, 5, 2, &pw, &[0., 0., 0., 1., 1., 1.]).unwrap(),
+        );
+        let tangent_half_angle = (angle / 2.0).tan();
+        let t = tangent_half_angle / (w + (1.0 - w) * tangent_half_angle);
+        let point = c.evaluate_point(&k, t).unwrap();
+        assert!(point.z.abs() < 1e-12);
+        let domain = Extent2d::from_points(Point2::new(-20.0, -20.0), Point2::new(20.0, 20.0));
+        let (uv, _) = s.step_inversion(&k, &domain, point, 1e-10, None).unwrap();
+        let interval = c.natural_interval();
+        assert!(c.owner().is_none() && s.owner().is_none());
+        let legacy =
+            classify_curve_surface_xsect_point(&k, &s, &domain, &c, &interval, uv, t).unwrap();
+        assert_eq!(legacy.point_type, TsectCurveType::NearTangent);
+        let actual = classify_curve_surface_xsect_point_with_tolerances(
+            &k, &s, &domain, &c, &interval, uv, t, 1e-8, 1e-8,
+        )
+        .unwrap();
+        assert_eq!(actual.point_type, TsectCurveType::NearTangent);
+        assert!(actual.found_guess);
+        // A known coarse contact tolerance merges the nearby roots. The
+        // unowned geometry must use that supplied tolerance rather than radius/1000.
+        let coarse = classify_curve_surface_xsect_point_with_tolerances(
+            &k, &s, &domain, &c, &interval, uv, t, 0.1, 0.1,
+        )
+        .unwrap();
+        assert_eq!(coarse.point_type, TsectCurveType::Tangent);
     }
 
     #[test]
