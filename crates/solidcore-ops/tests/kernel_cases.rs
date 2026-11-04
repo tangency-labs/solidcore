@@ -19,6 +19,8 @@
 //! geometry and its history is not graded; picks are record indices, passed to the operations
 //! with the body's record [`Order`] (the one face index convention).
 //!
+//! The test is `#[ignore]`d, out of the workspace run: run it with `--ignored`.
+//!
 //! Environment:
 //! - `KERNEL_CASES_AREA`: comma-separated areas (a prefix each: `ladder` takes every tier) to run
 //!   only those, the CI shards (#2394);
@@ -502,10 +504,10 @@ fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> 
             g.deviation = dev;
             if is_listed {
                 g.kind = Kind::KnownFailing;
-                g.note = "the rig's result (still failing as listed)".to_owned();
+                "the rig's result (still failing as listed)".clone_into(&mut g.note);
             } else if rig_status == "unsupported" {
                 g.kind = Kind::Unsupported;
-                g.note = "rated unsupported by the rig".to_owned();
+                "rated unsupported by the rig".clone_into(&mut g.note);
             }
         }
         Err(Stop::Unsupported(w)) => {
@@ -530,6 +532,7 @@ fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> 
 }
 
 #[test]
+#[ignore = "the whole corpus is slow; run it with --ignored, KERNEL_CASES_AREA shards it"]
 fn kernel_cases() {
     let fixes: Vec<String> =
         serde_json::from_str(&std::fs::read_to_string(corpus().join("fixes.json")).unwrap())
@@ -640,7 +643,9 @@ fn report(graded: &[Graded], listed: &BTreeMap<String, Listed>, not_run: usize) 
         for (t, r) in total.iter_mut().zip(row) {
             *t += r;
         }
-        let d = dev.get(a).map_or("-".to_owned(), |d| format!("{d:.1e}"));
+        let d = dev
+            .get(a)
+            .map_or_else(|| "-".to_owned(), |d| format!("{d:.1e}"));
         writeln!(
             s,
             "| {a} | {n} | {} | {} | {} | {} | {} | {d} |",
