@@ -27,7 +27,9 @@ mod offset_fixture;
 #[path = "support/panic_fuzz.rs"]
 mod panic_fuzz;
 
-use panic_fuzz::{assert_no_findings, fuzz, parse_env_u64, parse_repro, Family, Rng, Settings};
+use panic_fuzz::{
+    assert_no_findings, fuzz, parse_env_u64, parse_hangs, parse_repro, Family, Rng, Settings,
+};
 use solidcore::blend::fillet_executive::api as fillet;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep as boolean;
@@ -1569,4 +1571,24 @@ fn u64_setting_with_a_suffix_is_rejected() {
 #[should_panic(expected = "SOLIDCORE_PANIC_FUZZ_SEED=\"\": expected a u64")]
 fn empty_u64_setting_is_rejected() {
     parse_env_u64("SOLIDCORE_PANIC_FUZZ_SEED", "");
+}
+
+/// `SOLIDCORE_PANIC_FUZZ_HANGS` takes `fail`; any other value is an error, not a run that
+/// only prints its hangs.
+#[test]
+fn hangs_setting_parses() {
+    assert!(parse_hangs("fail"));
+    assert!(parse_hangs(" fail "));
+}
+
+#[test]
+#[should_panic(expected = "expected `fail` (or unset)")]
+fn hangs_setting_true_is_rejected() {
+    parse_hangs("true");
+}
+
+#[test]
+#[should_panic(expected = "expected `fail` (or unset)")]
+fn hangs_setting_in_capitals_is_rejected() {
+    parse_hangs("FAIL");
 }

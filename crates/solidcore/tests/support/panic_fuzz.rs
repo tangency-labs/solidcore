@@ -134,6 +134,15 @@ pub fn parse_env_u64(name: &str, value: &str) -> u64 {
         .unwrap_or_else(|e| panic!("{name}={value:?}: expected a u64, e.g. `10000` ({e})"))
 }
 
+/// `SOLIDCORE_PANIC_FUZZ_HANGS`'s value: `fail` (spaces trimmed) makes hangs findings; any
+/// other value panics (`1`, `true` or `FAIL` would otherwise leave hangs only printed).
+pub fn parse_hangs(value: &str) -> bool {
+    match value.trim() {
+        "fail" => true,
+        _ => panic!("SOLIDCORE_PANIC_FUZZ_HANGS={value:?}: expected `fail` (or unset)"),
+    }
+}
+
 /// `SOLIDCORE_PANIC_FUZZ_REPRO`'s `<family>:<u64 seed>`, split; panics on any other form
 /// (a malformed spec would otherwise skip every family, or run the CI set, silently).
 pub fn parse_repro(spec: &str) -> (&str, u64) {
@@ -188,7 +197,8 @@ impl Settings {
             ),
             repro,
             skip,
-            fail_on_hang: std::env::var("SOLIDCORE_PANIC_FUZZ_HANGS").is_ok_and(|v| v == "fail"),
+            fail_on_hang: std::env::var_os("SOLIDCORE_PANIC_FUZZ_HANGS")
+                .is_some_and(|v| parse_hangs(&v.to_string_lossy())),
         }
     }
 }
