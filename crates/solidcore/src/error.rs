@@ -54,21 +54,22 @@
 //!   still sees it (#2511).
 //!
 //! [`SolidError::kind`] gives every error a stable solidcore [`ErrorKind`] (a number and
-//! a name) that callers match on instead of message text.
+//! a name). Callers match on it and on the [`Reason`], never on message text or a
+//! status: each reason carries everything a caller needs (the sizes, the entities, the
+//! distinctions between cases). [`SolidError::is_port_failure`] tells a solidcore defect
+//! or missing port from a failure of the operation on its input (#1452).
 //!
 //! **Comparison with the pinned C++.** difftest compares each failure with the status
 //! the pinned C++ reports for the same input. A failure records that status privately,
 //! where it is made (the status depends on the call path, not only on the reason), and
-//! [`SolidError::sm_status`] is the one hook that reads it: difftest, the FFI side and
-//! callers porting the C API over it (#1452: `Some` for a failure the C++ reports with a
-//! status, `None` for a port-side error) use it. It is not a public field and never
-//! part of a message.
+//! [`SolidError::sm_status`] is the one hook that reads it, for difftest (and the FFI
+//! side) only. It is not a public field, never part of a message, and not for callers.
 //!
 //! **Retiring "upstream".** The goal is no [`SolidError::Upstream`] (nor `Nlib`,
 //! `FilletRefused`) variant and no "upstream status" text in the public API. They are
 //! the pre-#2615 shape: subsystems move their sites to [`SolidError::Failed`] one PR at
 //! a time (offset first), and the variants go when their last site does. Then
-//! `sm_status` and the status numbers here move behind a comparison-only module (or to
+//! `sm_status` and the status numbers here move to a comparison-only module (or to
 //! difftest and the FFI), since nothing but the comparison needs them.
 
 pub mod offset;
@@ -753,6 +754,22 @@ impl ErrorKind {
         self as u16
     }
 
+    /// True for a solidcore-side failure, not a failure of the operation on its input: a
+    /// port invariant that did not hold, a call into a part not ported yet, a solve that
+    /// needs its caller to prepare geometry, or trims unavailable while editing. A caller
+    /// that skips an entity where the operation fails on it must not skip on these
+    /// (#1452). A cancellation is the caller's own and is not one.
+    #[must_use]
+    pub const fn is_port_failure(self) -> bool {
+        matches!(
+            self,
+            Self::PortInvariant
+                | Self::Unported
+                | Self::PreparationRequired
+                | Self::FaceTrimsUnavailable
+        )
+    }
+
     /// The kind's stable name (`snake_case`).
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -850,9 +867,10 @@ impl SolidError {
         Self::PortInvariant { operation, reason }
     }
 
-    /// The comparison hook: the status the pinned C++ reports for this failure, when it
-    /// reports one exactly (difftest, the FFI side, and callers porting the C API, #1452).
-    /// Not part of any message; see the module docs on retiring it from the public API.
+    /// The comparison hook, for difftest only: the status the pinned C++ reports for this
+    /// failure, when it reports one exactly. Callers use [`SolidError::kind`], the
+    /// [`Reason`] and [`SolidError::is_port_failure`] instead; this moves to a
+    /// comparison-only module once the pre-#2615 variants are gone (see the module docs).
     ///
     /// By variant:
     ///
@@ -955,6 +973,13 @@ impl SolidError {
             Self::Failed(f) => f.kind(),
             Self::Unported { .. } => ErrorKind::Unported,
         }
+    }
+
+    /// True for a solidcore-side failure rather than a failure of the operation on its
+    /// input ([`ErrorKind::is_port_failure`], #1452).
+    #[must_use]
+    pub fn is_port_failure(&self) -> bool {
+        self.kind().is_port_failure()
     }
 
     /// The failure in solidcore's terms, for a [`SolidError::Failed`].
@@ -1349,6 +1374,12 @@ mod tests {
             (walls_touch(None), ErrorKind::OffsetWallsTouch, 201),
         ];
         for (e, kind, code) in cases {
+            // #1452 in solidcore terms: only the 90s but a cancellation are port-side
+            assert_eq!(
+                e.is_port_failure(),
+                (90..=94).contains(&code) && kind != ErrorKind::Cancelled,
+                "{e:?}"
+            );
             assert_eq!(e.kind(), kind, "{e:?}");
             assert_eq!(kind.code(), code, "{e:?}");
             assert_eq!(kind.to_string(), kind.name());
