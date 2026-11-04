@@ -2324,6 +2324,39 @@ mod tests {
     }
 
     #[test]
+    fn tangent_field_exact_and_snapshot_preserve_populated_base_state() {
+        use crate::curve::tangent_field::{TangentFieldCurve, TangentFieldMembers};
+
+        let k = Kernel::default();
+        let mut base = CrvOnSurf::new(&k, uv(), patch().into(), None, 3).unwrap();
+        base.owner_links = (false, true);
+        base.set_breaks_cache(false, vec![0.25, 0.75]);
+        let CurveKind::BSpline(approximation) = uv().kind().clone() else {
+            panic!("expected B-spline");
+        };
+        let cache = base.approx_cache_mut();
+        cache.bs_approx = Some(Box::new(approximation));
+        cache.max_gap_3d = 0.125;
+        cache.parametrization_matches = true;
+        let field = TangentFieldCurve::from_parts(base, TangentFieldMembers {
+            dir_type: 1,
+            start_tangent: Vec3::X,
+            end_tangent: Vec3::Y,
+        });
+        let curve = Curve::new(CurveKind::TangentField(Box::new(field)));
+        for copy in [curve.clone_exact_bounded(), curve.snapshot_copy().unwrap()] {
+            let CurveKind::TangentField(field) = copy.kind() else { panic!("expected tangent field") };
+            let base = field.base();
+            assert_eq!(base.owner_links, (false, true));
+            assert_eq!(base.breaks(), vec![0.25, 0.75]);
+            let cache = base.lock_approx_cache();
+            assert!(cache.bs_approx.is_some());
+            assert_eq!(cache.max_gap_3d, 0.125);
+            assert!(cache.parametrization_matches);
+        }
+    }
+
+    #[test]
     fn shared_knots_cache_refreshes_short_records_without_sharing_clones() {
         let k = Kernel::default();
         let mut c = CrvOnSurf::new(&k, uv(), patch().into(), None, 3).unwrap();
