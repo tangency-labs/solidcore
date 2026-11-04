@@ -463,13 +463,33 @@ def write_list(rows):
     return "".join(lines)
 
 
+def sig(row):
+    """A site's identity for matching the tree with the list: its function, pattern and
+    call text, not its occurrence index `n`, which a site added or removed earlier in
+    the same function renumbers."""
+    return (row["file"], row["fn"], row["pattern"], row["code"])
+
+
+def excess(rows, others):
+    """The rows of `rows` beyond the count of their `sig` in `others` (the last ones of
+    each signature, in key order)."""
+    room = Counter(sig(r) for r in others)
+    seen = Counter()
+    out = []
+    for r in sorted(rows, key=key):
+        seen[sig(r)] += 1
+        if seen[sig(r)] > room[sig(r)]:
+            out.append(r)
+    return out
+
+
 def check(current, listed, base=None, read_source=lambda f: ""):
-    """Error messages: unlisted sites no mechanical rule proves, moved marks, new open rows."""
+    """Error messages: sites beyond the list's count of their call text in their function
+    that no mechanical rule proves, malformed rows, new open rows. Matching by call text
+    rather than by key means a renumbered site is never new, and a `proven` mark covers
+    only the call text it was written for."""
     errors = []
-    cur = {key(r): r for r in current}
-    lst = {key(r): r for r in listed}
-    added = [cur[k] for k in sorted(cur.keys() - lst.keys())]
-    for r in added:
+    for r in excess(current, listed):
         if auto_reason(r["pattern"], r["code"], read_source(r["file"])) is not None:
             continue
         errors.append(
@@ -478,15 +498,9 @@ def check(current, listed, base=None, read_source=lambda f: ""):
             "If it provably cannot panic, run `python3 scripts/ci/check_panic_sites.py "
             "--update` and mark its row in plan/panic-sites.tsv `proven` with the reason."
         )
-    for k in sorted(cur.keys() & lst.keys()):
-        r = lst[k]
-        if r["status"] == "proven" and r["code"] != cur[k]["code"]:
-            errors.append(
-                f"{r['file']}: the proven mark on {r['fn']} {r['pattern']} #{r['n']} was "
-                f"for `{r['code']}`, the site is now `{cur[k]['code']}`. Check the reason "
-                "still holds and update the row (--update keeps marks whose code matches)."
-            )
-        elif r["status"] not in ("open", "proven"):
+    for r in listed:
+        k = key(r)
+        if r["status"] not in ("open", "proven"):
             errors.append(f"{r['file']}: row {k} has status `{r['status']}`, not open/proven")
         elif r["status"] == "proven" and not r["reason"].strip():
             errors.append(f"{r['file']}: proven row {k} has no reason")
@@ -497,8 +511,7 @@ def check(current, listed, base=None, read_source=lambda f: ""):
 
 def stale(current, listed):
     """A notice for rows that no longer match a site, or None."""
-    cur = {key(r) for r in current}
-    gone = [r for r in listed if key(r) not in cur]
+    gone = excess(listed, current)
     if not gone:
         return None
     names = ", ".join(f"{r['file']} {r['fn']} {r['pattern']} #{r['n']}" for r in gone[:5])

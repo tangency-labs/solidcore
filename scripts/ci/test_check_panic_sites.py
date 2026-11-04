@@ -149,7 +149,27 @@ class Ratchet(unittest.TestCase):
         listed = [row(status="proven", code="remove(0)", reason="guarded")]
         self.assertEqual(c.check([row(code="remove(0)")], listed), [])
         errors = c.check([row(code="remove(j)")], listed)
-        self.assertIn("proven mark", errors[0])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("new panic-prone call `remove(j)`", errors[0])
+
+    def test_renumbered_site_is_not_new(self):
+        # a provable windows(2) added before a listed open windows(k) shifts its n
+        listed = [row(pattern="windows", code="windows(k)")]
+        current = [row(pattern="windows", code="windows(2)"),
+                   row(pattern="windows", n="2", code="windows(k)")]
+        self.assertEqual(c.check(current, listed), [])
+        self.assertIsNone(c.stale(current, listed))
+        # removing the first of two listed sites renumbers the second: a notice only
+        listed = [row(code="remove(i)"), row(n="2", code="remove(j)")]
+        self.assertEqual(c.check([row(code="remove(j)")], listed), [])
+        self.assertIn("remove", c.stale([row(code="remove(j)")], listed))
+
+    def test_a_second_copy_of_a_listed_call_is_new(self):
+        listed = [row(status="proven", code="remove(0)", reason="guarded")]
+        current = [row(code="remove(0)"), row(n="2", code="remove(0)")]
+        errors = c.check(current, listed)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("new panic-prone call", errors[0])
 
     def test_proven_needs_a_reason(self):
         self.assertIn("no reason", c.check([row()], [row(status="proven")])[0])
