@@ -1,4 +1,4 @@
-#### WR-748. Offset movement detection excludes the target continuations used by construction
+#### WR-750. Offset movement detection excludes the target continuations used by construction
 
 - **Severity:** Wrong result
 - **Area:** Offset faces and local operations

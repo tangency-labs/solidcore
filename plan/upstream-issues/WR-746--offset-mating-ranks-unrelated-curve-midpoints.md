@@ -1,4 +1,4 @@
-#### WR-744. Offset edge mating ranks unrelated parameter midpoints instead of distances to intersection branches
+#### WR-746. Offset edge mating ranks unrelated parameter midpoints instead of distances to intersection branches
 
 - **Severity:** Wrong result
 - **Area:** Offset geometry creation

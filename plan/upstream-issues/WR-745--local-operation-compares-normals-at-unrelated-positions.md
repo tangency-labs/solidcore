@@ -1,4 +1,4 @@
-#### WR-743. A local operation reverses a partial cylinder by comparing normals at unrelated positions
+#### WR-745. A local operation reverses a partial cylinder by comparing normals at unrelated positions
 
 - **Severity:** Wrong result
 - **Area:** Offsets and local operations

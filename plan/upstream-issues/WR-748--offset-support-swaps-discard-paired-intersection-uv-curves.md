@@ -1,4 +1,4 @@
-#### WR-746. Offset support extension discards paired intersection UV curves and projects onto unrelated continuations
+#### WR-748. Offset support extension discards paired intersection UV curves and projects onto unrelated continuations
 
 - **Severity:** Wrong result
 - **Area:** Extended offsets
@@ -8,4 +8,4 @@
 - **How found:** native snapshots before/after gap closing and before/after merging, paired UV/3D evaluation, and independent point queries on the retained and extended parameter domains. No commercial CAD data is used.
 - **Confirmed:** in Rust. No C++ reference execution is claimed.
 - **Correction:** the support swap preserves the existing paired UV curves across the cached extension swap and the optional restoration of the original support. Both supports share the same parameterization; the original is restored only when the retained UV bounds fit. Ordinary surface replacement still emits notifications and invalidates other geometry caches. The standard UV setter restores the unchanged parameter curves without raising tolerances. The general surface-replacement cache contract is unchanged.
-- **Native regression:** the existing offset-surface test file constructs an eight-turn rational ruled sheet bounded by four non-isoparametric UV lines, using native curve-on-surface geometry. Before UV preservation, local offset failed with `do_extended_offset` 1001. The corrected construction retains its topology, passes strict validation, and preserves exact offset evaluations. No screw sweep or imported fixture is required. Native external all-lateral offsets also pass strict validation. Separate small triple-corner endpoint discrepancies in flank-only cases are addressed by WR-747, not waived by this correction.
+- **Native regression:** the existing offset-surface test file constructs an eight-turn rational ruled sheet bounded by four non-isoparametric UV lines, using native curve-on-surface geometry. Before UV preservation, local offset failed with `do_extended_offset` 1001. The corrected construction retains its topology, passes strict validation, and preserves exact offset evaluations. No screw sweep or imported fixture is required. Native external all-lateral offsets also pass strict validation. Separate small triple-corner endpoint discrepancies in flank-only cases are addressed by WR-749, not waived by this correction.

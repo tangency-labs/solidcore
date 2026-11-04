@@ -1,10 +1,10 @@
-#### WR-747. Independent offset edge cuts amplify intersection fitting error at shallow corners
+#### WR-749. Independent offset edge cuts amplify intersection fitting error at shallow corners
 
 - **Severity:** Wrong result
 - **Area:** Extended offsets
 - **Location:** `offset::offset_geometry_creation::OffsetGeometryCreation::trim_extended_edge`, accepted isolated adjacent-support intersections.
 - **What happens:** each fitted surface/surface intersection curve is cut independently against a third support. A small fitting displacement becomes a much larger displacement along the curve when the cut is shallow. Incident edges then disagree about the same exact three-support corner. Moving only the shared vertex leaves the already-trimmed curve endpoints inconsistent.
-- **Trigger:** native continuous external and internal M20x2.5 thread flanks offset by -.1. After the corrections in WR-742 through WR-746, the external result is manifold but reports edge/vertex gaps around 1.333e-5 and vertex/face gaps around 1.328e-5 against body tolerance 1e-5. The internal result has edge/vertex gaps around 1.412e-5. Full lateral selections pass independently.
+- **Trigger:** native continuous external and internal M20x2.5 thread flanks offset by -.1. After the corrections in WR-744 through WR-748, the external result is manifold but reports edge/vertex gaps around 1.333e-5 and vertex/face gaps around 1.328e-5 against body tolerance 1e-5. The internal result has edge/vertex gaps around 1.412e-5. Full lateral selections pass independently.
 - **How found:** exact native support/curve evaluations and three-support corner solves, using synthetic thread bodies. No imported commercial CAD geometry is used.
 - **Confirmed:** in Rust. No C++ reference execution is claimed.
 - **Correction:** the construction first classifies the original curve/surface intersection event. For an accepted isolated cut of a sharp paired edge, it solves the three exact supports together using the existing local surface/surface/surface solver. The local foot of that joint supplies the cut parameter on the existing fitted curve before its 3D and paired UV curves are trimmed together. Dependent supports and tangent-sector edges retain their separate construction. Curves and validity tolerances are not perturbed. Classifying the refined foot as though it were the original intersection is incorrect: the foot retains the fitting residual and may be slightly off the third support.

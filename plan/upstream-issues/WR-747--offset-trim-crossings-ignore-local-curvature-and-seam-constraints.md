@@ -1,4 +1,4 @@
-#### WR-745. Offset trimming misclassifies curved contacts and replaces satisfied tangent-seam constraints
+#### WR-747. Offset trimming misclassifies curved contacts and replaces satisfied tangent-seam constraints
 
 - **Severity:** Wrong result
 - **Area:** Offsets and curve/surface intersection classification
