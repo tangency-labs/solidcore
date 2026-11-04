@@ -1342,7 +1342,8 @@ mod tests {
     /// there, although `F` is about 0.95 at that parameter.
     #[test]
     fn issue_481_failed_guess_is_no_sign_change() {
-        let mut clean_solver = LocalSolve1d::with_interval(Extent1d::from_min_max(-3.0, 3.0), false);
+        let mut clean_solver =
+            LocalSolve1d::with_interval(Extent1d::from_min_max(-3.0, 3.0), false);
         let clean = clean_solver.solve_it(&mut Cycle, 0.0, 1e-9).unwrap();
         assert!(!clean.found);
         assert_eq!(
@@ -1355,10 +1356,7 @@ mod tests {
         assert!(!r.found, "{r:?}");
         assert_ne!(r.t.to_bits(), LAST_GUESS.to_bits());
         assert_ne!(s.lower_bracket_t.to_bits(), LAST_GUESS.to_bits());
-        assert_eq!(
-            s.termination_reason(),
-            TerminationReason::UnableToConverge
-        );
+        assert_eq!(s.termination_reason(), TerminationReason::UnableToConverge);
 
         // F really is about 0.95 there.
         let mut out = FunctionValue::default();
