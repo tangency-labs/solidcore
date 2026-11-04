@@ -2008,7 +2008,8 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
                 | CurvePropertyType::MinimizeRadiusOfCurvature
                 | CurvePropertyType::MaximizeRadiusOfCurvature
         );
-        if !stops_at_its_extremum || !(ls.curr.f.abs() < BIG_DOUBLE) {
+        let value = ls.curr.f.abs();
+        if !stops_at_its_extremum || !value.is_finite() || value >= BIG_DOUBLE {
             return Ok(false);
         }
     } // end no solution check

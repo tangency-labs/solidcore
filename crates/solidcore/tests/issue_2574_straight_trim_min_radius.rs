@@ -181,7 +181,7 @@ fn tight_bend(h: f64, at_end: bool) -> BSplineCurve {
 fn smallest_radius(curve: &BSplineCurve) -> (f64, f64, f64) {
     let (mut best, mut at, mut slow) = (f64::MAX, f64::NAN, f64::MAX);
     for i in 0..=20000 {
-        let t = i as f64 / 20000.0;
+        let t = f64::from(i) / 20000.0;
         let d = curve.evaluate(t, 3, false, false).unwrap();
         let speed = d[1].length();
         slow = slow.min(speed);
