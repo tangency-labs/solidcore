@@ -902,21 +902,35 @@ impl EvalFunction for FindPcExtremaEfo<'_, Curve> {
         // limited so that it cannot change the sign of the step. [B52]
         let lim_2d_deriv = 0.95; // Smaller values can slow down convergence.
 
-        // Not upstream (WR-740, #2546): when minimising, the limit applies only where the
-        // full derivative does not keep the step's sign (F' <= 0: the point at or beyond
-        // the centre of curvature, where the stationary point is not a minimum). Upstream
-        // limits it wherever the second order term is below -0.95 C'.C', so near a centre
-        // of curvature, where the true F' is C'.C' (rho / R) for a point rho from the
-        // centre of a circle of radius R, the step is cut to (rho / R) / 0.05 of Newton's
-        // and the solve runs out of iterations (from rho < R / 100 or so): no closest point
-        // on an arc from near its centre.
-        let full_newton =
-            self.solver_operation == SolverOperation::Minimize && tan_dot_tan + v_dot_2nd > 0.0;
-        if !full_newton && v_dot_2nd < -tan_dot_tan * lim_2d_deriv {
-            v_dot_2nd = -tan_dot_tan * lim_2d_deriv;
-        }
-
-        out.f_prime = tan_dot_tan + v_dot_2nd;
+        // Not upstream (WR-740, #2546): upstream holds F' at 0.05 C'.C' wherever the second
+        // order term is below -0.95 C'.C'. Near a centre of curvature the true F' is
+        // C'.C' (rho / R) for a point rho from the centre of a circle of radius R, so every
+        // step there was (rho / R) / 0.05 of Newton's and the solve ran out of iterations
+        // from within about R / 100 of the centre: no closest point on an arc from near its
+        // centre. When minimising, where the full F' is positive (a minimum's side of the
+        // centre of curvature) and the gap is within the limit's own angle of the normal
+        // (|cos(gap, C')| below 0.05), F' is the full one, bounded below by
+        // |cos(gap, C')| C'.C' so that a step never moves the foot along the curve farther
+        // than the gap is long. Everywhere else it is upstream's: near the answer the step
+        // is Newton's, far from it (where a full step would overshoot) upstream's damping.
+        let full = tan_dot_tan + v_dot_2nd;
+        let limit = 1.0 - lim_2d_deriv;
+        let cos_sq = if v_dot_v > 0.0 {
+            (v_dot_tan * v_dot_tan) / (v_dot_v * tan_dot_tan)
+        } else {
+            0.0
+        };
+        out.f_prime = if self.solver_operation == SolverOperation::Minimize
+            && full > 0.0
+            && cos_sq < limit * limit
+        {
+            full.max(cos_sq.sqrt() * tan_dot_tan)
+        } else {
+            if v_dot_2nd < -tan_dot_tan * lim_2d_deriv {
+                v_dot_2nd = -tan_dot_tan * lim_2d_deriv;
+            }
+            tan_dot_tan + v_dot_2nd
+        };
 
         // Set sign of 1st Derive for maximize
         if self.solver_operation == SolverOperation::Maximize {
