@@ -2151,6 +2151,19 @@ pub trait BrepCreationAccess<O: ClassObject + SolutionObject + Ord>:
         radius: Option<f64>,
     ) -> Result<Option<f64>>;
 
+    /// Not the fork's (#2546): for a constant ball, its rail whose ends lie within the
+    /// part's resolution of each other without closing to a point
+    /// (`blend::fillet_exact::rail_below_resolution`); `None` otherwise, and for a solver
+    /// that rolls no constant ball.
+    ///
+    /// # Errors
+    /// The judging's own errors; the adapter over [`ExecutiveAccess`] has no solvers.
+    fn creation_rail_below_resolution(
+        &mut self,
+        k: &mut Kernel,
+        solver: O,
+    ) -> Result<Option<crate::blend::fillet_exact::RailBelowResolution>>;
+
     /// `SmFilletSolver::BandsMeetAt` (the fork's, a3d6d81) over the executive's pairs of
     /// `solvers` sharing a face, in its loop order (`a`, `b`, then each's face index): the
     /// radius where their bands meet, with the first solver's edge, for each pair that
@@ -2263,6 +2276,14 @@ where
         _radius: Option<f64>,
     ) -> Result<Option<f64>> {
         Err(invalid("the ball's zone needs a live fillet session"))
+    }
+
+    fn creation_rail_below_resolution(
+        &mut self,
+        _k: &mut Kernel,
+        _solver: O,
+    ) -> Result<Option<crate::blend::fillet_exact::RailBelowResolution>> {
+        Err(invalid("a rail's length needs a live fillet session"))
     }
 
     fn creation_circle_tops(&mut self, _k: &mut Kernel, _solver: O) -> Result<Vec<(f64, O)>> {
@@ -3718,6 +3739,47 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         Err(failure())
     }
 
+    /// Not the fork's (#2546; `fixes.fillet_refuse_rails_below_resolution`, WR-739):
+    /// before the corners look for the rails' ends, a constant ball's round or chamfer
+    /// whose rail would have its ends within the part's resolution of each other, without
+    /// closing to a point, is refused with [`FilletErrorType::NoRoom`]
+    /// ([`NoRoomReason::RailBelowResolution`]), naming the largest size whose rails the
+    /// part resolves (open) and the size at which the rail closes to a point, which builds
+    /// ([`crate::blend::fillet_exact::rail_below_resolution`]). The least fit of the
+    /// refused solvers is named.
+    fn refuse_rails_below_resolution(
+        &mut self,
+        k: &mut Kernel,
+        access: &mut impl BrepCreationAccess<O>,
+    ) -> Result<()> {
+        let mut worst: Option<(crate::blend::fillet_exact::RailBelowResolution, O)> = None;
+        let mut index = 0;
+        while let Some(solver) = self.solvers.get(index).copied() {
+            index += 1;
+            if let Some(rail) = access.creation_rail_below_resolution(k, solver)? {
+                if worst.is_none_or(|(w, _)| rail.fit < w.fit) {
+                    worst = Some((rail, solver));
+                }
+            }
+        }
+        let Some((rail, solver)) = worst else {
+            return Ok(());
+        };
+        let g = |x: f64| c_general(x, 0, 7);
+        let edge = access.creation_solver_fit(solver)?.map(|fit| fit.edge);
+        self.note_fit_radius(rail.fit, edge, FitKind::Radius);
+        self.record_no_room(
+            NoRoomReason::RailBelowResolution,
+            &format!(
+                "Fillet Error: a rail of the blend would be an arc whose ends are {} apart, within the part's resolution {}: they would be one vertex. A size below {} builds, or exactly {}, where the rail closes to a point",
+                g(rail.chord),
+                g(rail.resolution),
+                g(rail.fit),
+                g(rail.point_size)
+            ),
+        )
+    }
+
     /// Not the fork's (#2401): after the ball's regularity, a constant ball whose offset of
     /// a face collapses (the face as wide as the ball) has its centre fixed, and builds only
     /// as the zone it sweeps, which must end in a section of the ball at each end of the
@@ -3864,6 +3926,11 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             if k.fixes.fillet_refuse_face_consuming_blends {
                 self.refuse_polygons_taken_whole(k, access)?;
             }
+        }
+
+        // Not the fork's (#2546, WR-739): a rail whose ends would be one vertex
+        if k.fixes.fillet_refuse_rails_below_resolution {
+            self.refuse_rails_below_resolution(k, access)?;
         }
 
         self.create_corner_vertices(k, access)?;
