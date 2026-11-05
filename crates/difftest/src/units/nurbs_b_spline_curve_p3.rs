@@ -2,8 +2,8 @@
 //! rotate copies, internal poles, segment lines, single control points, plane
 //! containment, joining, subdivision at discontinuities, gap trimming, `AssertValid`).
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_curve_p3` (upstream
-//! `source/SMLib/src/SmBSplineCurve.cpp`). Rust: `solidcore::nurbs::b_spline_curve::p3`.
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineCurve.cpp`; checked against its golden. Rust: `solidcore::nurbs::b_spline_curve::p3`.
 //!
 //! A case is `this` (the curve the op runs on: `dim`, `oob` and an optional inline,
 //! `.smc`, interpolated, joined-interpolated or circle curve; without one the curve has
@@ -35,8 +35,7 @@
 //! vertex where an edge's faces touch, WR-668) and ordinary coincident-point faults,
 //! as free curves: the pinned check, and the opt-in's, which needs an edge, both
 //! refuse them.
-//! Every run has at least [`MIN_GENERATED`] generated cases; generated inputs the ffi
-//! wrapper rejects are redrawn.
+//! Every run has at least [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -57,7 +56,6 @@ use solidcore::nurbs::crv_fit::p1::ParamMethod;
 use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_curve_p3::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -193,23 +191,6 @@ struct Inputs {
     op: OpIn,
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Scale { .. } => Op::Scale,
-            OpIn::Pole { .. } => Op::Pole,
-            OpIn::Segment { .. } => Op::Segment,
-            OpIn::Cp { .. } => Op::Cp,
-            OpIn::OnPlane { .. } => Op::OnPlane,
-            OpIn::Join { .. } => Op::Join,
-            OpIn::Subdivide { .. } => Op::Subdivide,
-            OpIn::Gap { .. } => Op::Gap,
-            OpIn::Assert { .. } => Op::Assert,
-            OpIn::Jump { .. } => Op::Jump,
-        }
-    }
-}
-
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
     let c = crate::fixtures::text_curve::read(path)?;
     Ok(InlineCrv {
@@ -278,77 +259,6 @@ fn resolve(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
 
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
-}
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn encode_this(t: &This, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    o.extend([flag(t.crv.is_some()), t.dim as f64, flag(t.oob)]);
-    if let Some(c) = &t.crv {
-        encode_crv(&resolve(c)?, o);
-    }
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    encode_this(&i.this, &mut o)?;
-    match &i.op {
-        OpIn::Scale { sv, ev, deg } => {
-            o.extend_from_slice(sv);
-            o.extend_from_slice(ev);
-            o.push(*deg);
-        }
-        OpIn::Pole { tol } => o.push(*tol),
-        OpIn::Segment { a, b, ns, tol } => o.extend([*a, *b, *ns as f64, *tol]),
-        OpIn::Cp { form, index } => o.extend([f64::from(*form), *index as f64]),
-        OpIn::OnPlane { pp, pn, tol, ivl } => {
-            o.extend_from_slice(pp);
-            o.extend_from_slice(pn);
-            o.extend([*tol, flag(ivl.is_some())]);
-            o.extend_from_slice(&ivl.unwrap_or([0.0, 1.0]));
-        }
-        OpIn::Join {
-            this_end,
-            other,
-            other_end,
-            tol,
-        } => {
-            o.push(flag(*this_end));
-            encode_this(other, &mut o)?;
-            o.extend([flag(*other_end), flag(tol.is_some()), tol.unwrap_or(0.0)]);
-        }
-        OpIn::Subdivide { cont, ang } => o.extend([f64::from(*cont), *ang]),
-        OpIn::Gap { other, fix, dmin } => {
-            encode_this(other, &mut o)?;
-            o.extend([f64::from(*fix), *dmin]);
-        }
-        OpIn::Assert { given } => o.push(flag(*given)),
-        OpIn::Jump {
-            closed_u,
-            closed_v,
-            dom,
-        } => {
-            o.extend([flag(*closed_u), flag(*closed_v)]);
-            o.extend_from_slice(dom);
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    match ffi::eval(i.op.ffi(), &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- records ----------------------------------------------------------------------
@@ -1148,10 +1058,6 @@ fn jump_cases(unit: &str) -> Result<Vec<Case>, HarnessError> {
                 dom,
             },
         };
-        let ok = cpp_input(&i).is_ok_and(|input| ffi::validate(i.op.ffi(), &input).is_ok());
-        if !ok {
-            continue;
-        }
         out.push(Case {
             unit: unit.to_string(),
             name: format!("jump_{:03}", out.len()),
@@ -1166,25 +1072,13 @@ fn jump_cases(unit: &str) -> Result<Vec<Case>, HarnessError> {
     Ok(out)
 }
 
-/// A generated case the ffi wrapper accepts (redrawn up to 64 times).
-fn gen_valid(rng: &mut Rng) -> Option<Inputs> {
-    for _ in 0..64 {
-        let i = gen_case(rng);
-        let ok = cpp_input(&i).is_ok_and(|input| ffi::validate(i.op.ffi(), &input).is_ok());
-        if ok {
-            return Some(i);
-        }
-    }
-    None
-}
-
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "nurbs.b_spline_curve_p3"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_valid(rng)?).ok()
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1195,10 +1089,6 @@ impl UnitDiff for Runner {
         let mut v = default_cases(self, &ctx)?;
         v.extend(jump_cases(self.id())?);
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

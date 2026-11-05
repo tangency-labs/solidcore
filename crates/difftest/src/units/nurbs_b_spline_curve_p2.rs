@@ -3,8 +3,8 @@
 //! queries, control point access and editing, weight matching, degree elevation,
 //! parameter reversal, STEP interval adjustment, reading from a database stream).
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_curve_p2` (upstream
-//! `source/SMLib/src/SmBSplineCurve.cpp`). Rust: `solidcore::nurbs::b_spline_curve::p2`.
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineCurve.cpp`; checked against its golden. Rust: `solidcore::nurbs::b_spline_curve::p2`.
 //!
 //! A case is `this` (the curve a member op runs on: `dim`, `oob` and an optional
 //! inline, `.smc`, interpolated or circle curve; without one the curve has no NURB),
@@ -27,8 +27,7 @@
 //! (`SmCurve::IsKindOf`,
 //! `curve.curve_p2`), `GetMaxAnalyticDomain` (`SmCurve::IsClosed`, `curve.curve_p4`)
 //! and `CreateSimpleOffset` (`SmCurve::IsArc`, `curve.curve_p5`; `EvaluateContinuity`,
-//! `curve.curve_p2`). Every run has at least [`MIN_GENERATED`] generated cases;
-//! generated inputs the ffi wrapper rejects are redrawn.
+//! `curve.curve_p2`). Every run has at least [`MIN_GENERATED`] generated cases.
 
 use std::fmt::Write as _;
 
@@ -49,7 +48,6 @@ use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_curve_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -265,35 +263,6 @@ struct Inputs {
     op: OpIn,
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Intersector => Op::Intersector,
-            OpIn::BBox { .. } => Op::BBox,
-            OpIn::Analytic { .. } => Op::Analytic,
-            OpIn::Join { .. } => Op::Join,
-            OpIn::Point { .. } => Op::Point,
-            OpIn::Offset { .. } => Op::Offset,
-            OpIn::Repeated { .. } => Op::Repeated,
-            OpIn::Canonical => Op::Canonical,
-            OpIn::IsLine { .. } => Op::IsLine,
-            OpIn::C0 => Op::C0,
-            OpIn::Degenerate { .. } => Op::Degenerate,
-            OpIn::Expert { .. } => Op::Expert,
-            OpIn::MaxDomain => Op::MaxDomain,
-            OpIn::Unique => Op::Unique,
-            OpIn::Polygon { .. } => Op::Polygon,
-            OpIn::Match { .. } => Op::Match,
-            OpIn::Elevate { .. } => Op::Elevate,
-            OpIn::Reverse { .. } => Op::Reverse,
-            OpIn::SetCanonical { .. } => Op::SetCanonical,
-            OpIn::SetCp { .. } => Op::SetCp,
-            OpIn::Adjust { .. } => Op::Adjust,
-            OpIn::ReadDb { .. } => Op::ReadDb,
-        }
-    }
-}
-
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
     let c = crate::fixtures::text_curve::read(path)?;
     Ok(InlineCrv {
@@ -361,41 +330,6 @@ fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn encode_this(t: &This, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    o.extend([flag(t.crv.is_some()), t.dim as f64, flag(t.oob)]);
-    if let Some(c) = &t.crv {
-        encode_crv(&resolve(c)?, o);
-    }
-    Ok(())
-}
-
-fn encode_canon(c: &CanonIn, o: &mut Vec<f64>) {
-    o.extend([c.dim as f64, c.deg as f64, c.pts.len() as f64]);
-    for p in &c.pts {
-        o.extend_from_slice(p);
-    }
-    o.extend([f64::from(c.form), c.knots.len() as f64]);
-    o.extend_from_slice(&c.knots);
-    o.extend(c.mults.iter().map(|&m| m as f64));
-    o.push(f64::from(c.kt));
-    o.push(flag(c.weights.is_some()));
-    if let Some(w) = &c.weights {
-        o.push(w.len() as f64);
-        o.extend_from_slice(w);
-    }
-    o.push(flag(c.trim.is_some()));
-    o.extend_from_slice(&c.trim.unwrap_or([0.0, 0.0]));
-}
-
 /// The database bytes of a `ReadDb` input.
 fn db_bytes(binary: bool, version: u64, db: &DbIn) -> Result<Vec<u8>, HarnessError> {
     match db {
@@ -434,87 +368,6 @@ fn db_bytes(binary: bool, version: u64, db: &DbIn) -> Result<Vec<u8>, HarnessErr
                 Ok(t.into_bytes())
             }
         }
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    if let Some(t) = &i.this {
-        encode_this(t, &mut o)?;
-    }
-    match &i.op {
-        OpIn::Intersector | OpIn::Canonical | OpIn::C0 | OpIn::MaxDomain | OpIn::Unique => {}
-        OpIn::BBox {
-            a,
-            b,
-            normal,
-            pseudo,
-            polar,
-        } => o.extend([*a, *b, flag(*normal), flag(*pseudo), flag(*polar)]),
-        OpIn::Analytic { a, b }
-        | OpIn::Polygon { a, b }
-        | OpIn::Reverse { a, b }
-        | OpIn::Adjust { a, b } => o.extend([*a, *b]),
-        OpIn::Join { segs, senses } => {
-            // upstream reads `(*cpOptSenses)[ii]` past a shorter array (UB)
-            if senses.as_ref().is_some_and(|v| v.len() < segs.len()) {
-                return Err(HarnessError::new("join: fewer senses than segments"));
-            }
-            o.push(segs.len() as f64);
-            for s in segs {
-                encode_this(s, &mut o)?;
-            }
-            o.push(flag(senses.is_some()));
-            for k in 0..segs.len() {
-                let s = senses.as_ref().and_then(|v| v.get(k).copied()).unwrap_or(true);
-                o.push(flag(s));
-            }
-        }
-        OpIn::Point { p } => o.extend_from_slice(p),
-        OpIn::Offset { tol, n, d, matched } => {
-            o.push(*tol);
-            o.extend_from_slice(n);
-            o.extend([*d, flag(*matched)]);
-        }
-        OpIn::Repeated { tol } => o.push(*tol),
-        OpIn::IsLine { ns, tol } => o.extend([*ns as f64, *tol]),
-        OpIn::Degenerate { tol, ivl } => {
-            o.extend([*tol, flag(ivl.is_some())]);
-            o.extend_from_slice(&ivl.unwrap_or([0.0, 1.0]));
-        }
-        OpIn::Expert {
-            form,
-            start,
-            end,
-            stride,
-        } => o.extend([f64::from(*form), *start as f64, *end as f64, *stride as f64]),
-        OpIn::Match { other } => encode_this(other, &mut o)?,
-        OpIn::Elevate { deg } => o.push(*deg as f64),
-        OpIn::SetCanonical { data } => encode_canon(data, &mut o),
-        OpIn::SetCp { form, index, p, w } => {
-            o.extend([f64::from(*form), *index as f64]);
-            o.extend_from_slice(p);
-            o.push(*w);
-        }
-        OpIn::ReadDb {
-            dim,
-            binary,
-            version,
-            db,
-        } => {
-            let bytes = db_bytes(*binary, *version, db)?;
-            o.extend([*dim as f64, flag(*binary), *version as f64, bytes.len() as f64]);
-            o.extend(bytes.iter().map(|&b| f64::from(b)));
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    match ffi::eval(i.op.ffi(), &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(e) => Err(harness(e.to_string())),
     }
 }
 
@@ -1424,25 +1277,13 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     }
 }
 
-/// A generated case the ffi wrapper accepts (redrawn up to 64 times).
-fn gen_valid(rng: &mut Rng) -> Option<Inputs> {
-    for _ in 0..64 {
-        let i = gen_case(rng);
-        let ok = cpp_input(&i).is_ok_and(|input| ffi::validate(i.op.ffi(), &input).is_ok());
-        if ok {
-            return Some(i);
-        }
-    }
-    None
-}
-
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "nurbs.b_spline_curve_p2"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_valid(rng)?).ok()
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1453,16 +1294,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &Kernel::default();
-        let i: Inputs = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: the Rust side honours sizes
-        // the FFI refuses (fuzz00841: a 2^31 stride, a 16 GiB output array).
-        ffi::validate(i.op.ffi(), &cpp_input(&i)?).map_err(|e| harness(e.to_string()))?;
-        rust(k, &i)
+        rust(k, &case.parse()?)
     }
 }

@@ -4,8 +4,8 @@
 //! vectors, end point deformation, arc-length reparametrisation, scaling, the
 //! intersection-curve through-point edit and trimming).
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_curve_n_lib` (upstream
-//! `source/SMLib/src/SmBSplineCurveNLib.cpp`). Rust:
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineCurveNLib.cpp`; checked against its golden. Rust:
 //! `solidcore::nurbs::b_spline_curve_n_lib`.
 //!
 //! A case is `this` (the curve a member op runs on: `dim`, `oob` and an inline, `.smc`,
@@ -24,8 +24,7 @@
 //! Cases whose Rust side reaches an unported callee are deferred: the
 //! `SetIntersectionCurveThroughPoint` calls on intersector-form curves that reach
 //! `SmCurve::ApproximateLength` (unit `curve.curve_p2`). Every run has at least
-//! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are
-//! redrawn.
+//! [`MIN_GENERATED`] generated cases.
 //!
 //! An `interp_crv` case with `given_params` (fixture cases only, never generated) runs
 //! the SolidCraft fork's `CreateInterpolatingCurve(..., cpOptParams)` (tangency-labs/
@@ -56,7 +55,6 @@ use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_curve_n_lib::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -280,31 +278,6 @@ struct Inputs {
 }
 
 impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Arc { .. } => Op::Arc,
-            OpIn::Rational { .. } => Op::Rational,
-            OpIn::Helix { .. } => Op::Helix,
-            OpIn::ExtParam { .. } => Op::ExtParam,
-            OpIn::ExtDist { .. } => Op::ExtDist,
-            OpIn::InterpCrv { .. } => Op::InterpCrv,
-            OpIn::Dampen { .. } => Op::Dampen,
-            OpIn::DegRed { .. } => Op::DegRed,
-            OpIn::InsOne { .. } => Op::InsOne,
-            OpIn::Through { .. } => Op::Through,
-            OpIn::Even { .. } => Op::Even,
-            OpIn::InsKnots { .. } => Op::InsKnots,
-            OpIn::InterpPts { .. } => Op::InterpPts,
-            OpIn::Compat { .. } => Op::Compat,
-            OpIn::Deform { .. } => Op::Deform,
-            OpIn::Reparam => Op::Reparam,
-            OpIn::Scale { .. } => Op::Scale,
-            OpIn::ScaleKnots { .. } => Op::ScaleKnots,
-            OpIn::Sync { .. } => Op::Sync,
-            OpIn::Trim { .. } => Op::Trim,
-        }
-    }
-
     /// Whether a successful op is followed by a flag and the state of a new curve.
     fn creates(&self) -> bool {
         matches!(
@@ -378,194 +351,6 @@ fn resolve(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn encode_srf(s: &InlineSrf, o: &mut Vec<f64>) {
-    let n = s.net.len().saturating_sub(1);
-    let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
-    o.extend([
-        n as f64,
-        m as f64,
-        s.p as f64,
-        s.q as f64,
-        s.u.len().saturating_sub(1) as f64,
-        s.v.len().saturating_sub(1) as f64,
-    ]);
-    for row in &s.net {
-        for c in row {
-            o.extend_from_slice(c);
-        }
-    }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-}
-
-fn encode_this(t: &This, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    o.extend([t.dim as f64, flag(t.oob)]);
-    encode_crv(&resolve(&t.crv)?, o);
-    Ok(())
-}
-
-fn encode_frame(f: &Frame, o: &mut Vec<f64>) {
-    for v in f {
-        o.extend_from_slice(v);
-    }
-}
-
-fn encode_pts(p: &[[f64; 3]], o: &mut Vec<f64>) {
-    o.push(p.len() as f64);
-    for v in p {
-        o.extend_from_slice(v);
-    }
-}
-
-fn encode_opt3(v: Option<[f64; 3]>, o: &mut Vec<f64>) {
-    o.push(flag(v.is_some()));
-    o.extend_from_slice(&v.unwrap_or([0.0; 3]));
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    if let Some(t) = &i.this {
-        encode_this(t, &mut o)?;
-    }
-    match &i.op {
-        OpIn::Arc {
-            dim,
-            nc,
-            frame,
-            r,
-            a0,
-            a1,
-            tol,
-        } => {
-            o.extend([*dim as f64, flag(nc.is_some()), nc.unwrap_or(0) as f64]);
-            encode_frame(frame, &mut o);
-            o.extend([*r, *a0, *a1, *tol]);
-        }
-        OpIn::Rational { tol } => o.push(*tol),
-        OpIn::Helix {
-            frame,
-            h,
-            r0,
-            r1,
-            turns,
-            right,
-            tol,
-        } => {
-            encode_frame(frame, &mut o);
-            o.extend([*h, *r0, *r1, *turns, flag(*right), *tol]);
-        }
-        OpIn::ExtParam { t, cont, precise } => o.extend([*t, f64::from(*cont), flag(*precise)]),
-        OpIn::ExtDist { d, end, cont } => o.extend([*d, f64::from(*end), f64::from(*cont)]),
-        OpIn::InterpCrv {
-            par,
-            dim,
-            deg,
-            pts,
-            vecs,
-            more,
-            ignore,
-            ..
-        } => {
-            o.extend([f64::from(*par), *dim as f64, *deg as f64]);
-            encode_pts(pts, &mut o);
-            encode_pts(vecs, &mut o);
-            o.push(flag(more.is_some()));
-            encode_pts(more.as_deref().unwrap_or(&[]), &mut o);
-            o.push(flag(*ignore));
-        }
-        OpIn::Dampen { factor, mult } => o.extend([*factor, *mult as f64]),
-        OpIn::DegRed { tol, max } => o.extend([*tol, flag(*max)]),
-        OpIn::InsOne { knot, times } => o.extend([*knot, *times as f64]),
-        OpIn::Through {
-            knot,
-            p,
-            tan,
-            pct,
-            uv,
-        } => {
-            o.push(*knot);
-            o.extend_from_slice(p);
-            encode_opt3(*tan, &mut o);
-            o.push(*pct);
-            o.push(uv.len() as f64);
-            for e in uv {
-                o.extend([2.0, 0.0]);
-                encode_crv(&e.crv, &mut o);
-                encode_srf(&e.srf, &mut o);
-                o.push(flag(e.uvp.is_some()));
-                o.extend_from_slice(&e.uvp.unwrap_or([0.0; 2]));
-            }
-        }
-        OpIn::Even { t0, t1, n, tol } => o.extend([*t0, *t1, *n as f64, *tol]),
-        OpIn::InsKnots { knots } => {
-            o.push(knots.len() as f64);
-            o.extend_from_slice(knots);
-        }
-        OpIn::InterpPts {
-            pts,
-            params,
-            deg,
-            ts,
-            te,
-            closed,
-            par,
-        } => {
-            encode_pts(pts, &mut o);
-            let prm = params.as_deref().unwrap_or(&[]);
-            o.extend([flag(params.is_some()), prm.len() as f64]);
-            o.extend_from_slice(prm);
-            o.push(*deg as f64);
-            encode_opt3(*ts, &mut o);
-            encode_opt3(*te, &mut o);
-            o.extend([flag(*closed), f64::from(*par)]);
-        }
-        OpIn::Compat { curves, tol } | OpIn::Sync { curves, tol } => {
-            o.push(curves.len() as f64);
-            for c in curves {
-                encode_this(c, &mut o)?;
-            }
-            o.push(*tol);
-        }
-        OpIn::Deform {
-            s,
-            e,
-            st,
-            st_type,
-            et,
-            et_type,
-        } => {
-            encode_opt3(*s, &mut o);
-            encode_opt3(*e, &mut o);
-            encode_opt3(*st, &mut o);
-            o.push(f64::from(*st_type));
-            encode_opt3(*et, &mut o);
-            o.push(f64::from(*et_type));
-        }
-        OpIn::Reparam => {}
-        OpIn::Scale { f } => o.push(*f),
-        OpIn::ScaleKnots { a, b } => o.extend([*a, *b]),
-        OpIn::Trim { a, b, mode } => o.extend([*a, *b, f64::from(*mode)]),
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    match ffi::eval(i.op.ffi(), &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- records ----------------------------------------------------------------------
 
@@ -1512,42 +1297,13 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     }
 }
 
-/// A generated case the ffi wrapper accepts (redrawn up to 64 times).
-fn gen_valid(rng: &mut Rng) -> Option<Inputs> {
-    for _ in 0..64 {
-        let i = gen_case(rng);
-        let ok = cpp_input(&i).is_ok_and(|input| ffi::validate(i.op.ffi(), &input).is_ok());
-        if ok {
-            return Some(i);
-        }
-    }
-    None
-}
-
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "nurbs.b_spline_curve_n_lib"
     }
 
-    fn skipped_platform(&self, case: &Case) -> Option<String> {
-        if cfg!(all(target_os = "macos", target_arch = "aarch64"))
-            && matches!(
-                case.name.as_str(),
-                "gen0695" | "gen0720" | "gen0880" | "gen0932" | "gen1279" | "gen1374" | "gen1482"
-            )
-            && case.inputs.get("op").and_then(Value::as_str) == Some("deform")
-        {
-            Some(
-                "upstream use-after-free in SmBSplineCurveNLib.cpp:3127-3149 (issue #449); Rust matches the Linux reference"
-                    .into(),
-            )
-        } else {
-            None
-        }
-    }
-
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_valid(rng)?).ok()
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1558,16 +1314,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: the Rust side honours sizes
-        // the FFI refuses (fuzz00880: a 2^31 count, 16 GiB knot arrays).
-        ffi::validate(i.op.ffi(), &cpp_input(&i)?).map_err(|e| harness(e.to_string()))?;
-        rust(&i)
+        rust(&case.parse()?)
     }
 }
 
