@@ -984,6 +984,23 @@ fn affine_refusal() -> SolidError {
     }
 }
 
+// f64::next_up/next_down postdate the crate's Rust 1.85 minimum.
+fn next_parameter_up(value: f64) -> f64 {
+    if value.is_nan() || value == f64::INFINITY {
+        value
+    } else if value == 0.0 {
+        f64::from_bits(1)
+    } else if value > 0.0 {
+        f64::from_bits(value.to_bits() + 1)
+    } else {
+        f64::from_bits(value.to_bits() - 1)
+    }
+}
+
+fn next_parameter_down(value: f64) -> f64 {
+    -next_parameter_up(-value)
+}
+
 fn iv_point(p: Vec3) -> [Ivl; 3] {
     [p.x, p.y, p.z].map(Ivl::from)
 }
@@ -1164,9 +1181,7 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
     let CurveKind::BSpline(spline) = curve.kind() else {
         return None;
     };
-    let Some(nurb) = spline.gw_nurb() else {
-        return None;
-    };
+    let nurb = spline.gw_nurb()?;
     if nurb.degree() != 1 {
         return None;
     }
@@ -1176,17 +1191,13 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
         .knots()
         .partition_point(|t| *t <= interval.min())
         .saturating_sub(1);
-    let Some((&lo, &hi)) = nurb.knots().get(index).zip(nurb.knots().get(index + 1)) else {
-        return None;
-    };
+    let (&lo, &hi) = nurb.knots().get(index).zip(nurb.knots().get(index + 1))?;
     if hi <= lo || interval.min() < lo || interval.max() > hi || index == 0 {
         return None;
     }
-    let Some((a, b)) = nurb.cpts().get(index - 1).zip(nurb.cpts().get(index)) else {
-        return None;
-    };
+    let (a, b) = nurb.cpts().get(index - 1).zip(nurb.cpts().get(index))?;
     let nonrational = a.w == crate::nurbs::math::NOW && b.w == crate::nurbs::math::NOW;
-    if !nonrational && !(a.w == b.w && a.w > 0.0 && a.w.is_finite()) {
+    if !(nonrational || a.w == b.w && a.w > 0.0 && a.w.is_finite()) {
         return None;
     }
     let coords = |p: &crate::nurbs::math::CPoint| {
@@ -1265,7 +1276,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         let delta = iv_sub(end, start);
         let constant = definition.constant_projection(normal);
         let left_end = if definition.isolated_end.is_some() {
-            interval.max().next_down()
+            next_parameter_down(interval.max())
         } else {
             interval.max()
         };
@@ -1357,7 +1368,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         }
         if !maximize && fraction.mid() > 0.0 && fraction.mid() < 1.0 {
             let t = interval.evaluate(fraction.mid());
-            for candidate in [t.next_down(), t, t.next_up()] {
+            for candidate in [next_parameter_down(t), t, next_parameter_up(t)] {
                 if candidate > interval.min() && candidate < interval.max() {
                     parameters.push(candidate);
                 }
@@ -2771,7 +2782,7 @@ mod tests {
     fn affine_parallel_identity_rejects_near_parallel_and_nonfinite() {
         assert!(!exact_parallel_difference(
             [0.0; 3],
-            [1.0, 1.0_f64.next_up(), 0.0],
+            [1.0, next_parameter_up(1.0), 0.0],
             Vec3::new(1.0, 1.0, 0.0)
         ));
         // Ordinary products underflow here; the exact determinant is nonzero.

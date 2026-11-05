@@ -63,6 +63,8 @@ gap even when its distance requires rounding.
 
 ## Discontinuous upper-knot regression
 
+![The isolated knot value and excluded left limit](figures/projected-upper-knot-limit.png)
+
 An additional runtime probe exposes a boundary defect in `a15810f8c`. Use raw
 degree-one knots `[0,0,1,1,2,2]`, controls
 `(100,0,0),(1,0,0),(10,0,0),(10,1,0)`, unit weights, point zero, normal Z,

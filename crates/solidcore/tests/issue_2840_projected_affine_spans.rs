@@ -104,13 +104,17 @@ fn unrepresentable_affine_minimum_returns_error_with_default_kernel() {
     // Check the rounded parameter and its immediate neighbors: these include
     // both floating-point parameters bracketing the exact perpendicular foot.
     let rounded = knots[2] + (knots[3] - knots[2]) * 0.46;
-    let best_representable = [rounded.next_down(), rounded, rounded.next_up()]
-        .into_iter()
-        .map(|t| {
-            let s = (t - knots[2]) / (knots[3] - knots[2]);
-            ((2.0 * s - 1.0).powi(2) + (s - 0.3).powi(2)).sqrt()
-        })
-        .fold(f64::INFINITY, f64::min);
+    let best_representable = [
+        f64::from_bits(rounded.to_bits() - 1),
+        rounded,
+        f64::from_bits(rounded.to_bits() + 1),
+    ]
+    .into_iter()
+    .map(|t| {
+        let s = (t - knots[2]) / (knots[3] - knots[2]);
+        ((2.0 * s - 1.0).powi(2) + (s - 0.3).powi(2)).sqrt()
+    })
+    .fold(f64::INFINITY, f64::min);
     assert!(best_representable - expected > tolerance);
     let result = curve.global_point_solve::<Object>(
         &Kernel::default(),
@@ -265,14 +269,14 @@ fn upper_discontinuity_and_exact_query_bound_keep_the_left_infimum() {
         assert_eq!(curve.evaluate_point(&kernel, 1.0).unwrap().x, 10.0);
         assert!(
             (curve
-                .evaluate_point(&kernel, 1.0_f64.next_down())
+                .evaluate_point(&kernel, f64::from_bits(1.0_f64.to_bits() - 1))
                 .unwrap()
                 .x
                 - 1.0)
                 .abs()
                 < 1e-6
         );
-        for upper in [1.0, 1.0_f64.next_down(), 2.0] {
+        for upper in [1.0, f64::from_bits(1.0_f64.to_bits() - 1), 2.0] {
             for operation in [
                 SolverOperation::ProjectedMinimize,
                 SolverOperation::ProjectedMaximize,
@@ -355,7 +359,7 @@ fn unattainable_left_infimum_at_upper_jump_is_refused() {
     let curve = upper_jump_curve(lower, false, 1.0);
     // Distance decreases to the open-left limit 1. Even the final representable
     // parameter misses that limit by more than the caller's tolerance.
-    let nearest = 1.0 + 99.0 * (1.0 - 1.0_f64.next_down()) / (1.0 - lower);
+    let nearest = 1.0 + 99.0 * (1.0 - f64::from_bits(1.0_f64.to_bits() - 1)) / (1.0 - lower);
     assert!(nearest - 1.0 > EFF_ZERO_SQRT);
     let result = curve.global_point_solve::<Object>(
         &Kernel::default(),
