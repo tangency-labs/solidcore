@@ -946,3 +946,38 @@ operation does not make them.
 - Inside the local operation, nothing changes: at its start and in `restore_kept_edges`, edge 14 is
   7.2676800194992e-3 and the body is 1e-5. The offset B-rep is at 5e-6 (half), and the restore raises it to
   the input's 1e-5, never above.
+
+### The kept sphere's edge with the moved plane, mated (2026-11-05, circle item)
+
+- *Root cause.* fc0000's face 5 is a whole sphere (analytic domain 0..360 x -90..90, natural
+  [0, 30.61] x [0, 15.31]); its extension is itself. Its intersection with the moved plane in
+  `mate_edges` is the sphere/plane special case (`Sphere::intersect_with_plane`, upstream's): one
+  whole exact circle, without UV curves (`AssociateOutputs`). The circle crosses the sphere's
+  seam, so a plain drop onto the sphere gives no curve, and `mate_edges` stopped at its
+  null-UV-curve check (1006), which its caller ignored as a soft status.
+- *Fix (3ab3d7f11).* `SurfaceIntersection::clip_exact_curves` (`surface/surface/exact_pieces.rs`):
+  a curve that comes without UV curves is dropped and trimmed onto each surface over its domain
+  (`DropAndTrimCurve`, the trace that breaks at seams and domain boundaries, as the marcher's
+  `AddBoundaryCurve` does), each overlap of the two surfaces' pieces is one piece with both UV
+  curves, proved on both analytic surfaces (`implicit::curve_lies_on`, the Bezier check of
+  `lies_on` on curve segments). `mate_edges` runs it after the intersection. A curve still
+  without UV curves there is a port invariant, and both it and the clip's refusals are passed on
+  by the caller instead of being taken for an unmated edge.
+- *Probe (all 165, `notes-localop/sound-circle.tsv` vs `sound-ownerfix.tsv`).* Sound 55 -> 72;
+  no case changes to a worse state, no status errors. Of the 11: fc0000, fc0014 and fc0025 are
+  manifold with 47 edges and the input's own 4 check lines (#4/#8/#7 of the input fillet);
+  fc0002, 0003, 0013, 0020, 0027 and nurb_fillet_face6/7_same (and attributed copies) are still
+  not manifold (#61 bad edges, 48-52 edges). 17 generated cases become sound (gen0004, 0009, 0025,
+  0031, 0039, 0050, 0051, 0059, 0065, 0069, 0070, 0072, 0074, 0079, 0080, 0092, 0095); gen0032
+  becomes manifold.
+- *Open: fc0000's volume.* 712.32 against the input's 1252.27, where the move adds a slab of about
+  16. The result's vertices and face areas are right (the moved plane's face: 15.746 by the
+  kernel, 15.745 by the shoelace of its own UV trims), but the kernel's centroid of that face is
+  (2.93, -4.74, -33.2) against (-0.92, -4.74, 4.18) by the shoelace. A mass-property defect on
+  this face, not of the mate; not chased. fc0025 is manifold but its volume is None.
+- *Difftest offset.offset_geometry_creation.* The unit's mate cases seed the extension cache with
+  the faces' own (analytic) surfaces, so the special case answers there too; native returns 1006.
+  With the clip, 5 cases now go past the mate into an unported `topology.face_p2` callee
+  (deferred), and the known mismatch gen0658 is among the deferred (its entry must go). Without the
+  clip the same cases differ only by the status code (1006 vs the port invariant). Whether the
+  clip applies when the extension is the surface itself (native stops at 1006) is a decision.
