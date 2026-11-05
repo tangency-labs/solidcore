@@ -11,7 +11,7 @@
 //!
 //! Deviations: closures replace evaluator subclasses; component arrays are zero-based;
 //! out-parameters become return values. Like upstream, integration starts at zero
-//! regardless of the initial values (except its early return), and scalar integration
+//! regardless of the initial values (except for equal finite endpoints), and scalar integration
 //! returns zero on numerical failure by default; with
 //! [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] / [`integrate_opt_in`]
 //! (WR-94) failures from [`OdeIntegrator::integrate`] propagate instead, while intervals
@@ -23,9 +23,9 @@
 //! scales/accuracy and unused initial values retain their upstream behavior. The step
 //! arrays (`ytemp`, `ak2`..`ak6`, `yerr`) are kept across the steps of one integration
 //! instead of allocated per step; they are zeroed or overwritten as the fresh ones
-//! were, so the values are the same.
+//! were, so the values are the same. Active steps must advance the floating-point
+//! independent variable to a finite value; endpoint equality is exact.
 
-use crate::geom::tol::are_same;
 use crate::math::{EFF_ZERO, EFF_ZERO_SQ};
 use crate::{Kernel, Result, SolidError};
 
@@ -117,7 +117,7 @@ impl OdeIntegrator {
     }
 
     /// Integrates into `initial`. The evaluator reads/writes zero-based components.
-    /// Initial values are preserved on failure and on the upstream early return;
+    /// Initial values are preserved on failure and on equal finite bounds;
     /// a nontrivial successful integration replaces them with the integral from zero.
     pub fn integrate<F>(
         &self,
@@ -134,7 +134,13 @@ impl OdeIntegrator {
         if initial.len() > MAX_COMPONENTS {
             return Err(SolidError::invalid_input(OP, "too many components"));
         }
-        if are_same(x1, x2) || are_same(options.initial_step, EFF_ZERO) {
+        if !x1.is_finite() || !x2.is_finite() {
+            return Err(SolidError::invalid_input(
+                OP,
+                "non-finite integration control",
+            ));
+        }
+        if x1 == x2 {
             return Ok(StepCounts::default());
         }
         if ![x1, x2, options.initial_step, options.minimum_step]
@@ -207,7 +213,7 @@ impl OdeIntegrator {
             x = step.x;
             // the step's values (`scratch.temp`, which the next step overwrites)
             core::mem::swap(&mut y, &mut scratch.temp);
-            if (x - x2) * (x2 - x1) >= 0.0 {
+            if x == x2 {
                 initial.copy_from_slice(&y);
                 return Ok(counts);
             }
@@ -285,6 +291,10 @@ impl OdeIntegrator {
         scratch.resize(y.len());
         let mut h = htry;
         for _ in 0..MAX_RETRIES {
+            let next_x = x + h;
+            if !next_x.is_finite() || next_x == x {
+                return Err(SolidError::sm_err(OP_STEP_CONTROL));
+            }
             cash_karp(y, dydx, x, h, evaluate, scratch)?;
             let mut errmax: f64 = 0.0;
             for (error, s) in scratch.errors.iter().zip(scale.iter_mut()) {
@@ -315,9 +325,6 @@ impl OdeIntegrator {
             } else {
                 htemp.min(0.1 * h)
             };
-            if !h.is_finite() || are_same(x + h, x) {
-                return Err(SolidError::sm_err(OP_STEP_CONTROL));
-            }
         }
         Err(SolidError::sm_err(OP_STEP_CONTROL))
     }
@@ -572,14 +579,239 @@ mod tests {
     #[test]
     fn short_scalar_interval_integrates_constant() {
         for (a, b, expected) in [(0.0, 1e-11, 10.0), (1e-11, 0.0, -10.0)] {
+            let mut calls = 0;
+            let direct = integrate(a, b, IntegrationAlgorithm::Romberg, 1e-8, |_| {
+                calls += 1;
+                Ok(1e12)
+            })
+            .unwrap();
+            assert!((direct - expected).abs() < 1e-12);
+            assert!(calls > 0);
             for propagate in [false, true] {
                 let mut calls = 0;
-                let result = integrate_opt_in(a, b, IntegrationAlgorithm::Romberg, 1e-8, propagate, |_| {
-                    calls += 1;
-                    Ok(1e12)
-                }).unwrap();
+                let result =
+                    integrate_opt_in(a, b, IntegrationAlgorithm::Romberg, 1e-8, propagate, |_| {
+                        calls += 1;
+                        Ok(1e12)
+                    })
+                    .unwrap();
                 assert!((result - expected).abs() < 1e-12, "{result} vs {expected}");
                 assert!(calls > 0);
+            }
+        }
+    }
+
+    /// Direct ODE stepping must advance, or refuse without changing the initial state.
+    #[test]
+    fn ode_progress_and_refusal() {
+        let solver = OdeIntegrator::default();
+        for step in [0.0, -0.0] {
+            let mut y = [7.0];
+            let result = solver.integrate(
+                &mut y,
+                0.0,
+                1.0,
+                OdeOptions {
+                    accuracy: 1e-8,
+                    initial_step: step,
+                    minimum_step: 0.0,
+                    scale: None,
+                },
+                |_, _, d| {
+                    d[0] = 1.0;
+                    Ok(())
+                },
+            );
+            assert!(matches!(
+                result,
+                Err(SolidError::Upstream {
+                    operation: OP_STEP_CONTROL,
+                    ..
+                })
+            ));
+            assert_eq!(y, [7.0]);
+        }
+        let mut y = [7.0];
+        let counts = solver
+            .integrate(
+                &mut y,
+                0.0,
+                1e-11,
+                OdeOptions {
+                    accuracy: 1e-8,
+                    initial_step: 1e-12,
+                    minimum_step: 0.0,
+                    scale: None,
+                },
+                |_, _, d| {
+                    d[0] = 1e12;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert!(counts.good + counts.reduced > 0);
+        assert!((y[0] - 10.0).abs() < 1e-12);
+        let mut y = [7.0];
+        let result = solver.integrate(
+            &mut y,
+            1e16,
+            1e16 + 2.0,
+            OdeOptions {
+                accuracy: 1e-8,
+                initial_step: 0.1,
+                minimum_step: 0.0,
+                scale: None,
+            },
+            |_, _, d| {
+                d[0] = 1.0;
+                Ok(())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(SolidError::Upstream {
+                operation: OP_STEP_CONTROL,
+                ..
+            })
+        ));
+        assert_eq!(y, [7.0]);
+        let mut clipped = [7.0];
+        let counts = solver
+            .integrate(
+                &mut clipped,
+                0.0,
+                1.0,
+                OdeOptions {
+                    accuracy: 1e-8,
+                    initial_step: f64::MAX,
+                    minimum_step: 0.0,
+                    scale: None,
+                },
+                |_, _, d| {
+                    d[0] = 1.0;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(counts.good, 1);
+        assert!((clipped[0] - 1.0).abs() < 1e-14);
+    }
+
+    /// Public steps reject both initially stalled steps and stalled rejected retries.
+    #[test]
+    fn public_step_checks_accepted_and_retried_progress() {
+        let solver = OdeIntegrator::default();
+        let mut calls = 0;
+        let result = solver.step(&[0.0], &[1.0], 1e16, 0.1, 1e-8, &mut [1.0], |_, _, d| {
+            calls += 1;
+            d[0] = 1.0;
+            Ok(())
+        });
+        assert!(matches!(
+            result,
+            Err(SolidError::Upstream {
+                operation: OP_STEP_CONTROL,
+                ..
+            })
+        ));
+        assert_eq!(calls, 0);
+        let result = solver.step(&[0.0], &[1.0], 1e16, 2.0, 1e-8, &mut [1.0], |_, _, d| {
+            calls += 1;
+            d[0] = 2.0;
+            Ok(())
+        });
+        assert!(matches!(
+            result,
+            Err(SolidError::Upstream {
+                operation: OP_STEP_CONTROL,
+                ..
+            })
+        ));
+        assert_eq!(calls, 5);
+        let retry = solver
+            .step(&[0.0], &[1.0], 0.0, 1e-11, 1e-8, &mut [1e-12], |_, _, d| {
+                d[0] = 2.0;
+                Ok(())
+            })
+            .unwrap();
+        assert!(retry.x > 0.0);
+        assert!(retry.taken < 1e-11);
+        let step = solver
+            .step(&[0.0], &[1e12], 0.0, 1e-12, 1e-8, &mut [1.0], |_, _, d| {
+                d[0] = 1e12;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(step.x, 1e-12);
+        assert!((step.values[0] - 1.0).abs() < 1e-14);
+    }
+
+    /// Equal finite bounds skip unused controls, but dimension and finite bounds come first.
+    #[test]
+    fn endpoint_validation_precedence() {
+        let solver = OdeIntegrator::default();
+        let invalid = OdeOptions {
+            accuracy: f64::NAN,
+            initial_step: f64::NAN,
+            minimum_step: f64::NAN,
+            scale: Some(&[f64::NAN]),
+        };
+        let mut y = [7.0];
+        assert_eq!(
+            solver
+                .integrate(&mut y, -0.0, 0.0, invalid, |_, _, _| panic!("unused"))
+                .unwrap(),
+            StepCounts::default()
+        );
+        assert_eq!(y, [7.0]);
+        for (a, b) in [(f64::INFINITY, f64::INFINITY), (f64::NAN, 0.0), (0.0, 1.0)] {
+            assert!(matches!(
+                solver.integrate(&mut y, a, b, invalid, |_, _, _| panic!("invalid")),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert_eq!(y, [7.0]);
+        }
+        assert!(matches!(
+            solver.integrate(
+                &mut vec![0.0; MAX_COMPONENTS + 1],
+                0.0,
+                0.0,
+                invalid,
+                |_, _, _| panic!("dimension")
+            ),
+            Err(SolidError::InvalidInput {
+                reason: "too many components",
+                ..
+            })
+        ));
+    }
+
+    /// The scalar wrapper deliberately skips only intervals strictly below its threshold.
+    #[test]
+    fn scalar_threshold_is_strict() {
+        for (length, evaluates) in [
+            (EFF_ZERO * 0.5, false),
+            (EFF_ZERO, true),
+            (EFF_ZERO * 2.0, true),
+        ] {
+            let mut calls = 0;
+            let value = integrate_opt_in(
+                0.0,
+                length,
+                IntegrationAlgorithm::Romberg,
+                1e-8,
+                true,
+                |_| {
+                    calls += 1;
+                    Ok(1e12)
+                },
+            )
+            .unwrap();
+            assert_eq!(calls > 0, evaluates);
+            if evaluates {
+                assert!((value - length * 1e12).abs() < 1e-12);
+            } else {
+                assert_eq!(value, 0.0);
             }
         }
     }
