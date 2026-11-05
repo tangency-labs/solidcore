@@ -1,6 +1,8 @@
 """Contract and process-failure tests for recipe replay; no real kernel builds."""
 
 import copy
+import io
+import signal
 import importlib.util
 import json
 import os
@@ -156,7 +158,7 @@ class ReplayTests(unittest.TestCase):
     def test_success_uses_blocking_wait_without_timeout_polling(self):
         process = Mock(returncode=0)
         process.wait.return_value = 0
-        with patch.object(replay.subprocess, "Popen", return_value=process):
+        with patch.object(replay.subprocess, "Popen", return_value=process), patch.object(replay, "process_group_exists", return_value=False):
             result = replay.execute(["fake"], {}, self.root / "blocking", 1)
         process.wait.assert_called_once_with()
         self.assertEqual(result["status"], "ok")
@@ -178,6 +180,41 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(report["manifest"]["state"], "warmup_failed")
         self.assertEqual(len(report["samples"]), 1)
         self.assertEqual(report["summary"][0]["samples"], 0)
+
+    def test_interrupted_warmup_preserves_the_reason(self):
+        """An interrupted warmup is not blamed on the evaluated binary."""
+        self.assertEqual(self.run_mocked(lambda *args: {"status": "interrupted", "exit": -15, "seconds": 0.1}), 2)
+        report = replay.load_report(self.root / "output")
+        self.assertEqual(report["manifest"]["state"], "interrupted")
+        self.assertEqual(len(report["samples"]), 1)
+        self.assertIsNone(report["summary"][0]["median_seconds"])
+
+    def test_abort_reasons_are_fixed_codes_not_exception_text(self):
+        """I/O, invalid sample and load failures retain only public reason codes."""
+        for error, reason in ((OSError("PRIVATE_SENTINEL"), "io_error"), (replay.Invalid("PRIVATE_SENTINEL"), "invalid_sample")):
+            with self.subTest(reason=reason):
+                self.root = Path(self.temp.name) / reason
+                self.root.mkdir()
+                stream = io.StringIO()
+                with patch("sys.stderr", stream):
+                    self.assertEqual(self.run_mocked(Mock(side_effect=error)), 2)
+                report = replay.load_report(self.root / "output")
+                self.assertEqual(report["manifest"]["abort_reason"], reason)
+                self.assertIn(reason, stream.getvalue())
+                self.assertNotIn("PRIVATE_SENTINEL", stream.getvalue() + json.dumps(report))
+        self.root = Path(self.temp.name) / "load"
+        self.root.mkdir()
+        self.config["max_load"] = 0
+        replay.write_json(self.config_path, self.config)
+        with patch.object(replay.os, "getloadavg", return_value=(1, 1, 1), create=True), patch("sys.stderr", io.StringIO()) as stream:
+            self.assertEqual(self.run_mocked(self.fake_success), 2)
+        report = replay.load_report(self.root / "output")
+        self.assertEqual(report["manifest"]["abort_reason"], "load_exceeded")
+        self.assertEqual(report["samples"], [])
+        self.assertIn("load_exceeded", stream.getvalue())
+        report["manifest"]["abort_reason"] = "PRIVATE_SENTINEL"
+        with self.assertRaises(replay.Invalid):
+            replay.public_manifest(report["manifest"])
 
     def test_interruption_preserves_completed_samples(self):
         count = 0
@@ -216,6 +253,70 @@ class ReplayTests(unittest.TestCase):
         report = replay.load_report(self.root / "output")
         self.assertEqual(report["manifest"]["state"], "input_changed")
         self.assertIsNone(report["summary"][0]["median_seconds"])
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "owned process-group cleanup requires Linux")
+    def test_normal_leader_exit_cleans_surviving_descendant(self):
+        """A detached workload cannot outlive a nominally successful evaluation."""
+        child_file = self.root / "child.pid"
+        program = "\n".join([
+            "import os, signal, time, pathlib",
+            "child = os.fork()",
+            "if child == 0:",
+            " signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+            f" pathlib.Path({str(child_file)!r}).write_text(str(os.getpid()))",
+            " time.sleep(60)",
+            "else:",
+            f" while not pathlib.Path({str(child_file)!r}).exists(): time.sleep(.01)",
+        ])
+        result = replay.execute([sys.executable, "-c", program], os.environ.copy(), self.root / "orphan", 5)
+        self.assertEqual(result["status"], "descendants_remaining")
+        self.assert_process_stopped(int(child_file.read_text()))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "SIGTERM lifecycle requires Linux")
+    def test_sigterm_during_warmup_cleans_child_and_finalizes_manifest(self):
+        """External termination preserves interrupted state and stops owned work."""
+        child_file = self.root / "evaluator.pid"
+        binary = self.root / "binary"
+        binary.write_text("#!/usr/bin/env python3\nimport os, pathlib, time\n"
+                          + f"pathlib.Path({str(child_file)!r}).write_text(str(os.getpid()))\n"
+                          + "time.sleep(60)\n")
+        binary.chmod(0o700)
+        self.config["timeout_seconds"] = 30
+        replay.write_json(self.config_path, self.config)
+        output = self.root / "output"
+        runner = subprocess.Popen([sys.executable, str(Path(replay.__file__)), "run", str(self.config_path), str(output)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        child = None
+        try:
+            deadline = time.monotonic() + 5
+            while not child_file.exists() and runner.poll() is None and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertTrue(child_file.exists(), "evaluator did not start")
+            child = int(child_file.read_text())
+            runner.send_signal(signal.SIGTERM)
+            self.assertEqual(runner.wait(timeout=5), 2)
+            report = replay.load_report(output)
+            self.assertEqual(report["manifest"]["state"], "interrupted")
+            self.assertEqual(report["samples"][0]["status"], "interrupted")
+            self.assert_process_stopped(child)
+        finally:
+            if runner.poll() is None:
+                runner.kill()
+                runner.wait()
+            if child is not None:
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def assert_process_stopped(self, pid):
+        """Permit an exited child awaiting reaping, but never a running orphan."""
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            stat = Path(f"/proc/{pid}/stat")
+            if not stat.exists() or stat.read_text().split()[2] == "Z":
+                return
+            time.sleep(0.02)
+        self.fail("runner left its descendant running")
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "owned process-group cleanup requires Linux")
     def test_timeout_kills_descendant_even_when_leader_exits_first(self):

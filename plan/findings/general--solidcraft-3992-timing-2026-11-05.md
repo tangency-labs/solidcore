@@ -103,7 +103,16 @@ solid-recipe benchmark contract. Timing eligibility is separate from correctness
 
 A timeout terminates only the runner's process group and censors that variant's
 remaining repetitions for the same case. Interrupted or aborted experiments retain
-samples but do not produce eligible medians. Exit status zero means orchestration
+samples but do not produce eligible medians. Ctrl-C and SIGTERM use the same
+interruption path, including during warmup. An evaluator that leaves descendants
+in its process group after its leader exits is cleaned up and recorded as
+`descendants_remaining`, not a successful sample. This is process containment, not
+a sandbox: executables must be trusted; processes that deliberately create a new
+session and uncatchable termination are outside this cleanup contract.
+
+Aborts record and print only an allowlisted `abort_reason`: `load_exceeded`,
+`invalid_sample`, or `io_error`. Raw exception text is never exported.
+Exit status zero means orchestration
 completed: individual failed samples can still exist, so consumers must inspect the
 summary. Exit status two means configuration, warmup, interruption, load, input
 mutation or another orchestration failure prevented a complete experiment.

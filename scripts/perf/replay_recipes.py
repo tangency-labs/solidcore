@@ -24,7 +24,8 @@ import time
 import threading
 
 SCHEMA = 1
-STATUSES = {"ok", "exit_error", "timeout", "interrupted", "spawn_error", "invalid_output", "invalid_resources"}
+STATUSES = {"ok", "exit_error", "timeout", "interrupted", "spawn_error", "invalid_output", "invalid_resources", "descendants_remaining"}
+ABORT_REASONS = {"load_exceeded", "invalid_sample", "io_error"}
 STATES = {"running", "complete", "warmup_failed", "interrupted", "input_changed", "aborted"}
 COUNTS = ("bodies", "faces", "edges", "vertices", "errors", "warnings", "suppressed", "rolled_back", "open_bodies_skipped")
 VALUES = ("volume", "area", "feature_seconds")
@@ -33,6 +34,10 @@ GEOMETRY = ("bodies", "faces", "edges", "vertices", "volume", "area", "closed", 
 
 class Invalid(ValueError):
     """Input does not satisfy the measurement contract."""
+
+
+class LoadExceeded(Invalid):
+    """The configured preflight load limit was exceeded."""
 
 
 def require(condition):
@@ -120,6 +125,9 @@ def public_manifest(value):
     require(value["warmup_case"] in {c["id"] for c in cases})
     require(value.get("max_load") is None or finite(value["max_load"], 0))
     out = {key: value[key] for key in ("schema_version", "state", "rounds", "threads", "timeout_seconds", "niceness", "warmup_case", "max_load")}
+    if value.get("abort_reason") is not None:
+        require(value["abort_reason"] in ABORT_REASONS)
+        out["abort_reason"] = value["abort_reason"]
     out.update(variants=variants, cases=cases, ordering="case then round; rotate variants by round", clock="fresh-process elapsed seconds", warmup="one excluded evaluation per variant")
     if value.get("recipe_archive_sha256") is not None:
         out["recipe_archive_sha256"] = hex_digest(value["recipe_archive_sha256"])
@@ -232,6 +240,15 @@ def stop_process(process):
     process.wait()
 
 
+def process_group_exists(process):
+    """Check only the process group created for this evaluation."""
+    try:
+        os.killpg(process.pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def execute(command, environment, prefix, timeout):
     """Run a fresh process with logs streamed to disk and explicit failure states."""
     started = time.perf_counter()
@@ -247,6 +264,7 @@ def execute(command, environment, prefix, timeout):
         cleaned = False
 
         def cleanup():
+            """Serialize watchdog and interruption cleanup for this group."""
             nonlocal cleaned
             with cleanup_lock:
                 if not cleaned:
@@ -254,6 +272,7 @@ def execute(command, environment, prefix, timeout):
                     cleaned = True
 
         def watchdog():
+            """Enforce the deadline without polling in the measured wait."""
             if not finished.wait(timeout):
                 expired.set()
                 cleanup()
@@ -261,16 +280,24 @@ def execute(command, environment, prefix, timeout):
         watcher = threading.Thread(target=watchdog, daemon=True)
         watcher.start()
         try:
-            # A timeout argument makes POSIX Popen.wait poll with sleeps, biasing
-            # short recipes. Block in waitpid; only the watchdog waits on a clock.
-            code = process.wait()
-            ended = time.perf_counter()
-            result.update(exit=code, status="ok" if code == 0 else "exit_error")
+            try:
+                # A timeout argument makes POSIX Popen.wait poll with sleeps,
+                # biasing short recipes. Only the watchdog waits on a clock.
+                code = process.wait()
+                ended = time.perf_counter()
+                result.update(exit=code, status="ok" if code == 0 else "exit_error")
+            finally:
+                finished.set()
+                watcher.join()
+            # A successful leader exit does not imply every child has stopped.
+            # An evaluator must not leave background work to contaminate timing.
+            if not cleaned and process_group_exists(process):
+                cleanup()
+                result["status"] = "descendants_remaining"
         except KeyboardInterrupt:
             cleanup()
             ended = time.perf_counter()
             result.update(status="interrupted", exit=process.returncode)
-        finally:
             finished.set()
             watcher.join()
         if expired.is_set() and result["status"] != "interrupted":
@@ -358,8 +385,9 @@ def run(config, output):
     runs = []
 
     def sample(case, variant, index, phase, log):
-        if manifest["max_load"] is not None:
-            require(os.getloadavg()[0] <= manifest["max_load"])
+        """Measure one owned evaluation and persist its sanitized result."""
+        if manifest["max_load"] is not None and os.getloadavg()[0] > manifest["max_load"]:
+            raise LoadExceeded()
         prefix = private / f"{phase}-{case}-{variant}-{index}"
         measurement, resource = Path(str(prefix) + ".json"), Path(str(prefix) + ".resources")
         command = ["/usr/bin/time", "-f", "%U %S %M", "-o", str(resource.resolve()), "nice", "-n", str(manifest["niceness"]), str(inputs["variants", variant]), "eval", str(inputs["cases", case]), "--json-out", str(measurement.resolve())]
@@ -380,10 +408,23 @@ def run(config, output):
         write_json(output / "summary.json", summarize(manifest, runs))
         return result
 
+    previous_term = signal.getsignal(signal.SIGTERM)
+
+    def interrupted(signum, frame):
+        """Handle catchable termination through the normal interruption path."""
+        # A repeated SIGTERM must not interrupt cleanup or artifact finalization.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupted)
     try:
         with (output / "runs.jsonl").open("w", encoding="utf-8") as log:
             for variant in variants:
-                if not successful(sample(manifest["warmup_case"], variant, 0, "warmup", log)):
+                warmup = sample(manifest["warmup_case"], variant, 0, "warmup", log)
+                if warmup["status"] == "interrupted":
+                    manifest["state"] = "interrupted"
+                    return 2
+                if not successful(warmup):
                     manifest["state"] = "warmup_failed"
                     return 2
             for case in manifest["cases"]:
@@ -403,20 +444,27 @@ def run(config, output):
     except KeyboardInterrupt:
         manifest["state"] = "interrupted"
         return 2
-    except (OSError, Invalid):
-        manifest["state"] = "aborted"
+    except (OSError, Invalid) as error:
+        reason = "load_exceeded" if isinstance(error, LoadExceeded) else "io_error" if isinstance(error, OSError) else "invalid_sample"
+        manifest.update(state="aborted", abort_reason=reason)
+        print("Recipe replay aborted: " + reason, file=sys.stderr)
         return 2
     finally:
-        for group, key in (("variants", "binary_sha256"), ("cases", "sha256")):
-            for item in manifest[group]:
-                try:
-                    unchanged = digest(inputs[group, item["id"]]) == item[key]
-                except OSError:
-                    unchanged = False
-                if not unchanged:
-                    manifest["state"] = "input_changed"
-        write_json(output / "manifest.json", manifest)
-        write_json(output / "summary.json", summarize(manifest, runs))
+        # Finish durable records before restoring the caller's termination policy.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        try:
+            for group, key in (("variants", "binary_sha256"), ("cases", "sha256")):
+                for item in manifest[group]:
+                    try:
+                        unchanged = digest(inputs[group, item["id"]]) == item[key]
+                    except OSError:
+                        unchanged = False
+                    if not unchanged:
+                        manifest["state"] = "input_changed"
+            write_json(output / "manifest.json", manifest)
+            write_json(output / "summary.json", summarize(manifest, runs))
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
     return 0 if manifest["state"] == "complete" else 2
 
 
