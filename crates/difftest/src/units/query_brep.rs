@@ -46,17 +46,19 @@ use solidcore::{EntityRef, SolidError};
 
 use solidcore::geom::attribute::{Attribute, AttributeValue, Behavior};
 use solidcore::math::{Point2, Vec3};
+use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::query::brep::{self as qb, PolyVertexClass};
 use solidcore::surface::surface::Surface;
 
-use super::surface_surface_cache_p1::harness;
-use super::surface_surface_cache_p3::{gen_surf, surf_domain, surface_in, SurfIn};
 use super::query_face_p1::{gen_face_brep, own_model, Model, NoGeometry};
+use super::surface_surface_cache_p1::{harness, srf, BssIn};
+use super::surface_surface_cache_p3::{gen_surf, surf_domain, surface_in, PlaneIn, SurfIn};
 use super::surface_surface_p7::{st, Fail};
 use super::topology_edgeuse_p1::{gen_brep, BrepIn};
 use crate::case::CaseContext;
-use crate::util::flag;
+use crate::cases::curve_contract as contract;
 use crate::runner::default_cases;
+use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Largest number of box steps a case runs.
@@ -216,7 +218,9 @@ mod non_finite2 {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[f64; 2], D::Error> {
         let float = |v: &Value| match v {
-            Value::Number(n) => n.as_f64().ok_or_else(|| D::Error::custom(format!("bad number {n}"))),
+            Value::Number(n) => n
+                .as_f64()
+                .ok_or_else(|| D::Error::custom(format!("bad number {n}"))),
             Value::String(s) if s == "NaN" => Ok(f64::NAN),
             Value::String(s) if s == "inf" => Ok(f64::INFINITY),
             Value::String(s) if s == "-inf" => Ok(f64::NEG_INFINITY),
@@ -295,13 +299,13 @@ fn rust_evaluate(i: &EvalIn) -> Result<Output, Fail> {
         What::Normal => {
             st(qb::evaluate_surface_normal(&k, surface.as_ref(), uv))?.map(|n| put(P_AT, n))
         }
-        What::Derivatives => st(qb::evaluate_surface_derivatives(&k, surface.as_ref(), uv))?.map(
-            |(p, du, dv)| {
+        What::Derivatives => {
+            st(qb::evaluate_surface_derivatives(&k, surface.as_ref(), uv))?.map(|(p, du, dv)| {
                 put(P_AT, p);
                 put(DU_AT, du);
                 put(DV_AT, dv);
-            },
-        ),
+            })
+        }
     }
     .map_or_else(|code| code, |()| SUCCESS);
     let mut flat = vec![code];
@@ -317,7 +321,11 @@ fn datum(d: &[f64], at: usize) -> Result<f64, HarnessError> {
 }
 
 fn vec_at(d: &[f64], at: usize) -> Result<Vec3, HarnessError> {
-    Ok(Vec3::new(datum(d, at)?, datum(d, at + 1)?, datum(d, at + 2)?))
+    Ok(Vec3::new(
+        datum(d, at)?,
+        datum(d, at + 1)?,
+        datum(d, at + 2)?,
+    ))
 }
 
 /// Writes a data record and sort index into the attribute (as the shim's `set_data`).
@@ -762,7 +770,11 @@ fn gen_classify(rng: &mut Rng) -> Option<Value> {
         },
         _ if rng.chance(0.1) => At::Point {
             p: *rng
-                .choose(&[[1e100, -1e100, 3e100], [1e-200, -1e-200, 3e-200], [1e6, -1e6, 3e6]])
+                .choose(&[
+                    [1e100, -1e100, 3e100],
+                    [1e-200, -1e-200, 3e-200],
+                    [1e6, -1e6, 3e6],
+                ])
                 .unwrap_or(&[0.0; 3]),
         },
         _ => At::Point {
@@ -787,7 +799,9 @@ fn gen_classify(rng: &mut Rng) -> Option<Value> {
         rng.uniform(-1.0, 1.0) * scale,
     ];
     let tol = *rng
-        .choose(&[0.0, 1e-10, 1e-8, 1e-6, 1e-4, 1e-2, 1e-6, 1e-6, -1e-12, -1.0, 100.0])
+        .choose(&[
+            0.0, 1e-10, 1e-8, 1e-6, 1e-4, 1e-2, 1e-6, 1e-6, -1e-12, -1.0, 100.0,
+        ])
         .unwrap_or(&1e-6);
     serde_json::to_value(Inputs::Classify(ClassifyIn {
         brep: serde_json::to_value(&brep).ok()?,
@@ -823,6 +837,87 @@ fn gen_eval(rng: &mut Rng) -> Result<EvalIn, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest control point index of a surface direction.
+const MAX_INDEX: usize = 32;
+/// The largest surface degree.
+const MAX_DEGREE: usize = 7;
+/// The largest magnitude of a coordinate, knot or scalar.
+const MAX_COORD: f64 = 1e6;
+/// The largest B-spline surface form code.
+const MAX_FORM: u8 = 11;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+/// A B-spline surface within the size bounds, of one rationality with weights in
+/// `[1e-3, 1e3]`, 3D homogeneous points within range, and clamped knots within range.
+fn bspline_surface(b: &BssIn) -> bool {
+    let Ok(s) = srf(&b.srf) else {
+        return false;
+    };
+    let (Some(n), Some(m)) = (
+        s.net.len().checked_sub(1),
+        s.net.first().and_then(|r| r.len().checked_sub(1)),
+    ) else {
+        return false;
+    };
+    let (Some(r), Some(q_)) = (s.u.len().checked_sub(1), s.v.len().checked_sub(1)) else {
+        return false;
+    };
+    let w0 = s.net.first().and_then(|r| r.first()).map_or(NOW, |c| c[3]);
+    b.form <= MAX_FORM
+        && s.net.iter().all(|row| row.len() == m + 1)
+        && n <= MAX_INDEX
+        && m <= MAX_INDEX
+        && s.p <= MAX_DEGREE
+        && s.q <= MAX_DEGREE
+        && r <= MAX_INDEX + MAX_DEGREE + 1
+        && q_ <= MAX_INDEX + MAX_DEGREE + 1
+        && (1..=n).contains(&s.p)
+        && (1..=m).contains(&s.q)
+        && r == n + s.p + 1
+        && q_ == m + s.q + 1
+        && s.net.iter().flatten().all(|&[x, y, z, w]| {
+            z != NOZ
+                && (w == NOW) == (w0 == NOW)
+                && (w == NOW || (1e-3..=1e3).contains(&w))
+                && [x, y, z].iter().all(|&c| fin(c))
+        })
+        && s.u.iter().chain(&s.v).all(|&k| fin(k))
+        && contract::clamped(&s.u, s.p).is_some()
+        && contract::clamped(&s.v, s.q).is_some()
+}
+
+/// A bounded plane with axes of squared length in `[1e-6, 1e6]` far from parallel, scales in
+/// `[1e-3, 1e3]`, and an ordered domain of sides at least `1e-6` within `1e4`.
+fn plane(p: &PlaneIn) -> bool {
+    let [lx, ly] = [contract::len_sq(p.x), contract::len_sq(p.y)];
+    let d = p.dom;
+    contract::vec3(&p.o, MAX_COORD)
+        && contract::vec3(&p.x, MAX_COORD)
+        && contract::vec3(&p.y, MAX_COORD)
+        && (1e-6..=1e6).contains(&lx)
+        && (1e-6..=1e6).contains(&ly)
+        && contract::frame(&p.x, &p.y, MAX_COORD)
+        && p.scale.iter().all(|&s| fin(s) && (1e-3..=1e3).contains(&s))
+        && d.iter().all(|&v| fin(v) && v.abs() <= 1e4)
+        && d[2] - d[0] >= 1e-6
+        && d[3] - d[1] >= 1e-6
+}
+
+/// Whether an evaluation keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/query_brep.rs`, `validate_evaluate`): no surface, or a
+/// B-spline, curve-bounded or plane surface as [`bspline_surface`] and [`plane`] take them.
+fn keeps_contract(i: &EvalIn) -> bool {
+    i.surf.as_ref().is_none_or(|s| match s {
+        SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => bspline_surface(b),
+        SurfIn::Plane(p) => plane(p),
+    })
+}
+
 // ---- runner -------------------------------------------------------------------------
 
 impl UnitDiff for Runner {
@@ -843,7 +938,7 @@ impl UnitDiff for Runner {
             };
         }
         for _ in 0..64 {
-            if let Ok(i) = gen_eval(rng) {
+            if let Some(i) = gen_eval(rng).ok().filter(keeps_contract) {
                 return serde_json::to_value(Inputs::Evaluate(i)).ok();
             }
         }
@@ -872,4 +967,3 @@ impl UnitDiff for Runner {
         }
     }
 }
-
