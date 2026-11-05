@@ -146,7 +146,9 @@ fn both_pieces_round_the_half_circle() {
     let mut b = part(&mut k);
     let pieces = half_circle(&k, &b);
     round(&mut k, &mut b, &pieces).unwrap();
-    let lines = check_brep(&mut k, &mut b, CheckLevel::Level2).unwrap().lines();
+    let lines = check_brep(&mut k, &mut b, CheckLevel::Level2)
+        .unwrap()
+        .lines();
     assert!(lines.is_empty(), "{lines:?}");
     let got = volume(&k, &mut b);
     assert!((got - 19_091.962_003_483_477).abs() <= 1e-9 * got, "{got}");
