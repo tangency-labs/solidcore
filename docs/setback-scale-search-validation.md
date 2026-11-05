@@ -262,11 +262,14 @@ expectations: that WIP also changed the degree order.
 Tests compare generated rows bitwise with the dense construction, compare lazy
 and exact violation scans including normalization underflow, and exercise solver
 ties, skipped slots, rounding, infeasibility and multiple 2,000-row batches.
-Validation of this implementation is in progress; the historical native results
-above do not establish parity for this change.
+This implementation was verified separately from the historical results above,
+at code head `07cb09ff1` after merging main `f06f897ea`.
 
-The first Linux production run passed 21 focused setback unit tests (one long
-monotonicity test ignored). The unchanged dense baseline passed seven setback
+The final Linux run passed all 24 focused setback unit tests, including the
+17-corner monotonicity grid. The integration suites passed 7 setback tests,
+7 executive tests and 11 curved-setback tests. Their five ignored tests comprise
+three diagnostic dump helpers and two expensive curved-growth cases; the executive
+dump was run separately below. The unchanged dense baseline passed seven setback
 integration tests and the thirteen-case executive dump. The six streamed search
 cases retained their existing scales, attempt counts and solve counts:
 
@@ -288,8 +291,20 @@ A clean allowed-source native reference at `5e8c9c1`, baseline overlay `20b1c01`
 and streamed overlay `3843ddb` passed the row-order gate, all six native count
 gates, and their thirteen-case executive comparison (seven bodies, 167 vertices,
 `1e-9` relative with no floor). The dense Rust baseline also passed against that
-native baseline. These are reference checks; final streamed Rust comparisons and
-the expanded Rust test set remain pending at this checkpoint.
+native baseline. The final refreshed Rust executive passed all thirteen cases:
+its recorded geometry and outcomes are exactly identical to the dense Rust
+baseline, and match the native baseline at `1e-9` relative with no floor (seven
+bodies, 167 vertices, empty Level2 checks). Before the main refresh, the streamed
+Rust executive also passed against both native overlays at the same tolerance.
+
+Workspace formatting, workspace/all-target clippy with `-D warnings`, and
+`wasm32-unknown-unknown` checking pass after the refresh. The earlier focused
+Windows run passed 21 tests. Full-workspace kernel tests, the full diagnostic
+`--green` sweep and the two ignored curved-growth cases were not run. No unit is
+promoted and no CI-green result is claimed. Raw logs and native source manifests
+are retained under `/home/chris/bigboy/solidcore-worktrees/2344-native`; the final
+Rust comparisons are `rust-refreshed-exact-comparison.log` and
+`rust-refreshed-native-comparison.log`.
 
 ### CI permission boundary
 
