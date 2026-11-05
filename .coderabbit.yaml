@@ -72,8 +72,10 @@ reviews:
       instructions: |
         Offset, shell and thicken: docs/offset-and-shell.md. A face's offset is the offset of its
         definition S, never of its net B: exact for the analytic kinds, certified otherwise. Where
-        the distance reaches a radius of curvature the offset collapses or folds; that is refused
-        naming the largest wall that builds, never built and repaired. The offset body's tolerance
+        the distance reaches the least radius of curvature on the displaced side (towards the
+        centre of curvature) the offset collapses or folds; that is refused naming the largest
+        wall that builds, never built and repaired. A wall on the other side never folds from
+        curvature alone. The offset body's tolerance
         is the input body's. The five-stage construction (face offsets, mitres with the extension
         reach, arrangement, winding-number cavity rule, extraction) is the design; flag work that
         extends the old executive instead of it.
