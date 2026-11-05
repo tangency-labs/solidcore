@@ -334,56 +334,11 @@ pub(crate) fn srf(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
     }
 }
 
-pub(crate) fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 pub(crate) fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
 // ---- records ------------------------------------------------------------------------
-
-pub(crate) fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend(
-        [
-            n,
-            m,
-            s.p,
-            s.q,
-            s.u.len().saturating_sub(1),
-            s.v.len().saturating_sub(1),
-        ]
-        .map(|x| x as f64),
-    );
-    for row in &s.net {
-        for p in row {
-            o.extend_from_slice(p);
-        }
-    }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-pub(crate) fn push_bss(o: &mut Vec<f64>, b: &BssIn) -> Result<(), HarnessError> {
-    o.push(flag(b.oob));
-    o.push(f64::from(b.form));
-    push_srf(o, &srf(&b.srf)?)
-}
 
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat

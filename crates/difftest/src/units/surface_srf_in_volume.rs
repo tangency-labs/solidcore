@@ -1,32 +1,31 @@
 //! Runner for unit `surface.srf_in_volume`: `SmSrfInVolume`, a surface mapped through
 //! a volume.
 //!
-//! C++: `solidcore_ffi::units::surface_srf_in_volume` (upstream
-//! `source/SMLib/src/SmSrfInVolume.cpp` on objects built from a B-spline or plane base
-//! surface and a chain of transform, twist, unbend or plain volumes).
+//! Ported from upstream `source/SMLib/src/SmSrfInVolume.cpp` (on objects built from a
+//! B-spline or plane base surface and a chain of transform, twist, unbend or plain
+//! volumes); checked against its golden.
 //! Rust: `solidcore::surface::srf_in_volume`, through the [`Surface`] dispatch where the
 //! method is virtual upstream.
 //!
 //! A case is an object (`siv`: `surface`, `volume` chain, `in_param`, `copy`, `owner`)
-//! and an `op` with its parameters. Both sides produce the flat record documented in
-//! the ffi module; the runner reports its first entry as the `status` int (`0` =
-//! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust
-//! error upstream cannot produce) and the rest as `out`.
+//! and an `op` with its parameters. The output is a flat record: the runner reports its
+//! first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a
+//! Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest as
+//! `out`.
 //!
 //! `Exact` calls the existing kernel-aware implementation and compares the returned
 //! surface's presence, concrete type and full NURB data, not merely its status.
-//! Its existing FFI guard permits transform-only chains; bend, unbend and twist
-//! exact-conversion implementations are not covered here. Volumes are otherwise
-//! chains of transform, plain, default and component
+//! Volumes are chains of transform, plain, default and component
 //! twist / unbend / bend maps (the component constructors take a real axis, mid
 //! direction, period or neutral distance and tolerance). B-spline volumes are not
 //! built: they evaluate to `SM_ERR` on both sides (no `USE_VOLUMES` in the reference
 //! build). `STEPInversion` and `ReadFromDB` run through `surface.volume_p2`; a
 //! `ReadFromDB` case reads the text upstream's `WriteToDB` wrote for a generated object
-//! (no plain volume). Hand-built inline cases cover `Evaluate` of orders (0, 0) with
+//! (no plain volume), frozen in `fixtures/surface.srf_in_volume/written_records.json`
+//! (solidcore has no writer, #2857). Hand-built inline cases cover `Evaluate` of orders (0, 0) with
 //! `bOnlyUpperHalf == FALSE`, `Transform` on chains whose last map is not a
 //! transform, and 60 `CreateMirrorSurface` cases (fixed seed). Every run has at least
-//! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are
+//! [`MIN_GENERATED`] generated cases; generated draws outside the input contract are
 //! redrawn.
 //!
 //! `CopyCtor` runs the native copy constructor `SmSrfInVolume(const SmSrfInVolume&)`
@@ -74,6 +73,7 @@ use solidcore::kernel::Kernel;
 use solidcore::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use solidcore::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use solidcore::nurbs::knots::Side;
+use solidcore::nurbs::math::NOW;
 use solidcore::surface::bend_volume::BendVolume;
 use solidcore::surface::cone::Cone;
 use solidcore::surface::plane::Plane;
@@ -84,12 +84,10 @@ use solidcore::surface::unbend_volume::UnbendVolume;
 use solidcore::surface::volume::{Volume, VolumeKind};
 use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_srf_in_volume::{self as ffi, Op};
 
 use crate::case::CaseContext;
-use crate::runner::default_cases;
 use crate::units::surface_surface_cache_p1::{
-    bss_of, default_form, gen_bss, gen_srf, gen_sub_dom, push_bss, srf, BssIn, InlineSrf, SrfIn,
+    bss_of, default_form, gen_bss, gen_srf, gen_sub_dom, srf, BssIn, InlineSrf, SrfIn,
 };
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
 
@@ -267,10 +265,12 @@ enum OpIn {
         level: u8,
     },
     /// `SmSrfInVolume::ReadFromDB` of the text upstream's `WriteToDB` wrote for `siv`
-    /// (the object is only the text's source: neither side builds it).
+    /// (the object is only the text's source: it is not built). `bytes` absent only in a
+    /// generated draw, never in a case.
     ReadDb {
         version: u64,
-        bytes: Vec<u8>,
+        #[serde(default)]
+        bytes: Option<Vec<u8>>,
     },
 }
 
@@ -281,210 +281,8 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ input --------------------------------------------------------------------
-
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
-}
-
-fn surf_block(v: &mut Vec<f64>, s: &SurfIn) -> Result<(), HarnessError> {
-    match s {
-        SurfIn::Bspline { bss, raw_knots } => {
-            v.push(if *raw_knots { 3.0 } else { 0.0 });
-            push_bss(v, bss)?;
-        }
-        SurfIn::Plane { o, n } => {
-            v.push(1.0);
-            v.extend_from_slice(o);
-            v.extend_from_slice(n);
-        }
-        SurfIn::Cylinder {
-            o,
-            x,
-            y,
-            r,
-            start,
-            end,
-            h,
-            swap,
-            inside,
-        } => {
-            v.push(2.0);
-            v.extend_from_slice(o);
-            v.extend_from_slice(x);
-            v.extend_from_slice(y);
-            v.extend([*r, *start, *end, *h, b(*swap), b(*inside)]);
-        }
-    }
-    Ok(())
-}
-
-fn vol_block(v: &mut Vec<f64>, vol: &Vol) {
-    v.push(vol.len() as f64);
-    for m in vol {
-        v.push(f64::from(m.kind));
-        if m.kind == 1 {
-            for r in m.t.unwrap_or_default() {
-                v.extend_from_slice(&r);
-            }
-        }
-        if m.kind >= 5 {
-            if let Some(c) = &m.comp {
-                v.extend_from_slice(&c.p);
-                v.extend_from_slice(&c.axis);
-                v.extend_from_slice(&c.mid);
-                v.extend([c.a, c.b]);
-            }
-        }
-        match &m.orient {
-            None => v.push(0.0),
-            Some(o) => {
-                v.push(1.0);
-                for r in o {
-                    v.extend_from_slice(r);
-                }
-            }
-        }
-    }
-}
-
-fn siv_block(v: &mut Vec<f64>, c: &SivIn) -> Result<(), HarnessError> {
-    surf_block(v, &c.surface)?;
-    vol_block(v, &c.volume);
-    v.extend([b(c.in_param), c.copy as f64, c.owner as f64]);
-    Ok(())
-}
-
-fn op_of(op: &OpIn) -> Op {
-    match op {
-        OpIn::Info { .. } => Op::Info,
-        OpIn::Eval { .. } => Op::Eval,
-        OpIn::EvalSimple { .. } => Op::EvalSimple,
-        OpIn::EvalPoint { .. } => Op::EvalPoint,
-        OpIn::Normal { .. } => Op::Normal,
-        OpIn::Knots { .. } => Op::Knots,
-        OpIn::StepInv { .. } => Op::StepInv,
-        OpIn::Reverse { .. } => Op::Reverse,
-        OpIn::SwapUv => Op::SwapUv,
-        OpIn::Trim { .. } => Op::Trim,
-        OpIn::Transform { .. } => Op::Transform,
-        OpIn::Split { .. } => Op::Split,
-        OpIn::Copy => Op::Copy,
-        OpIn::CopyCtor => Op::CopyCtor,
-        OpIn::Equal { .. } => Op::Equal,
-        OpIn::SetOwner { .. } => Op::SetOwner,
-        OpIn::MakeOwner => Op::MakeOwner,
-        OpIn::SetBase { .. } => Op::SetBase,
-        OpIn::SetVolume { .. } => Op::SetVolume,
-        OpIn::Mirror { .. } => Op::Mirror,
-        OpIn::Exact => Op::Exact,
-        OpIn::AssertValid { .. } => Op::AssertValid,
-        OpIn::ReadDb { .. } => Op::ReadDb,
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let op = op_of(&i.op);
-    let mut v = Vec::new();
-    if let OpIn::ReadDb { version, bytes } = &i.op {
-        v.extend([*version as f64, bytes.len() as f64]);
-        v.extend(bytes.iter().map(|&x| f64::from(x)));
-        return Ok((op, v));
-    }
-    siv_block(&mut v, &i.siv)?;
-    match &i.op {
-        OpIn::Info { uv, types } => {
-            v.extend_from_slice(uv);
-            v.push(types.len() as f64);
-            v.extend(types.iter().map(|&t| t as f64));
-        }
-        OpIn::Eval {
-            uv,
-            hu,
-            hv,
-            ul,
-            vl,
-            oh,
-            nz,
-        } => {
-            v.extend_from_slice(uv);
-            v.extend([*hu as f64, *hv as f64, b(*ul), b(*vl), b(*oh), b(*nz)]);
-        }
-        OpIn::EvalSimple {
-            uv,
-            hu,
-            hv,
-            ul,
-            vl,
-            oh,
-        } => {
-            v.extend_from_slice(uv);
-            v.extend([*hu as f64, *hv as f64, b(*ul), b(*vl), b(*oh)]);
-        }
-        OpIn::EvalPoint { uv } => v.extend_from_slice(uv),
-        OpIn::Normal { uv, ul, vl } => {
-            v.extend_from_slice(uv);
-            v.extend([b(*ul), b(*vl)]);
-        }
-        OpIn::Knots { v_dir, ivl } => {
-            let [x, y] = ivl.unwrap_or([0.0, 0.0]);
-            v.extend([b(*v_dir), b(ivl.is_some()), x, y]);
-        }
-        OpIn::StepInv { dom, p, tol } => {
-            v.extend_from_slice(dom);
-            v.extend_from_slice(p);
-            v.push(*tol);
-        }
-        OpIn::Reverse { v_dir } => v.push(b(*v_dir)),
-        OpIn::AssertValid { level } => v.push(f64::from(*level)),
-        OpIn::SwapUv
-        | OpIn::Copy
-        | OpIn::CopyCtor
-        | OpIn::MakeOwner
-        | OpIn::Exact
-        | OpIn::ReadDb { .. } => {}
-        OpIn::Trim { dom } => v.extend_from_slice(dom),
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => {
-            v.extend_from_slice(origin);
-            v.extend_from_slice(x);
-            v.extend_from_slice(y);
-            v.push(b(scale.is_some()));
-            v.extend_from_slice(&scale.unwrap_or([1.0, 1.0, 1.0]));
-        }
-        OpIn::Split { v_dir, t } => v.extend([b(*v_dir), *t]),
-        OpIn::Equal { other } => match other {
-            None => v.push(1.0),
-            Some(o) => {
-                v.push(0.0);
-                siv_block(&mut v, o)?;
-            }
-        },
-        OpIn::SetOwner { flag } => v.push(*flag as f64),
-        OpIn::SetBase {
-            surface,
-            in_param,
-            copy,
-            owns,
-        } => {
-            surf_block(&mut v, surface)?;
-            v.extend([b(*in_param), b(*copy), b(*owns)]);
-        }
-        OpIn::SetVolume { volume, copy, owns } => {
-            vol_block(&mut v, volume);
-            v.extend([b(*copy), b(*owns)]);
-        }
-        OpIn::Mirror { origin, x, y } => {
-            v.extend_from_slice(origin);
-            v.extend_from_slice(x);
-            v.extend_from_slice(y);
-        }
-    }
-    Ok((op, v))
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -495,12 +293,322 @@ fn to_output(flat: &[f64]) -> Output {
         .values("out", rest)
 }
 
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
+// ---- generated input contract -----------------------------------------------------
+//
+// The generator keeps a draw only inside the domain upstream's entry points are defined
+// on, without undefined behaviour: finite values, well-formed clamped B-splines, planes
+// with a non-zero normal, derivative orders up to 3 (upstream's fixed arrays), a plain
+// `SmVolume` head map only where nothing copies the volume (its `Copy` fails and the copy
+// would share it; for `Copy` and `CopyCtor` the result must not own the shared volume),
+// domains and split parameters inside the base B-spline's domain, placements with
+// independent axes, and a cylinder base (independent axes, positive radius and height,
+// `-360 <= start < end <= start + 360`) only for `Info`, the evaluation ops and `Exact`.
+// Generated cases exercise the working path; hostile inputs are the fixtures' job.
+
+/// Most maps in a volume chain.
+const MAX_MAPS: usize = 3;
+/// Largest control point index.
+const MAX_INDEX: usize = 16;
+/// Largest degree.
+const MAX_DEGREE: usize = 5;
+/// Largest coordinate magnitude.
+const MAX_COORD: f64 = 1.0e6;
+/// Largest derivative order.
+const MAX_DERIV: usize = 3;
+/// Largest database version.
+const MAX_VERSION: u64 = 1 << 20;
+
+fn finite(v: f64) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+fn finite_all(v: &[f64]) -> bool {
+    v.iter().all(|&c| finite(c))
+}
+
+fn nonzero3(v: [f64; 3]) -> bool {
+    finite_all(&v) && v.iter().map(|c| c * c).sum::<f64>() >= 1e-12
+}
+
+/// A placement `O X Y` with independent axes.
+fn placement_ok(o: [f64; 3], x: [f64; 3], y: [f64; 3]) -> bool {
+    if !finite_all(&o) || !nonzero3(x) || !nonzero3(y) {
+        return false;
     }
+    let c2: f64 = cross3(x, y).iter().map(|c| c * c).sum();
+    let l2: f64 = x.iter().map(|c| c * c).sum::<f64>() * y.iter().map(|c| c * c).sum::<f64>();
+    c2 >= 1e-6 * l2
+}
+
+/// A clamped knot vector of degree `p` with a parameter range of at least `1e-6`
+/// relative; its ends.
+fn knots_ok(knots: &[f64], p: usize) -> Option<(f64, f64)> {
+    if knots.windows(2).any(|w| w.first() > w.last()) {
+        return None;
+    }
+    let m = knots.len().checked_sub(1)?;
+    let (&a, &b) = (knots.first()?, knots.last()?);
+    if m < 2 * p + 1 {
+        return None;
+    }
+    let (head, tail, inner) = (knots.get(..=p)?, knots.get(m - p..)?, knots.get(p + 1..m - p)?);
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return None;
+    }
+    if b - a < 1e-6 * a.abs().max(b.abs()).max(1.0) {
+        return None;
+    }
+    if inner.iter().any(|&k| k == a || k == b) {
+        return None;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return None;
+        }
+    }
+    Some((a, b))
+}
+
+/// A base surface: its parameter domain (`None` for a plane or a cylinder) and whether
+/// it is a cylinder (only where `cylinder_ok`); `None` outside the contract.
+fn surface_ok(s: &SurfIn, cylinder_ok: bool) -> Option<(Option<[f64; 4]>, bool)> {
+    match s {
+        SurfIn::Plane { o, n } => (finite_all(o) && nonzero3(*n)).then_some((None, false)),
+        SurfIn::Cylinder {
+            o,
+            x,
+            y,
+            r,
+            start,
+            end,
+            h,
+            ..
+        } => {
+            let (a0, a1) = (*start, *end);
+            (cylinder_ok
+                && placement_ok(*o, *x, *y)
+                && finite_all(&[*r, a0, a1, *h])
+                && *r >= 1e-6
+                && *h >= 1e-6
+                && a0 >= -360.0
+                && a1 <= a0 + 360.0
+                && a1 > a0
+                && a1 <= 360.0)
+                .then_some((None, true))
+        }
+        SurfIn::Bspline { bss, .. } => {
+            if bss.form > 11 {
+                return None;
+            }
+            let s = srf(&bss.srf).ok()?;
+            let n = s.net.len().checked_sub(1)?;
+            let cols = s.net.first().map_or(0, Vec::len);
+            let m = cols.checked_sub(1)?;
+            if s.net.iter().any(|r| r.len() != cols) {
+                return None;
+            }
+            let (p, q) = (s.p, s.q);
+            let (r, ss) = (s.u.len().saturating_sub(1), s.v.len().saturating_sub(1));
+            let max_knot = MAX_INDEX + MAX_DEGREE + 1;
+            if n > MAX_INDEX || m > MAX_INDEX || p > MAX_DEGREE || q > MAX_DEGREE {
+                return None;
+            }
+            if r > max_knot || ss > max_knot {
+                return None;
+            }
+            if p == 0 || p > n || q == 0 || q > m || r != n + p + 1 || ss != m + q + 1 {
+                return None;
+            }
+            let mut rational = None;
+            for &[x, y, z, w] in s.net.iter().flatten() {
+                let is_r = w != NOW;
+                if *rational.get_or_insert(is_r) != is_r {
+                    return None;
+                }
+                if (is_r && !(1e-3..=1e3).contains(&w)) || !finite_all(&[x, y, z]) {
+                    return None;
+                }
+            }
+            if !finite_all(&s.u) || !finite_all(&s.v) {
+                return None;
+            }
+            let (u0, u1) = knots_ok(&s.u, p)?;
+            let (v0, v1) = knots_ok(&s.v, q)?;
+            Some((Some([u0, v0, u1, v1]), false))
+        }
+    }
+}
+
+/// A volume chain: (head is a plain volume, all maps transforms, some map is a plain
+/// volume); `None` outside the contract.
+fn volume_ok(vol: &Vol) -> Option<(bool, bool, bool)> {
+    if vol.is_empty() || vol.len() > MAX_MAPS {
+        return None;
+    }
+    let (mut head_base, mut all_transforms, mut any_base) = (false, true, false);
+    for (i, map) in vol.iter().enumerate() {
+        if map.kind > 7 {
+            return None;
+        }
+        if map.kind == 1 && !map.t.unwrap_or_default().iter().all(|r| finite_all(r)) {
+            return None;
+        }
+        let component = map.kind >= 5;
+        if component {
+            // origin / center, axis and mid direction (non-zero), then two numbers
+            let c = map.comp.as_ref()?;
+            let numbers = finite_all(&c.p) && finite_all(&[c.a, c.b]);
+            if !numbers || !nonzero3(c.axis) || !nonzero3(c.mid) {
+                return None;
+            }
+        }
+        if i == 0 {
+            head_base = map.kind == 0;
+        }
+        all_transforms &= map.kind == 1;
+        any_base |= map.kind == 0;
+        if let Some(o) = &map.orient {
+            if component || !o.iter().all(|r| finite_all(r)) {
+                return None;
+            }
+        }
+    }
+    Some((head_base, all_transforms, any_base))
+}
+
+/// What the contract knows about an object.
+#[derive(Debug, Clone, Copy)]
+#[allow(clippy::struct_excessive_bools)]
+struct Block {
+    /// The base surface's parameter domain `[u0, v0, u1, v1]` (`None` for a plane).
+    domain: Option<[f64; 4]>,
+    /// The head map is a plain `SmVolume`.
+    head_base: bool,
+    /// Every map is an `SmTransform`.
+    all_transforms: bool,
+    /// Some map is a plain `SmVolume`.
+    any_base: bool,
+    /// The constructor copies the volume.
+    copies_volume: bool,
+    /// The copy's result owns the volume: the effective owner flag
+    /// (`owner_flag | copy_flag`) is 2 or 3.
+    owns_volume: bool,
+    /// The base surface is a cylinder.
+    cylinder: bool,
+}
+
+/// An object inside the contract (the constructor copies no plain volume).
+fn object_ok(c: &SivIn) -> Option<Block> {
+    let (domain, cylinder) = surface_ok(&c.surface, true)?;
+    let (head_base, all_transforms, any_base) = volume_ok(&c.volume)?;
+    if c.copy > 3 || c.owner > 3 {
+        return None;
+    }
+    let copies_volume = c.copy == 2 || c.copy == 3;
+    if head_base && copies_volume {
+        return None;
+    }
+    Some(Block {
+        domain,
+        head_base,
+        all_transforms,
+        any_base,
+        copies_volume,
+        owns_volume: matches!(c.owner | c.copy, 2 | 3),
+        cylinder,
+    })
+}
+
+/// A parameter inside the base surface's domain by a margin (anywhere bounded for a
+/// plane).
+fn inside(t: f64, c: &Block, v_dir: bool) -> bool {
+    finite(t)
+        && c.domain.is_none_or(|[u0, v0, u1, v1]| {
+            let (a, b) = if v_dir { (v0, v1) } else { (u0, u1) };
+            let m = 1e-3 * (b - a);
+            t >= a + m && t <= b - m
+        })
+}
+
+/// Whether the object `siv` can be written to a database record that reads back (no
+/// plain volume: reading one fills a null volume).
+fn writable(siv: &SivIn, version: u64) -> bool {
+    object_ok(siv).is_some_and(|c| !c.any_base && !c.cylinder) && version <= MAX_VERSION
+}
+
+/// Whether a generated draw is inside the contract (a `read_db` draw was judged when
+/// drawn, by [`writable`]).
+fn admits(i: &Inputs) -> bool {
+    if matches!(i.op, OpIn::ReadDb { .. }) {
+        return true;
+    }
+    let Some(c) = object_ok(&i.siv) else {
+        return false;
+    };
+    if c.cylinder
+        && !matches!(
+            i.op,
+            OpIn::Info { .. }
+                | OpIn::Eval { .. }
+                | OpIn::EvalSimple { .. }
+                | OpIn::EvalPoint { .. }
+                | OpIn::Normal { .. }
+                | OpIn::Exact
+        )
+    {
+        return false;
+    }
+    let ok = match &i.op {
+        OpIn::Info { uv, types } => {
+            finite_all(uv) && types.len() <= 64 && types.iter().all(|&t| finite(t as f64))
+        }
+        OpIn::Eval { uv, hu, hv, .. } | OpIn::EvalSimple { uv, hu, hv, .. } => {
+            finite_all(uv) && *hu <= MAX_DERIV && *hv <= MAX_DERIV
+        }
+        OpIn::EvalPoint { uv } | OpIn::Normal { uv, .. } => finite_all(uv),
+        OpIn::Knots { ivl, .. } => finite_all(&ivl.unwrap_or([0.0, 0.0])),
+        OpIn::StepInv { dom, p, tol } => {
+            finite_all(dom) && finite_all(p) && finite(*tol) && *tol > 0.0
+        }
+        OpIn::Reverse { .. }
+        | OpIn::SwapUv
+        | OpIn::MakeOwner
+        | OpIn::Exact
+        | OpIn::ReadDb { .. } => true,
+        OpIn::AssertValid { level } => *level <= 4 && *level != 3,
+        OpIn::Trim { dom } => {
+            let [u0, v0, u1, v1] = *dom;
+            finite_all(dom)
+                && match c.domain {
+                    Some([a0, b0, a1, b1]) => {
+                        let (mu, mv) = (1e-3 * (a1 - a0), 1e-3 * (b1 - b0));
+                        !(u0 < a0 || u1 > a1 || v0 < b0 || v1 > b1 || u1 - u0 < mu || v1 - v0 < mv)
+                    }
+                    None => u1 > u0 && v1 > v0,
+                }
+        }
+        OpIn::Transform {
+            origin,
+            x,
+            y,
+            scale,
+        } => placement_ok(*origin, *x, *y) && finite_all(&scale.unwrap_or([1.0, 1.0, 1.0])),
+        OpIn::Split { v_dir, t } => !c.head_base && inside(*t, &c, *v_dir),
+        // a failed plain-volume copy leaves the volume shared: safe only when the result
+        // does not own it
+        OpIn::Copy | OpIn::CopyCtor => !(c.head_base && c.owns_volume),
+        OpIn::Equal { other } => other.as_ref().is_none_or(|o| object_ok(o).is_some()),
+        OpIn::SetOwner { flag } => *flag <= 3,
+        OpIn::SetBase { surface, .. } => surface_ok(surface, false).is_some(),
+        OpIn::SetVolume { volume, .. } => volume_ok(volume).is_some(),
+        OpIn::Mirror { origin, x, y } => {
+            c.all_transforms && !c.copies_volume && placement_ok(*origin, *x, *y)
+        }
+    };
+    // making the object the owner copies a plain volume
+    ok && !(matches!(i.op, OpIn::MakeOwner) && c.head_base)
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -847,6 +955,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut o: Vec<f64> = Vec::new();
     let k = Kernel::default();
     if let OpIn::ReadDb { version, bytes } = &i.op {
+        let bytes = bytes.as_ref().ok_or_else(|| harness("read_db: no bytes"))?;
         let mut db = DatabaseReader::with_stream(FileType::Ascii, InputStream::new(bytes.clone()));
         match SrfInVolume::read_from_db(&k, &mut db, *version) {
             Ok(c) => {
@@ -1310,41 +1419,41 @@ fn gen_placement(rng: &mut Rng) -> ([f64; 3], [f64; 3], [f64; 3]) {
     }
 }
 
-/// A database record upstream's `WriteToDB` wrote for a random object (no plain volume:
-/// reading one fills a null volume).
+/// A `read_db` draw of a random object (no plain volume: reading one fills a null volume).
+/// Its case reads the record upstream's `WriteToDB` wrote of the object, which solidcore
+/// has no writer for (#2857): those cases are frozen in
+/// `fixtures/surface.srf_in_volume/written_records.json` under their generated names and
+/// the generated index is skipped.
 fn gen_read_db(rng: &mut Rng) -> Option<Inputs> {
     let (siv, _) = gen_siv(rng);
     let version = *rng.choose(&[30u64, 33, 40])?;
-    let mut v = Vec::new();
-    siv_block(&mut v, &siv).ok()?;
-    v.push(version as f64);
-    let out = ffi::eval(Op::WriteDb, &v).ok()?;
-    let (&status, bytes) = out.split_first()?;
-    if status != 0.0 {
+    if !writable(&siv, version) {
         return None;
     }
-    let bytes: Vec<u8> = bytes.iter().map(|&x| x as u8).collect();
     Some(Inputs {
         siv,
-        op: OpIn::ReadDb { version, bytes },
+        op: OpIn::ReadDb {
+            version,
+            bytes: None,
+        },
     })
 }
 
+/// A generated `read_db` draw (no record yet).
+fn is_read_draw(i: &Inputs) -> bool {
+    matches!(i.op, OpIn::ReadDb { bytes: None, .. })
+}
+
 /// An `AssertValid` case: mostly `SM_LEVEL_GIVEN`, else a level that also runs the base
-/// surface's inherited checks (the shim refuses the bases where those read unwritten
-/// outputs; such draws are dropped).
+/// surface's inherited checks.
 fn gen_assert_valid_case(rng: &mut Rng) -> Option<Inputs> {
     let (siv, _) = gen_siv(rng);
     let level = if rng.chance(0.75) { 4 } else { rng.below(3) as u8 };
-    let i = Inputs {
+    Some(Inputs {
         siv,
         op: OpIn::AssertValid { level },
-    };
-    let (op, input) = cpp_input(&i).ok()?;
-    match ffi::eval(op, &input) {
-        Ok(_) => Some(i),
-        Err(_) => None,
-    }
+    })
+    .filter(admits)
 }
 
 fn gen_case(rng: &mut Rng) -> Inputs {
@@ -1481,8 +1590,8 @@ fn gen_case(rng: &mut Rng) -> Inputs {
 /// point (orders 0, 0) with `bOnlyUpperHalf == FALSE`, which upstream completes with
 /// the second-derivative branch, and `Transform` on a chain whose last map is not an
 /// `SmTransform` (upstream appends a copied transform).
-/// Generated `CreateMirrorSurface` cases the ffi wrapper accepts (the generator draws
-/// the op rarely and the wrapper takes transform chains only), from a fixed seed.
+/// Generated `CreateMirrorSurface` cases inside the input contract (the generator draws
+/// the op rarely and the contract takes transform chains only), from a fixed seed.
 fn mirror_cases() -> Result<Vec<Case>, HarnessError> {
     const WANT: usize = 60;
     let mut rng = Rng::new(0x5eed_4d17);
@@ -1494,10 +1603,7 @@ fn mirror_cases() -> Result<Vec<Case>, HarnessError> {
         let mut i = gen_case(&mut rng);
         let (origin, x, y) = gen_placement(&mut rng);
         i.op = OpIn::Mirror { origin, x, y };
-        let Ok((op, input)) = cpp_input(&i) else {
-            continue;
-        };
-        if ffi::validate(op, &input).is_err() {
+        if !admits(&i) {
             continue;
         }
         cases.push(Case {
@@ -1776,8 +1882,8 @@ fn gen_exact_volume_case(rng: &mut Rng) -> Inputs {
     }
 }
 
-/// Generated `MakeExactBSplineIfPossible` cases on bend, unbend and twist volumes the
-/// ffi wrapper accepts, from a fixed seed.
+/// Generated `MakeExactBSplineIfPossible` cases on bend, unbend and twist volumes inside
+/// the input contract, from a fixed seed.
 fn exact_volume_cases() -> Result<Vec<Case>, HarnessError> {
     const WANT: usize = 400;
     let mut rng = Rng::new(0x5eed_be4d);
@@ -1854,8 +1960,6 @@ fn exact_volume_cases() -> Result<Vec<Case>, HarnessError> {
                 },
                 op: OpIn::Exact,
             };
-            let (op, input) = cpp_input(&i)?;
-            ffi::validate(op, &input).map_err(|e| harness(format!("{e:?}")))?;
             cases.push(Case {
                 unit: "surface.srf_in_volume".into(),
                 name: format!("exact_volume_hand_{n}_{}", u8::from(in_param)),
@@ -1870,10 +1974,7 @@ fn exact_volume_cases() -> Result<Vec<Case>, HarnessError> {
             break;
         }
         let i = gen_exact_volume_case(&mut rng);
-        let Ok((op, input)) = cpp_input(&i) else {
-            continue;
-        };
-        if ffi::validate(op, &input).is_err() {
+        if !admits(&i) {
             continue;
         }
         cases.push(Case {
@@ -1973,8 +2074,6 @@ fn inline_cases() -> Result<Vec<Case>, HarnessError> {
                     siv: siv.clone(),
                     op,
                 };
-                let (o, input) = cpp_input(&inputs)?;
-                ffi::validate(o, &input).map_err(|e| harness(format!("inline case: {e}")))?;
                 out.push(Case {
                     unit: "surface.srf_in_volume".to_string(),
                     name: format!(
@@ -2056,8 +2155,6 @@ fn cylinder_cases() -> Result<Vec<Case>, HarnessError> {
                 siv: siv.clone(),
                 op,
             };
-            let (o, input) = cpp_input(&inputs)?;
-            ffi::validate(o, &input).map_err(|e| harness(format!("cylinder case: {e}")))?;
             out.push(Case {
                 unit: "surface.srf_in_volume".to_string(),
                 name: format!("inline_cylinder_{name}_{op_name}"),
@@ -2070,27 +2167,26 @@ fn cylinder_cases() -> Result<Vec<Case>, HarnessError> {
     Ok(out)
 }
 
+/// A generated case's draw: the first `gen_case` inside the input contract and outside
+/// the plain-volume `Copy` domain (generated cases keep their established copyable-head
+/// domain; the plain-volume `Copy` domain has named fixtures).
+fn draw(rng: &mut Rng) -> Option<Inputs> {
+    (0..64).map(|_| gen_case(rng)).find(|i| {
+        let plain_copy =
+            matches!(i.op, OpIn::Copy) && i.siv.volume.first().is_some_and(|map| map.kind == 0);
+        !plain_copy && admits(i)
+    })
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "surface.srf_in_volume"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            // Keep generated cases in their established copyable-head domain;
-            // the newly admitted plain-volume Copy domain has named fixtures.
-            if matches!(i.op, OpIn::Copy) && i.siv.volume.first().is_some_and(|map| map.kind == 0) {
-                continue;
-            }
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        draw(rng)
+            .filter(|i| !is_read_draw(i))
+            .and_then(|i| serde_json::to_value(i).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -2098,7 +2194,17 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        let mut cases = default_cases(self, &ctx)?;
+        let mut cases = ctx.fixture_cases(self.id())?;
+        // a skipped index (a `read_db` draw) is a fixture case of the same name
+        let generated = ctx.generated_cases(self.id(), |rng| {
+            let i = draw(rng)?;
+            Some(if is_read_draw(&i) {
+                Value::Null
+            } else {
+                serde_json::to_value(i).unwrap_or(Value::Null)
+            })
+        });
+        cases.extend(generated.into_iter().filter(|c| !c.inputs.is_null()));
         cases.extend(inline_cases()?);
         cases.extend(mirror_cases()?);
         cases.extend(exact_volume_cases()?);
@@ -2113,10 +2219,6 @@ impl UnitDiff for Runner {
             cases.push(c);
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -2139,7 +2241,7 @@ fn _srf_in(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
     srf(s)
 }
 
-#[cfg(all(test, feature = "cpp"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2224,13 +2326,8 @@ mod tests {
         for fixture in cases {
             let name = fixture["name"].as_str().unwrap();
             let input: Inputs = serde_json::from_value(fixture["inputs"].clone()).unwrap();
-            let native = cpp(&input).unwrap();
             let port = rust(&input).unwrap();
-            assert_exact_result(name, &native).unwrap();
             assert_exact_result(name, &port).unwrap();
-            let diff = crate::compare::compare(&native, &port, &[]);
-            assert!(diff.pass(), "{name}: {diff:?}");
-            assert!(diff.values_compared > 0, "{name}: empty comparison");
         }
     }
 
@@ -2252,15 +2349,11 @@ mod tests {
         assert_eq!(cases.len(), 2 * want.len());
         for c in cases {
             let input: Inputs = c.parse().unwrap();
-            let native = cpp(&input).unwrap();
             let port = rust(&input).unwrap();
             let n: usize = c.name["exact_volume_hand_".len()..][..1].parse().unwrap();
             let out = &port.values["out"];
             assert_eq!(out.first(), Some(&1.0), "{}: no exact image", c.name);
             assert_eq!(out.get(1), Some(&(want[n] as f64)), "{}", c.name);
-            let diff = crate::compare::compare(&native, &port, &[]);
-            assert!(diff.pass(), "{}: {diff:?}", c.name);
-            assert!(diff.values_compared > 40, "{}: {diff:?}", c.name);
         }
     }
 
@@ -2271,7 +2364,6 @@ mod tests {
             let mut rng = Rng::new(seed);
             let input: Inputs = serde_json::from_value(Runner.generate(&mut rng).unwrap()).unwrap();
             assert!(matches!(input.op, OpIn::Exact), "gen{index:04}");
-            let native = cpp(&input).unwrap();
             let port = rust(&input).unwrap();
             assert!(
                 port.deferred.is_none(),
@@ -2279,9 +2371,10 @@ mod tests {
                 port.deferred
             );
             assert_eq!(port.ints["status"], [0], "gen{index:04}");
-            let diff = crate::compare::compare(&native, &port, &[]);
-            assert!(diff.pass(), "gen{index:04}: {diff:?}");
-            assert!(diff.values_compared > 0, "gen{index:04}: empty comparison");
+            assert!(
+                port.values.get("out").is_some_and(|o| !o.is_empty()),
+                "gen{index:04}: empty result"
+            );
         }
     }
 }
