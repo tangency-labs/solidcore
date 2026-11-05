@@ -1128,6 +1128,15 @@ pub fn gn_enclose_over(
         law,
         defs.as_deref_mut(),
     )?;
+    // the fork's box only where the feet are a box too (a face whose partials have no
+    // form, or a point): along a tube the affine enclosure is the tighter one by orders
+    let any_def = defs
+        .as_ref()
+        .is_some_and(|d| d.faces.iter().any(Option::is_some));
+    let tube = at.s.hi > at.s.lo && !at.piecewise && !any_def;
+    if tube && affine.is_some() {
+        return Ok(affine);
+    }
     let plain = gn_enclose_plain(k, faces_n, leader_n, at, r, side, n, order_s, law, defs)?;
     Ok(match (affine, plain) {
         (Some(a), Some(p)) => Some(gn_try!(meet(&a, &p), None)),

@@ -317,7 +317,7 @@ fn the_ball_s_build_is_the_fork_s() {
     let (s, bound, spans, rail) = build(&k, 2.0);
     let s = s.unwrap();
     assert!(matches!(s.kind(), SurfaceKind::ProceduralBlend(_)));
-    assert_eq!((spans, bound), (40, 5.402_135_245_729_393e-9));
+    assert_eq!((spans, bound), (40, 5.402_135_245_734_716e-9));
     assert_pt(rail.evaluate_point(0.37).unwrap(), RAIL_037, "rail (0.37)");
     let uv = Point2::new(0.37, 0.5);
     assert_pt(
