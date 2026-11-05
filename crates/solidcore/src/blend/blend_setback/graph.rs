@@ -902,10 +902,10 @@ pub(super) fn graph_gk(
         }
 
         // the sector conditions on every piece's coefficient matrices, in t: C t >= b
-        stats.solves += 1;
         if let Some(pr) = probe.as_deref_mut().filter(|p| !p.fill && p.margin) {
             let SectorConditions { c: cm, b: bv } =
                 sector_conditions(&patches, &curvatures, &kernel, &yp, &zn, free)?;
+            stats.solves += 1;
             // the least tau with C t + tau >= b (tau >= -1): min tau + eps (|t|^2 + tau^2)
             let ln = free + 1;
             let lm = bv.len();
@@ -955,6 +955,7 @@ pub(super) fn graph_gk(
             };
         }
         let rows = sector_rows(&patches, &curvatures, &kernel, &yp, &zn, free)?;
+        stats.solves += 1;
         let mut work = QpStats::default();
         let outcome = dual_qp_source(&gm, &gv, &rows, free, 1.0e-13, false, &mut work);
         stats.record_qp_work(work);

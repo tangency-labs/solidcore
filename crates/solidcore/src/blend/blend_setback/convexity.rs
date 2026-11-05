@@ -865,4 +865,62 @@ mod tests {
             .is_empty());
         assert_eq!(rows.rows_built(), rows.slot_count());
     }
+
+    #[test]
+    fn long_signed_affine_scan_matches_exact_near_inward_boundary() {
+        const FREE: usize = 154;
+        let scalar = |c| {
+            vec![Tensor {
+                p: 0,
+                q: 0,
+                c: vec![c],
+            }]
+        };
+        let y: Vec<_> = (0..FREE)
+            .map(|f| if f % 3 == 0 { -0.75 } else { 1.125 })
+            .collect();
+        let mut skipped = 0;
+        let mut built = 0;
+        for side in [-1.0, 1.0] {
+            for delta in [-1.0, -1e-8, -1e-12, 0.0, 1e-12, 1e-8, 1.0] {
+                let mut pc0 = Vec::new();
+                let mut pcf = Vec::new();
+                for k in 0..3 {
+                    let mut sum = 0.0;
+                    for (f, &yf) in y.iter().enumerate() {
+                        let sign = if (f + k) % 2 == 0 { 1.0 } else { -1.0 };
+                        let c = sign * ((f % 7 + 1) as f64 / 13.0) * (k + 1) as f64;
+                        sum += yf * c;
+                        pcf.push(scalar(c));
+                    }
+                    pc0.push(scalar(-sum + delta));
+                }
+                let mut rows = SectorRows::new(FREE);
+                rows.add_patch(
+                    &[0.0, 0.0, 0.123, PI / 2.0, PI],
+                    side,
+                    1.0,
+                    1e-12 * 13.25,
+                    pc0,
+                    pcf,
+                )
+                .unwrap();
+                let taken = vec![false; rows.slot_count()];
+                for native in [false, true] {
+                    let before = rows.rows_built();
+                    let actual = rows.violated(&y, 0.0, &taken, native).unwrap();
+                    let exact_builds = rows.rows_built() - before;
+                    built += exact_builds;
+                    skipped += rows.slot_count() - exact_builds;
+                    let expected = ExactRows(&rows).violated(&y, 0.0, &taken, native).unwrap();
+                    assert_eq!(
+                        actual, expected,
+                        "side={side} delta={delta} native={native}"
+                    );
+                }
+            }
+        }
+        assert!(built > 0, "near-boundary rows require exact arithmetic");
+        assert!(skipped > 0, "well-inside rows still use the cheap bound");
+    }
 }
