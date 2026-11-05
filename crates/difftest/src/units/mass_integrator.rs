@@ -127,6 +127,7 @@ impl UnitDiff for Runner {
                         minimum_step: hmin,
                         scale: if scale.is_empty() { None } else { Some(&scale) },
                         quadrature: false,
+                        rounding: None,
                     },
                     |t, y, dy| eval(&i, t, y, dy),
                 )
@@ -822,6 +823,7 @@ mod tests {
                         minimum_step: 0.0,
                         scale: Some(&[floor]),
                         quadrature: false,
+                        rounding: None,
                     },
                     |_, _, dy| {
                         dy[0] = 1.0;

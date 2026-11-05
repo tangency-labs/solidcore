@@ -1803,9 +1803,11 @@ impl Curve {
     /// degree 1 curve, else the Romberg integral of `|C'|`; the end point distance
     /// for an interval shorter than `SM_EFF_ZERO` or a curve that does not
     /// tessellate (kinds not derived from `SmBSplineCurve`). Not upstream: each span's
-    /// end is evaluated in its own knot span (upstream: the span above), and the
+    /// end is evaluated in its own knot span (upstream: the span above), the
     /// integral's steps are accepted on the quadrature estimate
-    /// ([`crate::mass::integrator::integrate_opt_in`]).
+    /// ([`crate::mass::integrator::integrate_opt_in`]) down to the rounding of the
+    /// computed speed ([`BSplineCurve::speed_rounding_bound`]), and a span whose control
+    /// points are one point has length 0 exactly ([`BSplineCurve::is_point_on`]).
     ///
     /// # Errors
     ///
@@ -1885,6 +1887,9 @@ impl Curve {
         let span_accuracy = desired_accuracy / span_count as f64;
 
         let bsp = cache.curve();
+        let nurb = bsp
+            .b_spline_base()
+            .ok_or_else(|| SolidError::sm_err("curve::length"))?;
         for i in 0..span_count {
             let bez_elem = cache.span(i)?;
             let (p1, p2, seg_ivl) = bez_elem.aux.ends_on(k, bsp)?;
@@ -1896,15 +1901,21 @@ impl Curve {
                 continue;
             }
 
+            // a span whose control points are one point is that point: length 0, exactly
+            if nurb.is_point_on(&seg_ivl)? {
+                continue;
+            }
+
             // Greater than degree 1 if make it to here
             // Do an integration to get the length of the
-            // first derivatives integrated over the entire curve.
-            total_length += crate::mass::integrator::integrate_with_kernel(
+            // first derivatives integrated over the entire curve, its steps accepted
+            // down to the rounding of the computed speed.
+            total_length += crate::mass::integrator::integrate_rounded_with_kernel(
                 k,
                 seg_ivl.min(),
                 seg_ivl.max(),
-                crate::mass::integrator::IntegrationAlgorithm::Romberg,
                 span_accuracy,
+                nurb.speed_rounding_bound(&seg_ivl)?,
                 |t| {
                     // The span's end (a knot) is evaluated in the span's own knot span
                     // (`bFromLeft = FALSE`, the span below), every other t as upstream

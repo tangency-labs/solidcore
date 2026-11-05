@@ -1160,6 +1160,7 @@ fn runge_kutta_ode_integrate(
             minimum_step: 0.0,
             scale: Some(y_scale),
             quadrature: true,
+            rounding: None,
         },
         |t, _, dy| {
             eval_calls += 1;

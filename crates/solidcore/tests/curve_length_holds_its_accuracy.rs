@@ -13,8 +13,9 @@
 //!   precise-property integrals).
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use solidcore::curve::curve::Curve;
+use solidcore::geom::extent1d::Extent1d;
 use solidcore::nurbs::b_spline_curve::BSplineCurve;
-use solidcore::nurbs::math::CPoint;
+use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::Kernel;
 
 const RADIUS: f64 = 5.0;
@@ -92,4 +93,104 @@ fn a_circle_of_unequal_arcs_holds_every_requested_accuracy() {
         &arcs(&[30.0, 50.0, 70.0, 40.0, 80.0, 90.0]),
         RADIUS * 2.0 * std::f64::consts::PI,
     );
+}
+
+/// The knots of [`cubic`]: two knot spans, `[0, 0.4]` and `[0.4, 1]`.
+const CUBIC_KNOTS: [f64; 9] = [0.0, 0.0, 0.0, 0.0, 0.4, 1.0, 1.0, 1.0, 1.0];
+
+/// A cubic of two knot spans through the control points `points`, weighted by `w`
+/// (stored homogeneous) or non-rational for `None`.
+fn cubic(points: &[[f64; 3]; 5], w: Option<[f64; 5]>) -> Curve {
+    let cpw: Vec<CPoint> = match w {
+        Some(w) => points
+            .iter()
+            .zip(w)
+            .map(|(p, w)| CPoint::new(p[0] * w, p[1] * w, p[2] * w, w))
+            .collect(),
+        None => points
+            .iter()
+            .map(|p| CPoint::new(p[0], p[1], p[2], NOW))
+            .collect(),
+    };
+    Curve::from(BSplineCurve::from_data(3, 4, 8, 3, &cpw, &CUBIC_KNOTS).unwrap())
+}
+
+/// Lengths at 1e-3 .. 1e-12, by default and with failures propagated.
+fn lengths(curve: &Curve) -> Vec<(f64, bool, f64)> {
+    let mut out = Vec::new();
+    for propagate in [false, true] {
+        let mut k = Kernel::default();
+        k.fixes.integrator_propagates_failure = propagate;
+        for e in 3..=12 {
+            let accuracy = 10f64.powi(-e);
+            let length = curve
+                .length(&k, &curve.natural_interval(), accuracy)
+                .unwrap_or_else(|err| panic!("at {accuracy:e}, propagate {propagate}: {err:?}"));
+            out.push((accuracy, propagate, length));
+        }
+    }
+    out
+}
+
+/// A curve whose control points are all one point has length 0, exactly, at every
+/// accuracy and whether failures propagate or not. Its computed speed is rounding noise
+/// around zero, which the steps used to refuse at 1e-9 (step control 1001: 0 by
+/// default, an error with failures propagated). Weights that are powers of two keep the
+/// rational points exactly equal.
+#[test]
+fn a_point_curve_has_length_zero() {
+    for m in [1e-3, 1.0, 1e6] {
+        let p = [0.3 * m, -0.7 * m, 0.11 * m];
+        for w in [None, Some([1.0, 0.5, 2.0, 0.25, 1.0])] {
+            for (accuracy, propagate, length) in lengths(&cubic(&[p; 5], w)) {
+                assert_eq!(
+                    length, 0.0,
+                    "|P| ~ {m:e}, weights {w:?}, at {accuracy:e} (propagate {propagate})"
+                );
+            }
+        }
+    }
+}
+
+/// A curve whose control points differ by a few ulps is a point to rounding: its length
+/// (at most its control polygon's, a few ulps) is resolved to the rounding of its
+/// computed speed, `speed_rounding_bound` over each knot span, at every accuracy.
+/// Rational weights that are not powers of two make the same points differ by rounding.
+#[test]
+fn a_near_point_curve_has_length_within_its_rounding() {
+    for m in [1e-3, 1.0, 1e6] {
+        let base: [f64; 3] = [0.3 * m, -0.7 * m, 0.11 * m];
+        let mut points = [base; 5];
+        for (i, q) in points.iter_mut().enumerate() {
+            for _ in 0..i {
+                q[0] = q[0].next_up();
+                q[2] = q[2].next_down();
+            }
+        }
+        for w in [None, Some([1.0, 0.7, 1.3, 0.9, 1.0])] {
+            let curve = cubic(&points, w);
+            let polygon: f64 = points
+                .iter()
+                .zip(points.iter().skip(1))
+                .map(|(a, b)| {
+                    ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt()
+                })
+                .sum();
+            let nurb = curve.b_spline_base().unwrap();
+            let rounding: f64 = [(0.0, 0.4), (0.4, 1.0)]
+                .iter()
+                .map(|&(a, b)| {
+                    let span = Extent1d::from_min_max(a, b);
+                    nurb.speed_rounding_bound(&span).unwrap() * (b - a)
+                })
+                .sum();
+            for (accuracy, propagate, length) in lengths(&curve) {
+                assert!(
+                    (0.0..=polygon + rounding).contains(&length),
+                    "|P| ~ {m:e}, weights {w:?}, at {accuracy:e} (propagate {propagate}): \
+                     length {length:e} beyond polygon {polygon:e} + rounding {rounding:e}"
+                );
+            }
+        }
+    }
 }

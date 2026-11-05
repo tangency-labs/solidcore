@@ -136,6 +136,7 @@ fn piece_steps(eval: &OdeIsoCurveLength<'_>, a: f64, b: f64, n: usize) -> (Vec<f
                 minimum_step: 0.0,
                 scale: Some(&scale),
                 quadrature: true,
+                rounding: None,
             },
             |t, _, dy| {
                 eval.evaluate(t, &mut scratch)?;

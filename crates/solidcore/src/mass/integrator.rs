@@ -69,6 +69,11 @@ pub struct OdeOptions<'a> {
     /// samples ([`quadrature_error`]), not only from the embedded fourth-order solution;
     /// the step is accepted on the larger.
     pub quadrature: bool,
+    /// Optional bounds, one per component, on the absolute rounding error of each
+    /// derivative sample (the evaluator's, from its data); `None` reads as zero. Each
+    /// step's error scale is floored at the rounding of its error estimates
+    /// ([`estimate_rounding`]).
+    pub rounding: Option<&'a [f64]>,
 }
 
 /// Accepted full-size and reduced steps (`nok`, `nbad`).
@@ -158,6 +163,9 @@ impl OdeIntegrator {
                 return Err(SolidError::invalid_input(OP, "scale dimension mismatch"));
             }
         }
+        if let Some(rounding) = options.rounding {
+            validate_rounding(rounding, initial.len())?;
+        }
         let mut y = vec![0.0; initial.len()];
         let mut dydx = y.clone();
         let mut scale = y.clone();
@@ -192,6 +200,7 @@ impl OdeIntegrator {
                 &mut evaluate,
                 &mut scratch,
                 options.quadrature,
+                options.rounding,
             )
             .map_err(|e| match e {
                 SolidError::Upstream {
@@ -250,6 +259,7 @@ impl OdeIntegrator {
             &mut evaluate,
             &mut scratch,
             false,
+            None,
         )?;
         Ok(OdeStep {
             values: core::mem::take(&mut scratch.temp),
@@ -261,7 +271,7 @@ impl OdeIntegrator {
 
     /// [`OdeIntegrator::step`] into `scratch`: the new values are left in
     /// `scratch.temp`, so the steps of one integration allocate nothing. `quadrature`
-    /// as [`OdeOptions::quadrature`].
+    /// and `rounding` as [`OdeOptions::quadrature`] and [`OdeOptions::rounding`].
     #[allow(clippy::too_many_arguments)] // `step`'s arguments plus the scratch arrays
     fn step_in<F>(
         y: &[f64],
@@ -273,6 +283,7 @@ impl OdeIntegrator {
         evaluate: &mut F,
         scratch: &mut CashKarpScratch,
         quadrature: bool,
+        rounding: Option<&[f64]>,
     ) -> Result<StepEnd>
     where
         F: FnMut(f64, &[f64], &mut [f64]) -> Result<()>,
@@ -296,11 +307,20 @@ impl OdeIntegrator {
         for _ in 0..MAX_RETRIES {
             cash_karp(y, dydx, x, h, evaluate, scratch)?;
             let mut errmax: f64 = 0.0;
-            for (error, s) in scratch.errors.iter().zip(scale.iter_mut()) {
+            for (i, (error, s)) in scratch.errors.iter().zip(scale.iter_mut()).enumerate() {
                 if s.abs() < EFF_ZERO {
                     *s = EFF_ZERO;
                 }
-                errmax = errmax.max((error / *s).abs());
+                let floor = rounding_floor(
+                    EMBEDDED_ERROR_WEIGHTS,
+                    dydx,
+                    h,
+                    accuracy,
+                    rounding,
+                    scratch,
+                    i,
+                )?;
+                errmax = errmax.max((error / s.max(floor)).abs());
             }
             if accuracy <= errmax * EFF_ZERO {
                 return Err(SolidError::invalid_input(OP, UNACHIEVABLE));
@@ -308,7 +328,9 @@ impl OdeIntegrator {
             // (the guard above reads the embedded estimate alone: a coarse step's larger
             // fifth-order estimate asks for a smaller step, not for a lower accuracy)
             if quadrature {
-                errmax = errmax.max(quadrature_error(dydx, h, scale, scratch)?);
+                errmax = errmax.max(quadrature_error(
+                    dydx, h, accuracy, scale, rounding, scratch,
+                )?);
             }
             errmax /= accuracy;
             if errmax <= 1.0 {
@@ -353,6 +375,13 @@ fn finite(values: &[f64]) -> Result<()> {
 fn validate_scale(scale: &[f64]) -> Result<()> {
     if scale.len() > MAX_COMPONENTS || scale.iter().any(|v| v.is_nan()) {
         return Err(SolidError::invalid_input(OP, "invalid error scale"));
+    }
+    Ok(())
+}
+
+fn validate_rounding(rounding: &[f64], n: usize) -> Result<()> {
+    if rounding.len() != n || rounding.iter().any(|v| !(v.is_finite() && *v >= 0.0)) {
+        return Err(SolidError::invalid_input(OP, "invalid rounding bounds"));
     }
     Ok(())
 }
@@ -471,17 +500,120 @@ where
                 + (125.0 / 594.0) * at(ak4, i)?
                 + (512.0 / 1771.0) * at(ak6, i)?);
     }
+    // (`ak2`'s weight is zero)
+    let [e0, _, e3, e4, e5, e6] = EMBEDDED_ERROR_WEIGHTS;
     for (i, e) in errors.iter_mut().enumerate() {
         *e = h
-            * (((37.0 / 378.0) - (2825.0 / 27648.0)) * at(dydx, i)?
-                + ((250.0 / 621.0) - (18575.0 / 48384.0)) * at(ak3, i)?
-                + ((125.0 / 594.0) - (13525.0 / 55296.0)) * at(ak4, i)?
-                + (-277.0 / 14336.0) * at(ak5, i)?
-                + ((512.0 / 1771.0) - 0.25) * at(ak6, i)?);
+            * (e0 * at(dydx, i)?
+                + e3 * at(ak3, i)?
+                + e4 * at(ak4, i)?
+                + e5 * at(ak5, i)?
+                + e6 * at(ak6, i)?);
     }
     finite(temp)?;
     finite(errors)?;
     Ok(())
+}
+
+/// The weights of the embedded error estimate (fifth- minus fourth-order Cash–Karp
+/// weights) on the samples in order: the derivative at the step's start, then `ak2` to
+/// `ak6`.
+const EMBEDDED_ERROR_WEIGHTS: [f64; 6] = [
+    (37.0 / 378.0) - (2825.0 / 27648.0),
+    0.0,
+    (250.0 / 621.0) - (18575.0 / 48384.0),
+    (125.0 / 594.0) - (13525.0 / 55296.0),
+    -277.0 / 14336.0,
+    (512.0 / 1771.0) - 0.25,
+];
+/// The weights of the quadrature estimate on the same samples: `(-1/960)` times the
+/// fifth divided difference ([`quadrature_error`]).
+const QUADRATURE_ERROR_WEIGHTS: [f64; 6] = [
+    FIFTH_ORDER_ERROR_ON_S5 * DIVIDED_DIFFERENCE_5[0],
+    FIFTH_ORDER_ERROR_ON_S5 * DIVIDED_DIFFERENCE_5[1],
+    FIFTH_ORDER_ERROR_ON_S5 * DIVIDED_DIFFERENCE_5[2],
+    FIFTH_ORDER_ERROR_ON_S5 * DIVIDED_DIFFERENCE_5[3],
+    FIFTH_ORDER_ERROR_ON_S5 * DIVIDED_DIFFERENCE_5[4],
+    FIFTH_ORDER_ERROR_ON_S5 * DIVIDED_DIFFERENCE_5[5],
+];
+
+/// `gamma_n = n u / (1 - n u)`, `u = 2^-53` the unit roundoff: the bound on the relative
+/// error of `n` successive roundings (Higham, "Accuracy and Stability of Numerical
+/// Algorithms", 2nd ed., Lemma 3.1).
+#[must_use]
+pub fn gamma(n: u32) -> f64 {
+    let nu = f64::from(n) * (f64::EPSILON / 2.0);
+    nu / (1.0 - nu)
+}
+
+/// Not upstream: the bound on the rounding error of a step's error estimate
+/// `h sum_j w_j g_j` (weights `weights`, [`EMBEDDED_ERROR_WEIGHTS`] or
+/// [`QUADRATURE_ERROR_WEIGHTS`]) for component `i`, from the bound `delta` on the
+/// absolute rounding error of each sample ([`OdeOptions::rounding`]):
+///
+/// `E = |h| sum_j |w_j| (delta + gamma_8 |g_j|)`.
+///
+/// Each computed sample is `g_j + e_j`, `|e_j| <= delta + gamma_3 |g_j|` (the caller's
+/// absolute part, plus up to three roundings relative to the sample, as a Euclidean norm
+/// takes); the weighted sum of six terms and its product with `h` add at most `gamma_5`
+/// relative to `sum_j |w_j g_j|` (Higham, eq. 3.5), and `gamma_3 + gamma_5 <= gamma_8`.
+/// The computed estimate is then within `E` of the estimate of the exact samples:
+/// an estimate at or below `E` cannot be told from zero.
+///
+/// A step's error scale `s` is therefore floored at `E / accuracy`: the step is
+/// accepted when its estimate is within `accuracy * s` or within its own rounding `E`,
+/// whichever is larger. This does not loosen the accuracy: a requested accuracy below
+/// the integrand's rounding cannot be resolved by any step size (a smaller step's
+/// samples carry the same rounding), and such a step's value is already exact to that
+/// rounding. Without the floor the step control shrinks the step to underflow and fails
+/// (on a curve whose control points are all equal, `|C'|` is rounding noise around
+/// zero, and every step was refused at `1e-9`).
+fn estimate_rounding(
+    weights: [f64; 6],
+    dydx: &[f64],
+    h: f64,
+    delta: f64,
+    s: &CashKarpScratch,
+    i: usize,
+) -> Result<f64> {
+    let samples = [
+        at(dydx, i)?,
+        at(&s.ak2, i)?,
+        at(&s.ak3, i)?,
+        at(&s.ak4, i)?,
+        at(&s.ak5, i)?,
+        at(&s.ak6, i)?,
+    ];
+    let relative = gamma(8);
+    let sum: f64 = weights
+        .iter()
+        .zip(samples)
+        .map(|(w, g)| w.abs() * (delta + relative * g.abs()))
+        .sum();
+    Ok(h.abs() * sum)
+}
+
+/// The floor of component `i`'s error scale for an estimate of weights `weights`:
+/// [`estimate_rounding`] over `accuracy` (without sample rounding bounds `delta` is zero
+/// and only the relative rounding counts); zero at a non-positive accuracy, which the
+/// step refuses as unachievable.
+fn rounding_floor(
+    weights: [f64; 6],
+    dydx: &[f64],
+    h: f64,
+    accuracy: f64,
+    rounding: Option<&[f64]>,
+    s: &CashKarpScratch,
+    i: usize,
+) -> Result<f64> {
+    if accuracy <= 0.0 {
+        return Ok(0.0);
+    }
+    let delta = match rounding {
+        Some(rounding) => at(rounding, i)?,
+        None => 0.0,
+    };
+    Ok(estimate_rounding(weights, dydx, h, delta, s, i)? / accuracy)
 }
 
 /// The weights of the fifth divided difference on the Cash–Karp nodes `0, 1/5, 3/10, 3/5,
@@ -514,8 +646,15 @@ const FIFTH_ORDER_ERROR_ON_S5: f64 = -1.0 / 960.0;
 /// misses only where both vanish together. (A pair of null rules of consecutive
 /// degrees: Berntsen and Espelid, "Error estimation in automatic quadrature routines",
 /// ACM TOMS 17 (1991).) `scale` is the step's error scale, floored as the embedded
-/// estimate's.
-fn quadrature_error(dydx: &[f64], h: f64, scale: &[f64], s: &CashKarpScratch) -> Result<f64> {
+/// estimate's and at the estimate's rounding ([`estimate_rounding`]).
+fn quadrature_error(
+    dydx: &[f64],
+    h: f64,
+    accuracy: f64,
+    scale: &[f64],
+    rounding: Option<&[f64]>,
+    s: &CashKarpScratch,
+) -> Result<f64> {
     let [w0, w2, w3, w4, w5, w6] = DIVIDED_DIFFERENCE_5;
     let mut errmax: f64 = 0.0;
     for (i, sc) in scale.iter().enumerate() {
@@ -525,7 +664,8 @@ fn quadrature_error(dydx: &[f64], h: f64, scale: &[f64], s: &CashKarpScratch) ->
             + w4 * at(&s.ak4, i)?
             + w5 * at(&s.ak5, i)?
             + w6 * at(&s.ak6, i)?;
-        errmax = errmax.max((h * FIFTH_ORDER_ERROR_ON_S5 * difference / sc).abs());
+        let floor = rounding_floor(QUADRATURE_ERROR_WEIGHTS, dydx, h, accuracy, rounding, s, i)?;
+        errmax = errmax.max((h * FIFTH_ORDER_ERROR_ON_S5 * difference / sc.max(floor)).abs());
     }
     if errmax.is_finite() {
         Ok(errmax)
@@ -558,8 +698,25 @@ pub fn integrate_with_kernel<F>(
     k: &Kernel,
     a: f64,
     b: f64,
-    algorithm: IntegrationAlgorithm,
+    _algorithm: IntegrationAlgorithm,
     accuracy: f64,
+    evaluate: F,
+) -> Result<f64>
+where
+    F: FnMut(f64) -> Result<f64>,
+{
+    integrate_rounded_with_kernel(k, a, b, accuracy, 0.0, evaluate)
+}
+
+/// [`integrate_with_kernel`] for an integrand whose samples are each within `rounding`
+/// of its exact value ([`OdeOptions::rounding`]): a step is accepted at its estimates'
+/// rounding when the accuracy asks for less than the integrand can resolve.
+pub fn integrate_rounded_with_kernel<F>(
+    k: &Kernel,
+    a: f64,
+    b: f64,
+    accuracy: f64,
+    rounding: f64,
     mut evaluate: F,
 ) -> Result<f64>
 where
@@ -567,11 +724,11 @@ where
 {
     k.check_cancelled(OP)?;
     let mut eval_calls = 0u64;
-    integrate_opt_in(
+    integrate_scalar(
         a,
         b,
-        algorithm,
         accuracy,
+        rounding,
         k.fixes.integrator_propagates_failure,
         |t| {
             eval_calls += 1;
@@ -601,6 +758,21 @@ pub fn integrate_opt_in<F>(
     _algorithm: IntegrationAlgorithm,
     accuracy: f64,
     propagate_failure: bool,
+    evaluate: F,
+) -> Result<f64>
+where
+    F: FnMut(f64) -> Result<f64>,
+{
+    integrate_scalar(a, b, accuracy, 0.0, propagate_failure, evaluate)
+}
+
+/// [`integrate_opt_in`] with the samples' rounding bound `rounding`.
+fn integrate_scalar<F>(
+    a: f64,
+    b: f64,
+    accuracy: f64,
+    rounding: f64,
+    propagate_failure: bool,
     mut evaluate: F,
 ) -> Result<f64>
 where
@@ -610,6 +782,7 @@ where
         return Ok(0.0);
     }
     let mut y = [0.0];
+    let rounding_bound = [rounding];
     let options = OdeOptions {
         accuracy,
         initial_step: (b - a) / 10.0,
@@ -617,6 +790,7 @@ where
         scale: None,
         // `evaluate` reads `t` alone: the steps are accepted on the quadrature estimate
         quadrature: true,
+        rounding: Some(&rounding_bound),
     };
     match OdeIntegrator::default().integrate(&mut y, a, b, options, |t, _, dy| {
         let value = evaluate(t)?;
@@ -654,6 +828,7 @@ mod tests {
                         minimum_step: 0.0,
                         scale: Some(&[scale]),
                         quadrature: false,
+                        rounding: None,
                     },
                     |_, _, dy| {
                         dy[0] = 1.0;
@@ -676,6 +851,7 @@ mod tests {
                         minimum_step: f64::NAN,
                         scale: Some(&[f64::NAN]),
                         quadrature: false,
+                        rounding: None,
                     },
                     |_, _, _| panic!("early return must not evaluate")
                 )
@@ -693,6 +869,7 @@ mod tests {
             minimum_step: 0.0,
             scale: None,
             quadrature: false,
+            rounding: None,
         };
         OdeIntegrator::default()
             .integrate(&mut y, 0.0, 1.0, opt, |_, _, dy| {
@@ -1056,6 +1233,7 @@ mod tests {
             minimum_step: 0.0,
             scale: None,
             quadrature: false,
+            rounding: None,
         };
         let mut y = [0.0];
         let nan = OdeIntegrator::default().integrate(&mut y, 0.0, 1.0, options(1e-6), |x, _, d| {
@@ -1163,6 +1341,7 @@ mod tests {
                         minimum_step: 0.0,
                         scale: Some(&[1.0]),
                         quadrature,
+                        rounding: None,
                     },
                     |t, _, dy| {
                         dy[0] = t.powi(5) + a * t.powi(4);

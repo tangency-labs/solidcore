@@ -173,6 +173,7 @@ pub fn curve_properties(
             minimum_step: 0.0,
             scale: Some(&scale),
             quadrature: true,
+            rounding: None,
         },
         |t, _, dy| {
             eval.evaluate(k, t, &mut scratch)?;
@@ -415,6 +416,7 @@ pub fn boundary_properties(
                             minimum_step: 0.0,
                             scale: Some(&scale),
                             quadrature: true,
+                            rounding: None,
                         },
                         |t, _, dy| {
                             eval_calls += 1;
