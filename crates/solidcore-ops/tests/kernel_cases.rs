@@ -346,18 +346,22 @@ fn call_with_copy(
         }
         "untrim_face" => {
             let holes = p.get("holes").ok_or_else(|| bad("holes"))?;
+            let outer = p["outer"].as_bool().ok_or_else(|| bad("outer"))?;
+            let in_place = p["in_place"].as_bool().ok_or_else(|| bad("in_place"))?;
+            let pick = p.get("face").ok_or_else(|| bad("face"))?;
+            let mut s = first()?;
+            let (picked, order) = faces(&mut s, pick)?;
+            let [face] = picked.as_slice() else {
+                return Err(bad("one face"));
+            };
+            if order.faces.get(*face).is_none() {
+                return Err(bad("face index"));
+            }
             if !holes.is_null() {
                 return Err(Stop::Unsupported(
                     "untrim_face hole point picks have no recorded edge indices".to_owned(),
                 ));
             }
-            let outer = p["outer"].as_bool().ok_or_else(|| bad("outer"))?;
-            let in_place = p["in_place"].as_bool().ok_or_else(|| bad("in_place"))?;
-            let mut s = first()?;
-            let (picked, order) = faces(&mut s, &p["face"])?;
-            let [face] = picked.as_slice() else {
-                return Err(bad("one face"));
-            };
             // The public untrim operation copies its operand and maps the recorded IDs itself.
             made(untrim_face(
                 &s.body,
@@ -1115,6 +1119,16 @@ fn all_hole_untrim_restores_the_analytic_area_and_preserves_its_operand() {
         let got_area = output.body.area(1e-9).unwrap();
         assert!((got_area - area).abs() <= area * 1e-9, "{name}: {got_area}");
         assert_eq!(output.body.counts().unwrap(), [1, 4, 4], "{name}");
+        if name.ends_with("copied-out") {
+            let record = output.body.to_record().unwrap().0;
+            assert!(!record.vertices.is_empty());
+            for vertex in &record.vertices {
+                assert!(
+                    (vertex.point[2] - 10.0).abs() <= 1e-9,
+                    "not the top face: {vertex:?}"
+                );
+            }
+        }
         assert_eq!(input.body.to_record().unwrap().0, before, "{name}");
         assert_eq!(input.body.area(1e-9).unwrap(), before_area, "{name}");
         run_case(&entry, &e).unwrap();
@@ -1143,6 +1157,41 @@ fn all_hole_untrim_rejects_missing_parameters_and_keeps_point_holes_unsupported(
     assert!(
         matches!(call(&named, &mut [input]), Err(Stop::Unsupported(why)) if why.contains("hole"))
     );
+}
+
+#[test]
+fn an_untrim_face_index_past_the_record_cannot_satisfy_a_refusal() {
+    let (entry, mut e, _) = untrim_input("cov-untrim-sheet-hole-in-place");
+    let step = e["calls"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|c| c["op"] == "untrim_face")
+        .unwrap();
+    step["params"]["face"]["picked"][0]["index"] = serde_json::json!(1);
+    step.as_object_mut().unwrap().remove("outputs");
+    step["error"] = serde_json::json!("expected operation refusal");
+    assert!(matches!(run_case(&entry, &e), Err(Stop::Fail(why)) if why.contains("face")));
+}
+
+#[test]
+fn untrim_point_holes_do_not_hide_missing_required_parameters() {
+    let (_, e, input) = untrim_input("cov-untrim-sheet-hole-in-place");
+    let step = e["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["op"] == "untrim_face")
+        .unwrap();
+    for parameter in ["outer", "in_place", "face"] {
+        let mut missing = step.clone();
+        missing["params"]["holes"] = serde_json::json!([[6.0, 10.0, 0.0]]);
+        missing["params"].as_object_mut().unwrap().remove(parameter);
+        assert!(
+            matches!(call(&missing, &mut [input.clone()]), Err(Stop::Fail(_))),
+            "{parameter}"
+        );
+    }
 }
 
 #[test]
