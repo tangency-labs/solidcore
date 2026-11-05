@@ -183,7 +183,9 @@ fn lookup<T: Copy>(table: &[(&str, T)], name: &str) -> Result<T, HarnessError> {
 
 fn status_code(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => f64::from(SM_ERR_INVALID_INPUT),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => {
+            f64::from(SM_ERR_INVALID_INPUT)
+        }
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -203,6 +205,15 @@ fn db_bytes(i: &Inputs) -> Result<Vec<u8>, HarnessError> {
         out.extend(v.to_le_bytes());
     }
     Ok(out)
+}
+
+/// The dimension a curve's construction gives it (`None` for an unknown construction).
+fn effective_dim(c: &CurveIn) -> Option<u32> {
+    Some(match lookup(&KINDS, &c.kind).ok()? {
+        Kind::ThreeDDefault => 3,
+        Kind::TwoDDefault => 2,
+        Kind::ThreeD | Kind::TwoD => c.dim,
+    })
 }
 
 /// Build a curve by its construction `kind`.
@@ -345,7 +356,10 @@ fn rust_values(i: &Inputs) -> Result<solidcore::Result<Vec<f64>>, HarnessError> 
                 return Err(HarnessError::new("derivative order above MAX_EVAL_DERIVS"));
             }
             out.push(SM_SUCCESS);
-            for v in a.evaluate(i.t, n, i.flags & 1 != 0).map_err(|e| HarnessError::new(e.to_string()))? {
+            for v in a
+                .evaluate(i.t, n, i.flags & 1 != 0)
+                .map_err(|e| HarnessError::new(e.to_string()))?
+            {
                 put_v(&mut out, v);
             }
         }
@@ -375,7 +389,14 @@ fn rust_values(i: &Inputs) -> Result<solidcore::Result<Vec<f64>>, HarnessError> 
             }
             out.push(SM_SUCCESS);
             if i.flags & 1 != 0 {
-                out.extend([nb.u_min(), nb.v_min(), nb.w_min(), nb.u_max(), nb.v_max(), nb.w_max()]);
+                out.extend([
+                    nb.u_min(),
+                    nb.v_min(),
+                    nb.w_min(),
+                    nb.u_max(),
+                    nb.v_max(),
+                    nb.w_max(),
+                ]);
             }
             if i.flags & 2 != 0 {
                 for b in pb.basis() {
@@ -562,8 +583,12 @@ fn gen_case(rng: &mut Rng) -> Inputs {
         }
         Op::Knots => {
             flags = rng.below(4) as i32;
-            let lo = *rng.choose(&[0.0, -1.0, 0.5, 1.0, 1e-17, 1.0 + 1e-15]).unwrap_or(&0.0);
-            let hi = *rng.choose(&[1.0, 2.0, 0.5, 0.0, 1.0 - 1e-16]).unwrap_or(&1.0);
+            let lo = *rng
+                .choose(&[0.0, -1.0, 0.5, 1.0, 1e-17, 1.0 + 1e-15])
+                .unwrap_or(&0.0);
+            let hi = *rng
+                .choose(&[1.0, 2.0, 0.5, 0.0, 1.0 - 1e-16])
+                .unwrap_or(&1.0);
             w[0] = lo;
             w[1] = hi;
         }
@@ -698,7 +723,9 @@ fn gen_assert_valid(rng: &mut Rng) -> Inputs {
         b: CurveIn::default(),
         t: 0.0,
         n: *rng.choose(&[0i64, 1, 2, 4]).unwrap_or(&0),
-        flags: i32::from(rng.chance(0.8)),
+        // a report list only where test 1 stays inside the default label table: upstream
+        // reads past it for a curve whose construction gives a dimension other than 2 or 3
+        flags: i32::from(rng.chance(0.8) && effective_dim(&a).is_some_and(|d| matches!(d, 2 | 3))),
         a,
         w: [0.0; 6],
         data: String::new(),
