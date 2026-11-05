@@ -156,9 +156,16 @@ pub fn lies_on(form: &BSplineSurface, a: &Implicit) -> Result<bool> {
     Ok(true)
 }
 
-/// Whether the rational curve `curve` lies on `a`, as [`lies_on`] proves it of a surface:
+/// Whether the rational curve `curve` lies on `a`, as [`lies_on`] checks it of a surface:
 /// on every Bézier segment (a patch of degrees `(p, 0)`), every Bernstein coefficient of the
-/// implicit equation is within the rounding of computing it. Nothing is sampled.
+/// implicit equation is within the rounding of computing it from the segment's control
+/// points as they are stored. Nothing is sampled.
+///
+/// What it shows is that the segments' points are on `a` to the rounding of evaluating
+/// the equation at part scale, not exact containment: the bound does not cover the
+/// rounding of the Bézier decomposition (its knot insertion), nor of any trim or
+/// construction that made `curve`; a curve moved off `a` by more than that rounding is
+/// refused.
 ///
 /// # Errors
 ///

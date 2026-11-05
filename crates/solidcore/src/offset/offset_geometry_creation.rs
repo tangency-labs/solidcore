@@ -170,7 +170,8 @@ use crate::blend::fillet_standard_solver::p1::CircularCrossSectionFsg;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::{Curve, CurveKind, ELLIPSE_TYPE, LINE_TYPE};
 use crate::curve::curve::p8::CurveIntersectOptions;
-use crate::error::{Result, SolidError};
+use crate::error::offset::OffsetFailure;
+use crate::error::{Failure, Reason, Result, SolidError};
 use crate::geom::assert_array::ObjectKey;
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::context::MarkType;
@@ -3851,7 +3852,17 @@ impl OffsetGeometryCreation {
         // analytic surfaces and without UV curves, where upstream's fitted extensions give
         // marched pieces bounded by the domains, with their UV curves. Each such curve is
         // its pieces inside both extended domains, with their UV curves, proved on both.
-        ssi.clip_exact_curves(k, &s1, &domain1, other, &domain2, ssi_tol)?;
+        // Every failure of the cut is typed and passed on (never read as "unmated").
+        ssi.clip_exact_curves(k, &s1, &domain1, other, &domain2, ssi_tol)
+            .map_err(|e| {
+                if e.is_unported_or_cancelled() {
+                    e
+                } else {
+                    Failure::new(OP_MATE, OffsetFailure::ExactCurveUncut)
+                        .caused_by(e)
+                        .into_error()
+                }
+            })?;
 
         // `Kernel::fixes.offset_analytic_mate_edges` (tangency-labs/smlib@fddc366 and
         // @98ab1b0, #1453/#1130): two analytic surfaces meet on lines and conics. The
@@ -4438,8 +4449,8 @@ impl OffsetGeometryCreation {
             }
 
             // Mate a couple of edges by extension and intersection (a problem is only
-            // reported; not upstream: a port invariant, and an exact intersection curve
-            // that cannot be given with its UV curves, are passed on)
+            // reported; not upstream: a port invariant (through `ignore_soft`), and an
+            // exact intersection curve that cannot be cut into its pieces, are passed on)
             let mated = match self.mate_edges(
                 k,
                 brep,
@@ -4450,9 +4461,11 @@ impl OffsetGeometryCreation {
                 other_offset_edgeuse,
                 mark,
             ) {
-                Err(e @ SolidError::PortInvariant { .. }) => return Err(e),
-                Err(e @ SolidError::Unsupported { operation, .. })
-                    if operation == crate::surface::surface::exact_pieces::OP =>
+                Err(e)
+                    if matches!(
+                        e.failure().map(|f| &f.reason),
+                        Some(Reason::Offset(OffsetFailure::ExactCurveUncut))
+                    ) =>
                 {
                     return Err(e)
                 }
