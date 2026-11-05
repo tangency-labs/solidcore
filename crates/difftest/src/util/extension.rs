@@ -19,13 +19,14 @@ use solidcore::{Result, SolidError};
 const OP: &str = "difftest::util::extension";
 
 /// The continuity a caller asking for `c` gets: Natural for `SM_CT_CINFINITY`, Curvature for
-/// `SM_CT_G1_G2`, Tangent for `SM_CT_G1`, `SM_CT_G1R` and every other type (as upstream's
-/// `_ => NL_G1`).
+/// `SM_CT_G1_G2`, Ruled for `SM_CT_G1R`, Tangent for `SM_CT_G1` and every other type (as
+/// upstream's `_ => NL_G1`).
 #[must_use]
 pub fn continuity(c: ContinuityType) -> Continuity {
     match c {
         ContinuityType::CInfinity => Continuity::Natural,
         ContinuityType::G1G2 => Continuity::Curvature,
+        ContinuityType::G1R => Continuity::Ruled,
         _ => Continuity::Tangent,
     }
 }
@@ -35,7 +36,8 @@ pub fn continuity(c: ContinuityType) -> Continuity {
 #[must_use]
 pub fn continuity_of_flag(flag: i32) -> Option<Continuity> {
     match flag {
-        2 | 6 => Some(Continuity::Tangent),
+        2 => Some(Continuity::Tangent),
+        6 => Some(Continuity::Ruled),
         3 => Some(Continuity::Curvature),
         4 => Some(Continuity::Natural),
         _ => None,

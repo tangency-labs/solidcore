@@ -80,6 +80,10 @@ const REL: f64 = 0.5 * STOP;
 /// The stop on the across length, relative to the distance: the truncation part must reach
 /// it, and the enclosure lie within it of the distance where it is narrower.
 const STOP: f64 = 1e-9;
+
+/// The coarse stop the distance solve measures an ask to first ([`solve`]): enough to place it
+/// short of or past the distance while it is far from it.
+const COARSE: f64 = 1e-4;
 /// The most the rounding part of the across length may be, relative to the distance.
 const ROUNDING: f64 = 1e-6;
 /// Asks that scale the extension parameter until it brackets the distance.
@@ -112,6 +116,10 @@ pub enum Continuity {
     Tangent,
     /// Curvature continuous: the mirror with its second row from the C2 condition.
     Curvature,
+    /// Ruled: each row run on as the line of its end tangent (its homogeneous end point and
+    /// derivative continued linearly), tangent continuous across the side (upstream's
+    /// `SM_CT_G1R`): a row stays straight past the side however it curved before it.
+    Ruled,
 }
 
 /// Why an extension is refused ([`SolidError::ExtendRefused`]).
@@ -279,13 +287,14 @@ impl Surface {
             )))
         };
         // a length past the measure's leaf budget is no measurement, as a leaf not converged
-        let across =
-            |m: &Option<Surface>| match m.as_ref().map(|s| s.length_across_side(k, dom, side, REL))
-            {
-                None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
-                Some(Ok(a)) => Ok(Some(a)),
-                Some(Err(e)) => Err(e),
-            };
+        let across = |m: &Option<Surface>, rel: f64| match m
+            .as_ref()
+            .map(|s| s.length_across_side(k, dom, side, rel))
+        {
+            None | Some(Err(SolidError::NotConverged { .. })) => Ok(None),
+            Some(Ok(a)) => Ok(Some(a)),
+            Some(Err(e)) => Err(e),
+        };
         let ((surface, extension), enclosure) = solve(OP, &made, &across, &source, distance)?;
         let surface = surface.ok_or_else(op_err)?;
         // a bound that is not finite certifies nothing of the extension (its net's rounding
@@ -503,16 +512,27 @@ fn not_exact(op: &'static str, distance: Option<f64>) -> SolidError {
 fn solve<T>(
     op: &'static str,
     made: &dyn Fn(f64) -> Result<Option<Made<T>>>,
-    across: &dyn Fn(&Option<T>) -> Result<Option<Across>>,
+    across: &dyn Fn(&Option<T>, f64) -> Result<Option<Across>>,
     source: &Local,
     d: f64,
 ) -> Result<(Made<T>, Across)> {
+    // an ask's length: first to a coarse stop, which places most asks short of or past d
+    // already; measured to the stop only where the coarse enclosure does not decide (and
+    // always for one that is to be met, which a coarse measure never is)
+    let quick = |m: &Option<T>, ext: f64| -> Result<Option<Across>> {
+        let coarse = across(m, COARSE)?;
+        match says(coarse.as_ref(), ext, d) {
+            Says::Short(_) | Says::Past(_) => Ok(coarse),
+            Says::Met | Says::Unproved => across(m, REL),
+        }
+    };
+    let across = |m: &Option<T>| across(m, REL);
     // the first ask: the parameter range times d over the source's length across it
     let range = source.range()?;
     let whole = made(range)?;
     let mut ask = match &whole {
         Some(s) => {
-            let l = across(&s.0)?.map_or(0.0, |b| b.enclosure.mid());
+            let l = quick(&s.0, s.1)?.map_or(0.0, |b| b.enclosure.mid());
             if l > 0.0 && l.is_finite() {
                 range * d / l
             } else {
@@ -563,7 +583,7 @@ fn solve<T>(
         };
         if let Some(s) = made(e)? {
             good.set(good.get().max(e));
-            let b = across(&s.0)?;
+            let b = quick(&s.0, s.1)?;
             return Ok(Some((e, s, b)));
         }
         bad.set(e);
@@ -1065,6 +1085,7 @@ impl Local {
         };
         let grown = match how {
             Continuity::Natural => self.natural(e)?,
+            Continuity::Ruled => self.ruled(e)?,
             Continuity::Tangent | Continuity::Curvature => {
                 let mut cur = self.clone();
                 let mut left = e;
@@ -1130,6 +1151,37 @@ impl Local {
     /// Natural: the last span's Bezier points (from a copy with its start knot at multiplicity
     /// `p`) continued past `b` by de Casteljau at `t = 1 + e / (b - c)`: the points
     /// `blossom(1^(p-i), t^i)` are the polynomial's Bezier points over `[b, b + e]`.
+    /// Ruled: each row's homogeneous end point `H_n` and end derivative
+    /// `D = p (H_n - H_(n-1)) / h` (`h` the last span, the end clamped) continued as the line
+    /// `H_n + s D` over `[b, b + e]`, as a Bezier piece of the row's degree: the points
+    /// `H_n + (k e / p) D`. Homogeneous C1 across the joint, so the surface is C1 there (where
+    /// `w > 0`); each row's piece is a straight line.
+    fn ruled(&self, e: f64) -> Result<Self> {
+        let b = self.end()?;
+        let h = b - self.before_end(0)?;
+        let p = self.p;
+        #[allow(clippy::cast_precision_loss)]
+        let pf = p as f64;
+        let mut ext = Vec::new();
+        for row in &self.rows {
+            let (Some(&pn), Some(&pn1)) = (row.last(), row.iter().rev().nth(1)) else {
+                return Err(op_err());
+            };
+            let d = lin(pf / h, pn, -pf / h, pn1);
+            #[allow(clippy::cast_precision_loss)]
+            let q: Vec<H> = (1..=p)
+                .map(|k| lin(1.0, pn, k as f64 * e / pf, d))
+                .collect();
+            ext.push(q);
+        }
+        let knots = vec![b + e; p + 1];
+        // each point a two-term combination of the end points scaled by up to `2 e / h`: its
+        // rounding gamma_6 of that, on top of the rows' own
+        let mut out = self.joined(ext, &knots)?;
+        out.err = (1.0 + 2.0 * e / h) * (self.err + gamma(6) * self.size());
+        Ok(out)
+    }
+
     fn natural(&self, e: f64) -> Result<Self> {
         let b = self.end()?;
         let c = self.before_end(0)?;

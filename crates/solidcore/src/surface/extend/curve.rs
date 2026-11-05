@@ -14,7 +14,7 @@
 //!
 //! Deviations: none (no upstream counterpart). No recursion.
 
-use super::{not_exact, op_err, solve, Continuity, Grown, Local, Made, REL};
+use super::{not_exact, op_err, solve, Continuity, Grown, Local, Made};
 use crate::error::{Result, SolidError};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::crv_adv::p1::CurveEnd;
@@ -87,13 +87,13 @@ impl BSplineCurve {
             Ok(Some((Some(grown.curve(high)?), bound)))
         };
         // a length past the measure's leaf budget is no measurement, as a leaf not converged
-        let across = |m: &Option<Net>| {
+        let across = |m: &Option<Net>, rel: f64| {
             let length = m.as_ref().map(|c| {
                 let (lo, hi) = c.param_bounds();
                 if high {
-                    curve_length(c, joint, hi, REL)
+                    curve_length(c, joint, hi, rel)
                 } else {
-                    curve_length(c, lo, joint, REL)
+                    curve_length(c, lo, joint, rel)
                 }
             });
             match length {
