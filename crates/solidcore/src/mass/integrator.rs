@@ -64,6 +64,10 @@ pub struct OdeOptions<'a> {
     pub minimum_step: f64,
     /// Optional lower bounds for each component's error scale.
     pub scale: Option<&'a [f64]>,
+    /// The derivative reads only `x`, never `y`: the integration is a quadrature. Each
+    /// step's error is then also estimated from the fifth divided difference of its six
+    /// samples ([`quadrature_error`]), not only from the embedded fourth-order solution.
+    pub quadrature: bool,
 }
 
 /// Accepted full-size and reduced steps (`nok`, `nbad`).
@@ -186,6 +190,7 @@ impl OdeIntegrator {
                 &mut scale,
                 &mut evaluate,
                 &mut scratch,
+                options.quadrature,
             )
             .map_err(|e| match e {
                 SolidError::Upstream {
@@ -243,6 +248,7 @@ impl OdeIntegrator {
             scale,
             &mut evaluate,
             &mut scratch,
+            false,
         )?;
         Ok(OdeStep {
             values: core::mem::take(&mut scratch.temp),
@@ -253,7 +259,8 @@ impl OdeIntegrator {
     }
 
     /// [`OdeIntegrator::step`] into `scratch`: the new values are left in
-    /// `scratch.temp`, so the steps of one integration allocate nothing.
+    /// `scratch.temp`, so the steps of one integration allocate nothing. `quadrature`
+    /// as [`OdeOptions::quadrature`].
     #[allow(clippy::too_many_arguments)] // `step`'s arguments plus the scratch arrays
     fn step_in<F>(
         y: &[f64],
@@ -264,6 +271,7 @@ impl OdeIntegrator {
         scale: &mut [f64],
         evaluate: &mut F,
         scratch: &mut CashKarpScratch,
+        quadrature: bool,
     ) -> Result<StepEnd>
     where
         F: FnMut(f64, &[f64], &mut [f64]) -> Result<()>,
@@ -286,6 +294,9 @@ impl OdeIntegrator {
         let mut h = htry;
         for _ in 0..MAX_RETRIES {
             cash_karp(y, dydx, x, h, evaluate, scratch)?;
+            if quadrature {
+                quadrature_error(dydx, h, scratch)?;
+            }
             let mut errmax: f64 = 0.0;
             for (error, s) in scratch.errors.iter().zip(scale.iter_mut()) {
                 if s.abs() < EFF_ZERO {
@@ -470,6 +481,52 @@ where
     Ok(())
 }
 
+/// The weights of the fifth divided difference on the Cash–Karp nodes `0, 1/5, 3/10, 3/5,
+/// 1, 7/8` (in that order: the derivative at the step's start, then `ak2` to `ak6`):
+/// `1 / prod_{j != i} (c_i - c_j)`.
+const DIVIDED_DIFFERENCE_5: [f64; 6] = [
+    -2000.0 / 63.0,
+    6250.0 / 27.0,
+    -400_000.0 / 1449.0,
+    12500.0 / 99.0,
+    250.0 / 7.0,
+    -4_096_000.0 / 47817.0,
+];
+/// The error of the fifth-order Cash–Karp weights on `s^5` over `[0, 1]`:
+/// `37/378 (3/10)^5 + 250/621 (3/5)^5 + 125/594 + 512/1771 (7/8)^5 - 1/6`.
+const FIFTH_ORDER_ERROR_ON_S5: f64 = -1.0 / 960.0;
+
+/// Not upstream: the error of a quadrature step's fifth-order value, where it exceeds
+/// the embedded estimate, replaces it in `s.errors`.
+///
+/// For a derivative of `x` alone, a Cash–Karp step is a quadrature rule on six samples
+/// of `g(s) = f(x + s h)`: the fifth-order value integrates polynomials of degree 4
+/// exactly, and its error is `h (-1/960) g^(5)(xi) / 120 = h (-1/960) g[c_0..c_5]` to
+/// leading order, the fifth divided difference of the six samples. The embedded
+/// estimate is the difference of the fourth- and fifth-order values, a rule that is
+/// zero on cubics and so measures `g^(4)` only: where `g^(4)` changes sign within the
+/// step it can vanish while the step's error does not. On a step of half a quarter
+/// circle's trim it read 3.1e-5 where the step was off by 3.5e-3. The divided
+/// difference measures `g^(5)`, and both vanishing together is what the larger of the
+/// two misses. (A pair of null rules of consecutive degrees: Berntsen and Espelid,
+/// "Error estimation in automatic quadrature routines", ACM TOMS 17 (1991).)
+fn quadrature_error(dydx: &[f64], h: f64, s: &mut CashKarpScratch) -> Result<()> {
+    let [w0, w2, w3, w4, w5, w6] = DIVIDED_DIFFERENCE_5;
+    for (i, e) in s.errors.iter_mut().enumerate() {
+        let difference = w0 * at(dydx, i)?
+            + w2 * at(&s.ak2, i)?
+            + w3 * at(&s.ak3, i)?
+            + w4 * at(&s.ak4, i)?
+            + w5 * at(&s.ak5, i)?
+            + w6 * at(&s.ak6, i)?;
+        let fifth = h * FIFTH_ORDER_ERROR_ON_S5 * difference;
+        if fifth.abs() > e.abs() {
+            *e = fifth;
+        }
+    }
+    finite(&s.errors)
+}
+
 /// `SmIntegrator::IntegrateIt`. Numerical/evaluator failure yields `Ok(0.0)` as
 /// upstream does; an unported evaluator is always propagated for differential coverage.
 /// Intervals shorter than `EFF_ZERO` return zero without evaluating the function.
@@ -547,6 +604,7 @@ where
         initial_step: (b - a) / 10.0,
         minimum_step: (b - a) / 100000000.0,
         scale: None,
+        quadrature: false,
     };
     match OdeIntegrator::default().integrate(&mut y, a, b, options, |t, _, dy| {
         let value = evaluate(t)?;
@@ -583,6 +641,7 @@ mod tests {
                         initial_step: 0.1,
                         minimum_step: 0.0,
                         scale: Some(&[scale]),
+                        quadrature: false,
                     },
                     |_, _, dy| {
                         dy[0] = 1.0;
@@ -604,6 +663,7 @@ mod tests {
                         initial_step: f64::NAN,
                         minimum_step: f64::NAN,
                         scale: Some(&[f64::NAN]),
+                        quadrature: false,
                     },
                     |_, _, _| panic!("early return must not evaluate")
                 )
@@ -620,6 +680,7 @@ mod tests {
             initial_step: 0.1,
             minimum_step: 0.0,
             scale: None,
+            quadrature: false,
         };
         OdeIntegrator::default()
             .integrate(&mut y, 0.0, 1.0, opt, |_, _, dy| {
@@ -982,6 +1043,7 @@ mod tests {
             initial_step: 0.1,
             minimum_step: 0.0,
             scale: None,
+            quadrature: false,
         };
         let mut y = [0.0];
         let nan = OdeIntegrator::default().integrate(&mut y, 0.0, 1.0, options(1e-6), |x, _, d| {
@@ -1020,5 +1082,87 @@ mod tests {
             ),
             "{tight:?}"
         );
+    }
+
+    /// The fifth divided difference's weights are zero on polynomials of degree 4 and one
+    /// on `s^5`, and the fifth-order weights miss `s^5` by `-1/960`.
+    #[test]
+    fn quadrature_error_constants() {
+        let nodes = [0.0, 0.2, 0.3, 0.6, 1.0, 0.875];
+        let fifth = [
+            37.0 / 378.0,
+            0.0,
+            250.0 / 621.0,
+            125.0 / 594.0,
+            0.0,
+            512.0 / 1771.0,
+        ];
+        for power in 0..=5 {
+            let d: f64 = DIVIDED_DIFFERENCE_5
+                .iter()
+                .zip(nodes)
+                .map(|(w, c): (&f64, f64)| w * c.powi(power))
+                .sum();
+            let want = if power == 5 { 1.0 } else { 0.0 };
+            assert!((d - want).abs() < 1e-9, "s^{power}: {d}");
+        }
+        let miss: f64 = fifth
+            .iter()
+            .zip(nodes)
+            .map(|(w, c): (&f64, f64)| w * c.powi(5))
+            .sum::<f64>()
+            - 1.0 / 6.0;
+        assert!((miss - FIFTH_ORDER_ERROR_ON_S5).abs() < 1e-15, "{miss}");
+    }
+
+    /// `s^5 + a s^4`, with `a` making the embedded estimate exactly zero on `[0, 1]`: one
+    /// step is accepted with an error of 1/960 unless the step's divided difference is
+    /// read too.
+    #[test]
+    fn a_quadrature_step_is_not_accepted_on_a_blind_embedded_estimate() {
+        let nodes = [0.0, 0.2, 0.3, 0.6, 1.0, 0.875];
+        let embedded = [
+            37.0 / 378.0 - 2825.0 / 27648.0,
+            0.0,
+            250.0 / 621.0 - 18575.0 / 48384.0,
+            125.0 / 594.0 - 13525.0 / 55296.0,
+            -277.0 / 14336.0,
+            512.0 / 1771.0 - 0.25,
+        ];
+        let on = |power: i32| -> f64 {
+            embedded
+                .iter()
+                .zip(nodes)
+                .map(|(w, c): (&f64, f64)| w * c.powi(power))
+                .sum()
+        };
+        let a = -on(5) / on(4);
+        let exact = 1.0 / 6.0 + a / 5.0;
+        let run = |quadrature: bool| {
+            let mut y = [0.0];
+            OdeIntegrator::default()
+                .integrate(
+                    &mut y,
+                    0.0,
+                    1.0,
+                    OdeOptions {
+                        accuracy: 1e-6,
+                        initial_step: 1.0,
+                        minimum_step: 0.0,
+                        scale: Some(&[1.0]),
+                        quadrature,
+                    },
+                    |t, _, dy| {
+                        dy[0] = t.powi(5) + a * t.powi(4);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            y[0] - exact
+        };
+        let blind = run(false);
+        assert!((blind + 1.0 / 960.0).abs() < 1e-12, "{blind}");
+        let error = run(true);
+        assert!(error.abs() <= 1e-6, "{error}");
     }
 }

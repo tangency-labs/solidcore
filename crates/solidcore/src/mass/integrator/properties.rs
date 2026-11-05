@@ -172,6 +172,7 @@ pub fn curve_properties(
             initial_step: (interval.max() - interval.min()) / 2.0,
             minimum_step: 0.0,
             scale: Some(&scale),
+            quadrature: true,
         },
         |t, _, dy| {
             eval.evaluate(k, t, &mut scratch)?;
@@ -422,21 +423,15 @@ pub fn boundary_properties(
                             initial_step: (b - a) / divisor,
                             minimum_step: 0.0,
                             scale: Some(&scale),
+                            quadrature: true,
                         },
                         |t, _, dy| {
                             eval_calls += 1;
                             if (eval_calls & 63) == 1 {
                                 k.check_cancelled(OP)?;
                             }
-                            // A zero U tangent leaves the caller's derivative array
-                            // untouched upstream. Preserve this particular stage's
-                            // values, rather than another stage's shared scratch.
-                            if let Some(unused) = scratch.first_mut() {
-                                *unused = 0.0;
-                            }
-                            for (s, d) in scratch.iter_mut().skip(1).zip(dy.iter()) {
-                                *s = *d;
-                            }
+                            // (the evaluator writes every component, zero where
+                            // the trim's du/dt is)
                             eval.evaluate(k, t, &mut scratch)?;
                             for (d, v) in dy.iter_mut().zip(scratch.iter().skip(1)) {
                                 *d = *v;
