@@ -80,6 +80,23 @@ if [ -z "${CXX:-}" ] && [ "$(uname -s)" = Darwin ]; then
 fi
 export CXX="${CXX:-g++}"
 
+# CMake reads CXX only when it first configures a build tree. If the tree was configured
+# with another compiler (e.g. Apple clang before `brew install gcc`), the libraries would
+# keep it while ffi.env below names $CXX for the shims: start the tree again instead.
+CACHED_CXX="$(sed -n 's/^CMAKE_CXX_COMPILER:[A-Z]*=//p' "$BUILD/CMakeCache.txt" 2>/dev/null || true)"
+if [ -n "$CACHED_CXX" ]; then
+  want="$(command -v "$CXX" || echo "$CXX")"
+  if command -v realpath >/dev/null 2>&1; then
+    CACHED_CXX="$(realpath "$CACHED_CXX" 2>/dev/null || echo "$CACHED_CXX")"
+    want="$(realpath "$want" 2>/dev/null || echo "$want")"
+  fi
+  if [ "$CACHED_CXX" != "$want" ]; then
+    echo "build.sh: $BUILD was configured with $CACHED_CXX, not $want; reconfiguring it" >&2
+    rm -rf "$BUILD"
+    mkdir -p "$BUILD"
+  fi
+fi
+
 # The C++ runtime solidcore-ffi links, from the compiler's own headers (macOS only; on
 # Linux it keeps its libstdc++ default and ffi.env does not change).
 FFI_TOOLCHAIN=""

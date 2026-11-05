@@ -167,7 +167,8 @@ pub enum CaseOutcome {
     /// The Rust side returned `Unported` (and the C++ side ran without a harness
     /// error): neither pass nor fail.
     Deferred,
-    /// Skipped because the platform's C++ standard library is not libstdc++.
+    /// Skipped because the C++ reference cannot act as the oracle on this platform
+    /// ([`UnitDiff::skipped_platform`]), e.g. its standard library is not libstdc++.
     SkippedPlatform,
     /// A mismatch listed in `known_mismatches/<unit>.toml` ([`crate::known`]): not a pass,
     /// keeps the unit from being green, reported like a failure.
@@ -1496,6 +1497,47 @@ mod tests {
                 .is_some_and(|m| m.contains("must not defer")));
         }
         assert_eq!(r.cases[3].outcome(), CaseOutcome::Rejected);
+    }
+
+    /// Fake unit that skips case 1 whatever the C++ standard library is, as the
+    /// macOS-allocator skips of `curve.curve_p6` do (UB-251).
+    struct SkipsOne;
+
+    impl UnitDiff for SkipsOne {
+        fn id(&self) -> &'static str {
+            "fake.skips_one"
+        }
+        fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+            let i: i64 = case.get("i")?;
+            assert_ne!(i, 1, "a platform-skipped case must not run C++");
+            Ok(Output::new().int("i", i))
+        }
+        fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+            let i: i64 = case.get("i")?;
+            assert_ne!(i, 1, "a platform-skipped case must not run Rust");
+            Ok(Output::new().int("i", i))
+        }
+        fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
+            Fake.cases(ctx)
+        }
+        fn skipped_platform(&self, case: &Case) -> Option<String> {
+            (case.name == "c1").then(|| "allocator-dependent C++ reference".into())
+        }
+    }
+
+    #[test]
+    fn skipped_platform_is_consulted_on_every_standard_library() {
+        // The hook decides the platform condition itself: the runner must not run the
+        // case on a libstdc++ build either (the C++ reference of `--features cpp`).
+        let ctx = CaseContext {
+            root: std::path::PathBuf::new(),
+            seeds: 0,
+        };
+        let r = run_unit(&SkipsOne, &ctx, &RunOptions::default());
+        assert_eq!(r.cases[1].outcome(), CaseOutcome::SkippedPlatform);
+        assert!(r.cases[1].harness_error.is_none());
+        assert_eq!((r.passed(), r.failed(), r.skipped_platform()), (3, 0, 1));
+        assert_eq!(r.status(), UnitStatus::Green);
     }
 
     /// Fake unit for `--heap-pads`: the C++ side of `drift` returns how often it has
