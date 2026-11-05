@@ -38,9 +38,12 @@ stationary-point search finds no root. It computes their projected distance,
 but leaves `found_solution` false, discarding them. The trim then fails and the
 default sweep path continues with untrimmed extensions.
 
-The correction marks an existing endpoint candidate as a `SingleValue` solution
-after its distance evaluates successfully. A failed endpoint evaluation returns
-its error locally, rather than admitting an error code as a numeric distance.
+The correction enumerates eligible finite boundaries as `SingleValue` candidates
+independently of stationary-point searches. A stationary point can be a minimum
+when a maximum was requested, so finding one must not suppress the boundaries.
+Each endpoint is admitted only after its distance evaluates successfully. A
+failed endpoint evaluation returns its error locally, rather than admitting an
+error code as a numeric distance.
 The outer legacy status policy is unchanged. Two further corrections are necessary
 to preserve better interior candidates:
 
@@ -101,3 +104,25 @@ lines return success with zero projected extrema for an exterior query point.
 records the exact inputs, expected endpoints, native outputs and build identity.
 Full difftest results and final validation are recorded in the pull request;
 Rust-only tests are not counted as evidence of C++ parity.
+
+## Changed-case audit and limits
+
+The revised candidate's [45 changed global-query cases](curve.curve_p1--projected-extrema-audit-2840.md)
+have independently checked polynomial extrema. Every returned candidate is within
+the original query tolerance on the cached domain. The out-of-bounds request in
+`gen0975` is explicitly qualified: neither cache searches its extrapolated portion.
+No claim of complete requested-domain correctness is made for that case.
+
+[WR-754](../upstream-issues/WR-754--projected-extrema-pruning-metric.md) confirms
+native pruning counterexamples; [WR-755](../upstream-issues/WR-755--projected-maximization-derivative-sign.md)
+confirms the derivative sign. The [local convergence audit](curve.curve_p4--projected-derivative-local-convergence-2840.md)
+names all changed evaluator and local-search cases, including two valid native
+roots missed from the same starting guesses after the correction. Their global
+queries still find the independently calculated maxima. Those local differences
+are not classified as C++ defects.
+
+The shared bounds use the objective of supported curve-point and curve-curve
+projected searches. Separate topology pre-pruning and unsupported projected
+surface-pair paths are not repaired here. The existing wrapper's status-suppression
+policy also remains unchanged; propagating endpoint errors locally is not a claim
+that every enclosing legacy caller propagates them.
