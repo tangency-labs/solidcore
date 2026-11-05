@@ -68,7 +68,9 @@ for what you are solving: a schematic of the problem drawn in VectorCraft (house
 what the correct result is. For a body in an `.smb` file,
 `cargo run --release -p diagnostics -- FILE.smb --out DIR` draws it through `solidcore-tess` with
 its large-tolerance edges over everything (`--highlight` and `--see-through` take face indices)
-and writes a JSON report of every face and edge with its tolerance and label pixel. Then find how the problem is solved in the literature: search for
+and writes a JSON report of every face and edge with its tolerance and label pixel. A pull
+request that changes a case's result attaches its pictures before and after the change, drawn
+the same way from the same view, whenever the case can be drawn. Then find how the problem is solved in the literature: search for
 the papers, read the ones that apply, and design from them. Say in the issue what you read and
 how the design follows it. A fix nobody has seen the problem of, or built without that research,
 is not ready for review.
