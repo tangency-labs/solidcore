@@ -1070,3 +1070,22 @@ operation does not make them.
   2.363e-4) gets an entry; the two ND-493 parked cases stay parked. Unit: cases=165,
   failed 0, known 163, parked 2; it still fails the value-share gate (0 passing cases, as
   before this item).
+
+## `intersect.surface_drop_lib_p1`: the drop traces each piece once (e0706bc0c, 2026-11-05)
+
+`FindBoundaryStartPoints` (`intersect/surface_drop_curve.rs`) now also removes a start
+whose image across the seam lies on the iso curve just traced (not upstream). Native
+traces such a start a second time and returns the same 3D piece twice. Run at d6e7a4cbb
+(`notes-localop/dt-drop.log`): `intersect.surface_drop_curve` 547/547,
+`surface_drop_lib_p2` 1531/1531, `surface_drop_lib_p3` 1532/1532 pass; `surface_drop_lib_p1`
+has 6 `DropAndTrimCurve` cases where native returns 2 UV curves and solidcore 1
+(`values.rec.len` cpp 40, rust 22: one curve record of 18 values fewer):
+
+| Case | Curve on the surface |
+|---|---|
+| `trim_cylinder_vertical_line_seam`, `trim_cylinder_vertical_line_seam_on` | a line along the rational cylinder's seam: native gives its u = 0 and u = 1 images, one 3D piece |
+| `trim0059`, `trim0090`, `trim0107`, `trim0312` | a parallel circle of a surface of revolution starting on its seam: native traces the full turn, then again from the seam's other point (the iso curve's end 0.9999999999999998, not 1) |
+
+Measured: the record lengths only (the native curves' data are not printed by the
+unit). Listed as known mismatches; the unit is partial. Not a confirmed upstream issue
+yet, so not a `cpp_defect`.

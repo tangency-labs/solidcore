@@ -1,0 +1,34 @@
+# The drop traces each piece of the curve once (e0706bc0c, not upstream): a start whose
+# image across the seam lies on the iso curve just traced is not traced again. Native
+# returns the same 3D piece twice (2 UV curves, solidcore 1);
+# plan/findings/surface.exact-extension--difftest-cases-moved-2026-11-05.md, last section.
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim_cylinder_vertical_line_seam"
+why = "a line along the cylinder's seam: native gives its u = 0 and u = 1 images (one 3D piece twice), solidcore one"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim_cylinder_vertical_line_seam_on"
+why = "a line along the cylinder's seam: native gives its u = 0 and u = 1 images (one 3D piece twice), solidcore one"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim0059"
+why = "a parallel circle from the seam of a surface of revolution: native traces the full turn twice (2 UV curves), solidcore once"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim0090"
+why = "a parallel circle from the seam of a surface of revolution: native traces the full turn twice (2 UV curves), solidcore once"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim0107"
+why = "a parallel circle from the seam of a surface of revolution: native traces the full turn twice (2 UV curves), solidcore once"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim0312"
+why = "a parallel circle from the seam of a surface of revolution: native traces the full turn twice (2 UV curves), solidcore once"
