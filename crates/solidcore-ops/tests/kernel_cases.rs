@@ -228,6 +228,25 @@ fn faces(slot: &mut Slot, pick: &Value) -> Result<(Vec<usize>, Order), Stop> {
     Ok((record, order))
 }
 
+/// A traced blend's edges and sizes as the operation takes them. The trace records the
+/// application's picks point by point; the application blends an edge two points name once, at
+/// the first point's size, and [`blend`] takes each edge once.
+fn each_edge_once(edges: &[usize], sizes: &[f64]) -> (Vec<usize>, Vec<f64>) {
+    let mut out = (Vec::new(), Vec::new());
+    for (i, &e) in edges.iter().enumerate() {
+        if !out.0.contains(&e) {
+            out.0.push(e);
+            if let Some(&s) = sizes.get(i) {
+                out.1.push(s);
+            }
+        }
+    }
+    if sizes.len() != edges.len() {
+        out.1 = sizes.to_vec();
+    }
+    out
+}
+
 /// A traced profile: its curves as the operation takes them (`line`, `arc`, `nurbs`).
 fn profile(v: &Value) -> Option<Vec<Curve>> {
     let mut out = Vec::new();
@@ -412,6 +431,7 @@ fn call_with_copy(
                 .ok_or_else(|| bad("sizes"))?;
             let mut s = copy_for_edit(&first()?)?;
             let (edges, _) = faces(&mut s, &p["edges"])?;
+            let (edges, sizes) = each_edge_once(&edges, &sizes);
             let r = blend(&s.body, kind, &edges, &sizes, &[], Corners::Filled).map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
@@ -619,6 +639,19 @@ fn run_case_with_records(
     } else {
         Err(Stop::Fail(diffs.join(", ")))
     }
+}
+
+#[test]
+fn an_edge_picked_twice_is_blended_once_at_its_first_size() {
+    assert_eq!(
+        each_edge_once(&[23, 23, 19, 2], &[1.0, 5.0, 2.0, 3.0]),
+        (vec![23, 19, 2], vec![1.0, 2.0, 3.0])
+    );
+    // one size for every edge stays one
+    assert_eq!(
+        each_edge_once(&[23, 23, 19], &[1.0]),
+        (vec![23, 19], vec![1.0])
+    );
 }
 
 fn handled_refusal_case() -> Value {
