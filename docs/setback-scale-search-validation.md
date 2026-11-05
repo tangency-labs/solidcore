@@ -239,7 +239,31 @@ not evidence for the merge resolutions above.
 
 Full `cargo test -p solidcore`, runner self-tests and `--green` were not run
 for this slice; there is no unit promotion or CI-green claim. Production Rust
-streaming remains unimplemented; the native preparation is documented separately.
+streaming was unimplemented at that historical head; the native preparation is documented separately.
+
+### Production streaming implementation (#2344(b), PR #2783)
+
+The planar and curved fill solvers now consume affine sector-row generators.
+Stable slots preserve patch/piece/coefficient/direction/pair order, including
+slots skipped for having no free unknown. Each violation scan uses a conservative
+bound to avoid constructing comfortably satisfied rows; uncertain or exceptional
+arithmetic falls back to the original normalized row and slack calculation.
+Only selected working-set rows are retained. Degree order, certification and
+the curved solver's rounding allowance and continued dual state are unchanged.
+The optional margin probe still uses its dense augmented programme.
+
+`FillStats` records exact materialization attempts (including skipped slots and
+rebuilds), maximum selected rows held, and dual iterations including the empty
+programme's feasibility scan. `CertifiedScale` aggregates these over all attempts.
+The existing `curved_rows` field now counts materialization attempts rather than
+the former dense programme's row count. Native WIP count snapshots are not direct
+expectations: that WIP also changed the degree order.
+
+Tests compare generated rows bitwise with the dense construction, compare lazy
+and exact violation scans including normalization underflow, and exercise solver
+ties, skipped slots, rounding, infeasibility and multiple 2,000-row batches.
+Validation of this implementation is in progress; the historical native results
+above do not establish parity for this change.
 
 ### CI permission boundary
 
