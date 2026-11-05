@@ -1080,6 +1080,14 @@ mod tests {
         assert!(pb.xy_area() <= 4.0 + 1e-9);
     }
 
+    /// A constant 100-point set has that same point as its mean (WR-15).
+    #[test]
+    fn wr15_default_centroid_includes_every_full_block() {
+        let point = Vec3::new(2.0, 4.0, 6.0);
+        let mut set = PointSet3d::new(vec![point; 100], 1e-9, None);
+        assert_eq!(set.centroid(), point);
+    }
+
     #[test]
     fn centroid_drops_last_block_at_multiples_of_50() {
         let pts: Vec<Point3> = (0..50).map(|i| Vec3::new(f64::from(i), 1.0, 0.0)).collect();
