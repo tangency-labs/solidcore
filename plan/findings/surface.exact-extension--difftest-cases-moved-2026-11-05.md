@@ -921,3 +921,28 @@ The hypothesis holds, but it is only half the cause.
     -877.59: still unsound.
   - The generated cases move their volumes by ≤ 2.6e-5 relative.
   - The suite and the difftest were not run at ce5ab9faf.
+
+### Where fc0000's body tolerance (1e-5) and edge 14's tolerance (7.27e-3) come from (2026-11-05)
+
+`Solids/nurb_fillet.smb` stores a body tolerance of 1e-4 and edge tolerances 4.708e-3 (index 13),
+6.152e-3 (14) and 6.810e-3 (43). The B-rep as read has 1e-5, 3.545e-3, 7.268e-3 and 3.905e-3.
+Both changes are made by the read itself, the same on the native and the Rust side. The local
+operation does not make them.
+
+- The file has no version header, so its healer version is 0, below `SM_HEALER_VERSION` 10.
+  `MakeTopologyFromData` then heals the body (`HealBrep(SM_HO_ALL)`: upstream `SmBrep.cpp:20888-20903`,
+  port `topology/brep/p10.rs` `make_topology`, `heal_this_brep`).
+- Before the heal, the body is at the file's 1e-4 (`bForceSameTol`), and the edges carry the file's values.
+  Measured on both sides: Rust 1e-4, 4.7081904198638e-3, 6.1516631081214e-3, 6.8101171617752e-3.
+  The native build with the healer off gives the same values.
+- `Fix_TolSizes` (upstream `SmHealData.cpp:2818`, port `heal/heal_data/p2.rs` `fix_tol_sizes`)
+  sets the body tolerance from the longest edge's size class: (0.5, 500] gives 1e-5 (`SmHealData.cpp:2872`).
+  It also re-derives each edge flagged with a bad tolerance from its measured edge-edge and
+  edge-face gaps (`SmHealData.cpp:2946-2952`). Edge 14's measured gap is 7.2676800194992e-3.
+- After the read, the native and Rust bodies agree exactly: body 1e-5, and edges 13, 14 and 43 at
+  3.5450343002993642e-3, 7.2676800194992e-3 and 3.9046537666228317e-3.
+- Runtime edge ids equal the file's indices. Rust `EdgeId(i)` and the native `GetEdges()[i]` match the
+  file table row by row before the heal.
+- Inside the local operation, nothing changes: at its start and in `restore_kept_edges`, edge 14 is
+  7.2676800194992e-3 and the body is 1e-5. The offset B-rep is at 5e-6 (half), and the restore raises it to
+  the input's 1e-5, never above.
