@@ -161,6 +161,8 @@ impl Caches {
 pub struct WorkCounters {
     face_pairs: Cell<u64>,
     loops_classified: Cell<u64>,
+    certificate_pieces: Cell<u64>,
+    certificate_depth: Cell<u64>,
 }
 
 impl WorkCounters {
@@ -181,10 +183,35 @@ impl WorkCounters {
         self.loops_classified.get()
     }
 
+    /// Pieces of a span the G^n certificate enclosed (not the fork's, #2690): each call of
+    /// `gn_fourth_over_series` by `gn_certify_span`.
+    #[must_use]
+    pub fn certificate_pieces(&self) -> u64 {
+        self.certificate_pieces.get()
+    }
+
+    /// The deepest cut of a span the G^n certificate took since the last reset (not the
+    /// fork's, #2690): a piece at depth d is `2^-d` of its span.
+    #[must_use]
+    pub fn certificate_depth(&self) -> u64 {
+        self.certificate_depth.get()
+    }
+
     /// Zeroes every count (`SmWorkCounters::Reset`).
     pub fn reset(&self) {
         self.face_pairs.set(0);
         self.loops_classified.set(0);
+        self.certificate_pieces.set(0);
+        self.certificate_depth.set(0);
+    }
+
+    /// Counts one piece the G^n certificate enclosed, at `depth` cuts from its span.
+    pub(crate) fn add_certificate_piece(&self, depth: u64) {
+        self.certificate_pieces
+            .set(self.certificate_pieces.get().saturating_add(1));
+        if depth > self.certificate_depth.get() {
+            self.certificate_depth.set(depth);
+        }
     }
 
     /// Counts one face pair examined for intersection.

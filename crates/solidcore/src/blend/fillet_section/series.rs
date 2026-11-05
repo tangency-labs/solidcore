@@ -306,6 +306,58 @@ mod tests {
         x
     }
 
+    /// A series' coefficients below a truncation do not depend on the orders past it
+    /// (#2690: the certificate solves the feet's coefficients of total order t from G
+    /// taken to order t in each variable only): the product, the reciprocal square root
+    /// and the vector operations at a smaller truncation equal the larger one's there.
+    #[test]
+    fn coefficients_below_a_truncation_are_the_larger_one_s() {
+        let full = Trunc::new(MAX_S, MAX_E).unwrap();
+        let mut seed = 2690_u64;
+        let mut next = || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+        };
+        let mut a = Ser::constant(4.0_f64);
+        let mut b = Ser::constant(-1.5_f64);
+        for i in 0..=MAX_S {
+            for k in 0..=MAX_E {
+                if i + k > 0 {
+                    a.set(i, k, next());
+                    b.set(i, k, next());
+                }
+            }
+        }
+        let va = VSer {
+            a: [a, b, a.mul(&b, full)],
+        };
+        let vb = VSer {
+            a: [b, a.scale(0.5, full), a],
+        };
+        let ops = |tr: Trunc| {
+            let p = a.mul(&b, tr);
+            let q = a.inv_sqrt(tr).unwrap();
+            let c = va.cross(&vb, tr);
+            let d = va.dot(&vb, tr).add(&p, tr).sub(&q, tr);
+            [p, q, c.a[0], c.a[1], c.a[2], d]
+        };
+        let big = ops(full);
+        for s in 0..=MAX_S {
+            for e in 0..=MAX_E {
+                let tr = Trunc::new(s, e).unwrap();
+                for (x, y) in ops(tr).iter().zip(&big) {
+                    for i in 0..=s {
+                        for k in 0..=e {
+                            assert!(x.c[i][k] == y.c[i][k], "({s}, {e}) at ({i}, {k})");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn truncation_is_bounded() {
         assert!(Trunc::new(MAX_S, MAX_E).is_ok());

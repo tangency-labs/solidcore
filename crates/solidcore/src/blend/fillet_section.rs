@@ -100,6 +100,7 @@
 //!   halved span; `sm_GnCertifySpan` once per level, piece's end station and piece's bound.
 //!   A fired token returns `Cancelled`; one that never fires changes nothing.
 
+pub mod affine;
 pub mod certificate;
 pub mod definition;
 pub mod definition_box;
