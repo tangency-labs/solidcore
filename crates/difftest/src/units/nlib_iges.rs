@@ -4,7 +4,7 @@
 //! (`N_IgesClampCrv`, `N_IgesCorrectCrvKnots`, `N_IgesClampSrf`,
 //! `N_IgesCorrectSrfKnots`).
 //!
-//! C++: `solidcore_ffi::units::nlib_iges` (upstream `source/SMLib/src/NL_Iges.cpp`).
+//! Ported from upstream `source/SMLib/src/NL_Iges.cpp`; checked against its golden.
 //! Rust: `solidcore::nurbs::iges`.
 //!
 //! Both sides produce the same flat record (status, then the resulting curve or
@@ -28,8 +28,6 @@ use solidcore::nurbs::iges;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_iges::{self as ffi, SurfaceArgs};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -216,62 +214,6 @@ fn record_surface(r: SolidResult<Surface>) -> Vec<f64> {
 }
 
 // ---- the two sides --------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let rec = match i {
-        Inputs::Crv126 { k, m, t, w, pts, v } => ffi::iges_126(*k, *m, t, w, pts, *v),
-        Inputs::Validate { u, p, v } => ffi::validate(u, *p, *v),
-        Inputs::Srf128 {
-            k,
-            deg,
-            s,
-            t,
-            w,
-            pts,
-            u,
-            v,
-        } => ffi::iges_128(*k, *deg, s, t, w, pts, *u, *v),
-        Inputs::ClampCrv { p, cpts, knots, b } => ffi::clamp_curve(*p, cpts, knots, *b),
-        Inputs::CorrectCrv { p, cpts, knots } => ffi::correct_curve(*p, cpts, knots),
-        Inputs::ClampSrf {
-            deg,
-            size,
-            net,
-            u,
-            v,
-            ub,
-            vb,
-        } => ffi::clamp_surface(
-            &SurfaceArgs {
-                deg: *deg,
-                size: *size,
-                net,
-                u,
-                v,
-            },
-            *ub,
-            *vb,
-        ),
-        Inputs::CorrectSrf {
-            deg,
-            size,
-            net,
-            u,
-            v,
-        } => ffi::correct_surface(&SurfaceArgs {
-            deg: *deg,
-            size: *size,
-            net,
-            u,
-            v,
-        }),
-    };
-    match rec {
-        Ok(flat) => to_output(is_surface(i), &flat),
-        Err(e @ FfiError::InvalidArgument(_)) => Err(harness(e.to_string())),
-        Err(e) => Err(harness(format!("shim failed: {e}"))),
-    }
-}
 
 fn vec3(p: &[f64; 3]) -> Vec3 {
     Vec3::new(p[0], p[1], p[2])
@@ -724,10 +666,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

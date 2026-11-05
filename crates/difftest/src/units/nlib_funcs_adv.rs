@@ -2,8 +2,8 @@
 //! B-spline curve function, and the symbolic products function * function and
 //! function * curve (xyz and 4D).
 //!
-//! C++: `solidcore_ffi::units::nlib_funcs_adv` (upstream
-//! `source/SMLib/src/NL_FuncsAdv.cpp`). Rust: `solidcore::nurbs::funcs_adv` (methods on
+//! Ported from upstream
+//! `source/SMLib/src/NL_FuncsAdv.cpp`; checked against its golden. Rust: `solidcore::nurbs::funcs_adv` (methods on
 //! `solidcore::nurbs::funcs_basic::CurveFunction`).
 //!
 //! Each case runs one routine (`inputs.op`). Both sides produce the same flat record of
@@ -30,12 +30,9 @@ use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::funcs_basic::CurveFunction;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_funcs_adv::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
-use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -235,73 +232,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_fun(f: &InlineFun, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = f.v.len().checked_sub(1).ok_or_else(|| harness("empty function"))?;
-    let m = f.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, f.p as f64, m as f64]);
-    o.extend_from_slice(&f.v);
-    o.extend_from_slice(&f.u);
-    Ok(())
-}
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::Refine { f, x, inplace } => {
-            encode_fun(&resolve_fun(f)?, &mut o)?;
-            o.push(x.len() as f64);
-            o.extend_from_slice(x);
-            o.push(flag(*inplace));
-            Op::Refine
-        }
-        Inputs::Deriv { f, d } => {
-            encode_fun(&resolve_fun(f)?, &mut o)?;
-            o.push(*d as f64);
-            Op::Deriv
-        }
-        Inputs::MulFunc { f, g } => {
-            encode_fun(&resolve_fun(f)?, &mut o)?;
-            o.push(flag(g.is_none()));
-            if let Some(g) = g {
-                encode_fun(&resolve_fun(g)?, &mut o)?;
-            }
-            Op::MulFunc
-        }
-        Inputs::MulCrv { f, g } | Inputs::MulCrv4d { f, g } => {
-            encode_fun(&resolve_fun(f)?, &mut o)?;
-            encode_crv(&resolve_crv(g)?, &mut o)?;
-            if matches!(i, Inputs::MulCrv { .. }) {
-                Op::MulCrv
-            } else {
-                Op::MulCrv4d
-            }
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -655,10 +585,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

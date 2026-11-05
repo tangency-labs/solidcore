@@ -2,8 +2,8 @@
 //! projections, distances, rotation / frame matrices, control-point reflection and
 //! collinearity, polygon and net bounding boxes.
 //!
-//! C++: `solidcore_ffi::units::nlib_geom` (upstream `source/SMLib/src/NL_Geom.cpp`,
-//! `NL_FrameBasic.cpp`). Rust: `solidcore::nurbs::geom`.
+//! Ported from upstream `source/SMLib/src/NL_Geom.cpp`,
+//! `NL_FrameBasic.cpp`; checked against its golden. Rust: `solidcore::nurbs::geom`.
 //!
 //! Each case runs one *op* (`inputs.op`, a group of upstream calls). Both sides
 //! produce the same flat record of doubles, split into keys by the op's layout
@@ -31,8 +31,6 @@ use solidcore::nurbs::geom::{
 };
 use solidcore::nurbs::math::{combine2_pts, CPoint, RealMatrix, NOW, NOZ};
 use solidcore::{Result as SolidResult, SolidError, Vec3};
-use solidcore_ffi::units::nlib_geom::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -208,129 +206,6 @@ fn split(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn line_flat(l: &Line, o: &mut Vec<f64>) {
-    o.extend_from_slice(&l.p);
-    o.extend_from_slice(&l.v);
-    o.push(if l.bounded { 1.0 } else { 0.0 });
-}
-
-fn plane_flat(p: &Pl, o: &mut Vec<f64>) {
-    o.extend_from_slice(&p.p);
-    o.extend_from_slice(&p.n);
-}
-
-fn cpp_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::VectorOps {
-            a,
-            b,
-            alpha,
-            beta,
-            pw,
-            qw,
-        } => {
-            o.extend_from_slice(a);
-            o.extend_from_slice(b);
-            o.push(*alpha);
-            o.push(*beta);
-            o.extend_from_slice(pw);
-            o.extend_from_slice(qw);
-            Op::VectorOps
-        }
-        Inputs::IsectLineLine { l1, l2 } => {
-            line_flat(l1, &mut o);
-            line_flat(l2, &mut o);
-            Op::IsectLineLine
-        }
-        Inputs::IsectLinePlane { l, plane } => {
-            line_flat(l, &mut o);
-            plane_flat(plane, &mut o);
-            Op::IsectLinePlane
-        }
-        Inputs::ProjectPtLine { l, pt } => {
-            line_flat(l, &mut o);
-            o.extend_from_slice(pt);
-            Op::ProjectPtLine
-        }
-        Inputs::PlaneOps { plane, pt, bounded } => {
-            plane_flat(plane, &mut o);
-            o.extend_from_slice(pt);
-            o.push(if *bounded { 1.0 } else { 0.0 });
-            Op::PlaneOps
-        }
-        Inputs::DistSeg { p, a, b } => {
-            o.extend_from_slice(p);
-            o.extend_from_slice(a);
-            o.extend_from_slice(b);
-            Op::DistSeg
-        }
-        Inputs::Polygon { pts } => {
-            o.extend(pts.iter().flatten());
-            Op::Polygon
-        }
-        Inputs::Cpolygon { pts } => {
-            o.extend(pts.iter().flatten());
-            Op::CPolygon
-        }
-        Inputs::Net { rows } => {
-            o.push(rows.len() as f64);
-            o.push(rows.first().map_or(0, Vec::len) as f64);
-            o.extend(rows.iter().flatten().flatten());
-            Op::Net
-        }
-        Inputs::Rotation { p, v, al } => {
-            o.extend_from_slice(p);
-            o.extend_from_slice(v);
-            o.push(*al);
-            Op::Rotation
-        }
-        Inputs::Transform {
-            o1,
-            x1,
-            y1,
-            z1,
-            o2,
-            x2,
-            y2,
-            z2,
-        } => {
-            for v in [o1, x1, y1, z1, o2, x2, y2, z2] {
-                o.extend_from_slice(v);
-            }
-            Op::Transform
-        }
-        Inputs::CptOps {
-            pw,
-            qw,
-            rw,
-            plane,
-        } => {
-            o.extend_from_slice(pw);
-            o.extend_from_slice(qw);
-            o.extend_from_slice(rw);
-            plane_flat(plane, &mut o);
-            Op::CptOps
-        }
-    };
-    (op, o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if let Inputs::Net { rows } = i {
-        let cols = rows.first().map_or(0, Vec::len);
-        if rows.iter().any(|r| r.len() != cols) {
-            return Err(harness("net rows differ in length"));
-        }
-    }
-    let (op, input) = cpp_input(i);
-    match ffi::eval(op, &input) {
-        Ok(flat) => split(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -946,10 +821,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

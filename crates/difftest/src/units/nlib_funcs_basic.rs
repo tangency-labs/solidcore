@@ -2,8 +2,8 @@
 //! (`NL_CFUN`, `NL_SFUN`): accessors, storage sizing, compaction, curve evaluation
 //! and derivatives, surface evaluation.
 //!
-//! C++: `solidcore_ffi::units::nlib_funcs_basic` (upstream
-//! `source/SMLib/src/NL_FuncsBasic.cpp`). Rust: `solidcore::nurbs::funcs_basic`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_FuncsBasic.cpp`; checked against its golden. Rust: `solidcore::nurbs::funcs_basic`.
 //!
 //! Each case runs one *op* (`inputs.op`, a group of upstream calls). Both sides
 //! produce the same flat record of doubles, split into keys by [`to_output`].
@@ -23,8 +23,6 @@ use serde_json::Value;
 use solidcore::nurbs::funcs_basic::{CurveFunction, SurfaceFunction};
 use solidcore::nurbs::knots::Side;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_funcs_basic::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -53,9 +51,6 @@ impl Flag {
         }
     }
 
-    fn code(self) -> f64 {
-        f64::from(self.side().flag())
-    }
 }
 
 /// A curve function: storage plus optional indices in use `[n, m]`.
@@ -180,24 +175,6 @@ fn srf_shape(s: &SrfIn) -> Result<([usize; 4], [usize; 4]), HarnessError> {
         return Err(harness("indices in use above the storage"));
     }
     Ok((big, used))
-}
-
-fn encode_crv(c: &CrvIn, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (big, used) = crv_shape(c)?;
-    o.extend([big[0], big[1], used[0], used[1], c.p].map(|k| k as f64));
-    o.extend_from_slice(&c.values);
-    o.extend_from_slice(&c.knots);
-    Ok(())
-}
-
-fn encode_srf(s: &SrfIn, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (big, used) = srf_shape(s)?;
-    o.extend(big.iter().map(|&k| k as f64));
-    o.extend([used[0], used[1], s.p, s.q, used[2], used[3]].map(|k| k as f64));
-    o.extend(s.values.iter().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
 }
 
 fn build_crv(c: &CrvIn) -> Result<CurveFunction, HarnessError> {
@@ -327,86 +304,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 
 // ---- C++ side ---------------------------------------------------------------------
 
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::CrvEval { crv, der, params } => {
-            encode_crv(crv, &mut o)?;
-            o.push(*der as f64);
-            o.push(params.len() as f64);
-            for pt in params {
-                o.extend([pt.u, pt.flag.code()]);
-            }
-            Op::CrvEval
-        }
-        Inputs::CrvInspect { crv, sized } => {
-            encode_crv(crv, &mut o)?;
-            o.extend(sized.iter().map(|&k| k as f64));
-            Op::CrvInspect
-        }
-        Inputs::CrvModify { crv, kind } => {
-            encode_crv(crv, &mut o)?;
-            match kind {
-                CrvKind::Compact => o.push(0.0),
-                CrvKind::SetSize { idx } => {
-                    o.push(1.0);
-                    o.extend(idx.iter().map(|&k| k as f64));
-                }
-                CrvKind::SetPtrs { values, knots } => {
-                    o.push(2.0);
-                    o.push(values.len() as f64);
-                    o.extend_from_slice(values);
-                    o.push(knots.len() as f64);
-                    o.extend_from_slice(knots);
-                }
-                CrvKind::SizeArrays { idx } => {
-                    o.push(3.0);
-                    o.extend(idx.iter().map(|&k| k as f64));
-                }
-                CrvKind::SizeArraysNull { idx } => {
-                    o.push(4.0);
-                    o.extend(idx.iter().map(|&k| k as f64));
-                }
-            }
-            Op::CrvModify
-        }
-        Inputs::SrfEval { srf, params } => {
-            encode_srf(srf, &mut o)?;
-            o.push(params.len() as f64);
-            for pt in params {
-                o.extend([pt.u, pt.v, pt.ufl.code(), pt.vfl.code()]);
-            }
-            Op::SrfEval
-        }
-        Inputs::SrfInspect { srf, sized } => {
-            encode_srf(srf, &mut o)?;
-            o.extend(sized.iter().map(|&k| k as f64));
-            Op::SrfInspect
-        }
-        Inputs::SrfModify { srf, kind } => {
-            encode_srf(srf, &mut o)?;
-            let (code, idx) = match kind {
-                SrfKind::SetSize { idx } => (0.0, idx),
-                SrfKind::SizeArrays { idx } => (1.0, idx),
-                SrfKind::SizeArraysNull { idx } => (2.0, idx),
-            };
-            o.push(code);
-            o.extend(idx.iter().map(|&k| k as f64));
-            Op::SrfModify
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
-
 // ---- Rust side --------------------------------------------------------------------
 
 /// `0` for `Ok`, the `NL_*_ERR` number for an NLib error, `-1` otherwise.
@@ -445,10 +342,6 @@ fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     let mut o = Vec::new();
     match i {
         Inputs::CrvEval { crv, der, params } => {
-            // Run only on orders the C++ guard accepts: `der` sizes every output row.
-            if *der > ffi::MAX_DER {
-                return Err(harness(format!("der {der} > {}", ffi::MAX_DER)));
-            }
             let c = build_crv(crv)?;
             for pt in params {
                 let f = c.eval(pt.u, pt.flag.side());
@@ -917,10 +810,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
