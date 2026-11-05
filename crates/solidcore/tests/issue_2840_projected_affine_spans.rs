@@ -233,3 +233,141 @@ fn rotated_constant_projection_retains_its_range_at_zero_tolerance() {
         assert_eq!(answer.end.solution_value, 2.0);
     }
 }
+
+fn upper_jump_curve(start_parameter: f64, constant: bool, right_weight: f64) -> Curve {
+    let knots = vec![start_parameter, start_parameter, 1.0, 1.0, 2.0, 2.0];
+    let first = if constant {
+        CPoint::new(1.0, 0.0, -1.0, 1.0)
+    } else {
+        CPoint::new(100.0, 0.0, 0.0, 1.0)
+    };
+    let nurb = NurbCurve::new(
+        vec![
+            first,
+            CPoint::new(1.0, 0.0, 0.0, 1.0),
+            CPoint::new(10.0 * right_weight, 0.0, 0.0, right_weight),
+            CPoint::new(10.0, 1.0, 0.0, 1.0),
+        ],
+        1,
+        knots.clone(),
+    )
+    .unwrap();
+    let spline = BSplineCurve::from_nurb(nurb, 3, true);
+    assert_eq!(spline.gw_nurb().unwrap().knots(), knots.as_slice());
+    Curve::from(spline)
+}
+
+#[test]
+fn upper_discontinuity_and_exact_query_bound_keep_the_left_infimum() {
+    let kernel = Kernel::default();
+    for right_weight in [1.0, 2.0] {
+        let curve = upper_jump_curve(0.0, false, right_weight);
+        assert_eq!(curve.evaluate_point(&kernel, 1.0).unwrap().x, 10.0);
+        assert!(
+            (curve
+                .evaluate_point(&kernel, 1.0_f64.next_down())
+                .unwrap()
+                .x
+                - 1.0)
+                .abs()
+                < 1e-6
+        );
+        for upper in [1.0, 1.0_f64.next_down(), 2.0] {
+            for operation in [
+                SolverOperation::ProjectedMinimize,
+                SolverOperation::ProjectedMaximize,
+            ] {
+                let answers = curve
+                    .global_point_solve::<Object>(
+                        &kernel,
+                        &Extent1d::from_min_max(0.0, upper),
+                        operation,
+                        Vec3::ZERO,
+                        EFF_ZERO_SQRT,
+                        SolutionRequested::Single,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&[Vec3::Z]),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(answers.len(), 1);
+                let answer = &answers.as_slice()[0];
+                let t = answer.start.parameters[0];
+                assert!(t >= 0.0 && t <= upper);
+                let evaluated = curve.evaluate_point(&kernel, t).unwrap();
+                let actual = Vec3::Z.cross(evaluated).cross(Vec3::Z).length();
+                let expected = if operation == SolverOperation::ProjectedMinimize {
+                    1.0
+                } else {
+                    100.0
+                };
+                assert!((actual - expected).abs() <= EFF_ZERO_SQRT);
+                assert!(
+                    (actual - answer.start.solution_value).abs()
+                        <= 1e-9 * actual.max(answer.start.solution_value)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn constant_left_span_does_not_extend_range_over_right_valued_knot() {
+    let curve = upper_jump_curve(0.0, true, 2.0);
+    for operation in [
+        SolverOperation::ProjectedMinimize,
+        SolverOperation::ProjectedMaximize,
+    ] {
+        let answers = curve
+            .global_point_solve::<Object>(
+                &Kernel::default(),
+                &Extent1d::from_min_max(0.0, 1.0),
+                operation,
+                Vec3::ZERO,
+                EFF_ZERO_SQRT,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::Z]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(answers.len(), 1);
+        let answer = &answers.as_slice()[0];
+        if operation == SolverOperation::ProjectedMinimize {
+            assert_eq!(answer.solution_type, SolutionType::RangeOfValues);
+            assert_eq!(answer.start.parameters[0], 0.0);
+            assert!(answer.end.parameters[0] < 1.0);
+            assert_eq!(answer.start.solution_value, 1.0);
+            assert_eq!(answer.end.solution_value, 1.0);
+        } else {
+            assert_eq!(answer.solution_type, SolutionType::SingleValue);
+            assert_eq!(answer.start.parameters[0], 1.0);
+            assert_eq!(answer.start.solution_value, 10.0);
+        }
+    }
+}
+
+#[test]
+fn unattainable_left_infimum_at_upper_jump_is_refused() {
+    let lower = 1.0 - 1.5e-12;
+    let curve = upper_jump_curve(lower, false, 1.0);
+    // Distance decreases to the open-left limit 1. Even the final representable
+    // parameter misses that limit by more than the caller's tolerance.
+    let nearest = 1.0 + 99.0 * (1.0 - 1.0_f64.next_down()) / (1.0 - lower);
+    assert!(nearest - 1.0 > EFF_ZERO_SQRT);
+    let result = curve.global_point_solve::<Object>(
+        &Kernel::default(),
+        &Extent1d::from_min_max(lower, 1.0),
+        SolverOperation::ProjectedMinimize,
+        Vec3::ZERO,
+        EFF_ZERO_SQRT,
+        SolutionRequested::Single,
+        &GlobalPointSolveOptions {
+            opt_vectors: Some(&[Vec3::Z]),
+            ..Default::default()
+        },
+    );
+    assert!(result.is_err());
+}

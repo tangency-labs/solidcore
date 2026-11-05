@@ -37,7 +37,7 @@ Normalizing Newton's variable and then evaluating at rounded raw parameters
 does not remove that discrepancy. Accepting every failed Newton search would
 also be unsound.
 
-## Construction under investigation
+## Affine construction
 
 An affine span has an exact quadratic projected-distance objective. With
 projected displacement `A` and projected start-to-query offset `B`, its minimum
@@ -53,6 +53,33 @@ This follows constrained quadratic minimization and the same-objective enclosure
 requirement already discussed in [the construction finding](curve.curve_p1--projected-endpoints-small-mitres.md).
 The regression tests keep the raw knots and original accuracy, including a
 `1e-12` request that cannot be represented and must be refused.
+
+Candidate `a15810f8c` passes all six initial affine tests, including a rotated
+constant projection at zero selection tolerance. Constant projection is proved
+by an exact bounded dyadic parallelism predicate, not a rounded zero cross
+product. Selection tolerance is distinct from ordinary metric rounding: an exact
+constant range or a symbolically proved boundary optimum has zero optimization
+gap even when its distance requires rounding.
+
+## Discontinuous upper-knot regression
+
+An additional runtime probe exposes a boundary defect in `a15810f8c`. Use raw
+degree-one knots `[0,0,1,1,2,2]`, controls
+`(100,0,0),(1,0,0),(10,0,0),(10,1,0)`, unit weights, point zero, normal Z,
+and requested interval `[0,1]`. Evaluation at `1` returns the right-hand value
+`(10,0,0)`, while `1.next_down()` returns approximately `(1.000000000000011,0,0)`.
+The candidate incorrectly returns distance 10 at the knot. Three additional tests
+fail against that candidate: the discontinuous minimum, a constant range incorrectly
+including the jump, and a limiting optimum that cannot meet the requested tolerance.
+
+The corrected construction separates the isolated right-valued upper knot from
+the affine span to its left. Its last representable interior parameter is compared
+against the limiting optimum, with explicit refusal when the gap is too large.
+The isolated control's own homogeneous weight is used. Constant ranges exclude
+the jump. Projected query intervals are intersected exactly: the previous
+`EFF_ZERO` containment allowance could return the knot even when the requested
+upper endpoint was `1.next_down()`. The natural upper endpoint keeps its existing
+special evaluation rule. These changes require fresh validation.
 
 ## Why the trimming result alone was insufficient
 

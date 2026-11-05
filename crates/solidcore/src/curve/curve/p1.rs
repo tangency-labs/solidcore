@@ -21,7 +21,9 @@
 //! Deviations:
 //! - **Projected affine extrema.** Exact affine spans use a closed-form local
 //!   fraction and an outward-rounded objective certificate, including raw tiny
-//!   knot spans. Projected extrema propagate solve errors rather than publishing
+//!   knot spans. Interior full-multiplicity upper knots are isolated right-valued
+//!   candidates beside a left span with its upper limit excluded; query bounds are intersected
+//!   exactly. Projected extrema propagate solve errors rather than publishing
 //!   uncertified partial results.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
 //!   independently of the stationary-point search (#2840). Finding a stationary
@@ -1104,6 +1106,7 @@ struct AffineDefinition {
     end: [Ivl; 3],
     interval: Extent1d,
     direction_points: ([f64; 3], [f64; 3]),
+    isolated_end: Option<[Ivl; 3]>,
 }
 impl AffineDefinition {
     fn point(&self, t: f64) -> [Ivl; 3] {
@@ -1147,6 +1150,7 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
             start: endpoint(interval.min()),
             end: endpoint(interval.max()),
             interval,
+            isolated_end: None,
             direction_points: (
                 [0.0; 3],
                 if line.line_scale() == 0.0 {
@@ -1196,11 +1200,31 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefiniti
     let ac = coords(a);
     let bc = coords(b);
     let w = Ivl::from(if nonrational { 1.0 } else { a.w });
+    // Side::Left names the span's left boundary, so evaluate_point at an
+    // interior full-multiplicity knot returns the NEXT span's first control.
+    // The natural upper endpoint is special and retains the last left value.
+    let isolated_end = if interval.max() == hi
+        && hi < spline.natural_interval().max()
+        && nurb.knots().get(index + 2) == Some(&hi)
+    {
+        let right = nurb.cpts().get(index + 1)?;
+        let weight = if right.w == crate::nurbs::math::NOW {
+            1.0
+        } else if right.w > 0.0 && right.w.is_finite() {
+            right.w
+        } else {
+            return None;
+        };
+        Some(coords(right).map(|x| Ivl::from(x) / Ivl::from(weight)))
+    } else {
+        None
+    };
     Some(AffineDefinition {
         start: ac.map(|x| Ivl::from(x) / w),
         end: bc.map(|x| Ivl::from(x) / w),
         interval: Extent1d::from_min_max(lo, hi),
         direction_points: (ac, bc),
+        isolated_end,
     })
 }
 
@@ -1240,7 +1264,13 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         let end = projected(definition.point(interval.max()));
         let delta = iv_sub(end, start);
         let constant = definition.constant_projection(normal);
+        let left_end = if definition.isolated_end.is_some() {
+            interval.max().next_down()
+        } else {
+            interval.max()
+        };
         let maximize = self.base.operation == SolverOperation::ProjectedMaximize;
+        let operation = self.base.operation;
         let tolerance = self.base.tolerance_3d;
         if !tolerance.is_finite() || tolerance < 0.0 {
             return Err(affine_refusal());
@@ -1258,17 +1288,15 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             solution
         };
         let metric = |t: f64| -> Result<(f64, Ivl)> {
-            let value = proj_dist(
-                k,
-                curve,
-                t,
-                point,
-                normal,
-                true,
-                Vec3::ZERO,
-                self.base.operation,
-            )?;
-            let bounds = iv_length(projected(definition.point(t)));
+            let value = proj_dist(k, curve, t, point, normal, true, Vec3::ZERO, operation)?;
+            let position = if t == interval.max() {
+                definition
+                    .isolated_end
+                    .unwrap_or_else(|| definition.point(t))
+            } else {
+                definition.point(t)
+            };
+            let bounds = iv_length(projected(position));
             if !value.is_finite() || !bounds.lo.is_finite() || !bounds.hi.is_finite() {
                 return Err(affine_refusal());
             }
@@ -1280,11 +1308,17 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             // The exact parallel identity proves zero optimization error for
             // every parameter, including a zero requested distance tolerance.
             let (a, _) = metric(interval.min())?;
-            let (b, _) = metric(interval.max())?;
+            let (b, _) = metric(left_end)?;
+            if definition.isolated_end.is_some() {
+                let (value, _) = metric(interval.max())?;
+                self.add_solution(&make_solution(interval.max(), value), true)?;
+            }
             let mut solution = make_solution(interval.min(), a);
-            solution.solution_type = SolutionType::RangeOfValues;
+            if interval.min() < left_end {
+                solution.solution_type = SolutionType::RangeOfValues;
+            }
             solution.end = solution.start;
-            solution.end.parameters[0] = interval.max();
+            solution.end.parameters[0] = left_end;
             solution.end.solution_value = b;
             self.add_solution(&solution, true)?;
             return Ok(true);
@@ -1300,17 +1334,26 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         }
         let fraction = Ivl::new(foot.lo.clamp(0.0, 1.0), foot.hi.clamp(0.0, 1.0));
         if !maximize
+            && definition.isolated_end.is_none()
             && ((foot.hi <= 0.0 && (conts[0] as i32) >= (ContinuityType::G1 as i32))
                 || (foot.lo >= 1.0 && (conts[1] as i32) >= (ContinuityType::G1 as i32)))
         {
             return Ok(true);
         }
-        let optimum = iv_length(iv_lerp(start, end, fraction));
+        let mut optimum = iv_length(iv_lerp(start, end, fraction));
+        if let Some(position) = definition.isolated_end {
+            let isolated = iv_length(projected(position));
+            optimum.lo = optimum.lo.min(isolated.lo);
+            optimum.hi = optimum.hi.min(isolated.hi);
+        }
         let mut parameters = Vec::new();
         for (t, continuity) in [(interval.min(), conts[0]), (interval.max(), conts[1])] {
             if (continuity as i32) < (ContinuityType::G1 as i32) {
                 parameters.push(t);
             }
+        }
+        if definition.isolated_end.is_some() && !parameters.contains(&left_end) {
+            parameters.push(left_end);
         }
         if !maximize && fraction.mid() > 0.0 && fraction.mid() < 1.0 {
             let t = interval.evaluate(fraction.mid());
@@ -1340,7 +1383,9 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         let Some(&(best_t, best_value, best_bound)) = candidates.first() else {
             return Ok(true);
         };
-        let proven_optimal = if maximize {
+        let proven_optimal = if definition.isolated_end.is_some() {
+            false
+        } else if maximize {
             candidates
                 .iter()
                 .all(|(t, _, bound)| *t == best_t || bound.hi <= best_bound.lo)
@@ -1351,10 +1396,13 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         if !proven_optimal {
             let gap = if maximize {
                 // Only eligible boundaries belong to this leaf's maximum search.
-                let upper = candidates
+                let mut upper = candidates
                     .iter()
                     .map(|(_, _, b)| b.hi)
                     .fold(f64::NEG_INFINITY, f64::max);
+                if definition.isolated_end.is_some() {
+                    upper = upper.max(iv_length(end).hi);
+                }
                 upper - best_bound.lo
             } else {
                 best_bound.hi - optimum.lo
@@ -1367,7 +1415,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         // Preserve eligible endpoint candidates for All mode, but do not emit
         // adjacent floating-point representatives as distinct stationary roots.
         for (t, value, _) in candidates.into_iter().skip(1) {
-            if t == interval.min() || t == interval.max() {
+            if t == interval.min() || t == interval.max() || t == left_end {
                 self.add_solution(&make_solution(t, value), true)?;
             }
         }
@@ -1443,10 +1491,19 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         }
 
         // trim sBezIvl to m_crInterval
-        if !bez_ivl.is_contained_by(&interval, EFF_ZERO) {
+        let projected_extremum = matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        );
+        let containment_tolerance = if projected_extremum { 0.0 } else { EFF_ZERO };
+        if !bez_ivl.is_contained_by(&interval, containment_tolerance) {
             bez_ivl = bez_ivl.intersect(&interval)?;
             // no work - zero length trimmed interval
-            if are_same(bez_ivl.max(), bez_ivl.min()) {
+            if if projected_extremum {
+                bez_ivl.max() == bez_ivl.min()
+            } else {
+                are_same(bez_ivl.max(), bez_ivl.min())
+            } {
                 return Ok(needs_more_subdivision);
             }
         }
