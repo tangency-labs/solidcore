@@ -2,8 +2,8 @@
 //! and removal, removal error bound, splitting, segment extraction, Bezier
 //! decomposition, degree elevation).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_tool_p1` (upstream
-//! `source/SMLib/src/NL_CrvTool.cpp`). Rust: `solidcore::nurbs::crv_tool::p1`
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvTool.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_tool::p1`
 //! (methods on `solidcore::nurbs::crv_basic::Curve`).
 //!
 //! Each case runs one routine (`inputs.op`) on one curve. Both sides produce the same
@@ -24,12 +24,9 @@ use serde_json::Value;
 use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_crv_tool_p1::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
-use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 #[path = "fixtures/nlib_crv_tool_p1_smc.rs"]
@@ -258,72 +255,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let c = resolve(i.crv())?;
-    encode_crv(&c, &mut o)?;
-    let op = match i {
-        Inputs::InsertKnot { u, r, inplace, .. } => {
-            o.extend([u.get(&c)?, *r as f64, flag(*inplace)]);
-            Op::InsertKnot
-        }
-        Inputs::Split { u, .. } => {
-            o.push(u.get(&c)?);
-            Op::Split
-        }
-        Inputs::DecomposeBez { .. } => Op::DecomposeBez,
-        Inputs::Refine { x, inplace, .. } => {
-            o.push(x.len() as f64);
-            for v in x {
-                o.push(v.get(&c)?);
-            }
-            o.push(flag(*inplace));
-            Op::Refine
-        }
-        Inputs::ExtractSeg { ul, ur, inplace, .. } => {
-            o.extend([ul.get(&c)?, ur.get(&c)?, flag(*inplace)]);
-            Op::ExtractSeg
-        }
-        Inputs::RemoveKnot {
-            u, nu, tol, inplace, ..
-        } => {
-            o.extend([u.get(&c)?, *nu as f64, *tol, flag(*inplace)]);
-            Op::RemoveKnot
-        }
-        Inputs::MaxErr { r, s, .. } => {
-            o.extend([*r as f64, *s as f64]);
-            Op::MaxErr
-        }
-        Inputs::Elevate { t, inplace, .. } => {
-            o.extend([*t as f64, flag(*inplace)]);
-            Op::Elevate
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -655,10 +586,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

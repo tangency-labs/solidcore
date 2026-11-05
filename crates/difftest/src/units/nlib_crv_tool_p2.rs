@@ -2,8 +2,8 @@
 //! knots, degree reduction, compatibility of curve sets, removal of degenerate
 //! segments).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_tool_p2` (upstream
-//! `source/SMLib/src/NL_CrvTool.cpp`). Rust: `solidcore::nurbs::crv_tool::p2`
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvTool.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_tool::p2`
 //! (methods on `solidcore::nurbs::crv_basic::Curve` and free functions on curve sets).
 //!
 //! Each case runs one routine (`inputs.op`). Both sides produce the same flat record of
@@ -29,8 +29,6 @@ use solidcore::nurbs::crv_tool::p2::{
 };
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_crv_tool_p2::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -228,76 +226,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let single = |crv: &CrvIn, tol: f64, inplace: bool, o: &mut Vec<f64>| {
-        encode_crv(&resolve(crv)?, o)?;
-        o.extend([tol, flag(inplace)]);
-        Ok::<(), HarnessError>(())
-    };
-    let set = |crvs: &[CrvIn], prm: f64, o: &mut Vec<f64>| {
-        o.push(crvs.len() as f64);
-        for c in crvs {
-            encode_crv(&resolve(c)?, o)?;
-        }
-        o.push(prm);
-        Ok::<(), HarnessError>(())
-    };
-    let op = match i {
-        Inputs::RemoveKnots { crv, tol, inplace } => {
-            single(crv, *tol, *inplace, &mut o)?;
-            Op::RemoveKnots
-        }
-        Inputs::ReduceDegreeOnce { crv, tol, inplace } => {
-            single(crv, *tol, *inplace, &mut o)?;
-            Op::ReduceDegreeOnce
-        }
-        Inputs::ReduceDegree { crv, tol, inplace } => {
-            single(crv, *tol, *inplace, &mut o)?;
-            Op::ReduceDegree
-        }
-        Inputs::RemoveDegenSegs { crv, tol, inplace } => {
-            single(crv, *tol, *inplace, &mut o)?;
-            Op::RemoveDegenSegs
-        }
-        Inputs::MakeCompatible { crvs } => {
-            set(crvs, 0.0, &mut o)?;
-            Op::MakeCompatible
-        }
-        Inputs::MakeCompatibleTol { crvs, knot_tol } => {
-            set(crvs, *knot_tol, &mut o)?;
-            Op::MakeCompatibleTol
-        }
-        Inputs::MakeCompatibleAdj { crvs, tol } => {
-            set(crvs, *tol, &mut o)?;
-            Op::MakeCompatibleAdj
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -675,10 +603,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

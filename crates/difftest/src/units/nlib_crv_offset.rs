@@ -1,8 +1,8 @@
 //! Runner for unit `nlib.crv_offset`: the planar curve offset by point sampling
 //! (`N_CrvOffsetPtSampling`).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_offset` (upstream
-//! `source/SMLib/src/NL_CrvOffset.cpp`). Rust: `solidcore::nurbs::crv_offset`
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvOffset.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_offset`
 //! ([`Curve::offset_pt_sampling`]).
 //!
 //! Inputs: a curve (inline `cpts` `[x, y, z, w]`, degree `p`, knots `u`, or an upstream
@@ -15,11 +15,7 @@
 //! then on success `dims` (`n p m`), `cpts` (homogeneous `x y z w`) and `knots` of the
 //! offset curve.
 //!
-//! The shim refuses inputs whose sample count exceeds
-//! [`ffi::MAX_SAMPLES`](solidcore_ffi::units::nlib_crv_offset::MAX_SAMPLES) (upstream
-//! casts it unchecked); the generator screens its cases with the same count computed
-//! by the Rust port ([`sample_count`]). Every run has at least [`MIN_GENERATED`]
-//! generated cases.
+//! Every run has at least [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,11 +25,8 @@ use solidcore::nurbs::crv_basic::{ConicType, Curve};
 use solidcore::nurbs::crv_common::{circ_arc, Arc};
 use solidcore::nurbs::crv_fit::p1::ParamMethod;
 use solidcore::nurbs::crv_offset::OffsetParam;
-use solidcore::nurbs::geom::Interval;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::nlib_crv_offset as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -170,39 +163,6 @@ fn to_output(flat: &[f64]) -> Result<Output, HarnessError> {
 
 // ---- C++ side ---------------------------------------------------------------------
 
-fn encode(i: &Inputs, c: &InlineCrv) -> Result<Vec<f64>, HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m =
-        c.u.len()
-            .checked_sub(1)
-            .ok_or_else(|| harness("empty knots"))?;
-    let mut o = vec![n as f64, c.p as f64, m as f64];
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    o.extend_from_slice(&i.b);
-    o.extend([
-        i.d,
-        i.deg as f64,
-        if i.tangents { 1.0 } else { 0.0 },
-        f64::from(i.par.par().flag()),
-        i.tol,
-    ]);
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let c = resolve(&i.crv)?;
-    match ffi::offset_pt_sampling(&encode(i, &c)?) {
-        Ok(flat) => to_output(&flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
-
 // ---- Rust side --------------------------------------------------------------------
 
 /// Status of a Rust error: the NLib number, `1000` for upstream's bare error flags,
@@ -246,50 +206,6 @@ fn rust_record(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         Err(e) => vec![status(&e)],
     };
     Ok(rec)
-}
-
-// ---- screening --------------------------------------------------------------------
-
-/// The total sample count of `N_CrvOffsetPtSampling` as the shim's guard computes it
-/// (`None` when the guard refuses the input).
-fn sample_count(i: &Inputs) -> Option<f64> {
-    let c = resolve(&i.crv).ok()?;
-    let cur = to_curve(&c).ok()?;
-    if i.tol == 0.0 {
-        return Some(0.0);
-    }
-    let exp = if i.deg == 1 { 0.5 } else { 0.34 };
-    let f1 = (1.0 / i.tol).powf(exp);
-    let f2 = 2.0 * i.deg as f64;
-    if !f1.is_finite() {
-        return None;
-    }
-    let [bx, by, bz] = i.b;
-    let Ok((b, _)) = solidcore::nurbs::geom::normalize(Vec3::new(bx, by, bz)) else {
-        return Some(0.0);
-    };
-    let Ok(bez) = cur.decompose_bez() else {
-        return Some(0.0);
-    };
-    let max = ffi::MAX_SAMPLES as f64;
-    let mut mu = 0.0;
-    for mut seg in bez {
-        seg.reparam_to_interval(Interval::new(0.0, 1.0)).ok()?;
-        let Ok(muu) = seg.offset_max_2nd_deriv(i.d, b) else {
-            break;
-        };
-        let s = (0.125 * muu).sqrt();
-        let gro = if f2 > s { f2 } else { s };
-        let del = (f1 * gro).ceil();
-        if !(del >= 0.0 && del <= max) {
-            return None;
-        }
-        mu += del;
-        if mu > max {
-            return None;
-        }
-    }
-    Some(mu)
 }
 
 // ---- generated cases --------------------------------------------------------------
@@ -551,20 +467,9 @@ fn gen_inputs(rng: &mut Rng) -> Option<Inputs> {
     })
 }
 
-/// A generated case whose sample count the shim accepts.
+/// A generated case (redrawn up to 64 times while the curve cannot be built).
 fn gen_case(rng: &mut Rng) -> Option<Inputs> {
-    for _ in 0..64 {
-        let Some(mut i) = gen_inputs(rng) else {
-            continue;
-        };
-        for _ in 0..4 {
-            if sample_count(&i).is_some() {
-                return Some(i);
-            }
-            i.tol = (i.tol * 10.0).min(1.0);
-        }
-    }
-    None
+    (0..64).find_map(|_| gen_inputs(rng))
 }
 
 impl UnitDiff for Runner {
@@ -582,10 +487,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

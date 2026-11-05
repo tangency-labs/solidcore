@@ -3,8 +3,8 @@
 //! reversal, reparametrisation, Greville abscissae, linear / degenerate segments,
 //! line and circle recognition, closure continuity).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_nurb` (upstream
-//! `source/SMLib/src/NL_CrvNurb.cpp`). Rust: `solidcore::nurbs::crv_nurb` (methods on
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvNurb.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_nurb` (methods on
 //! `solidcore::nurbs::crv_basic::Curve`).
 //!
 //! Each case runs one routine (`inputs.op`) on one curve (none for `line`). Both
@@ -29,8 +29,6 @@ use solidcore::nurbs::crv_nurb::{greville_abscissa, line_from_pt_and_vector, Cur
 use solidcore::nurbs::knots::Side;
 use solidcore::nurbs::math::{CPoint, MatrixType, RealMatrix, NOW, NOZ};
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::nlib_crv_nurb::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -96,12 +94,6 @@ enum SideIn {
 }
 
 impl SideIn {
-    fn flag(self) -> f64 {
-        match self {
-            SideIn::Left => 1.0,
-            SideIn::Right => 2.0,
-        }
-    }
 
     fn side(self) -> Side {
         match self {
@@ -438,137 +430,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 
 // ---- C++ side ---------------------------------------------------------------------
 
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let c = resolve_opt(i.crv())?;
-    if let Some(c) = &c {
-        encode_crv(c, &mut o)?;
-    }
-    let u = match (i.param(), &c) {
-        (Some(p), Some(c)) => p.get(c)?,
-        _ => 0.0,
-    };
-    let s = i.side().flag();
-    let op = match i {
-        Inputs::Greville { deg, idx, .. } => {
-            o.extend([*deg as f64, *idx as f64]);
-            Op::Greville
-        }
-        Inputs::Curvature { circle, .. } => {
-            o.extend([u, s, flag(*circle)]);
-            Op::Curvature
-        }
-        Inputs::Eval { .. } => {
-            o.extend([u, s]);
-            Op::Eval
-        }
-        Inputs::Bbox { .. } => Op::BBox,
-        Inputs::Derivs { der, .. } => {
-            o.extend([u, s, *der as f64]);
-            Op::Derivs
-        }
-        Inputs::Tangent { .. } => {
-            o.extend([u, s]);
-            Op::Tangent
-        }
-        Inputs::Frenet { .. } => {
-            o.extend([u, s]);
-            Op::Frenet
-        }
-        Inputs::Transform { m, .. } => {
-            o.extend_from_slice(m);
-            Op::Transform
-        }
-        Inputs::MinMax { .. } => Op::MinMax,
-        Inputs::Line { p, v } => {
-            o.extend_from_slice(p);
-            o.extend_from_slice(v);
-            Op::Line
-        }
-        Inputs::Scale { c, f, .. } => {
-            o.extend_from_slice(c);
-            o.extend_from_slice(f);
-            Op::Scale
-        }
-        Inputs::ScaleCpts { f, .. } => {
-            o.push(*f);
-            Op::ScaleCPts
-        }
-        Inputs::Translate { t, .. } => {
-            o.extend_from_slice(t);
-            Op::Translate
-        }
-        Inputs::Project {
-            o: po,
-            n,
-            e,
-            perspective,
-            inplace,
-            ..
-        } => {
-            o.extend_from_slice(po);
-            o.extend_from_slice(n);
-            o.extend_from_slice(e);
-            o.extend([if *perspective { 2.0 } else { 1.0 }, flag(*inplace)]);
-            Op::Project
-        }
-        Inputs::Reverse { inplace, .. } => {
-            o.push(flag(*inplace));
-            Op::Reverse
-        }
-        Inputs::BboxDiag { .. } => Op::BBoxDiag,
-        Inputs::MaxPos { .. } => Op::MaxPos,
-        Inputs::LinearSegs { tol, .. } => {
-            o.push(*tol);
-            Op::LinearSegs
-        }
-        Inputs::DegenSegs { tol, .. } => {
-            o.push(*tol);
-            Op::DegenSegs
-        }
-        Inputs::Reparam { ul, ur, .. } => {
-            o.extend([*ul, *ur]);
-            Op::Reparam
-        }
-        Inputs::GetType { tol, .. } => {
-            o.push(*tol);
-            Op::Type
-        }
-        Inputs::CurvDeriv { .. } => {
-            o.extend([u, s]);
-            Op::CurvDeriv
-        }
-        Inputs::Closed { n, tols, .. } => {
-            o.push(*n as f64);
-            o.extend_from_slice(tols);
-            Op::Closed
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -1181,10 +1042,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

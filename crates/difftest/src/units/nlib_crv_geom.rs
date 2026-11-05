@@ -2,8 +2,8 @@
 //! (`N_CrvClosestPt`), arc length (`N_CrvArcLength`) and polyline approximation
 //! (`N_ApproxCrvWithPolyline`).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_geom` (upstream
-//! `source/SMLib/src/NL_CrvGeom.cpp`). Rust: `solidcore::nurbs::crv_geom` (methods on
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvGeom.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_geom` (methods on
 //! `solidcore::nurbs::crv_basic::Curve`).
 //!
 //! Each case runs one routine (`inputs.op`) on one curve. Both sides produce the same
@@ -30,8 +30,6 @@ use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::crv_geom::{ToleranceKind, ITER_LIMIT};
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::nlib_crv_geom::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -98,13 +96,6 @@ enum Ret {
 }
 
 impl Ret {
-    fn flag(self) -> f64 {
-        match self {
-            Ret::Points => 1.0,
-            Ret::Parameters => 2.0,
-            Ret::Both => 3.0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,66 +244,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m =
-        c.u.len()
-            .checked_sub(1)
-            .ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn tflag(relative: bool) -> f64 {
-    if relative {
-        2.0
-    } else {
-        1.0
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let c = resolve(i.crv())?;
-    let mut o = Vec::new();
-    encode_crv(&c, &mut o)?;
-    let op = match i {
-        Inputs::Closest {
-            p, u0, top, toc, ..
-        } => {
-            o.extend_from_slice(p);
-            o.extend([u0.get(&c)?, *top, *toc]);
-            Op::Closest
-        }
-        Inputs::ArcLength {
-            ul,
-            ur,
-            tol,
-            relative,
-            ..
-        } => {
-            o.extend([ul.get(&c)?, ur.get(&c)?, *tol, tflag(*relative)]);
-            Op::ArcLength
-        }
-        Inputs::Polyline {
-            tol, relative, ret, ..
-        } => {
-            o.extend([*tol, tflag(*relative), ret.flag()]);
-            Op::Polyline
-        }
-    };
-    match ffi::eval(op, &o) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -782,10 +713,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
