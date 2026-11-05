@@ -148,6 +148,53 @@ fn req_all() -> i32 {
     1
 }
 
+/// The largest magnitude of a record value.
+const MAX_COORD: f64 = 1e6;
+/// The largest control point index of a database record.
+const MAX_DB_INDEX: i64 = 64;
+
+/// Whether a database record keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_hyperbola.rs`, `check_record`): finite values
+/// within range, `1 ≤ p ≤ n ≤ MAX_DB_INDEX`, flags in range, the exact number of values and
+/// positive weights.
+fn record_ok(r: &RecordIn) -> bool {
+    let fin = |x: f64| x.is_finite() && x.abs() <= MAX_COORD;
+    let head = r.head.iter().all(|&x| fin(x))
+        && (1..=MAX_DB_INDEX).contains(&r.n)
+        && r.p >= 1
+        && i64::from(r.p) <= r.n
+        && (0..=1).contains(&r.rat)
+        && (2..=3).contains(&r.dim)
+        && r.kt <= 4
+        && r.form <= 6;
+    if !head {
+        return false;
+    }
+    let per = 2 + usize::from(r.dim != 2) + usize::from(r.rat != 0);
+    let (Ok(n_pts), Ok(n_knots)) = (
+        usize::try_from(r.n + 1),
+        usize::try_from(r.n + i64::from(r.p) + 2),
+    ) else {
+        return false;
+    };
+    r.vals.len() == n_pts * per + n_knots
+        && r.vals.iter().all(|&x| fin(x))
+        && (r.rat == 0
+            || r.vals
+                .chunks(per)
+                .take(n_pts)
+                .all(|c| c.last().is_some_and(|&w| w > 0.0)))
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper: a record as
+/// [`record_ok`] takes it for `read_db`, a hyperbola for every other op.
+fn keeps_contract(i: &Inputs) -> bool {
+    match &i.op {
+        OpIn::ReadDb { record, .. } => record_ok(record),
+        _ => i.this.is_some(),
+    }
+}
+
 /// The stream bytes of `r` as `SmHyperbola::WriteToDB` writes them (ASCII: one group per
 /// line with upstream's labels, values as `{:.17e}`; binary: native-endian doubles,
 /// `long` / `short` header fields). The fields are written as they are, so a record
@@ -297,7 +344,11 @@ macro_rules! solid {
 }
 
 /// The outputs of a member op after the status, or the op's error.
-fn member(k: &solidcore::kernel::Kernel, curve: &mut Curve, op: &OpIn) -> Result<solidcore::Result<Vec<f64>>, HarnessError> {
+fn member(
+    k: &solidcore::kernel::Kernel,
+    curve: &mut Curve,
+    op: &OpIn,
+) -> Result<solidcore::Result<Vec<f64>>, HarnessError> {
     let mut o = Vec::new();
     match op {
         OpIn::State { types } => {
@@ -341,7 +392,10 @@ fn member(k: &solidcore::kernel::Kernel, curve: &mut Curve, op: &OpIn) -> Result
             solid!(h.adjust_step_interval(&Extent1d::from_min_max(ivl[0], ivl[1]), None));
         }
         OpIn::Reverse { ivl } => {
-            let r = solid!(curve.reverse_parameterization(&solidcore::kernel::Kernel::default(), &Extent1d::from_min_max(ivl[0], ivl[1])));
+            let r = solid!(curve.reverse_parameterization(
+                &solidcore::kernel::Kernel::default(),
+                &Extent1d::from_min_max(ivl[0], ivl[1])
+            ));
             o.extend([r.min(), r.max()]);
         }
         OpIn::Transform { o: po, x, y, scale } => {
@@ -392,7 +446,10 @@ fn member(k: &solidcore::kernel::Kernel, curve: &mut Curve, op: &OpIn) -> Result
 }
 
 /// The Rust record, or `Err(output)` for a deferred case.
-fn rust_record(k: &solidcore::kernel::Kernel, i: &Inputs) -> Result<Result<Vec<f64>, Output>, HarnessError> {
+fn rust_record(
+    k: &solidcore::kernel::Kernel,
+    i: &Inputs,
+) -> Result<Result<Vec<f64>, Output>, HarnessError> {
     let mut o = Vec::new();
 
     if let OpIn::ReadDb {
@@ -412,7 +469,13 @@ fn rust_record(k: &solidcore::kernel::Kernel, i: &Inputs) -> Result<Result<Vec<f
                 FileType::Ascii
             },
         );
-        match Curve::read_from_db(&solidcore::kernel::Kernel::default(), Hyperbola::TYPE, &mut db, *dim, *version) {
+        match Curve::read_from_db(
+            &solidcore::kernel::Kernel::default(),
+            Hyperbola::TYPE,
+            &mut db,
+            *dim,
+            *version,
+        ) {
             Ok(c) => {
                 o.extend([0.0, 1.0]);
                 state(&mut o, hyp_of(&c)?);
@@ -425,7 +488,10 @@ fn rust_record(k: &solidcore::kernel::Kernel, i: &Inputs) -> Result<Result<Vec<f
         return Ok(Ok(o));
     }
 
-    let this = i.this.as_ref().ok_or_else(|| harness("member op without this"))?;
+    let this = i
+        .this
+        .as_ref()
+        .ok_or_else(|| harness("member op without this"))?;
     let mut curve = Curve::from(build(this));
     match member(k, &mut curve, &i.op)? {
         Ok(out) => {
@@ -723,6 +789,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_inputs(rng)).ok()
+        let i = (0..64).map(|_| gen_inputs(rng)).find(keeps_contract)?;
+        serde_json::to_value(i).ok()
     }
 }
