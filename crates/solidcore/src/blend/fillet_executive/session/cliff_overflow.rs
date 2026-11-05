@@ -534,10 +534,18 @@ impl FilletSession<'_> {
                 // region whose face meets a target face a hair from its edge, #1467's box
                 // at r10.02); the fork checks only the Boolean's status. Refused here as
                 // no room, the target as it was.
-                if target_solid
+                // (an error past here puts the target back first: it was taken out of
+                // the caller's body for the Boolean)
+                let leaves_no_solid = target_solid
                     && (outcome.result.faces().ids().next().is_none()
-                        || !crate::topology::brep::p2::is_manifold_solid(&outcome.result)?)
-                {
+                        || match crate::topology::brep::p2::is_manifold_solid(&outcome.result) {
+                            Ok(solid) => !solid,
+                            Err(e) => {
+                                self.objects.target.restore(kept);
+                                return Err(e);
+                            }
+                        });
+                if leaves_no_solid {
                     self.objects.target.restore(kept);
                     self.note_refusal(Refusal {
                         code: FilletErrorType::NoRoom,
@@ -547,11 +555,14 @@ impl FilletSession<'_> {
                     return Err(SolidError::sm_err(OP));
                 }
                 let mut result = outcome.result;
-                super::replace_application_attributes(
+                if let Err(e) = super::replace_application_attributes(
                     &mut self.objects.attributes,
                     &mut result,
                     serial,
-                )?;
+                ) {
+                    self.objects.target.restore(kept);
+                    return Err(e);
+                }
                 *self.objects.target = result;
                 Ok(())
             }
