@@ -1,7 +1,7 @@
 //! Runner for unit `intersect.topology_solver_p1`: `SmTopologySolver` and its local solvers.
 //!
-//! C++: `solidcore_ffi::units::intersect_topology_solver_p1` (upstream
-//! `source/SMLib/src/SmTopologySolver.cpp`). Rust: `solidcore::intersect::topology_solver::p1`.
+//! Ported from upstream `source/SMLib/src/SmTopologySolver.cpp`; checked against its golden.
+//! Rust: `solidcore::intersect::topology_solver::p1`.
 //!
 //! A case is one `op`: `ctor` (the constructor's operation category and projection flag,
 //! `GetBestAnswerSoFar`), `may` (`MayContainAnswer` on box pairs), `local` (`SolveIt` of a
@@ -12,14 +12,13 @@
 //! free-standing vertices (`{"vertex": {p, tol}}`), curves (`{"curve": ..}`: `bspline`
 //! (control points as stored `[x, y, z, w]`), `hermite`, `line`, `ellipse` or `circle`, as
 //! unit `curve.curve_p5`) and edges (`{"edge": {curve, ivl, tol?}}`, owning the curve; `tol` sets the edge's tolerance, else `SmEdge`'s default 0.0), and the
-//! local solver `local` (`kind` as `solidcore_ffi::units::intersect_topology_solver_p1::
-//! LocalKind`, `swap`, `point`, point vertex `pv`, interval `ivl`, curve `owner`, `curve`,
-//! curve edge `cedge`; indices into the table, `-1` for none). On the Rust side the table
-//! is a [`TopologyObjects`] over the same free-standing objects (vertex point and tolerance,
+//! local solver `local` (`kind`, `swap`, `point`, point vertex `pv`, interval `ivl`, curve `owner`, `curve`,
+//! curve edge `cedge`; indices into the table, `-1` for none). The table is a
+//! [`TopologyObjects`] over the free-standing objects (vertex point and tolerance,
 //! the edge's curve and interval, the curve's edge), the handles carrying the curves'
 //! natural intervals.
 //!
-//! Both sides produce the flat record documented in the ffi module; the runner reports
+//! The Rust side produces a flat record; the runner reports
 //! its first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007`
 //! for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest
 //! as the `out` values. Solution objects are table indices, `-1` for `NULL`, `-2` for
@@ -55,7 +54,6 @@ use solidcore::nurbs::math::NOW;
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::surface::surface::p2::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_topology_solver_p1::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -237,171 +235,10 @@ enum OpIn {
     },
 }
 
-// ---- C++ input --------------------------------------------------------------------
+// ---- records ----------------------------------------------------------------------
 
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            v.extend_from_slice(&l.p);
-            v.extend_from_slice(&l.v);
-            v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-        }
-        CurveIn::Ellipse(e) => {
-            v.extend([3.0, 3.0]);
-            for p in [e.c, e.x, e.y] {
-                v.extend_from_slice(&p);
-            }
-            v.extend([e.domain[0], e.domain[1], e.radii[0], e.radii[1], b(e.inside_out)]);
-        }
-        CurveIn::Circle(e) => {
-            v.extend([4.0, 3.0]);
-            for p in [e.c, e.x, e.y] {
-                v.extend_from_slice(&p);
-            }
-            v.extend([e.domain[0], e.domain[1], e.radius, b(e.inside_out)]);
-        }
-    }
-}
-
-fn header(v: &mut Vec<f64>, s: &SolverIn) {
-    v.extend([
-        f64::from(s.op),
-        f64::from(s.req),
-        s.tol,
-        s.best,
-        b(s.at.is_some()),
-        s.at.unwrap_or(0.0),
-        s.vecs.len() as f64,
-    ]);
-    for w in &s.vecs {
-        v.extend_from_slice(w);
-    }
-}
-
-fn objects_block(v: &mut Vec<f64>, objs: &[ObjIn]) {
-    v.push(objs.len() as f64);
-    for o in objs {
-        match o {
-            ObjIn::Vertex { p, tol } => {
-                v.push(0.0);
-                v.extend_from_slice(p);
-                v.push(*tol);
-            }
-            ObjIn::Curve(c) => {
-                v.push(1.0);
-                curve_block(v, c);
-            }
-            ObjIn::Edge { curve, ivl, tol } => {
-                v.extend([2.0, *curve as f64, ivl[0], ivl[1]]);
-                v.extend([f64::from(u8::from(tol.is_some())), tol.unwrap_or(0.0)]);
-            }
-        }
-    }
-}
-
-fn local_block(v: &mut Vec<f64>, l: &LocalIn) {
-    v.extend([l.kind as f64, b(l.swap)]);
-    v.extend_from_slice(&l.point);
-    let ivl = l.ivl.unwrap_or([0.0, 0.0]);
-    v.extend([
-        l.pv as f64,
-        b(l.ivl.is_some()),
-        ivl[0],
-        ivl[1],
-        l.owner as f64,
-        l.curve as f64,
-        l.cedge as f64,
-    ]);
-}
-
-fn tree_block(v: &mut Vec<f64>, t: &TreeIn) {
-    match t {
-        TreeIn::Point { p, size } => {
-            v.push(0.0);
-            v.extend_from_slice(p);
-            v.push(*size);
-        }
-        TreeIn::Spatial { bbox, items } => {
-            v.push(1.0);
-            v.extend_from_slice(bbox);
-            v.push(items.len() as f64);
-            for (o, bx) in items {
-                v.push(*o as f64);
-                v.extend_from_slice(bx);
-            }
-        }
-    }
-}
-
-fn cpp_input(op: &OpIn) -> (Op, Vec<f64>) {
-    let mut v = Vec::new();
-    match op {
-        OpIn::Ctor { solver } => {
-            header(&mut v, solver);
-            (Op::Ctor, v)
-        }
-        OpIn::May { solver, pairs } => {
-            header(&mut v, solver);
-            v.push(pairs.len() as f64);
-            for [b1, b2] in pairs {
-                v.extend_from_slice(b1);
-                v.extend_from_slice(b2);
-            }
-            (Op::May, v)
-        }
-        OpIn::Local {
-            solver,
-            objects,
-            local,
-            calls,
-        } => {
-            header(&mut v, solver);
-            objects_block(&mut v, objects);
-            local_block(&mut v, local);
-            v.push(calls.len() as f64);
-            for [o1, o2] in calls {
-                v.extend([*o1 as f64, *o2 as f64]);
-            }
-            (Op::Local, v)
-        }
-        OpIn::Trees {
-            solver,
-            objects,
-            local,
-            tree1,
-            tree2,
-            two,
-        } => {
-            header(&mut v, solver);
-            objects_block(&mut v, objects);
-            local_block(&mut v, local);
-            tree_block(&mut v, tree1);
-            tree_block(&mut v, tree2);
-            v.push(b(*two));
-            (Op::Trees, v)
-        }
-    }
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -410,14 +247,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
-    let (code, input) = cpp_input(op);
-    match ffi::eval(code, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -763,7 +592,7 @@ fn shim_id(o: Option<Obj>) -> f64 {
     }
 }
 
-/// A solution record (see the ffi module docs).
+/// A solution record.
 fn put_sol(o: &mut Vec<f64>, s: &Solution<Obj>) {
     o.extend([
         f64::from(s.solution_type as i32),
@@ -1035,7 +864,7 @@ fn gen_vecs(rng: &mut Rng, n: usize) -> Vec<[f64; 3]> {
     out
 }
 
-/// The option vector count an operation reads (as the ffi validation).
+/// The option vector count an operation reads.
 fn vectors_needed(op: i32) -> usize {
     match op {
         11..=13 | 21 => 2,
@@ -1637,10 +1466,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1650,20 +1475,6 @@ impl UnitDiff for Runner {
     }
 }
 
-/// Encodes a tree fixture for the p2 reference entry without duplicating the protocol.
-pub(super) fn p2_tree_input(case: &Case) -> Result<Vec<f64>, HarnessError> {
-    let parsed: OpIn = case.parse()?;
-    if !matches!(parsed, OpIn::Trees { .. }) { return Err(harness("p2 tree fixture requires op=trees")); }
-    Ok(cpp_input(&parsed).1)
-}
-/// Decodes the shared reference result for the p2 runner.
-pub(super) fn p2_tree_output(flat: &[f64]) -> Output { to_output(flat) }
 /// Generates a bounded tree fixture, seeded independently by the p2 unit id.
 pub(super) fn p2_tree_generate(rng: &mut Rng) -> Option<Value> { serde_json::to_value(gen_trees_case(rng)).ok() }
 
-/// Encodes a p2 local fixture using the shared object-construction protocol.
-pub(super) fn p2_local_input(case: &Case) -> Result<Vec<f64>, HarnessError> {
-    let parsed: OpIn = case.parse()?;
-    if !matches!(parsed, OpIn::Local { .. }) { return Err(harness("p2 local fixture requires op=local")); }
-    Ok(cpp_input(&parsed).1)
-}

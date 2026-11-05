@@ -1,19 +1,18 @@
 //! Runner for unit `intersect.surface_intersector_p5`: `SmSurfaceIntersector::DoIntersection`
 //! (with `GrazingBoxProcess`).
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_intersector_p5` (a real
+//! Ported from upstream `source/SMLib/src/SmSurfaceIntersector.cpp` (an
 //! `SmAdvSurfaceIntersector`, as `SmSurface::GlobalSurfaceIntersect` builds it, on
-//! `SmPlane` / `SmBSplineSurface` / `SmCurveBoundedSurface` objects). Rust:
-//! `solidcore::intersect::surface_intersector::p5`.
+//! `SmPlane` / `SmBSplineSurface` / `SmCurveBoundedSurface` objects); checked against its
+//! golden. Rust: `solidcore::intersect::surface_intersector::p5`.
 //!
 //! A case is two surfaces (B may be A itself), their domains, the edge flags, the optional
 //! tolerances and optionally a hand-built decomposition tree per surface cache. With trees,
-//! the C++ side swaps them into the real surface caches for the call and the Rust side runs
-//! `do_intersection_with_caches` on caches holding them (upstream's nested
-//! `SmSurface::GlobalCurveIntersect` fetches the same swapped cache; the port hands it the
-//! intersector's cache, so both solve the boundary curves on the hand tree); without, both
-//! sides build the caches (`do_intersection`). Both produce `status` and, on success, the curves (values `rec`, see
-//! the ffi module; statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
+//! the Rust side runs `do_intersection_with_caches` on caches holding them (upstream's
+//! nested `SmSurface::GlobalCurveIntersect` fetches the same cache; the port hands it the
+//! intersector's cache, so the boundary curves are solved on the hand tree); without, it
+//! builds the caches (`do_intersection`). The record is `status` and, on success, the curves
+//! (values `rec`; statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
 //! `InvalidInput`, `-1` for a Rust error upstream cannot return).
 //!
 //! Generated scenes, at scales `1e-3` to `1e4`, with and without edges and tolerances:
@@ -57,7 +56,6 @@ use solidcore::surface::surface_cache::p1::{
     BezierAux2d, BezierPatch, SurfaceCache, SurfaceCacheOptions,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_surface_intersector_p5::{self as ffi};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -136,9 +134,9 @@ struct Inputs {
     ang: Option<f64>,
     /// Tree of A and (unless B is A) of B; `None`: the caches build their own.
     trees: Option<(Vec<NodeIn>, Option<Vec<NodeIn>>)>,
-    /// Per surface (A, B): keep the B-spline knots exactly as given (see
-    /// [`ffi::Case::raw_knots`]); Rust builds that surface over a borrowed NURB, whose
-    /// knots `SmBSplineSurface(gw_SURFACE*, TRUE, ..)` leaves as they are.
+    /// Per surface (A, B): keep the B-spline knots exactly as given; Rust builds that
+    /// surface over a borrowed NURB, whose knots `SmBSplineSurface(gw_SURFACE*, TRUE, ..)`
+    /// leaves as they are.
     #[serde(default, skip_serializing_if = "no_raw_knots")]
     raw_knots: [bool; 2],
 }
@@ -158,73 +156,6 @@ fn cpt4(c: &[Option<f64>; 4]) -> [f64; 4] {
         c[2].unwrap_or(f64::NAN),
         c[3].unwrap_or(NOW),
     ]
-}
-
-fn ffi_surface(s: &SurfaceIn) -> ffi::SurfaceIn {
-    match s {
-        SurfaceIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfaceIn::BSpline { p, q, net, u, v } => ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.iter().map(|r| r.iter().map(cpt4).collect()).collect(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-        SurfaceIn::CurveBounded { basis } => {
-            ffi::SurfaceIn::CurveBounded(Box::new(ffi_surface(basis)))
-        }
-    }
-}
-
-fn ffi_node(n: &NodeIn) -> ffi::NodeIn {
-    ffi::NodeIn {
-        parent: n.parent,
-        c1: n.c1,
-        c2: n.c2,
-        aux: n.aux,
-        bbox: n.bbox,
-        dom: n.dom,
-        polar: n.polar.clone(),
-        pseudo: n.pseudo,
-    }
-}
-
-fn ffi_case(i: &Inputs) -> ffi::Case {
-    ffi::Case {
-        a: ffi_surface(&i.a),
-        b: i.b.as_ref().map(ffi_surface),
-        dom1: i.dom1,
-        dom2: i.dom2,
-        edges: i.edges,
-        tol: i.tol,
-        ang: i.ang,
-        raw_knots: i.raw_knots,
-        trees: i.trees.as_ref().map(|(ta, tb)| {
-            (
-                ta.iter().map(ffi_node).collect(),
-                tb.as_ref().map(|t| t.iter().map(ffi_node).collect()),
-            )
-        }),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_case(i)) {
-        Ok(v) => Ok(Output::new().values("rec", v)),
-        Err(e) => Err(harness(format!("shim: {e}"))),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------------
@@ -401,7 +332,7 @@ fn put_opt(o: &mut Vec<f64>, c: Option<&Curve>) -> Result<(), HarnessError> {
 }
 
 /// `closest uv1[2] uv2[2] separate trace_dir ang_tol approx_tol tol3d op closed ncurve
-/// nstart nthrough` (see the ffi module).
+/// nstart nthrough`.
 fn put_state(o: &mut Vec<f64>, si: &AdvSurfaceIntersector<'_, '_, H>) {
     let uvs = si.closest_uvs();
     o.extend([
@@ -1113,8 +1044,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            let Some(i) = gen_case(rng) else { continue };
-            if ffi::encode(&ffi_case(&i)).is_ok() {
+            if let Some(i) = gen_case(rng) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -1136,10 +1066,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1240,9 +1166,8 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "cpp")]
     #[test]
-    fn csi_former_polar_deferrals_compare_native_values() {
+    fn csi_former_polar_deferrals_record_values() {
         // Exact original seeds from main CI 39940775733; no generator changes or
         // replacement inputs. Reverting the CSI call must restore the deferrals.
         for index in [393, 1277] {
@@ -1254,18 +1179,13 @@ mod tests {
                 source: CaseSource::Generated { seed },
                 inputs,
             };
-            let cpp = Runner.run_cpp(&case).unwrap();
             let rust = Runner.run_rust(&case).unwrap();
-            assert!(
-                cpp.deferred.is_none() && rust.deferred.is_none(),
-                "{case:?}"
-            );
-            assert!(cpp.error.is_none() && rust.error.is_none(), "{case:?}");
-            assert_eq!(cpp.values.get("rec").and_then(|v| v.first()), Some(&0.0));
-            let diff = crate::compare::compare(&cpp, &rust, &[]);
-            assert!(diff.pass(), "{}: {diff:?}", case.name);
-            assert!(diff.values_compared > 15, "{}: {diff:?}", case.name);
-            assert!(diff.nonzero_compared > 0, "{}: {diff:?}", case.name);
+            assert!(rust.deferred.is_none(), "{case:?}");
+            assert!(rust.error.is_none(), "{case:?}");
+            let rec = rust.values.get("rec").unwrap();
+            assert_eq!(rec.first(), Some(&0.0), "{}", case.name);
+            assert!(rec.len() > 15, "{}: {} values", case.name, rec.len());
+            assert!(rec.iter().skip(1).any(|v| *v != 0.0), "{}", case.name);
         }
     }
 }

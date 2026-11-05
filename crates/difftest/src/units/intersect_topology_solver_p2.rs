@@ -1,14 +1,14 @@
-//! Differential coverage of topology p2's local tree traversal.
+//! Coverage of topology solver p2's local tree traversal, ported from upstream
+//! `source/SMLib/src/SmTopologySolver.cpp`; checked against its golden.
 //!
-//! The shared p1 fixture adapter builds the same objects and trees on both sides;
-//! the p2 C++ entry reaches the pinned `SmTopologySolver::LocalSolve`.
+//! The shared p1 fixture adapter builds the objects and trees; the tree solves reach
+//! `SmTopologySolver::LocalSolve`.
 //!
 //! The static face entries (5 to 8: `SmTLSVertexFace`, `SmTLSCurveFace`,
 //! `SmTLSEdgeFace`, `SmTLSFaceFace`) run on two planes, or, with `faces`
 //! (`static-analytic-faces.json`), on faces of real `SmCylinder` / `SmCone` /
 //! `SmSphere` / `SmTorus` surfaces over their natural domains, built as `--ssi-corpus`
-//! builds them (the Rust side with [`crate::ssi::kernel::rust_surface`]); each such C++
-//! case runs in a fresh process. Their projected operations reach
+//! builds them (with [`crate::ssi::kernel::rust_surface`]). Their projected operations reach
 //! `sm_GetFaceSilhouettes` (unit `intersect.topology_solver_p1`), whose
 //! `SM_CAST_PTR(SmBSplineSurface)` accepts every analytic kind. An analytic face's
 //! surface is handle 2005 / 2006 (a plane's 2002 / 2003, whose natural domain the
@@ -41,12 +41,11 @@ use solidcore::surface::surface_cache::face_context::{
 };
 use solidcore::surface::surface_cache::SurfaceCache;
 use solidcore::topology::{Brep, FaceId};
-use solidcore_ffi::units::intersect_topology_solver_p2 as ffi;
 use std::cell::RefCell;
 
 use crate::ssi::case::SurfaceSpec;
 
-/// Topology solver p2 differential runner.
+/// Topology solver p2 runner.
 pub struct Runner;
 
 impl UnitDiff for Runner {
@@ -62,27 +61,6 @@ impl UnitDiff for Runner {
             },
         )
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if case.inputs.get("op").and_then(Value::as_str) == Some("static") {
-            let input = static_input(case)?;
-            let i: StaticInputs = case.parse()?;
-            let flat = match &i.faces {
-                Some([a, b]) => ffi::eval_static_faces(&input, &[a.ffi(), b.ffi()]),
-                None => ffi::eval_static(&input),
-            };
-            return flat
-                .map(|v| static_output(&v))
-                .map_err(|e| HarnessError::new(e.to_string()));
-        }
-        let output = if case.inputs.get("op").and_then(Value::as_str) == Some("local") {
-            ffi::eval_local(&shared::p2_local_input(case)?)
-        } else {
-            ffi::eval_trees(&shared::p2_tree_input(case)?)
-        };
-        output
-            .map(|v| shared::p2_tree_output(&v))
-            .map_err(|e| HarnessError::new(e.to_string()))
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         if case.inputs.get("op").and_then(Value::as_str) == Some("static") {
             return static_rust(case);
@@ -95,7 +73,7 @@ impl UnitDiff for Runner {
 }
 
 // Independent fixtures for the static entrypoints. The adapter supplies cache
-// trees for real C++ shell-vertex B-reps; this does not port SmBrepCache itself.
+// trees for shell-vertex B-reps; this does not port SmBrepCache itself.
 
 #[derive(Deserialize)]
 struct StaticInputs {
@@ -115,7 +93,7 @@ struct StaticInputs {
     faces: Option<[FaceIn; 2]>,
 }
 
-/// A face surface of the static face entries (`ffi::FaceSurface`; angles in degrees).
+/// A face surface of the static face entries (angles in degrees).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum FaceIn {
@@ -156,71 +134,6 @@ enum FaceIn {
 }
 
 impl FaceIn {
-    fn ffi(&self) -> ffi::FaceSurface {
-        match self.clone() {
-            FaceIn::Plane => ffi::FaceSurface::Plane,
-            FaceIn::Cylinder {
-                origin,
-                x,
-                y,
-                radius,
-                angle,
-                height,
-            } => ffi::FaceSurface::Cylinder {
-                origin,
-                x,
-                y,
-                radius,
-                angle,
-                height,
-            },
-            FaceIn::Cone {
-                apex,
-                x,
-                y,
-                half_angle_deg,
-                height,
-            } => ffi::FaceSurface::Cone {
-                apex,
-                x,
-                y,
-                half_angle_deg,
-                height,
-            },
-            FaceIn::Sphere {
-                center,
-                x,
-                y,
-                radius,
-                lon,
-                lat,
-            } => ffi::FaceSurface::Sphere {
-                center,
-                x,
-                y,
-                radius,
-                lon,
-                lat,
-            },
-            FaceIn::Torus {
-                center,
-                x,
-                y,
-                major_radius,
-                minor_radius,
-                major,
-                minor,
-            } => ffi::FaceSurface::Torus {
-                center,
-                x,
-                y,
-                major_radius,
-                minor_radius,
-                major,
-                minor,
-            },
-        }
-    }
 
     /// The `--ssi-corpus` description (`None` for the default plane).
     fn ssi_spec(&self) -> Option<SurfaceSpec> {
@@ -616,8 +529,7 @@ impl TopologyObjects<StaticHandle> for StaticScene {
 }
 fn static_rust(case: &Case) -> Result<Output, HarnessError> {
     let input = static_input(case)?;
-    // Validate the Rust fixture independently against the native protocol guard.
-    // Do not invoke C++ here: the two sides must construct their own objects.
+    // bound the fixture before building it
     let i: StaticInputs = case.parse()?;
     if input.len() > 396
         || i.first.is_empty()
@@ -627,7 +539,7 @@ fn static_rust(case: &Case) -> Result<Output, HarnessError> {
     {
         return Err(HarnessError::new("unbounded static fixture"));
     }
-    // ffi::eval_static_faces: face surfaces only for the face entries
+    // face surfaces only for the face entries
     if i.faces.is_some() && !(5..=8).contains(&i.entry) {
         return Err(HarnessError::new("face surfaces for a non-face entry"));
     }

@@ -5,14 +5,14 @@
 //! `sm_RemoveDuplicateDropPointSolutions`, `SmSurface::DropIsoCurve` and
 //! `SmSurface::DropAndTrimCurve`.
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_drop_lib_p1` (upstream
-//! `source/SMLib/src/SmSurfaceDropLib.cpp`, compiled into the shim) on real `SmPlane`,
+//! Ported from upstream `source/SMLib/src/SmSurfaceDropLib.cpp` (on `SmPlane`,
 //! `SmBSplineSurface` and `SmSurfOfRevolution` surfaces and `SmLine`, `SmCircle` and
-//! `SmBSplineCurve` curves. Rust: `solidcore::intersect::surface_drop_lib::p1`.
+//! `SmBSplineCurve` curves); checked against its golden.
+//! Rust: `solidcore::intersect::surface_drop_lib::p1`.
 //!
-//! A case is one op; both sides produce the record documented in the ffi module, compared
-//! as the values `rec`. Inputs the shim treats as undefined upstream are [`ffi::REJECTED`]
-//! on both sides (the Rust side applies the same predicate with its own evaluations).
+//! A case is one op; the Rust side produces a flat record, reported as the values `rec`.
+//! Inputs undefined upstream are [`REJECTED`] (the runner applies the predicate with the
+//! kernel's evaluations).
 //!
 //! Deferred cases: `TestSpanAccuracy` spans that reach `smsurf_IsPointOnNormal`
 //! (`surface.surface_p3`), `DropAndTrimCurve`s whose trace reaches unported code
@@ -21,9 +21,9 @@
 //! `ReSet` / `ConnectIntervals` stubs, `intersect.curve_class_p2`), and surface
 //! evaluations of kinds whose evaluators are not ported yet.
 //!
-//! Curves and surfaces may be upstream `.dat` files (database version 30), read on the
-//! C++ side by `SmBSplineCurve::ReadFromFile` / `SmBSplineSurface::ReadFromFile` and on
-//! the Rust side by the same steps (`read_file_db`, then `ReadFromDB`); a `Trim` case
+//! Curves and surfaces may be upstream `.dat` files (database version 30), read as
+//! `SmBSplineCurve::ReadFromFile` / `SmBSplineSurface::ReadFromFile` read them
+//! (`read_file_db`, then `ReadFromDB`); a `Trim` case
 //! without a domain or interval uses the natural ones, as upstream's `prog_test` does.
 //!
 //! At least [`MIN_GENERATED`] generated cases run, then [`TRIM_CASES`] fixed-seed
@@ -60,11 +60,17 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::topology::ObjectHandle;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_surface_drop_lib_p1 as ffi;
 
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The record of an op undefined upstream (not run).
+const REJECTED: f64 = -2.0;
+/// The record of an op whose surface of revolution could not be made.
+const NO_SURFACE: f64 = -3.0;
+/// Values per drop point.
+const PT_LEN: usize = 38;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -230,204 +236,6 @@ enum Inputs {
     },
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c {
-        CurveIn::Line { a, b } => ffi::CurveIn::Line { a: *a, b: *b },
-        CurveIn::Circle { c, x, y, d, r } => ffi::CurveIn::Circle {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            r: *r,
-        },
-        CurveIn::Bspline { p, cpts, knots } => ffi::CurveIn::BSpline {
-            p: *p,
-            cpts: cpts.clone(),
-            knots: knots.clone(),
-        },
-        CurveIn::File { file } => ffi::CurveIn::File { path: file.clone() },
-    }
-}
-
-fn ffi_surface(s: &SurfIn) -> ffi::SurfaceIn {
-    match s {
-        SurfIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfIn::Bspline { p, q, net, u, v } => ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.clone(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-        SurfIn::File { file } => ffi::SurfaceIn::File { path: file.clone() },
-        SurfIn::Revolution {
-            gen,
-            point,
-            axis,
-            swap,
-        } => ffi::SurfaceIn::Revolution {
-            gen: ffi_curve(gen),
-            point: *point,
-            axis: *axis,
-            swap: *swap,
-        },
-    }
-}
-
-fn ffi_op(i: &Inputs) -> ffi::Op {
-    match i {
-        Inputs::Ctor { t, degen } => ffi::Op::Ctor {
-            t: *t,
-            degen: *degen,
-        },
-        Inputs::Assign { pt } => ffi::Op::Assign(pt.clone()),
-        Inputs::Uninit { pt } => ffi::Op::Uninit(pt.clone()),
-        Inputs::GoodTangent { pt, on_pole } => ffi::Op::GoodTangent {
-            pt: pt.clone(),
-            on_pole: *on_pole,
-        },
-        Inputs::Moving {
-            surface,
-            pt,
-            domain,
-            tol,
-            ang,
-            test,
-        } => ffi::Op::Moving {
-            surface: ffi_surface(surface),
-            pt: pt.clone(),
-            domain: *domain,
-            tol: *tol,
-            ang: *ang,
-            test: *test,
-        },
-        Inputs::Span {
-            surface,
-            curve,
-            domain,
-            start,
-            end,
-            tol,
-            uv_tol,
-            refine,
-        } => ffi::Op::Span {
-            surface: ffi_surface(surface),
-            curve: ffi_curve(curve),
-            domain: *domain,
-            start: start.clone(),
-            end: end.clone(),
-            tol: *tol,
-            uv_tol: *uv_tol,
-            refine: *refine,
-        },
-        Inputs::Seam {
-            surface,
-            closure,
-            tol,
-            start,
-            end,
-        } => ffi::Op::Seam {
-            surface: ffi_surface(surface),
-            closure: *closure,
-            tol: *tol,
-            start: start.clone(),
-            end: end.clone(),
-        },
-        Inputs::FixTangents {
-            domain,
-            start,
-            end,
-            uv_tol,
-            tol,
-        } => ffi::Op::FixTangents {
-            domain: *domain,
-            start: start.clone(),
-            end: end.clone(),
-            uv_tol: *uv_tol,
-            tol: *tol,
-        },
-        Inputs::Stack { ops } => ffi::Op::Stack(
-            ops.iter()
-                .map(|s| match s {
-                    StackIn::Push { t, uv, duv } => ffi::StackOp::Push {
-                        t: *t,
-                        uv: *uv,
-                        duv: *duv,
-                    },
-                    StackIn::Pop => ffi::StackOp::Pop,
-                    StackIn::Look => ffi::StackOp::Look,
-                })
-                .collect(),
-        ),
-        Inputs::FixCurves {
-            domain,
-            uv_tol,
-            poly,
-        } => ffi::Op::FixCurves {
-            domain: *domain,
-            uv_tol: *uv_tol,
-            poly: poly.clone(),
-        },
-        Inputs::Dups { uv_tol, uvs } => ffi::Op::Dups {
-            uv_tol: *uv_tol,
-            uvs: uvs.clone(),
-        },
-        Inputs::Iso {
-            surface,
-            curve,
-            domain,
-            interval,
-            start_uv,
-            tol,
-        } => ffi::Op::Iso {
-            surface: ffi_surface(surface),
-            curve: ffi_curve(curve),
-            domain: *domain,
-            interval: *interval,
-            start_uv: *start_uv,
-            tol: *tol,
-        },
-        Inputs::Trim {
-            surface,
-            curve,
-            domain,
-            interval,
-            tol,
-            keep_all,
-            on_surface,
-        } => ffi::Op::Trim {
-            surface: ffi_surface(surface),
-            curve: ffi_curve(curve),
-            domain: *domain,
-            interval: *interval,
-            tol: *tol,
-            keep_all: *keep_all,
-            on_surface: *on_surface,
-        },
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_op(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
-}
-
 // ---- Rust side ----------------------------------------------------------------------
 
 fn v3(p: [f64; 3]) -> Vec3 {
@@ -582,7 +390,7 @@ fn rust_surface(k: &Kernel, s: &SurfIn) -> Result<Option<Surface>, HarnessError>
 }
 
 fn pt_in(v: &[f64]) -> Result<DropPt, HarnessError> {
-    if v.len() != ffi::PT_LEN {
+    if v.len() != PT_LEN {
         return Err(harness("drop point length"));
     }
     let g = |i: usize| v.get(i).copied().unwrap_or(0.0);
@@ -788,7 +596,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             test,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let p = pt_in(pt)?;
@@ -801,7 +609,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
                 test_bdry(*test),
             ))? {
                 Ok(poc) => o.push(f64::from(poc.code())),
-                Err(_) => o.push(ffi::REJECTED),
+                Err(_) => o.push(REJECTED),
             }
         }
         Inputs::Span {
@@ -815,7 +623,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             refine,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let c = rust_curve(k, curve)?;
@@ -823,7 +631,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             let a = pt_in(start)?;
             let e = pt_in(end)?;
             if span_undefined(k, &s, &d, &a, &e)? {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
                 return Ok(());
             }
             match st(a.test_span_accuracy(k, &s, &d, &c, &e, *tol, uv_tol[0], uv_tol[1], *refine))? {
@@ -845,7 +653,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             end,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let a = pt_in(start)?;
@@ -903,7 +711,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
                         put_vec(o, p);
                     }
                 }
-                Err(_) => o.push(ffi::REJECTED),
+                Err(_) => o.push(REJECTED),
             }
         }
         Inputs::Dups { uv_tol, uvs } => {
@@ -934,7 +742,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             tol,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let c = rust_curve(k, curve)?;
@@ -971,7 +779,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             on_surface,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let c = rust_curve(k, curve)?;
@@ -1084,7 +892,7 @@ fn rflag(rng: &mut Rng) -> f64 {
 
 /// A random drop point state (`PT_LEN` values).
 fn gen_pt(rng: &mut Rng, uv: [f64; 2], duv: [f64; 2], crv: [[f64; 3]; 3], t: f64) -> Vec<f64> {
-    let mut v = Vec::with_capacity(ffi::PT_LEN);
+    let mut v = Vec::with_capacity(PT_LEN);
     v.push(t);
     v.push(rflag(rng));
     for c in crv {
@@ -1817,16 +1625,14 @@ fn gen_trim_plane_line(rng: &mut Rng, k: &Kernel) -> Option<Inputs> {
 
 /// The fixed-seed `DropAndTrimCurve` cases ([`gen_trim`]), appended after the generated
 /// cases so that adding them leaves every generated case's inputs unchanged. Case `i`
-/// takes the first trim input of seed `TRIM_SEED + i` that the shim accepts.
+/// takes the first trim input of seed `TRIM_SEED + i`.
 fn trim_cases(unit: &str) -> Vec<Case> {
     let k = Kernel::default();
     let mut out = Vec::new();
     for i in 0..TRIM_CASES {
         let seed = TRIM_SEED + i;
         let mut rng = Rng::new(seed);
-        let got = (0..64).find_map(|_| {
-            gen_trim(&mut rng, &k).filter(|t| ffi::encode(&ffi_op(t)).is_ok())
-        });
+        let got = (0..64).find_map(|_| gen_trim(&mut rng, &k));
         let Some(inputs) = got.and_then(|t| serde_json::to_value(t).ok()) else {
             continue;
         };
@@ -1878,9 +1684,7 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
             _ => gen_trim_plane_line(rng, &k),
         };
         if let Some(i) = got {
-            if ffi::encode(&ffi_op(&i)).is_ok() {
-                return i;
-            }
+            return i;
         }
     }
 }
@@ -1898,10 +1702,6 @@ impl UnitDiff for Runner {
         let mut cases = default_cases(self, &ctx)?;
         cases.extend(trim_cases(self.id()));
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

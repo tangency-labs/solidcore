@@ -1,17 +1,15 @@
 //! Runner for unit `intersect.surface_drop_lib_p2`: `SmDropPt::SetProperties`,
 //! `SmDropPt::GetNextPoint`, `sm_AddToCurve` and `sm_FlushCrv`.
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_drop_lib_p2` (upstream
-//! `source/SMLib/src/SmSurfaceDropLib.cpp`, compiled into the shim) on real `SmPlane`,
+//! Ported from upstream `source/SMLib/src/SmSurfaceDropLib.cpp` (on `SmPlane`,
 //! `SmBSplineSurface` and `SmSurfOfRevolution` surfaces, `SmLine`, `SmCircle` and
-//! `SmBSplineCurve` curves and the `SmOffsetSurface` `DropCurve` builds. Rust:
-//! `solidcore::intersect::surface_drop_lib::p2`.
+//! `SmBSplineCurve` curves and the `SmOffsetSurface` `DropCurve` builds); checked against
+//! its golden. Rust: `solidcore::intersect::surface_drop_lib::p2`.
 //!
-//! A case is one op; both sides produce the record documented in the ffi module, compared
-//! as the values `rec`. Inputs the shim treats as undefined upstream are [`ffi::REJECTED`]
-//! on both sides (the Rust side applies the same predicate with its own evaluations). A
-//! `chain` case is a long run of consecutive `sm_AddToCurve` spans (built the same way for
-//! both sides) that reaches the 2000 point message and the 10000 point limit.
+//! A case is one op; the Rust side produces a flat record, reported as the values `rec`.
+//! Inputs undefined upstream are [`REJECTED`] (the runner applies the predicate with the
+//! kernel's evaluations). A `chain` case is a long run of consecutive `sm_AddToCurve` spans
+//! that reaches the 2000 point message and the 10000 point limit.
 //!
 //! Deferred cases: `SetProperties` drops that reach the offset surface evaluations
 //! (`surface.offset_surface`: every non-degenerate curve tangent that is not rejected
@@ -46,11 +44,19 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surf_of_revolution::SurfOfRevolution;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_surface_drop_lib_p2 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most points of a chain case.
+const MAX_ITEMS: usize = 20_000;
+/// The record of an op undefined upstream (not run).
+const REJECTED: f64 = -2.0;
+/// The record of an op whose surface of revolution could not be made.
+pub(crate) const NO_SURFACE: f64 = -3.0;
+/// Values per drop point.
+const PT_LEN: usize = 38;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -156,61 +162,6 @@ enum Inputs {
     },
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-pub(crate) fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c {
-        CurveIn::Line { a, b } => ffi::CurveIn::Line { a: *a, b: *b },
-        CurveIn::Circle { c, x, y, d, r } => ffi::CurveIn::Circle {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            r: *r,
-        },
-        CurveIn::Bspline { p, cpts, knots } => ffi::CurveIn::BSpline {
-            p: *p,
-            cpts: cpts.clone(),
-            knots: knots.clone(),
-        },
-    }
-}
-
-pub(crate) fn ffi_surface(s: &SurfIn) -> ffi::SurfaceIn {
-    match s {
-        SurfIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfIn::Bspline { p, q, net, u, v } => ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.clone(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-        SurfIn::Revolution {
-            gen,
-            point,
-            axis,
-            swap,
-        } => ffi::SurfaceIn::Revolution {
-            gen: ffi_curve(gen),
-            point: *point,
-            axis: *axis,
-            swap: *swap,
-        },
-    }
-}
 /// The unit square plane of [`chain`].
 fn square_plane() -> SurfIn {
     SurfIn::Plane {
@@ -259,96 +210,13 @@ fn chain(n: usize, flush: bool) -> Inputs {
 /// A chain case as its spans; other cases unchanged.
 fn expand(i: Inputs) -> Result<Inputs, HarnessError> {
     match i {
-        // `n + 1` points: the FFI accepts at most `MAX_ITEMS`, so refuse larger chains
-        // before building them (a fuzzed `n` would otherwise allocate without bound).
-        Inputs::Chain { n, .. } if n >= ffi::MAX_ITEMS => {
-            Err(harness(format!("chain of {n} spans exceeds {}", ffi::MAX_ITEMS)))
+        // `n + 1` points: refuse chains of more than `MAX_ITEMS` points before building
+        // them (a fuzzed `n` would otherwise allocate without bound).
+        Inputs::Chain { n, .. } if n >= MAX_ITEMS => {
+            Err(harness(format!("chain of {n} spans exceeds {MAX_ITEMS}")))
         }
         Inputs::Chain { n, flush } => Ok(chain(n, flush)),
         other => Ok(other),
-    }
-}
-
-fn ffi_op(i: &Inputs) -> Result<ffi::Op, HarnessError> {
-    Ok(match i {
-        Inputs::Set {
-            surface,
-            pt,
-            offset,
-            singularities,
-            tol,
-            domain,
-            adjust,
-        } => ffi::Op::Set {
-            surface: ffi_surface(surface),
-            pt: pt.clone(),
-            offset: *offset,
-            singularities: *singularities,
-            tol: *tol,
-            domain: *domain,
-            adjust: *adjust,
-        },
-        Inputs::Next {
-            surface,
-            curve,
-            start,
-            offset,
-            singularities,
-            poles,
-            domain,
-            closure,
-            tol,
-            uv_tol,
-            end_t,
-        } => ffi::Op::Next {
-            surface: ffi_surface(surface),
-            curve: ffi_curve(curve),
-            start: start.clone(),
-            offset: *offset,
-            singularities: *singularities,
-            poles: poles.clone(),
-            domain: *domain,
-            closure: *closure,
-            tol: *tol,
-            uv_tol: *uv_tol,
-            end_t: *end_t,
-        },
-        Inputs::Add {
-            surface,
-            domain,
-            tol,
-            uv_tol,
-            pts,
-            spans,
-            flush,
-        } => ffi::Op::Add {
-            surface: ffi_surface(surface),
-            domain: *domain,
-            tol: *tol,
-            uv_tol: *uv_tol,
-            pts: pts.clone(),
-            spans: spans.clone(),
-            flush: *flush,
-        },
-        Inputs::Chain { .. } => return Err(harness("chain not expanded")),
-        Inputs::Flush {
-            domain,
-            uv_tol,
-            poly,
-            knots,
-        } => ffi::Op::Flush {
-            domain: *domain,
-            uv_tol: *uv_tol,
-            poly: poly.clone(),
-            knots: knots.clone(),
-        },
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_op(i)?) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
     }
 }
 
@@ -478,7 +346,7 @@ pub(crate) fn rust_surface(k: &Kernel, s: &SurfIn) -> Result<Option<Surface>, Ha
 }
 
 fn pt_in(v: &[f64]) -> Result<DropPt, HarnessError> {
-    if v.len() != ffi::PT_LEN {
+    if v.len() != PT_LEN {
         return Err(harness("drop point length"));
     }
     let g = |i: usize| v.get(i).copied().unwrap_or(0.0);
@@ -643,7 +511,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             adjust,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let mut p = pt_in(pt)?;
@@ -670,7 +538,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             end_t,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let c = rust_curve(k, curve)?;
@@ -688,7 +556,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
                 ))?
                 .is_err()
             {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
                 return Ok(());
             }
             let pole_pts: Option<Vec<Vec3>> = poles.as_ref().map(|ps| ps.iter().map(|p| v3(*p)).collect());
@@ -724,7 +592,7 @@ fn run_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             flush,
         } => {
             let Some(s) = rust_surface(k, surface)? else {
-                o.push(ffi::NO_SURFACE);
+                o.push(NO_SURFACE);
                 return Ok(());
             };
             let d = ext(*domain);
@@ -857,7 +725,7 @@ fn rflag(rng: &mut Rng) -> f64 {
 
 /// A random drop point state (`PT_LEN` values).
 fn gen_pt(rng: &mut Rng, uv: [f64; 2], duv: [f64; 2], crv: [[f64; 3]; 3], t: f64) -> Vec<f64> {
-    let mut v = Vec::with_capacity(ffi::PT_LEN);
+    let mut v = Vec::with_capacity(PT_LEN);
     v.push(t);
     v.push(rflag(rng));
     for c in crv {
@@ -1432,11 +1300,7 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
             }),
         };
         if let Some(i) = got {
-            let ok = expand(i.clone())
-                .is_ok_and(|i2| ffi_op(&i2).is_ok_and(|op| ffi::encode(&op).is_ok()));
-            if ok {
-                return i;
-            }
+            return i;
         }
     }
 }
@@ -1452,10 +1316,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&expand(case.parse()?)?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

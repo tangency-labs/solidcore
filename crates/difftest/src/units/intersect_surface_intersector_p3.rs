@@ -2,15 +2,15 @@
 //! (`FindBoundaryStartPoints`, `ComputeNextPoint`, `TestPoint` with
 //! `sm_UpdateTsectPoint`, `SplitSpan`).
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_intersector_p3` (a real
+//! Ported from upstream `source/SMLib/src/SmSurfaceIntersector.cpp` (an
 //! `SmSurfaceIntersector` on `SmPlane` / `SmBSplineSurface` / `SmCurveBoundedSurface`
-//! objects). Rust: `solidcore::intersect::surface_intersector::p3`.
+//! objects); checked against its golden. Rust: `solidcore::intersect::surface_intersector::p3`.
 //!
 //! A case is two surfaces (B may be A itself), their domains, the fillet flag, some
-//! curves, a point arena and a program of operations; both sides produce the record
-//! documented in the ffi module (statuses `0` = `SM_SUCCESS`, else the `SmStatus`;
+//! curves, a point arena and a program of operations; the Rust side produces a flat
+//! record (statuses `0` = `SM_SUCCESS`, else the `SmStatus`;
 //! `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce,
-//! [`ffi::REJECTED`] for an op the shim does not run), reported as the values `rec`.
+//! [`REJECTED`] for an op undefined upstream, not run), reported as the values `rec`.
 //! A case whose Rust side reaches an unported unit is deferred as a whole.
 //!
 //! Generated programs: traces along the line where two planes cross (any angle down to
@@ -60,11 +60,15 @@ use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::surface::surface::p2::surface_cache;
 use solidcore::surface::surface_cache::SurfaceCache;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_surface_intersector_p3::{self as ffi};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
+
+/// The op status of an op the runner does not run (undefined upstream).
+const REJECTED: f64 = -2.0;
+/// Values per point in the point arena.
+const POINT_LEN: usize = 80;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -155,7 +159,7 @@ struct Inputs {
     dom2: [f64; 4],
     fillet: bool,
     curves: Vec<CurveIn>,
-    /// [`ffi::POINT_LEN`] values each.
+    /// [`POINT_LEN`] values each.
     points: Vec<Vec<f64>>,
     ops: Vec<OpIn>,
 }
@@ -221,60 +225,6 @@ fn cpt4(c: &[Option<f64>; 4]) -> [f64; 4] {
         c[2].unwrap_or(f64::NAN),
         weight(c[3]),
     ]
-}
-
-fn ffi_surface(s: &SurfaceIn) -> ffi::SurfaceIn {
-    match s {
-        SurfaceIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfaceIn::BSpline { p, q, net, u, v } => ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.iter().map(|r| r.iter().map(cpt4).collect()).collect(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-        SurfaceIn::CurveBounded { basis } => {
-            ffi::SurfaceIn::CurveBounded(Box::new(ffi_surface(basis)))
-        }
-    }
-}
-
-fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c {
-        CurveIn::Segment { a, b } => ffi::CurveIn::Segment(*a, *b),
-        CurveIn::BSpline {
-            dim,
-            p,
-            cpts,
-            knots,
-        } => ffi::CurveIn::BSpline {
-            dim: *dim,
-            p: *p,
-            cpts: cpts.iter().map(cpt4).collect(),
-            knots: knots.clone(),
-        },
-    }
-}
-
-// ---- C++ side -----------------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_program(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------------
@@ -421,7 +371,7 @@ fn ept(code: f64) -> Result<ExtentPointType, HarnessError> {
 }
 
 fn rust_point(v: &[f64]) -> Result<TsectPnt, HarnessError> {
-    if v.len() != ffi::POINT_LEN {
+    if v.len() != POINT_LEN {
         return Err(harness("point length"));
     }
     let mut it = v.iter().copied();
@@ -789,7 +739,7 @@ fn gen_uv(rng: &mut Rng, d: [f64; 4]) -> [f64; 2] {
 /// A point: random UVs and tangents in the domains, a random type (mostly crossing),
 /// matrices of plausible size, increasing parameters.
 fn gen_point(rng: &mut Rng, doms: [[f64; 4]; 2], s: f64, param: f64) -> Vec<f64> {
-    let mut v = Vec::with_capacity(ffi::POINT_LEN);
+    let mut v = Vec::with_capacity(POINT_LEN);
     v.push(if rng.chance(0.6) {
         2.0
     } else {
@@ -877,90 +827,6 @@ fn heights(rng: &mut Rng, n: usize, s: f64, flat_row0: Option<&[f64]>) -> Vec<Ve
             (0..n).map(|_| s * rng.uniform(-0.3, 0.3)).collect()
         })
         .collect()
-}
-
-fn ffi_op(o: &OpIn) -> ffi::Op {
-    match o {
-        OpIn::State => ffi::Op::State,
-        OpIn::Point { i } => ffi::Op::Point(*i),
-        OpIn::AddCurve { i } => ffi::Op::AddCurve(*i),
-        OpIn::AddStart { i } => ffi::Op::AddStart(*i),
-        OpIn::AddThrough { i } => ffi::Op::AddThrough(*i),
-        OpIn::Cpv { uvs, i, prev, step } => ffi::Op::Cpv {
-            uvs: *uvs,
-            i: *i,
-            prev: *prev,
-            step: *step,
-        },
-        OpIn::Members {
-            trace_dir,
-            approx_tol,
-            start_tol,
-            step_tol,
-            ang_tol,
-        } => ffi::Op::Members {
-            trace_dir: *trace_dir,
-            approx_tol: *approx_tol,
-            start_tol: *start_tol,
-            step_tol: *step_tol,
-            ang_tol: *ang_tol,
-        },
-        OpIn::Ends { start, end } => ffi::Op::Ends {
-            start: *start,
-            end: *end,
-        },
-        OpIn::Ext {
-            clip,
-            last_through,
-            distance,
-        } => ffi::Op::Ext {
-            clip: *clip,
-            last_through: *last_through,
-            distance: *distance,
-        },
-        OpIn::Test { i, done } => ffi::Op::Test { i: *i, done: *done },
-        OpIn::Next {
-            prev,
-            step,
-            next,
-            dev,
-            ang,
-        } => ffi::Op::Next {
-            prev: *prev,
-            step: *step,
-            next: *next,
-            dev: *dev,
-            ang: *ang,
-        },
-        OpIn::Split(s) => ffi::Op::Split(ffi::SplitOp {
-            curr: s.curr,
-            next: s.next,
-            delta: s.delta,
-            normals: s.normals,
-            average: s.average,
-            orient: s.orient,
-            curve: s.curve,
-            interval: s.interval,
-            orientations: s.orientations,
-        }),
-        OpIn::Fbsp { bbox, use_edges } => ffi::Op::Fbsp {
-            bbox: *bbox,
-            use_edges: *use_edges,
-        },
-    }
-}
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    ffi::Program {
-        a: ffi_surface(&i.a),
-        b: i.b.as_ref().map(ffi_surface),
-        dom1: i.dom1,
-        dom2: i.dom2,
-        fillet: i.fillet,
-        curves: i.curves.iter().map(ffi_curve).collect(),
-        points: i.points.clone(),
-        ops: i.ops.iter().map(ffi_op).collect(),
-    }
 }
 
 
@@ -1088,7 +954,7 @@ fn run_op(k: &Kernel, run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &O
         OpIn::AddCurve { i } | OpIn::AddStart { i } | OpIn::AddThrough { i } => {
             pt_of(si, *i)?;
             if si.is_linked(id(*i)) {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
             } else {
                 let r = match op {
                     OpIn::AddCurve { .. } => si.add_point_to_curve(id(*i)),
@@ -1141,7 +1007,7 @@ fn run_op(k: &Kernel, run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &O
         OpIn::Test { i, done } => {
             pt_of(si, *i)?;
             if test_rejected(si, *i) {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
             } else {
                 let r = si.test_point(&Kernel::default(), id(*i));
                 if let Some(d) = st(o, r)? {
@@ -1161,7 +1027,7 @@ fn run_op(k: &Kernel, run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &O
             pt_of(si, *prev)?;
             pt_of(si, *next)?;
             if prev == next {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
             } else {
                 let r = si.compute_next_point(&Kernel::default(), id(*prev), *step, id(*next));
                 if let Some(n) = st(o, r)? {
@@ -1282,8 +1148,6 @@ fn rust_run(k: &Kernel, i: &Inputs) -> Result<Vec<f64>, Fail> {
 }
 
 fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
-    // reject what the C++ side rejects
-    ffi::encode(&ffi_program(i)).map_err(|e| harness(format!("rejected input: {e}")))?;
     match rust_run(k, i) {
         Ok(rec) => Ok(Output::new().values("rec", rec)),
         Err(Fail::Deferred(d)) => Ok(*d),
@@ -1971,13 +1835,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            if ffi::encode(&ffi_program(&i)).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1995,10 +1853,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

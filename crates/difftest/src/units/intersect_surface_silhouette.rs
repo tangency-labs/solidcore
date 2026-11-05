@@ -1,23 +1,21 @@
 //! Runner for unit `intersect.surface_silhouette`: `SmSurfaceSilhouette`.
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_silhouette` (upstream
-//! `source/SMLib/src/SmSurfaceSilhouette.cpp` on a real `SmBSplineSurface` or `SmPlane`).
+//! Ported from upstream `source/SMLib/src/SmSurfaceSilhouette.cpp` (on an `SmBSplineSurface`
+//! or `SmPlane`); checked against its golden.
 //! Rust: `solidcore::intersect::surface_silhouette::SurfaceSilhouette`.
 //!
 //! A case is a surface, a tracer domain, a view direction or eye point, optional tolerances and
 //! a program of ops: `ComputePointValues` (alone or with the previous point, which reaches the
 //! singularity searches through `SmFindSilSingEFO`), `LocalPointSolve`, `DoesPointLieOnCurve`,
 //! `FindSolutionsOnBoundaryCurve` and `BranchMayContainAnswers` on hand-built surface cache
-//! trees. Both sides produce the record documented in the ffi module, reported as the values
-//! `rec`.
+//! trees. The Rust side produces a flat record, reported as the values `rec`.
 //!
 //! Deferred cases: `SmSurface::EvaluateNormal` on B-spline surfaces and `SmSurface::DropVectors`
 //! (`surface.surface_p7`), `SmSurface::EvaluateGeometric` and `SmSurface::EvaluateNormalSection`
 //! (`surface.surface_p3`), and whatever the boundary property analysis and the polar box
 //! builds still defer. A case is deferred as a whole, so programs are short.
 //!
-//! At least [`MIN_GENERATED`] generated cases run; generation only draws inputs the ffi
-//! wrapper accepts.
+//! At least [`MIN_GENERATED`] generated cases run.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,11 +46,13 @@ use solidcore::surface::surface_cache::p1::{
     BezierAux2d, BezierPatch, SurfaceCache, SurfaceCacheOptions,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_surface_silhouette::{self as ffi};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most nodes per generated tree.
+const MAX_NODES: usize = 16;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 600;
@@ -169,108 +169,6 @@ struct Inputs {
     #[serde(default)]
     ang: Option<f64>,
     ops: Vec<OpIn>,
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn ffi_surface(s: &SurfIn) -> ffi::SurfaceIn {
-    match s {
-        SurfIn::Bspline(d) => ffi::SurfaceIn::BSpline(ffi::SurfaceData {
-            p: d.p,
-            q: d.q,
-            net: d.net.clone(),
-            u: d.u.clone(),
-            v: d.v.clone(),
-        }),
-        SurfIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-    }
-}
-
-fn ffi_curve(c: &CurveData) -> ffi::CurveData {
-    ffi::CurveData {
-        p: c.p,
-        cpts: c.cpts.clone(),
-        knots: c.knots.clone(),
-    }
-}
-
-fn ffi_node(n: &NodeIn) -> ffi::NodeIn {
-    ffi::NodeIn {
-        parent: n.parent,
-        child1: n.c1,
-        child2: n.c2,
-        aux: n.aux,
-        null_data: n.null_data,
-        domain: n.dom,
-        polar: n.polar.clone(),
-        pseudo: n.pseudo.as_ref().map(|p| ffi::PseudoIn {
-            basis: p.basis,
-            points: p.pts.clone(),
-        }),
-    }
-}
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    let ops = i
-        .ops
-        .iter()
-        .map(|o| match o {
-            OpIn::Cpv {
-                dir,
-                use_prev,
-                kind,
-                t,
-                uv,
-            } => ffi::Op::Cpv {
-                dir: *dir,
-                use_prev: *use_prev,
-                kind: *kind,
-                t: *t,
-                uv: *uv,
-            },
-            OpIn::Lps { uv } => ffi::Op::Lps(*uv),
-            OpIn::OnCurve { refine, uv } => ffi::Op::OnCurve {
-                refine: *refine,
-                uv: *uv,
-            },
-            OpIn::Boundary { curve, interval } => ffi::Op::Boundary {
-                curve: ffi_curve(curve),
-                interval: *interval,
-            },
-            OpIn::Branch { nodes, queries } => ffi::Op::Branch {
-                nodes: nodes.iter().map(ffi_node).collect(),
-                queries: queries.clone(),
-            },
-        })
-        .collect();
-    ffi::Program {
-        surface: ffi_surface(&i.surface),
-        domain: i.domain,
-        perspective: i.perspective,
-        eye: i.eye,
-        tol: i.tol,
-        ang: i.ang,
-        ops,
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_program(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -958,7 +856,7 @@ fn gen_tree(rng: &mut Rng, nat: [f64; 4], scale: f64) -> OpIn {
             let Some(pd) = nodes.get(pi).map(|n| n.dom) else {
                 continue;
             };
-            if nodes.len() + 2 > ffi::MAX_NODES {
+            if nodes.len() + 2 > MAX_NODES {
                 break;
             }
             let split_u = rng.chance(0.5);
@@ -1134,10 +1032,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -1,17 +1,16 @@
 //! Runner for unit `intersect.surface_drop_lib_p3`: `SmSurface::DropCurve` (the base
 //! body).
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_drop_lib_p3` (the library's
-//! `SmSurface::DropCurve`, called non-virtually) on real `SmPlane`, `SmBSplineSurface`
-//! and `SmSurfOfRevolution` surfaces (spheres and cones with poles, cylinders and tori
-//! with seams, a closed rational B-spline cylinder, a B-spline with a collapsed edge)
-//! and `SmLine`, `SmCircle` and `SmBSplineCurve` curves, with or without an
-//! `SmDropCurveFail` record. Rust: `solidcore::intersect::surface_drop_lib::p3`
-//! ([`Surface::drop_curve_base`]) on the same geometry (built by the
-//! `intersect.surface_drop_lib_p2` runner's builders).
+//! Ported from upstream `source/SMLib/src/SmSurfaceDropLib.cpp` (the library's
+//! `SmSurface::DropCurve`, called non-virtually); checked against its golden. Rust:
+//! `solidcore::intersect::surface_drop_lib::p3` ([`Surface::drop_curve_base`]) on
+//! `SmPlane`, `SmBSplineSurface` and `SmSurfOfRevolution` surfaces (spheres and cones with
+//! poles, cylinders and tori with seams, a closed rational B-spline cylinder, a B-spline
+//! with a collapsed edge) and `SmLine`, `SmCircle` and `SmBSplineCurve` curves, with or
+//! without an `SmDropCurveFail` record (built by the `intersect.surface_drop_lib_p2`
+//! runner's builders).
 //!
-//! A case is one drop; both sides produce the record documented in the ffi module,
-//! compared as the values `rec`.
+//! A case is one drop; the Rust side produces a flat record, reported as the values `rec`.
 //!
 //! Deferred cases: drops that finish on a surface that is not a B-spline surface need
 //! the curve on that surface for the final gap measure (`curve.crv_on_surf`, dispatch
@@ -37,12 +36,11 @@ use solidcore::nurbs::math::NOW;
 use solidcore::surface::surface::p2::DropCurveFail;
 use solidcore::surface::surface::p4::NoObject;
 use solidcore::surface::surface::Surface;
-use solidcore_ffi::units::intersect_surface_drop_lib_p3 as ffi;
 
 use super::intersect_surface_drop_lib_p2::{
-    add3, arr3, cross3, ext, ffi_curve, ffi_surface, gen_curve_near, gen_domain, gen_knots,
-    gen_scale, gen_surface, norm3, pick, put_curve, rust_curve, rust_surface, scale3, status,
-    surface_with_domain, unit_dir, uv_in, CurveIn, SurfIn,
+    add3, arr3, cross3, ext, gen_curve_near, gen_domain, gen_knots, gen_scale, gen_surface,
+    norm3, pick, put_curve, rust_curve, rust_surface, scale3, status, surface_with_domain,
+    unit_dir, uv_in, CurveIn, SurfIn, NO_SURFACE,
 };
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -71,32 +69,13 @@ struct Inputs {
     want_record: bool,
 }
 
-fn ffi_drop(i: &Inputs) -> ffi::Drop {
-    ffi::Drop {
-        surface: ffi_surface(&i.surface),
-        curve: ffi_curve(&i.curve),
-        domain: i.domain,
-        interval: i.interval,
-        tol: i.tol,
-        keep_all: i.keep_all,
-        want_record: i.want_record,
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_drop(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
-}
-
 // ---- Rust side ----------------------------------------------------------------------
 
 fn put_vec(o: &mut Vec<f64>, v: Vec3) {
     o.extend([v.x, v.y, v.z]);
 }
 
-/// The record value of a `SmSurfParamType` (see the ffi module).
+/// The record value of a `SmSurfParamType`.
 fn param_code(p: SurfParamType) -> f64 {
     match p {
         SurfParamType::U => 0.0,
@@ -172,7 +151,7 @@ fn put_record(o: &mut Vec<f64>, f: &DropCurveFail<NoObject>) -> Result<(), Harne
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let k = Kernel::default();
     let Some(srf) = rust_surface(&k, &i.surface)? else {
-        return Ok(Output::new().values("rec", vec![ffi::NO_SURFACE]));
+        return Ok(Output::new().values("rec", vec![NO_SURFACE]));
     };
     let curve = rust_curve(&k, &i.curve)?;
     let mut fail: DropCurveFail<NoObject> = DropCurveFail::default();
@@ -360,8 +339,8 @@ fn point_at(p: [f64; 3]) -> CurveIn {
 }
 
 /// The curve's whole parameter range or a random part of it, an interval overhanging the
-/// range, one entirely past its end, a zero-length or inverted one, or one just above the
-/// ffi guard's length bound (HANG-38).
+/// range, one entirely past its end, a zero-length or inverted one, or a tiny one (three
+/// times 16000 ulp of its larger end: HANG-38).
 fn gen_interval(rng: &mut Rng, range: [f64; 2]) -> [f64; 2] {
     let w = range[1] - range[0];
     let a = range[0] + rng.uniform(0.0, 0.4) * w;
@@ -376,7 +355,7 @@ fn gen_interval(rng: &mut Rng, range: [f64; 2]) -> [f64; 2] {
         87..=91 => [b, a],
         92..=94 => [range[1], range[0]],
         _ => {
-            // length 3x the guard's bound (16000 ulp of the larger end)
+            // length 3 x 16000 ulp of the larger end
             let m = a.abs().max(1.0);
             let len = 3.0 * 16000.0 * (m.next_up() - m);
             [a, a + len]
@@ -481,9 +460,7 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
     let k = Kernel::default();
     loop {
         if let Some(i) = gen_case(rng, &k) {
-            if ffi::encode(&ffi_drop(&i)).is_ok() {
-                return i;
-            }
+            return i;
         }
     }
 }
@@ -843,10 +820,6 @@ impl UnitDiff for Runner {
         }
         cases.extend(default_cases(self, &ctx)?);
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -2,24 +2,24 @@
 //! (`ComputePointValues`, `ClassifyBoundaryStartPointIntersection`, `FlushCurve`,
 //! `DoBoundaryPlaneTest`, `ComputeLawPointValues`, `sm_IsPointUnique`).
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_intersector_p2` (a real
+//! Ported from upstream `source/SMLib/src/SmSurfaceIntersector.cpp` (an
 //! `SmSurfaceIntersector` on `SmPlane` / `SmBSplineSurface` / `SmCurveBoundedSurface`
 //! objects, and on the analytic `SmCylinder` / `SmCone` / `SmSphere` / `SmTorus` of the
-//! `analytic_bpt.json` fixtures, built as `--ssi-corpus` builds them: the Rust side with
-//! [`crate::ssi::kernel::rust_surface`]). Rust: `solidcore::intersect::surface_intersector::p2`.
+//! `analytic_bpt.json` fixtures, built as `--ssi-corpus` builds them, with
+//! [`crate::ssi::kernel::rust_surface`]); checked against its golden.
+//! Rust: `solidcore::intersect::surface_intersector::p2`.
 //!
 //! The analytic fixtures run `DoBoundaryPlaneTest` over the surfaces' natural domains
 //! (`natural`: each side asks its own surfaces for `GetNaturalUVDomain()`): the
 //! `SM_CAST_PTR(SmBSplineSurface)` there accepts every analytic kind, so their bounding
 //! planes (`SmSurfaceCache::ComputeBoundingPlanes`, unit `surface.surface_cache_p1`) and
 //! the plane tests run, where the B-spline / plane fixtures never reach a derived kind.
-//! Each such C++ case runs in a fresh process.
 //!
 //! A case is two surfaces (B may be A itself), their domains, the fillet flag, some
-//! curves, a point arena and a program of operations; both sides produce the record
-//! documented in the ffi module (statuses `0` = `SM_SUCCESS`, else the `SmStatus`;
+//! curves, a point arena and a program of operations; the Rust side produces a flat
+//! record (statuses `0` = `SM_SUCCESS`, else the `SmStatus`;
 //! `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce,
-//! [`ffi::REJECTED`] for an op the shim does not run), reported as the values `rec`.
+//! [`REJECTED`] for an op undefined upstream, not run), reported as the values `rec`.
 //! A case whose Rust side reaches an unported unit is deferred as a whole.
 //!
 //! Deferred cases: `ComputePointValues` reaching `SmSurface::IsSingularity` of a
@@ -57,13 +57,17 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::surface_cache::PatchBoundaryBoundingPlanes;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_surface_intersector_p2::{self as ffi};
 
 use crate::ssi::case::SurfaceSpec;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
+
+/// The op status of an op the runner does not run (undefined upstream).
+const REJECTED: f64 = -2.0;
+/// Values per point in the point arena.
+const POINT_LEN: usize = 80;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -223,7 +227,7 @@ struct Inputs {
     dom2: [f64; 4],
     fillet: bool,
     curves: Vec<CurveIn>,
-    /// [`ffi::POINT_LEN`] values each.
+    /// [`POINT_LEN`] values each.
     points: Vec<Vec<f64>>,
     ops: Vec<OpIn>,
 }
@@ -240,94 +244,6 @@ fn cpt4(c: &[Option<f64>; 4]) -> [f64; 4] {
         c[2].unwrap_or(f64::NAN),
         weight(c[3]),
     ]
-}
-
-fn ffi_surface(s: &SurfaceIn) -> ffi::SurfaceIn {
-    match s {
-        SurfaceIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfaceIn::BSpline { p, q, net, u, v } => ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.iter().map(|r| r.iter().map(cpt4).collect()).collect(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-        SurfaceIn::CurveBounded { basis } => {
-            ffi::SurfaceIn::CurveBounded(Box::new(ffi_surface(basis)))
-        }
-        SurfaceIn::Cylinder {
-            origin,
-            x,
-            y,
-            radius,
-            angle,
-            height,
-        } => ffi::SurfaceIn::Analytic(ffi::Analytic::Cylinder {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            radius: *radius,
-            angle: *angle,
-            height: *height,
-        }),
-        SurfaceIn::Cone {
-            apex,
-            x,
-            y,
-            half_angle_deg,
-            height,
-        } => ffi::SurfaceIn::Analytic(ffi::Analytic::Cone {
-            apex: *apex,
-            x: *x,
-            y: *y,
-            half_angle_deg: *half_angle_deg,
-            height: *height,
-        }),
-        SurfaceIn::Sphere {
-            center,
-            x,
-            y,
-            radius,
-            lon,
-            lat,
-        } => ffi::SurfaceIn::Analytic(ffi::Analytic::Sphere {
-            center: *center,
-            x: *x,
-            y: *y,
-            radius: *radius,
-            lon: *lon,
-            lat: *lat,
-        }),
-        SurfaceIn::Torus {
-            center,
-            x,
-            y,
-            major_radius,
-            minor_radius,
-            major,
-            minor,
-        } => ffi::SurfaceIn::Analytic(ffi::Analytic::Torus {
-            center: *center,
-            x: *x,
-            y: *y,
-            major_radius: *major_radius,
-            minor_radius: *minor_radius,
-            major: *major,
-            minor: *minor,
-        }),
-    }
 }
 
 /// The `--ssi-corpus` description of an analytic surface (`None` for the other kinds).
@@ -397,98 +313,6 @@ fn ssi_spec(s: &SurfaceIn) -> Option<SurfaceSpec> {
             return None
         }
     })
-}
-
-fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c {
-        CurveIn::Segment { a, b } => ffi::CurveIn::Segment(*a, *b),
-        CurveIn::BSpline {
-            dim,
-            p,
-            cpts,
-            knots,
-        } => ffi::CurveIn::BSpline {
-            dim: *dim,
-            p: *p,
-            cpts: cpts.iter().map(cpt4).collect(),
-            knots: knots.clone(),
-        },
-    }
-}
-
-fn ffi_op(o: &OpIn) -> ffi::Op {
-    match o {
-        OpIn::State => ffi::Op::State,
-        OpIn::Point { i } => ffi::Op::Point(*i),
-        OpIn::AddCurve { i } => ffi::Op::AddCurve(*i),
-        OpIn::AddStart { i } => ffi::Op::AddStart(*i),
-        OpIn::Cpv { uvs, i, prev, step } => ffi::Op::Cpv {
-            uvs: *uvs,
-            i: *i,
-            prev: *prev,
-            step: *step,
-        },
-        OpIn::Classify { i } => ffi::Op::Classify(*i),
-        OpIn::Flush => ffi::Op::Flush,
-        OpIn::Unique { p, tol } => ffi::Op::Unique { p: *p, tol: *tol },
-        OpIn::Bpt {
-            tol,
-            bbox,
-            dom1,
-            dom2,
-        } => ffi::Op::Bpt {
-            tol: *tol,
-            bbox: *bbox,
-            dom1: *dom1,
-            dom2: *dom2,
-        },
-        OpIn::Law(l) => ffi::Op::Law(ffi::LawOp {
-            param: l.param,
-            uv0: l.uv0,
-            uv1: l.uv1,
-            delta: l.delta,
-            normals: l.normals,
-            average: l.average,
-            orient: l.orient,
-            curve: l.curve,
-            interval: l.interval,
-            orientations: l.orientations,
-            skip: l.skip,
-            i: l.i,
-        }),
-        OpIn::Members {
-            trace_dir,
-            approx_tol,
-            start_tol,
-        } => ffi::Op::Members {
-            trace_dir: *trace_dir,
-            approx_tol: *approx_tol,
-            start_tol: *start_tol,
-        },
-    }
-}
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    ffi::Program {
-        a: ffi_surface(&i.a),
-        b: i.b.as_ref().map(ffi_surface),
-        natural: i.natural,
-        dom1: i.dom1,
-        dom2: i.dom2,
-        fillet: i.fillet,
-        curves: i.curves.iter().map(ffi_curve).collect(),
-        points: i.points.clone(),
-        ops: i.ops.iter().map(ffi_op).collect(),
-    }
-}
-
-// ---- C++ side -----------------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_program(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------------
@@ -649,7 +473,7 @@ fn ept(code: f64) -> Result<ExtentPointType, HarnessError> {
 }
 
 fn rust_point(v: &[f64]) -> Result<TsectPnt, HarnessError> {
-    if v.len() != ffi::POINT_LEN {
+    if v.len() != POINT_LEN {
         return Err(harness("point length"));
     }
     let mut it = v.iter().copied();
@@ -813,7 +637,7 @@ fn run_op(
         OpIn::AddCurve { i } | OpIn::AddStart { i } => {
             pt_of(si, *i)?;
             if si.is_linked(id(*i)) {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
             } else {
                 let r = if matches!(op, OpIn::AddCurve { .. }) {
                     si.add_point_to_curve(id(*i))
@@ -837,7 +661,7 @@ fn run_op(
         OpIn::Classify { i } => {
             let p = pt_of(si, *i)?;
             if classify_rejected(&p) {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
             } else if let Some(d) = st(o, si.classify_boundary_start_point_intersection(k, &p))? {
                 o.push(b(d));
             }
@@ -989,8 +813,6 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    // reject what the C++ side rejects
-    ffi::encode(&ffi_program(i)).map_err(|e| harness(format!("rejected input: {e}")))?;
     match rust_run(i) {
         Ok(rec) => Ok(Output::new().values("rec", rec)),
         Err(Fail::Deferred(d)) => Ok(*d),
@@ -1257,7 +1079,7 @@ fn gen_uv(rng: &mut Rng, d: [f64; 4]) -> [f64; 2] {
 /// A point: random UVs and tangents in the domains, a random type (mostly crossing),
 /// matrices of plausible size, increasing parameters.
 fn gen_point(rng: &mut Rng, doms: [[f64; 4]; 2], s: f64, param: f64) -> Vec<f64> {
-    let mut v = Vec::with_capacity(ffi::POINT_LEN);
+    let mut v = Vec::with_capacity(POINT_LEN);
     v.push(if rng.chance(0.6) {
         2.0
     } else {
@@ -1782,8 +1604,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            let Some(i) = gen_case(rng) else { continue };
-            if ffi::encode(&ffi_program(&i)).is_ok() {
+            if let Some(i) = gen_case(rng) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -1805,10 +1626,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
