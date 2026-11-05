@@ -1,7 +1,6 @@
-//! Public `SmApi` queries against real native geometry. The C++ side builds each
-//! topology input natively; the Rust side builds the same B-rep with the Rust kernel
-//! ([`own_brep`], in the shim's `sc_edgeuse_graph.h` traversal order), so no C++ state
-//! reaches it. All query results come from `SmApi*`.
+//! Public `SmApi` queries, ported from upstream `SM_API`; checked against its golden. The
+//! Rust side builds each topology input with the Rust kernel ([`own_brep`], in upstream's
+//! edge-use traversal order). All query results come from `SmApi*`.
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -33,7 +32,6 @@ use solidcore::topology::brep_cache::BrepCache;
 use solidcore::topology::brep_cache::{arena_identity, CacheObject, CacheSource};
 use solidcore::topology::{Brep, BrepId, FaceId};
 use solidcore::{Result, SolidError};
-use solidcore_ffi::units::query_api_queries as ffi;
 
 /// Differential coverage of the public geometry and topology queries.
 pub struct Runner;
@@ -81,9 +79,8 @@ fn output(op: i32, r: Result<Vec<f64>>) -> Output {
     }
 }
 
-/// The case ops are `1..=25` and `27` (`SmApiBrepMaterialCensus`); the FFI's `0` and `26` are the graph exports
-/// [`imported`] reads the native B-rep through, which have no Rust counterpart to
-/// compare.
+/// The case ops are `1..=25` and `27` (`SmApiBrepMaterialCensus`); `0` and `26` were the
+/// shim's graph exports, which have no Rust counterpart.
 fn compared_op(op: i32) -> std::result::Result<(), HarnessError> {
     if (1..=25).contains(&op) || op == 27 {
         Ok(())
@@ -92,13 +89,13 @@ fn compared_op(op: i32) -> std::result::Result<(), HarnessError> {
     }
 }
 
-// Native null contracts are covered by the FFI tests; typed Rust APIs cannot
-// represent them. Refuse these fixtures on both sides of the comparison.
+// Null pointers are upstream contracts the typed Rust APIs cannot represent; such
+// fixtures are refused.
 fn compared_input(i: &Inputs) -> std::result::Result<(), HarnessError> {
     compared_op(i.op)?;
     if i.data[16] != 0. {
         return Err(HarnessError::new(
-            "null pointers have no typed Rust equivalent; use the FFI contract tests",
+            "null pointers have no typed Rust equivalent",
         ));
     }
     Ok(())
@@ -966,23 +963,6 @@ fn topology(k: &mut Kernel, i: &Inputs, b: &mut Brep, second: &mut Brep) -> Resu
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "query.api_queries"
-    }
-    fn run_cpp(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
-        let i: Inputs = c.parse()?;
-        compared_input(&i)?;
-        let mut input = i.data.to_vec();
-        if let Some(other) = i.other_box {
-            input.extend(other);
-        }
-        let data = ffi::eval(i.op, &input).map_err(|e| HarnessError::new(e.to_string()))?;
-        if let Some(expected) = i.expected_relationship {
-            if i.op != 7 || data.first() != Some(&0.) || data.get(2) != Some(&f64::from(expected)) {
-                return Err(HarnessError::new(format!(
-                    "native relationship fixture expected class {expected}, got {data:?}"
-                )));
-            }
-        }
-        Ok(decode(i.op, data))
     }
     fn run_rust(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
         let i: Inputs = c.parse()?;

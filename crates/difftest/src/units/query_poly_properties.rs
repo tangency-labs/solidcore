@@ -2,13 +2,13 @@
 //! `SmApiPolyBrepComputeVolume`, `SmApiPolyBrepComputeMassProperties`,
 //! `SmPolyBrep::ComputeProperties` and `SmPolyFace::ComputeProperties`.
 //!
-//! C++: `solidcore_ffi::units::query_poly_properties` (shim
-//! `harness/cpp/shim/query_poly_properties.cpp`, which documents the block).
+//! Ported from upstream's `SM_API` poly B-rep queries and `SmPolyBrep` / `SmPolyFace`
+//! properties; checked against its golden.
 //! Rust: [`solidcore::query::poly_properties`].
 //!
-//! A case is the shim's block: the operation, the properties asked for, the origin and
-//! density, and a poly B-rep (vertices, faces of closed loops, radial rings). Both sides
-//! build their own poly B-rep from it. The output is the status and every value the
+//! A case is a block: the operation, the properties asked for, the origin and
+//! density, and a poly B-rep (vertices, faces of closed loops, radial rings). The Rust
+//! side builds its poly B-rep from it. The output is the status and every value the
 //! operation returns (per face for the face operation). Generated cases cover closed
 //! meshes (tetrahedra, cubes, triangulated cubes, octahedra, prisms, latitude-longitude
 //! spheres, tori) under random frames at tiny, unit and huge scales, with outward,
@@ -30,11 +30,13 @@ use solidcore::query::poly_properties::{
     MassPropertiesType, PolyProperties,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::query_poly_properties as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Largest radial ring the generator makes.
+const MAX_RING: usize = 16;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 600;
@@ -54,14 +56,6 @@ fn herr(e: impl std::fmt::Display) -> HarnessError {
 
 fn output(flat: Vec<f64>) -> Output {
     Output::new().values("out", flat)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::eval(&i.block) {
-        Ok(v) => Ok(output(v)),
-        Err(solidcore_ffi::FfiError::InvalidArgument(r)) => Ok(Output::rejected(r)),
-        Err(e) => Err(herr(e)),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -565,7 +559,7 @@ fn gen_case(rng: &mut Rng) -> Inputs {
         // three faces at an edge: merge two rings
         1 if rings.len() > 1 => {
             let extra = rings.remove(1);
-            if rings[0].len() + extra.len() <= ffi::MAX_RING {
+            if rings[0].len() + extra.len() <= MAX_RING {
                 rings[0].extend(extra);
             }
         }
@@ -594,10 +588,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

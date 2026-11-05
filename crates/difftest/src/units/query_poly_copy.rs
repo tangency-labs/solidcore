@@ -1,13 +1,12 @@
 //! Runner for unit `query.poly_copy`: `SmApiPolyBrepCopy` (the `SmPolyBrep` copy
 //! constructor: `SmPolyBrepData::FromPolyBrep` and `SmPolyBrep::MakeTopologyFromData`).
 //!
-//! C++: `solidcore_ffi::units::query_poly_copy` (shim
-//! `harness/cpp/shim/query_poly_copy.cpp`, which documents the block).
+//! Ported from upstream `SmApiPolyBrepCopy`; checked against its golden.
 //! Rust: [`solidcore::query::poly::copy::poly_brep_copy`].
 //!
-//! A case is the shim's block: a poly B-rep (regions, shells, vertices, faces with
+//! A case is a block: a poly B-rep (regions, shells, vertices, faces with
 //! closed, open and last-end-vertex loops, radial rings, aux data, attributes on the
-//! poly B-rep). Both sides build it, copy it and dump the copy: tolerance, every
+//! poly B-rep). The Rust side builds it, copies it and dumps the copy: tolerance, every
 //! region / shell / face (tolerance, stored normal and deviation) / loop (orientation,
 //! closed) / edge (tolerance, start vertex, radial and vertex ring links, aux data) /
 //! vertex (point, tolerance, edge ring head) by index, the back pointer flag, the
@@ -34,11 +33,13 @@ use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
 use solidcore::query::poly::copy::{poly_brep_copy, PolyCopyAttributes};
 use solidcore::query::poly::{PolyBrep, PolyEdgeId, PolyShellId, PolyVertexId};
-use solidcore_ffi::units::query_poly_copy as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Largest radial ring the generator makes.
+const MAX_RING: usize = 16;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 500;
@@ -58,14 +59,6 @@ fn herr(e: impl std::fmt::Display) -> HarnessError {
 
 fn output(flat: Vec<f64>) -> Output {
     Output::new().values("out", flat)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::eval(&i.block) {
-        Ok(v) => Ok(output(v)),
-        Err(solidcore_ffi::FfiError::InvalidArgument(r)) => Ok(Output::rejected(r)),
-        Err(e) => Err(herr(e)),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -144,12 +137,9 @@ fn build(
                 .map(|_| pick(&verts, rd.int()?))
                 .collect::<Result<Vec<_>, _>>()?;
             let lp = rs(b.start_poly_edge_loop(face))?;
-            // (the FFI guard refuses these loops: no vertex, or an open loop without an
-            // edge; `(j + 1) % kk` and `kk - 1` need them)
-            if kk == 0 || (mode == 2 && kk < 2) {
-                return Err(herr("loop without vertices, or open loop without edges"));
-            }
-            let ne = if mode == 2 { kk - 1 } else { kk };
+            // a loop of `kk` vertices has `kk` edges, an open one `kk - 1`: a loop without
+            // vertices, or an open loop of one vertex, has none
+            let ne = if mode == 2 { kk.saturating_sub(1) } else { kk };
             for j in 0..ne {
                 let (v0, v1) = (vs[j], vs[(j + 1) % kk]);
                 let (p0, p1) = (rs(b.vertex_point(v0))?, rs(b.vertex_point(v1))?);
@@ -159,7 +149,7 @@ fn build(
                 // (the status is ignored by the shim)
                 let _ = b.finish_poly_edge_loop(lp);
             } else if mode == 2 {
-                rs(b.set_last_end_poly_vertex(lp, Some(vs[kk - 1])))?;
+                rs(b.set_last_end_poly_vertex(lp, vs.last().copied()))?;
             }
         }
     }
@@ -542,7 +532,7 @@ fn gen_case(rng: &mut Rng) -> Inputs {
         }
         1 if rings.len() > 1 => {
             let extra = rings.remove(1);
-            if rings[0].len() + extra.len() <= ffi::MAX_RING {
+            if rings[0].len() + extra.len() <= MAX_RING {
                 rings[0].extend(extra);
             }
         }
@@ -594,10 +584,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -1,25 +1,20 @@
-//! Runner for unit `query.face_p1`. C++: `solidcore_ffi::units::query_face_p1`. Rust:
-//! `solidcore::query::face::p1`.
+//! Runner for unit `query.face_p1`. Ported from upstream `SmFace`'s queries; checked
+//! against its golden. Rust: `solidcore::query::face::p1`.
 //!
 //! **Curve API.** `SmApiEvaluateCurve` on a null curve, an `SmLine` or an
 //! `SmHermiteCurve`, every optional-output mask; status and the (seeded) outputs.
 //!
-//! **B-rep ops.** The C++ side builds a real `SmBrep` from unit `topology.edgeuse_p1`'s
-//! B-rep block (an upstream `.smb` file with or without rebuilt UV trim curves, a face
-//! on a B-spline surface or a real `SmPlane`, a wire edge, the wire network, isolated
-//! vertices, or faces and networks mixed) and runs `SmFace` / `SmShell` /
-//! `SmRegion::CalculateBoundingBox` (explicit `bTight` or the default argument),
-//! `SmFace::Point3DClassify` or `SmFace::EdgeCurveOnClassify` on it. The Rust side builds
-//! the same B-rep with the Rust kernel ([`own_model`]: [`crate::own_builder`] for the
-//! shim-built sources, the Rust `.smb` reader for files) in the shim's traversal order,
-//! so no C++ state reaches it; the C++ side resolves its arguments on an import of its
-//! export with each face's primary face use patched in ([`model`], shared with the
-//! `query.brep` runner). Entity selectors are taken modulo the entity count (`-2` on
-//! both sides when there is none).
+//! **B-rep ops.** Each case builds a B-rep from unit `topology.edgeuse_p1`'s B-rep block
+//! (an upstream `.smb` file with or without rebuilt UV trim curves, a face on a B-spline
+//! surface or an `SmPlane`, a wire edge, the wire network, isolated vertices, or faces
+//! and networks mixed) with the Rust kernel ([`own_model`]: [`crate::own_builder`] for
+//! the built sources, the Rust `.smb` reader for files) in upstream's traversal order,
+//! and runs `SmFace` / `SmShell` / `SmRegion::CalculateBoundingBox` (explicit `bTight` or
+//! the default argument), `SmFace::Point3DClassify` or `SmFace::EdgeCurveOnClassify` on
+//! it. Entity selectors are taken modulo the entity count (`-2` when there is none).
 //!
-//! The classified 3D point is computed by each side from its own B-rep: the face
-//! surface at a fraction of the face's UV domain plus an offset. The Rust geometry is
-//! native (every surface and curve kind), so no case is deferred on a lossy import.
+//! The classified 3D point is computed from the B-rep: the face surface at a fraction of
+//! the face's UV domain plus an offset.
 //!
 //! **Outputs.** Boxes: status and the box (seeded with a sentinel box, so what a failing
 //! call leaves is compared). `Point3DClassify`: status and the classification (class,
@@ -35,11 +30,8 @@ use serde_json::Value;
 use solidcore::curve::curve::Curve;
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::curve::line::Line;
-use solidcore::geom::assert_array::labels::FACE_TYPE;
-use solidcore::geom::attribute::ObjectKey;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent3d::Extent3d;
-use solidcore::geom::object::ObjectRef;
 use solidcore::geom::tol::zone_tol3d;
 use solidcore::geom::vector2d::Point2;
 use solidcore::geom::vector3d::Vec3;
@@ -49,13 +41,11 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::query::face::p1;
 use solidcore::topology::{
-    Brep, EdgeId, FaceId, FaceuseId, LoopId, RegionId, ShellId,
+    Brep, EdgeId, FaceId, LoopId, RegionId, ShellId,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::query_face_p1::{self as ffi, Op};
-use solidcore_ffi::units::topology_edgeuse_p1 as graph;
 
-use super::topology_edgeuse_p1::{domain, fixture_input, gen_brep, gen_surface, import, BrepIn};
+use super::topology_edgeuse_p1::{domain, fixture_input, gen_brep, gen_surface, BrepIn};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1200;
@@ -176,70 +166,21 @@ enum Input {
     Curve(CurveInput),
 }
 
-// ---- the imported B-rep -----------------------------------------------------------------
+// ---- the B-rep ---------------------------------------------------------------------------
 
-/// The case's B-rep imported from the C++ export, with each face's primary face use
-/// (shared with the `query.brep` runner).
+/// The case's B-rep (shared with the `query.brep` runner).
 pub(crate) struct Model {
-    pub(crate) path: String,
-    pub(crate) block: Vec<f64>,
     pub(crate) brep: Brep,
-}
-
-pub(crate) fn model(brep: &Value) -> Result<Model, HarnessError> {
-    let (path, block) = fixture_input(brep.clone())?;
-    let export = graph::eval(graph::Op::Export, &path, &block)
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let mut b = import(&export)?;
-    let fus = ffi::eval(Op::FaceFu, &path, &block, &[])
-        .map_err(|e| harness(format!("c++ face uses: {e}")))?;
-    if fus.len() != b.faces().len() {
-        return Err(harness("face use count differs from the face count"));
-    }
-    for (i, fu) in fus.iter().enumerate() {
-        let f = FaceId::from_index(u32::try_from(i).map_err(|_| harness("face index"))?);
-        b.face_mut(f).map_err(|e| harness(e.to_string()))?.faceuse = if *fu < 0.0 {
-            None
-        } else {
-            Some(FaceuseId::from_index(*fu as u32))
-        };
-    }
-    // Upstream face surfaces are owned by their faces (their zone tolerance is the
-    // face's, and point solves test trim containment through the face); the import
-    // leaves them unowned.
-    for i in 0..b.faces().len() {
-        let f = FaceId::from_index(u32::try_from(i).map_err(|_| harness("face index"))?);
-        if let Some(s) = b
-            .face_mut(f)
-            .map_err(|e| harness(e.to_string()))?
-            .surface
-            .as_mut()
-        {
-            s.set_owner(Some(ObjectRef {
-                type_code: FACE_TYPE,
-                key: ObjectKey(i as u64),
-            }));
-        }
-        // the face's tolerance, as the face upstream answers GetTolerance with
-        b.sync_face_surface_tolerance(f)
-            .map_err(|e| harness(e.to_string()))?;
-    }
-    Ok(Model {
-        path,
-        block,
-        brep: b,
-    })
 }
 
 /// The Rust side's model: the case's B-rep built by the Rust kernel as the shim's
 /// `sc_topology_fixture::apply` builds it (unit `topology.edgeuse_p1`'s `build` and
 /// `walk`: [`crate::own_builder`] for shim-built sources, the Rust `.smb` reader for
-/// files), in that traversal order, its geometry owned under the arena identities. No
-/// C++ state reaches it (its face uses are the built ones, so no `FaceFu` patch).
+/// files), in that traversal order, its geometry owned under the arena identities.
 /// Shared with the `query.brep` runner's Rust side.
 pub(crate) fn own_model(brep: &Value) -> Result<Result<Model, Output>, HarnessError> {
     use crate::own_builder::{build, failed_output, read_as, Built, Conventions};
-    let (path, block) = fixture_input(brep.clone())?;
+    let (path, _) = fixture_input(brep.clone())?;
     let src: BrepIn = serde_json::from_value(brep.clone())
         .map_err(|e| harness(format!("topology fixture: {e}")))?;
     let mut k = Kernel::default();
@@ -260,33 +201,7 @@ pub(crate) fn own_model(brep: &Value) -> Result<Result<Model, Output>, HarnessEr
         b.sync_face_surface_tolerance(f)
             .map_err(|e| harness(e.to_string()))?;
     }
-    Ok(Ok(Model {
-        path,
-        block,
-        brep: b,
-    }))
-}
-
-/// The model a side runs on: the C++ side's import of its export ([`model`]), or the
-/// Rust-built one ([`own_model`]).
-fn side_model(brep: &Value, cpp: bool) -> Result<Result<Model, Output>, HarnessError> {
-    // HANG-29 (nightly fuzz00201, a tight face box with a control point of 1e300): the
-    // C++ ops classify points on the faces, and creating a face's UV trim curves with a
-    // coordinate above 1e150 does not return upstream, so the FFI refuses such a block
-    // and the C++ side is a harness error (the case is `rejected`). The Rust side runs
-    // the kernel, which refuses the face itself at the entry of the tight box and the
-    // two classifications (`query::face::p3::check_face_coordinates`); the unit tests
-    // below check that both sides refuse the fuzz input.
-    if cpp {
-        let (_, block) = fixture_input(brep.clone())?;
-        solidcore_ffi::units::topology_edgeuse_p2::check_block_magnitudes(&block)
-            .map_err(|e| harness(e.to_string()))?;
-    }
-    if cpp {
-        model(brep).map(Ok)
-    } else {
-        own_model(brep)
-    }
+    Ok(Ok(Model { brep: b }))
 }
 
 fn pick(sel: usize, n: usize) -> Option<u32> {
@@ -322,29 +237,12 @@ fn box_output(status: i64, values: &[f64]) -> Output {
         .values("box", values.to_vec())
 }
 
-fn run_box(input: &BoxInput, cpp: bool) -> Result<Output, HarnessError> {
-    let m = match side_model(&input.brep, cpp)? {
+fn run_box(input: &BoxInput) -> Result<Output, HarnessError> {
+    let m = match own_model(&input.brep)? {
         Ok(m) => m,
         Err(o) => return Ok(o),
     };
     let b = &m.brep;
-    if cpp {
-        let args = [
-            f64::from(input.target),
-            input.index as f64,
-            flag(input.tight),
-            flag(input.use_default),
-        ];
-        let out = ffi::eval(Op::Box, &m.path, &m.block, &args)
-            .map_err(|e| harness(format!("c++: {e}")))?;
-        let (status, rest) = out
-            .split_first()
-            .ok_or_else(|| harness("empty c++ output"))?;
-        if *status == -2.0 {
-            return Ok(none_output());
-        }
-        return Ok(box_output(*status as i64, rest));
-    }
     let n = match input.target {
         0 => b.faces().len(),
         1 => b.shells().len(),
@@ -495,40 +393,14 @@ pub(crate) fn drop_trim_cache(b: &Brep, f: FaceId) -> Result<(), HarnessError> {
     Ok(())
 }
 
-fn run_point(k: &Kernel, i: &PointInput, cpp: bool) -> Result<Output, HarnessError> {
-    let m = match side_model(&i.brep, cpp)? {
+fn run_point(k: &Kernel, i: &PointInput) -> Result<Output, HarnessError> {
+    let m = match own_model(&i.brep)? {
         Ok(m) => m,
         Err(o) => return Ok(o),
     };
     let Some(a) = point_args(k, &m, i)? else {
         return Ok(none_output());
     };
-    if cpp {
-        let mut args = vec![
-            f64::from(a.face.index()),
-            a.point.x,
-            a.point.y,
-            a.point.z,
-            i.src_tol,
-            flag(i.do_bnd),
-            flag(a.guess.is_some()),
-            a.guess.map_or(0.0, |g| g.x),
-            a.guess.map_or(0.0, |g| g.y),
-            flag(i.tgt_only),
-            flag(i.has_loops),
-            a.loops.len() as f64,
-        ];
-        args.extend(a.loops.iter().map(|l| f64::from(l.index())));
-        args.extend([flag(i.uv_ok), i.pc_tol]);
-        let out = ffi::eval(Op::Point3d, &m.path, &m.block, &args)
-            .map_err(|e| harness(format!("c++: {e}")))?;
-        let (status, rest) = out
-            .split_first()
-            .ok_or_else(|| harness("empty c++ output"))?;
-        return Ok(Output::new()
-            .int("status", *status as i64)
-            .values("pc", rest.to_vec()));
-    }
     let k = Kernel::default();
     let mut b = m.brep;
     drop_trim_cache(&b, a.face)?;
@@ -565,8 +437,8 @@ fn edge_on_output(status: i64, inside: bool, problem: bool, why: i64) -> Output 
         .ints("answer", vec![i64::from(inside), i64::from(problem), why])
 }
 
-fn run_edge_on(i: &EdgeOnInput, cpp: bool) -> Result<Output, HarnessError> {
-    let m = match side_model(&i.brep, cpp)? {
+fn run_edge_on(i: &EdgeOnInput) -> Result<Output, HarnessError> {
+    let m = match own_model(&i.brep)? {
         Ok(m) => m,
         Err(o) => return Ok(o),
     };
@@ -582,33 +454,6 @@ fn run_edge_on(i: &EdgeOnInput, cpp: bool) -> Result<Output, HarnessError> {
     let edge = (i.edge >= 0)
         .then(|| pick(i.edge as usize, n_edges).map(EdgeId::from_index))
         .flatten();
-    if cpp {
-        let mut args = vec![
-            f64::from(face.index()),
-            edge.map_or(-1.0, |e| f64::from(e.index())),
-        ];
-        args.push(f64::from(i.dim));
-        args.extend(i.p);
-        args.extend(i.q);
-        args.extend([
-            i.edge_param,
-            i.interval[0],
-            i.interval[1],
-            if i.same { 0.0 } else { 1.0 },
-            i.tol,
-            flag(i.uv_ok),
-        ]);
-        let out = ffi::eval(Op::EdgeOn, &m.path, &m.block, &args)
-            .map_err(|e| harness(format!("c++: {e}")))?;
-        return Ok(match out.as_slice() {
-            [s, ..] if *s == -2.0 => none_output(),
-            [s, cs] if *s == -3.0 => Output::err(format!("line_segment_status_{cs}")),
-            [s, inside, problem, why] => {
-                edge_on_output(*s as i64, *inside != 0.0, *problem != 0.0, *why as i64)
-            }
-            _ => return Err(harness("malformed c++ output")),
-        });
-    }
     let k = Kernel::default();
     let [px, py, pz] = i.p;
     let [qx, qy, qz] = i.q;
@@ -657,29 +502,10 @@ fn curve_output(status: i32, values: [f64; 9]) -> Output {
         .values("out", values.to_vec())
 }
 
-fn run_curve(k: &Kernel, input: &CurveInput, cpp: bool) -> Result<Output, HarnessError> {
-    // Inputs the FFI refuses before any C++ runs: nothing runs on either side.
-    if !(0..=2).contains(&input.kind)
-        || !(0..=7).contains(&input.mask)
-        || input.data.iter().any(|x| !x.is_finite())
-    {
-        return Ok(Output::rejected(
-            "curve kind, data or output mask outside the shim's inputs",
-        ));
-    }
-    if cpp {
-        let (status, values) = ffi::evaluate_curve(
-            input.kind,
-            &input.data,
-            input.parameter.value()?,
-            input.mask,
-        )
-        .map_err(|e| harness(e.to_string()))?;
-        // the shim reports the raw SmStatus: SM_SUCCESS is 1000
-        return Ok(curve_output(
-            if status == 1000 { 0 } else { status },
-            values,
-        ));
+fn run_curve(k: &Kernel, input: &CurveInput) -> Result<Output, HarnessError> {
+    // a curve kind or output mask outside the case's protocol
+    if !(0..=2).contains(&input.kind) || !(0..=7).contains(&input.mask) {
+        return Ok(Output::rejected("curve kind or output mask outside the case's inputs"));
     }
     let [px, py, pz, dx, dy, dz, qx, qy, qz, ex, ey, ez] = input.data;
     let p = Vec3::new(px, py, pz);
@@ -710,13 +536,13 @@ fn run_curve(k: &Kernel, input: &CurveInput, cpp: bool) -> Result<Output, Harnes
     }
 }
 
-fn run(k: &Kernel, case: &Case, cpp: bool) -> Result<Output, HarnessError> {
+fn run(k: &Kernel, case: &Case) -> Result<Output, HarnessError> {
     let input = case.parse::<Input>()?;
     match input {
-        Input::Box(i) => run_box(&i, cpp),
-        Input::Point(i) => run_point(k, &i, cpp),
-        Input::EdgeOn(i) => run_edge_on(&i, cpp),
-        Input::Curve(i) => run_curve(k, &i, cpp),
+        Input::Box(i) => run_box(&i),
+        Input::Point(i) => run_point(k, &i),
+        Input::EdgeOn(i) => run_edge_on(&i),
+        Input::Curve(i) => run_curve(k, &i),
     }
 }
 
@@ -904,14 +730,9 @@ impl UnitDiff for Runner {
         )
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let k = &Kernel::default();
-        run(k, case, true)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &Kernel::default();
-        run(k, case, false)
+        run(k, case)
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
@@ -939,21 +760,15 @@ mod tests {
         serde_json::from_value(inputs).expect("a box input")
     }
 
-    /// HANG-29: the C++ tight box does not return on this face (from 1e155; the
-    /// classifications from 1e153), so the FFI refuses the block; the Rust kernel
-    /// refuses the face at the query's entry, so the two sides agree. Without the kernel
-    /// guard the Rust side returns a box after an 18-31 s run instead.
+    /// HANG-29: the upstream tight box does not return on this face (from 1e155; the
+    /// classifications from 1e153); the Rust kernel refuses the face at the query's
+    /// entry. Without the kernel guard the Rust side returns a box after an 18-31 s run
+    /// instead.
     #[test]
-    fn fuzz00201_huge_control_point_is_refused_on_both_sides() {
+    fn fuzz00201_huge_control_point_is_refused() {
         let input = fuzz00201();
         assert!(input.tight);
-        let cpp = run_box(&input, true).err().map(|e| e.to_string());
-        assert!(
-            cpp.as_deref().is_some_and(|m| m.contains("HANG-29")),
-            "cpp: {cpp:?}"
-        );
-        assert!(side_model(&input.brep, true).is_err());
-        let rust = run_box(&input, false).expect("the Rust side runs");
+        let rust = run_box(&input).expect("the Rust side runs");
         let text = format!("{rust:?}");
         assert!(text.contains("HANG-29") && text.contains("invalid input"), "rust: {text}");
     }

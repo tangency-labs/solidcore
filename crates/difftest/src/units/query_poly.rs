@@ -2,27 +2,21 @@
 //! bounding boxes, normals, bounding spheres, point containment, degenerate edges,
 //! `Transform`, setters and destructors, `IsKindOf`).
 //!
-//! C++: `solidcore_ffi::units::query_poly` (upstream `source/SMLib/src/SmPoly.cpp`).
+//! Ported from upstream `source/SMLib/src/SmPoly.cpp`; checked against its golden.
 //! Rust: `solidcore::query::poly`.
 //!
-//! A case is a poly B-rep description (`brep`) and an operation (`op`). Both sides
-//! build the same poly B-rep (the shim with upstream's constructors, the Rust side with
-//! the mirrors in `query::poly`), run the operation and dump the whole structure
-//! (lists, rings, stored tolerances, normals and spheres) as keyed sections; integer
-//! sections are compared exactly, float sections to `1e-9` relative. Statuses are `0`
-//! (`SM_SUCCESS`) or the `SmStatus`.
+//! A case is a poly B-rep description (`brep`) and an operation (`op`). The Rust side
+//! builds the poly B-rep (with the mirrors in `query::poly`), runs the operation and
+//! dumps the whole structure (lists, rings, stored tolerances, normals and spheres) as
+//! keyed sections; integer sections are recorded exactly, float sections to `1e-9`
+//! relative. Statuses are `0` (`SM_SUCCESS`) or the `SmStatus`.
 //!
-//! Rejected cases: `IsDegenerate` of an edge whose face has a label for an original
-//! face while the back pointers are valid. Upstream then calls `SmFace::GetSurface`
-//! on that face (to map UV points), and a label is not an `SmFace`: the call is
-//! undefined in C++ (AGENTS.md section 4, step 5.6). The shim decides this from the
-//! built model (label plus back pointers), before any call, and returns
-//! `STATUS_UNDEFINED_INPUT`; `run_cpp` maps that status to `rejected`, no C++ result is
-//! inspected, and the Rust side, which would defer it at `SmFace::GetSurface`
-//! (`topology.face_p2`) for lack of the face, is not run.
-//! `owner_degenerate` is a separate opt-in operation that does compare these calls:
-//! explicit face records resolve only their own labels, and it compares real native
-//! `IsDegenerate` calls and independent surface samples.
+//! `IsDegenerate` of an edge whose face has a label for an original face while the back
+//! pointers are valid calls `SmFace::GetSurface` on that face upstream (to map UV
+//! points), and a label is not an `SmFace`: the Rust side defers it at
+//! `SmFace::GetSurface` (`topology.face_p2`) for lack of the face. `owner_degenerate` is
+//! a separate opt-in operation for these calls: explicit face records resolve only their
+//! own labels, and it records the `IsDegenerate` calls and independent surface samples.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,12 +44,26 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::topology::Topology;
 use solidcore::topology::{Brep, Face, FaceId, Shell};
 use solidcore::SolidError;
-use solidcore_ffi::units::query_poly as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::util::v3;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most shells a region of a case's poly B-rep may have: a fuzzed count must not make the
+/// runner build billions of shells.
+const MAX_SHELLS_PER_REGION: usize = 1 << 16;
+
+/// One output section.
+#[derive(Debug, Clone, PartialEq)]
+struct Section {
+    /// Section key.
+    key: i32,
+    /// Integer values (else floats).
+    ints: bool,
+    /// Values.
+    values: Vec<f64>,
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 600;
@@ -205,127 +213,6 @@ enum OwnerSurfaceIn {
     },
 }
 
-fn owner_to_ffi(owner: &OwnerIn) -> ffi::OwnerFace {
-    ffi::OwnerFace {
-        label: owner.label,
-        surface: owner.surface.as_ref().map(|s| match s {
-            OwnerSurfaceIn::Plane {
-                origin,
-                x,
-                y,
-                scale,
-                domain,
-            } => ffi::OwnerSurface::Plane {
-                origin: *origin,
-                x: *x,
-                y: *y,
-                scale: *scale,
-                domain: *domain,
-            },
-            OwnerSurfaceIn::Bezier { net } => ffi::OwnerSurface::Bezier { net: net.clone() },
-        }),
-    }
-}
-
-fn to_ffi(b: &BrepIn) -> ffi::PolyDesc {
-    ffi::PolyDesc {
-        tol: b.tol,
-        regions: b.regions.clone(),
-        vertices: b.vertices.clone(),
-        faces: b
-            .faces
-            .iter()
-            .map(|f| ffi::FaceDesc {
-                shell: f.shell,
-                tol: f.tol,
-                normal: f.normal,
-                loops: f
-                    .loops
-                    .iter()
-                    .map(|l| ffi::LoopDesc {
-                        mode: l.mode,
-                        edge_tol: l.edge_tol,
-                        verts: l.verts.clone(),
-                    })
-                    .collect(),
-            })
-            .collect(),
-        radials: b.radials.clone(),
-        aux: b.aux.clone(),
-        edge_aux: b.edge_aux.clone(),
-        vertex_normals: b.vertex_normals.clone(),
-        cpolys: b.cpolys.clone(),
-        orig_faces: b.orig_faces.clone(),
-        orig_edgeuses: b.orig_edgeuses.clone(),
-        ok_back_ptrs: b.ok_back_ptrs,
-    }
-}
-
-fn op_to_ffi(op: &OpIn) -> ffi::Op {
-    match op {
-        // OriginalCopy uses an isolated entry point, never the legacy labels.
-        OpIn::OriginalCopy { .. } | OpIn::Dump => ffi::Op::Dump,
-        OpIn::Bbox {
-            pseudo,
-            points,
-            centroid,
-            normal,
-        } => ffi::Op::BBox {
-            pseudo: *pseudo,
-            points: points.clone(),
-            centroid: *centroid,
-            normal: *normal,
-        },
-        OpIn::Normal { calls } => ffi::Op::Normal(calls.clone()),
-        OpIn::Sphere { calls } => ffi::Op::Sphere(calls.clone()),
-        OpIn::Contains { queries } => ffi::Op::Contains(
-            queries
-                .iter()
-                .map(|q| ffi::ContainsQuery {
-                    face: q.face,
-                    id: q.id,
-                    point: q.point,
-                    tol: q.tol,
-                    work_in_3d: q.work_in_3d,
-                })
-                .collect(),
-        ),
-        OpIn::Degenerate { calls } => ffi::Op::Degenerate(calls.clone()),
-        OpIn::OwnerDegenerate { owners, calls } => ffi::Op::OwnerDegenerate {
-            owners: owners.iter().map(owner_to_ffi).collect(),
-            calls: calls.clone(),
-        },
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => ffi::Op::Transform {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
-        },
-        OpIn::Mutate { cmds } => ffi::Op::Mutate(
-            cmds.iter()
-                .map(|c| match *c {
-                    MutIn::SetPoint { v, p } => ffi::Mutation::SetPoint(v, p),
-                    MutIn::SetVertexTolerance { v, t } => ffi::Mutation::SetVertexTolerance(v, t),
-                    MutIn::DeleteEdge { e } => ffi::Mutation::DeleteEdge(e),
-                    MutIn::DeleteFace { f } => ffi::Mutation::DeleteFace(f),
-                    MutIn::CpolyRemove { c, f } => ffi::Mutation::CPolyRemove(c, f),
-                    MutIn::SetNormalUninit { f } => ffi::Mutation::SetNormalUninit(f),
-                    MutIn::SetEdgeTolerance { e, t } => ffi::Mutation::SetEdgeTolerance(e, t),
-                    MutIn::SetFaceTolerance { f, t } => ffi::Mutation::SetFaceTolerance(f, t),
-                    MutIn::SetOriginalFace { f, label } => ffi::Mutation::SetOriginalFace(f, label),
-                    MutIn::ClearAux { e } => ffi::Mutation::ClearAux(e),
-                })
-                .collect(),
-        ),
-        OpIn::Kinds { codes } => ffi::Op::Kinds(codes.clone()),
-    }
-}
-
 // ---- sections ---------------------------------------------------------------------
 
 const K_STATUS: i32 = 0;
@@ -389,7 +276,7 @@ fn key_name(key: i32) -> &'static str {
     }
 }
 
-fn to_output(secs: &[ffi::Section]) -> Result<Output, HarnessError> {
+fn to_output(secs: &[Section]) -> Result<Output, HarnessError> {
     let mut out = Output::new();
     for s in secs {
         let name = key_name(s.key);
@@ -409,18 +296,18 @@ fn to_output(secs: &[ffi::Section]) -> Result<Output, HarnessError> {
 }
 
 #[derive(Default)]
-struct Secs(Vec<ffi::Section>);
+struct Secs(Vec<Section>);
 
 impl Secs {
     fn floats(&mut self, key: i32, v: Vec<f64>) {
-        self.0.push(ffi::Section {
+        self.0.push(Section {
             key,
             ints: false,
             values: v,
         });
     }
     fn ints(&mut self, key: i32, v: Vec<f64>) {
-        self.0.push(ffi::Section {
+        self.0.push(Section {
             key,
             ints: true,
             values: v,
@@ -482,9 +369,7 @@ fn build(k: &Kernel, b: &BrepIn) -> Result<Built, Fail> {
     }
     let mut shells: Vec<PolyShellId> = Vec::new();
     for (r, &n) in regions.iter().zip(&b.regions) {
-        // The FFI rejects larger counts; mirror it so a fuzzed count cannot make the
-        // runner build billions of shells.
-        if n > ffi::MAX_SHELLS_PER_REGION {
+        if n > MAX_SHELLS_PER_REGION {
             return Err(Fail::Harness(harness("too many shells in a region")));
         }
         for _ in 0..n {
@@ -618,8 +503,6 @@ struct OwnerWorld {
 }
 
 fn build_owners(owners: &[OwnerIn]) -> Result<OwnerWorld, Fail> {
-    let descs: Vec<_> = owners.iter().map(owner_to_ffi).collect();
-    ffi::check_owner_faces(&descs).map_err(|e| Fail::Harness(harness(e.to_string())))?;
     let mut brep = Brep::new();
     let shell = rs(brep.add_shell_record(Shell::default()))?;
     let mut faces = std::collections::BTreeMap::new();
@@ -1285,29 +1168,6 @@ impl UnitDiff for Runner {
         "query.poly"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        if let OpIn::OriginalCopy { steps, composite } = &i.op {
-            return ffi::original_copy(steps, *composite)
-                .map(|values| Output::new().values("original_copy", values))
-                .map_err(|e| harness(e.to_string()));
-        }
-        match ffi::run(&to_ffi(&i.brep), &op_to_ffi(&i.op)) {
-            Ok(secs) => to_output(&secs),
-            // The shim declined the input before calling anything (decided from the built
-            // model, not from a result): upstream would call `SmFace::GetSurface` on a
-            // label that is not an `SmFace`.
-            Err(solidcore_ffi::FfiError::Status(ffi::STATUS_UNDEFINED_INPUT)) => {
-                Ok(Output::rejected(
-                    "SmPolyEdge::IsDegenerate would call GetSurface on a labelled fake SmFace \
-                     (undefined in C++; real original faces: owner_degenerate)",
-                ))
-            }
-            Err(solidcore_ffi::FfiError::Status(s)) => Ok(Output::err(format!("status_{s}"))),
-            Err(e) => Err(harness(e.to_string())),
-        }
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
         let k = Kernel::default();
@@ -1367,7 +1227,7 @@ mod owner_tests {
     }
 
     #[test]
-    fn opaque_original_faces_are_rejected_before_native_dereference() {
+    fn opaque_original_faces_are_deferred() {
         let cases = Runner
             .cases(&CaseContext {
                 root: repo_root(),
@@ -1380,26 +1240,15 @@ mod owner_tests {
             let deferred = rust.deferred.unwrap();
             assert_eq!(deferred.unit, "topology.face_p2");
             assert_eq!(deferred.symbol, "SmFace::GetSurface");
-            // The labelled original face is not an `SmFace`: upstream would dereference
-            // it, so the C++ side rejects the case and nothing is compared.
-            let cpp = Runner.run_cpp(case).unwrap();
-            assert!(cpp.error.is_none());
-            assert!(cpp.rejected.is_some());
-            assert!(cpp.ints.is_empty() && cpp.values.is_empty());
         }
     }
 
     #[test]
-    fn real_owner_native_mapping_poles_seams_and_controls() {
+    fn real_owner_mapping_poles_seams_and_controls() {
         for case in owner_cases() {
-            let cpp = Runner.run_cpp(&case).unwrap();
-            let rust = Runner.run_rust(&case).unwrap();
-            assert!(cpp.error.is_none() && cpp.rejected.is_none() && cpp.deferred.is_none());
-            assert!(rust.error.is_none() && rust.rejected.is_none() && rust.deferred.is_none());
-            let diff = crate::compare::compare(&cpp, &rust, &[]);
-            assert!(diff.pass(), "{}: {diff:?}", case.name);
-            assert!(diff.values_compared > 0);
-            assert!(cpp.values["owner_points"]
+            let out = Runner.run_rust(&case).unwrap();
+            assert!(out.error.is_none() && out.rejected.is_none() && out.deferred.is_none());
+            assert!(out.values["owner_points"]
                 .iter()
                 .any(|v| v.is_finite() && *v != 0.0));
             let expected: &[i64] = match case.name.as_str() {
@@ -1412,33 +1261,26 @@ mod owner_tests {
                 "owner_distinct_face_identity" => &[1, 0],
                 _ => &[0],
             };
-            assert_eq!(cpp.ints["results"], expected, "{}", case.name);
+            assert_eq!(out.ints["results"], expected, "{}", case.name);
             if case.name == "owner_u_seam_midpoint" {
                 assert_eq!(
-                    &cpp.values["owner_points"][10..19],
+                    &out.values["owner_points"][10..19],
                     &[1.0, 0.0, 3.0, 1.0, 0.0, 3.0, 0.0, 0.0, 3.0]
                 );
             }
             if case.name == "owner_plane_compress" {
                 assert_eq!(
-                    &cpp.values["owner_points"][10..19],
+                    &out.values["owner_points"][10..19],
                     &[8.0625, -1.0, 1.0, 8.125, -1.0, 1.0, 8.09375, -1.0, 1.0]
                 );
             }
             if case.name == "owner_face_without_surface" {
-                assert_eq!(&cpp.ints["owner_topo"][1..6], &[3, 1, 0, 1, 0]);
+                assert_eq!(&out.ints["owner_topo"][1..6], &[3, 1, 0, 1, 0]);
                 // The same valid original face label, without its explicit record,
                 // must defer instead of becoming another surface-less face.
                 let mut unresolved = case.clone();
                 unresolved.inputs["op"]["owners"] = serde_json::json!([]);
                 assert!(Runner.run_rust(&unresolved).unwrap().deferred.is_some());
-                assert!(Runner
-                    .run_cpp(&unresolved)
-                    .unwrap()
-                    .rejected
-                    .as_deref()
-                    .unwrap()
-                    .contains("fake SmFace"));
             }
         }
     }

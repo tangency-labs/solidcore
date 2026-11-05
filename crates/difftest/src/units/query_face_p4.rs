@@ -1,27 +1,25 @@
-//! Runner for unit `query.face_p4`. C++: `solidcore_ffi::units::query_face_p4`. Rust:
-//! `solidcore::query::face::p4`.
+//! Runner for unit `query.face_p4`. Ported from upstream `SmFace::ClassifyLoops`; checked
+//! against its golden. Rust: `solidcore::query::face::p4`.
 //!
-//! **B-reps.** The C++ side builds a real `SmBrep` per call: an upstream `.smb` file, a
+//! **B-reps.** Each case builds a B-rep with the Rust kernel ([`own_brep`]: the Rust
+//! reader, the shared face builder and this runner's curves and natural-face builders,
+//! in upstream's call order and traversal order): an upstream `.smb` file, a
 //! face over a B-spline surface or `SmPlane` (`CreateFaceFromSurface`), a face of 2D line
 //! and circle UV trim curves and single vertex loops over a real `SmCylinder`,
 //! `SmSphere`, `SmTorus` or `SmCone` or a B-spline (`MakeFaceWithCurves`, as `prog_test`
 //! `my_test_tsurf_cyl_creation_fast`; lines spanning a periodic direction make the
 //! no-area loops of faces without seam edge: cylinder circles, sphere caps and bands,
 //! torus bands and diagonals), or the natural face of an analytic surface
-//! (`CreateFaceInRegionFromSurface`, as `my_test_closed_sphere_properties`). The Rust
-//! side makes the same B-rep with the Rust kernel ([`own_brep`]: the Rust reader, the
-//! shared face builder and this runner's curves and natural-face builders, in the
-//! shim's call order and traversal order), so no C++ state reaches its geometry or
-//! topology.
+//! (`CreateFaceInRegionFromSurface`, as `my_test_closed_sphere_properties`).
 //!
 //! **Face props.** `ClassifyLoops` reads the face props of its only caller,
-//! `SmFaceProps::SetProps_Stage3`. With `props` `1` each side builds them as that caller
+//! `SmFaceProps::SetProps_Stage3`. With `props` `1` they are built as that caller
 //! does (`SetProps_Stage2`, `ReSet(SM_PROPSTAGE_3)`, the loop props; the Rust side with
-//! the port of unit `heal.face_props`, [`stage3_props`]) on its own B-rep, and runs
+//! the port of unit `heal.face_props`, [`stage3_props`]) on the B-rep, and runs
 //! `ClassifyLoops` on them. With `props` `0` the props are fresh and `ClassifyLoops`
 //! computes them itself (`SetProps_Stage2`). The case (face, props, target loops and
-//! the rejection guards) is resolved by each side from its own B-rep (the Rust side's
-//! [`setup`], the shim's `setup` in its call order); no C++ state reaches the Rust side.
+//! the rejection guards) is resolved from the B-rep ([`setup`], in upstream's call
+//! order).
 //!
 //! **Deferred.** Fresh props of a closed surface need `SmFace::HasSeamProblem`
 //! (`topology.face_p4`), which reaches its unported callees.
@@ -63,9 +61,8 @@ use solidcore::query::face::p4 as qf4;
 use solidcore::surface::surface::Surface;
 use solidcore::topology::Brep;
 use solidcore::topology::{EdgeId, EdgeuseId, FaceId, LoopId, VertexId};
-use solidcore_ffi::units::query_face_p4::{self as ffi, Op};
 
-use super::topology_edgeuse_p1::{domain, flag, gen_surface, push_surface, SrfIn, FILES};
+use super::topology_edgeuse_p1::{domain, gen_surface, SrfIn, FILES};
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -290,82 +287,6 @@ struct Inputs {
     loops: u8,
 }
 
-fn push_any(v: &mut Vec<f64>, s: &AnySrf) -> Result<(), HarnessError> {
-    let sw = |b: bool| flag(b);
-    match s {
-        AnySrf::Bspline { surface } => push_surface(v, surface)?,
-        AnySrf::Cylinder { scale, a, c, swap } => v.extend([10.0, *scale, *a, 0.0, *c, sw(*swap)]),
-        AnySrf::Sphere { scale, a, swap } => v.extend([11.0, *scale, *a, 0.0, 0.0, sw(*swap)]),
-        AnySrf::Torus { scale, a, b, swap } => v.extend([12.0, *scale, *a, *b, 0.0, sw(*swap)]),
-        AnySrf::Cone {
-            scale,
-            a,
-            b,
-            c,
-            swap,
-        } => v.extend([13.0, *scale, *a, *b, *c, sw(*swap)]),
-    }
-    Ok(())
-}
-
-/// The B-rep block of `brep` (shared with unit `query.face_p3`, whose shim builds
-/// B-reps with this unit's builders).
-pub(super) fn brep_input(
-    brep: &BrepIn,
-    validate_only: bool,
-    init_gaps: bool,
-) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    match brep {
-        BrepIn::File { rebuild, .. } => v.extend([0.0, flag(*rebuild)]),
-        BrepIn::Face { surface, dom } => {
-            v.push(2.0);
-            push_surface(&mut v, surface)?;
-            v.extend(dom);
-        }
-        BrepIn::Curves {
-            copies,
-            surface,
-            loops,
-            points,
-        } => {
-            v.extend([4.0, f64::from(*copies)]);
-            push_any(&mut v, surface)?;
-            v.push(loops.len() as f64);
-            v.extend(loops.iter().map(|l| l.len() as f64));
-            v.push(loops.iter().map(Vec::len).sum::<usize>() as f64);
-            for c in loops.iter().flatten() {
-                match c {
-                    CurveIn::Line { a, b, c, d, rev } => {
-                        v.extend([0.0, *a, *b, *c, *d, if *rev { 2.0 } else { 1.0 }]);
-                    }
-                    CurveIn::Circle { a, b, r, rev } => {
-                        v.extend([1.0, *a, *b, *r, 0.0, if *rev { 2.0 } else { 1.0 }]);
-                    }
-                }
-            }
-            v.push(points.len() as f64);
-            v.extend(points.iter().flatten());
-        }
-        BrepIn::Natural { surface } => {
-            v.push(5.0);
-            push_any(&mut v, surface)?;
-        }
-    }
-    v.extend([flag(validate_only), flag(init_gaps)]);
-    Ok(v)
-}
-
-fn input_of(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut v = brep_input(&i.brep, i.validate_only, i.init_gaps)?;
-    v.extend([f64::from(i.face), f64::from(i.props), f64::from(i.loops)]);
-    Ok(v)
-}
-
-fn path_of(i: &Inputs) -> Result<String, HarnessError> {
-    brep_path(&i.brep)
-}
-
 /// The `.smb` path of a B-rep input ("" when it is not a file).
 pub(super) fn brep_path(brep: &BrepIn) -> Result<String, HarnessError> {
     match brep {
@@ -375,10 +296,6 @@ pub(super) fn brep_path(brep: &BrepIn) -> Result<String, HarnessError> {
         }
         _ => Ok(String::new()),
     }
-}
-
-fn run_ffi(op: Op, i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    ffi::eval(op, &path_of(i)?, &input_of(i)?).map_err(|e| harness(format!("c++: {e}")))
 }
 
 // ---- outputs ----------------------------------------------------------------------------
@@ -395,40 +312,6 @@ fn initial_out() -> ClassifyLoopsOut {
         stop_type: CrvDirOnFaceType::Lamina,
         ordered_no_area_indices: vec![77],
         looptree: None,
-    }
-}
-
-/// Sequential reader of shim output.
-struct Rd<'a> {
-    v: &'a [f64],
-    at: usize,
-}
-
-impl Rd<'_> {
-    fn num(&mut self) -> Result<f64, HarnessError> {
-        let x = self
-            .v
-            .get(self.at)
-            .copied()
-            .ok_or_else(|| harness("shim output too short"))?;
-        self.at += 1;
-        Ok(x)
-    }
-
-    fn int(&mut self) -> Result<i64, HarnessError> {
-        Ok(self.num()? as i64)
-    }
-
-    fn count(&mut self) -> Result<usize, HarnessError> {
-        let n = self.int()?;
-        usize::try_from(n)
-            .ok()
-            .filter(|&n| n <= 1 << 20)
-            .ok_or_else(|| harness("bad count in shim output"))
-    }
-
-    fn ints(&mut self, n: usize) -> Result<Vec<i64>, HarnessError> {
-        (0..n).map(|_| self.int()).collect()
     }
 }
 
@@ -527,42 +410,6 @@ fn result_output(
         )
         .ints("looptree", tree)
         .int("scratch_size", scratch_size)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let o = run_ffi(Op::Classify, i)?;
-    let mut rd = Rd { v: &o, at: 0 };
-    if rd.num()? != 0.0 {
-        return Ok(Output::err(format!("build_failed: {}", rd.num()?)));
-    }
-    if rd.num()? != 0.0 {
-        return Ok(Output::err("rejected"));
-    }
-    let status = rd.num()?;
-    let n = rd.count()?;
-    let loops = rd.ints(n)?;
-    let classifiable = rd.int()?;
-    let not_yet = rd.int()?;
-    let n_io = rd.count()?;
-    let ios = rd.ints(6 * n_io)?;
-    let start = rd.int()?;
-    let stop = rd.int()?;
-    let n_na = rd.count()?;
-    let no_area = rd.ints(n_na)?;
-    let n_tree = rd.count()?;
-    let mut tree = vec![n_tree as i64];
-    tree.extend(rd.ints(8 * n_tree)?);
-    let scratch = rd.int()?;
-    Ok(Output::new()
-        .scalar("status", status)
-        .ints("loops", loops)
-        .int("classifiable", classifiable)
-        .int("not_yet", not_yet)
-        .ints("classify_loop_ios", ios)
-        .ints("start_stop", vec![start, stop])
-        .ints("ordered_no_area", no_area)
-        .ints("looptree", tree)
-        .int("scratch_size", scratch))
 }
 
 // ---- the Rust B-rep ---------------------------------------------------------------------
@@ -802,8 +649,7 @@ fn natural_face(
 /// `query.face_p3`), made by the Rust kernel in the shim's traversal order (unit
 /// `topology.face_p2`'s conventions: the same `walk` and `init_gaps` walk): an `.smb`
 /// file read by the Rust reader, a face from a surface by [`crate::own_builder`], and
-/// the curves and natural faces here. No C++ state reaches it. A failed build is
-/// `build_failed: <status>`, as the C++ side reports the shim's NULL build.
+/// the curves and natural faces here. A failed build is `build_failed: <status>`.
 pub(super) fn own_brep(
     brep: &BrepIn,
     validate_only: bool,
@@ -1093,13 +939,6 @@ fn setup(
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
-    // the shim never runs it, so the Rust side must not either. Nightly fuzz case
-    // fuzz00209 (run 41040730716) moved a UV line's end to v = 1e300: the FFI refuses a
-    // line end outside the face domain for the C++ side, while this side built the face
-    // and classified its loops for 48 s (the curve coincidence search along a 1e300-long
-    // trim). The checks see the same input vector as `run_ffi`.
-    ffi::validate(&path_of(i)?, &input_of(i)?).map_err(|e| harness(e.to_string()))?;
     let k = Kernel::default();
     // the B-rep: the Rust kernel's own build of the source (no C++ state)
     let (mut b, _) = match own_brep(&i.brep, i.validate_only, i.init_gaps)? {
@@ -1502,10 +1341,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse::<Inputs>()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse::<Inputs>()?)
     }
@@ -1520,35 +1355,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// Nightly fuzz case `query.face_p4/fuzz00209` (run 41040730716): a UV line ending at
-    /// v = 1e300 on a cylinder face. The FFI refuses a line end outside the face domain for
-    /// the C++ side, and the Rust side must be refused the same way instead of classifying
-    /// the face's loops along a 1e300-long trim (48 s).
-    #[test]
-    fn line_end_outside_the_domain_is_refused_on_both_sides() {
-        let v = serde_json::json!({
-            "brep": {
-                "copies": 1, "kind": "curves", "points": [],
-                "loops": [
-                    [{"a": 0.0, "b": 0.35403041722463596, "c": 1.0, "d": 1e300,
-                      "rev": false, "t": "line"}],
-                    [{"a": 1.0, "b": 0.30845071908772786, "c": 0.0,
-                      "d": 0.30845071908772786, "rev": false, "t": "line"}]
-                ],
-                "surface": {"a": 1.7697804728715845, "c": 4.514774976811207,
-                            "kind": "cylinder", "scale": 1.0, "swap": false}
-            },
-            "face": 18, "init_gaps": true, "loops": 0, "props": 1, "validate_only": false
-        });
-        let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = cpp(&i).unwrap_err().to_string();
-        let rust = rust(&i).unwrap_err().to_string();
-        assert_eq!(cpp, "c++: invalid argument: line: end outside the domain");
-        assert_eq!(rust, cpp.trim_start_matches("c++: "));
-    }
-
-    /// Most generated cases reach a real classification on the C++ side (not a build
-    /// failure or a rejection), and the Rust side compares most of those.
+    /// Most generated cases reach a real classification (not a build failure or a
+    /// rejection).
     #[test]
     fn generated_cases_classify() {
         let mut rng = Rng::new(11);
@@ -1557,12 +1365,11 @@ mod tests {
         let mut classified = 0;
         for _ in 0..n {
             let i = gen_case(&mut rng);
-            let c = cpp(&i).unwrap();
-            let r = rust(&i).unwrap();
+            let c = rust(&i).unwrap();
             let key = if let Some(e) = &c.error {
                 let kind = serde_json::to_value(&i.brep).unwrap()["kind"].clone();
-                format!("cpp error {e} {kind} props {} loops {}", i.props, i.loops)
-            } else if let Some(d) = &r.deferred {
+                format!("error {e} {kind} props {} loops {}", i.props, i.loops)
+            } else if let Some(d) = &c.deferred {
                 format!("deferred {}", d.unit)
             } else {
                 let ios = c.ints.get("classify_loop_ios").map_or(0, Vec::len);
@@ -1587,7 +1394,7 @@ mod tests {
                     classified += 1;
                 }
                 format!(
-                    "compared status {} classifiable {:?} ios>0 {}",
+                    "status {} classifiable {:?} ios>0 {}",
                     c.values
                         .get("status")
                         .and_then(|v| v.first())

@@ -4,16 +4,16 @@
 //! on hand-built trees with a poly B-rep boundary, the whole `BuildTree`), the tessellation
 //! drivers and `SmPolyToEUVUAttr`.
 //!
-//! C++: `solidcore_ffi::units::query_tess` (upstream `source/SMLib/src/SmTess.cpp`; the face
+//! Ported from upstream `source/SMLib/src/SmTess.cpp`; checked against its golden (the face
 //! is a bare `SmFace` holding the surface without owning it, the poly B-rep one face of
 //! closed loops in the uv plane, trees are built by hand). Rust: `solidcore::query::tess`.
 //!
 //! A case has an `op` and (except `attr`) a `setup`: a surface, the cache tolerances, a
-//! driver, an optional poly B-rep, an optional tree and the cache state. Both sides produce
-//! the sections documented in the ffi module: `status` (`0` = `SM_SUCCESS`, else the
+//! driver, an optional poly B-rep, an optional tree and the cache state. The Rust side
+//! produces the sections: `status` (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce), `res`, `res_i`, `state`, `dom`, `nodes` and `node_geom`. Every run has at least
-//! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are redrawn.
+//! [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -39,7 +39,6 @@ use solidcore::surface::surface::Surface;
 use solidcore::surface::surface_cache::p1::FaceContainment;
 use solidcore::surface::surface_cache::{BezierAux2d, SurfaceCacheOptions};
 use solidcore::SolidError;
-use solidcore_ffi::units::query_tess::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -198,20 +197,6 @@ enum OpIn {
     Attr { id: u64, behavior: u8, eu: u64, vu: u64 },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            Self::New { .. } => Op::New,
-            Self::Test { .. } => Op::Test,
-            Self::BuildSub => Op::BuildSub,
-            Self::Implant { .. } => Op::Implant,
-            Self::Mark => Op::Mark,
-            Self::Build => Op::Build,
-            Self::Attr { .. } => Op::Attr,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     #[serde(flatten)]
@@ -245,169 +230,6 @@ fn srf(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
         SrfIn::File { sms } => read_sms(sms),
         SrfIn::Inline(i) => Ok(i.clone()),
     }
-}
-
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, b: &BssIn) -> Result<(), HarnessError> {
-    o.push(flag(b.oob));
-    o.push(f64::from(b.form));
-    let s = srf(&b.srf)?;
-    let (n, m) = shape(&s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    let ku = s.u.len().checked_sub(1).ok_or_else(|| harness("empty u knots"))?;
-    let kv = s.v.len().checked_sub(1).ok_or_else(|| harness("empty v knots"))?;
-    o.extend([ku as f64, kv as f64]);
-    for row in &s.net {
-        for p in row {
-            o.extend(p);
-        }
-    }
-    o.extend(&s.u);
-    o.extend(&s.v);
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    if let OpIn::Attr {
-        id,
-        behavior,
-        eu,
-        vu,
-    } = &i.op
-    {
-        o.extend([*id as f64, f64::from(*behavior), *eu as f64, *vu as f64]);
-        return Ok((Op::Attr, o));
-    }
-    let s = i.setup.as_ref().ok_or_else(|| harness("missing setup"))?;
-    if let Some(p) = &s.plane {
-        o.push(1.0);
-        o.extend(p.o);
-        o.extend(p.x);
-        o.extend(p.y);
-        o.extend(p.scale);
-        o.extend(p.dom);
-    } else {
-        o.push(0.0);
-        push_srf(&mut o, s.srf.as_ref().ok_or_else(|| harness("missing surface"))?)?;
-    }
-    o.extend(s.opts);
-    let d = &s.driver;
-    o.push(f64::from(d.kind));
-    o.extend(d.view);
-    o.extend([d.sil_ch, d.sil_ang]);
-    o.extend(d.opts);
-    match &s.poly {
-        None => o.push(0.0),
-        Some(p) => {
-            o.extend([1.0, p.brep_tol, p.face_tol, p.label as f64]);
-            o.push(p.loops.len() as f64);
-            for l in &p.loops {
-                o.extend([l.etol, l.pts.len() as f64]);
-                for pt in &l.pts {
-                    o.extend(pt);
-                }
-            }
-        }
-    }
-    o.push(s.tree.len() as f64);
-    for n in &s.tree {
-        o.extend([
-            n.parent as f64,
-            n.c1 as f64,
-            n.c2 as f64,
-            f64::from(n.aux),
-            f64::from(n.split),
-            flag(n.marked),
-            f64::from(n.class),
-        ]);
-        o.extend(n.dom);
-    }
-    let st = &s.state;
-    o.extend([
-        flag(st.point_test),
-        flag(st.have_t),
-        f64::from(st.containment),
-        flag(st.dom.is_some()),
-    ]);
-    o.extend(st.dom.unwrap_or([0.0; 4]));
-    match &i.op {
-        OpIn::New { kinds } => {
-            o.push(kinds.len() as f64);
-            o.extend(kinds.iter().map(|&k| k as f64));
-        }
-        OpIn::Test { nodes } => {
-            o.push(nodes.len() as f64);
-            o.extend(nodes.iter().map(|&k| k as f64));
-        }
-        OpIn::Implant { edges } => {
-            o.push(edges.len() as f64);
-            o.extend(edges.iter().map(|&k| k as f64));
-        }
-        OpIn::BuildSub | OpIn::Mark | OpIn::Build | OpIn::Attr { .. } => {}
-    }
-    Ok((i.op.ffi(), o))
-}
-
-const SECTIONS: [&str; 7] = [
-    "status",
-    "res",
-    "res_i",
-    "state",
-    "dom",
-    "nodes",
-    "node_geom",
-];
-
-fn to_output(flat: &[f64]) -> Result<Output, HarnessError> {
-    let mut out = Output::new();
-    let mut at = 0;
-    while at < flat.len() {
-        let key = flat.get(at).copied().unwrap_or(-1.0);
-        let kind = flat.get(at + 1).copied().unwrap_or(-1.0);
-        let len = flat.get(at + 2).copied().unwrap_or(-1.0);
-        if len < 0.0 || len.fract() != 0.0 {
-            return Err(harness("bad section length"));
-        }
-        let len = len as usize;
-        let vals = flat
-            .get(at + 3..at + 3 + len)
-            .ok_or_else(|| harness("truncated section"))?
-            .to_vec();
-        let name = SECTIONS
-            .get(key as usize)
-            .ok_or_else(|| harness(format!("bad section key {key}")))?;
-        out = if kind == 1.0 {
-            out.ints(name, vals.iter().map(|&v| v as i64).collect::<Vec<i64>>())
-        } else {
-            out.values(name, vals)
-        };
-        at += 3 + len;
-    }
-    Ok(out)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    to_output(&flat)
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1382,16 +1204,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1402,16 +1215,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&i)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
         rust(&i)
     }
 }
@@ -1420,6 +1225,32 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// The kind of an [`OpIn`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Op {
+        New,
+        Test,
+        BuildSub,
+        Implant,
+        Mark,
+        Build,
+        Attr,
+    }
+
+    impl OpIn {
+        fn kind(&self) -> Op {
+            match self {
+                Self::New { .. } => Op::New,
+                Self::Test { .. } => Op::Test,
+                Self::BuildSub => Op::BuildSub,
+                Self::Implant { .. } => Op::Implant,
+                Self::Mark => Op::Mark,
+                Self::Build => Op::Build,
+                Self::Attr { .. } => Op::Attr,
+            }
+        }
+    }
 
     #[test]
     fn cyclic_trees_fail_softly() {
@@ -1452,12 +1283,7 @@ mod tests {
         for seed in 0..MIN_GENERATED as u64 {
             let mut rng = Rng::new(0x7e55_0000 + seed);
             let i = gen_case(&mut rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
+            let op = i.op.kind();
             let out = rust(&i).expect("harness");
             if let Some(d) = &out.deferred {
                 *tally.entry(format!("{op:?}:deferred:{}", d.unit)).or_default() += 1;

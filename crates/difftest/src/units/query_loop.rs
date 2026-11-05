@@ -1,12 +1,12 @@
 //! Runner for unit `query.loop`: `SmLoop::ContainsUVPoint` (with the co-ported
 //! `SmLoop::GetUVCornerBoundaries` and `sm_CalcQuadNum`).
 //!
-//! C++: `solidcore_ffi::units::query_loop` (upstream `source/SMLib/src/SmLoop.cpp`) on a
-//! one-face B-rep built with `SmBrepConstructor`: real `SmPlane`, `SmBSplineSurface` and
-//! `SmSurfOfRevolution` faces, `SmLine`, `SmCircle`, `SmBSplineCurve` and `SmHermiteCurve` edges, explicit
-//! 2D B-spline UV trim curves and explicit face / edge zone tolerances. Rust:
-//! `solidcore::query::r#loop::contains_uv_point` on a one-face `Brep` built from the same
-//! data (the loop walks the B-rep, which it may edit where it creates UV trim curves).
+//! Ported from upstream `source/SMLib/src/SmLoop.cpp`; checked against its golden. Rust:
+//! `solidcore::query::r#loop::contains_uv_point` on a one-face `Brep` built from the
+//! case's data: `SmPlane`, `SmBSplineSurface` and `SmSurfOfRevolution` faces, `SmLine`,
+//! `SmCircle`, `SmBSplineCurve` and `SmHermiteCurve` edges, explicit 2D B-spline UV trim
+//! curves and explicit face / edge zone tolerances (the loop walks the B-rep, which it may
+//! edit where it creates UV trim curves).
 //! The arena surfaces carry no face owner; the face's zone tolerance is used as upstream's
 //! `GetZoneTol3d(pSurface)` of the face's own surface.
 //!
@@ -14,7 +14,7 @@
 //! loop's edge uses in loop order (edge, orientation, UV trim curve) and the point.
 //! Outputs: `containment` (`SmPointObjectContainmentType`), `on_edge` (edge index, `-1`
 //! none), `edge_param` and `orientation` (`SmOrientType`). A surface that cannot be built
-//! is the error `surface` on both sides.
+//! is the error `surface`.
 //!
 //! Deferred cases: a point on a side of the surface's natural domain with a loop end on
 //! a side too (`SmSurface::GetSingularities`, `surface.surface_p3`), and the global
@@ -48,7 +48,6 @@ use solidcore::topology::{
     LoopId, Loopuse, LoopuseId, LoopuseStart, Region, RegionId, Shell, ShellId, Vertex, VertexId,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::query_loop as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -178,120 +177,12 @@ struct Inputs {
 
 // ---- C++ ----------------------------------------------------------------------------
 
-fn ffi_nurb(n: &NurbIn) -> ffi::Nurb {
-    ffi::Nurb {
-        cpts: n.cpts.clone(),
-        p: n.p,
-        knots: n.u.clone(),
-    }
-}
-
-fn ffi_case(i: &Inputs) -> ffi::Case {
-    let surface = match &i.surface {
-        SurfIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::Surf::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfIn::Bspline { net, p, q, u, v } => ffi::Surf::BSpline {
-            net: net.clone(),
-            p: *p,
-            q: *q,
-            u: u.clone(),
-            v: v.clone(),
-        },
-        SurfIn::Revolution {
-            gen,
-            point,
-            axis,
-            swap,
-        } => ffi::Surf::Revolution {
-            gen: match gen {
-                GenIn::Line { a, b } => ffi::Gen::Line { a: *a, b: *b },
-                GenIn::Circle { c, x, y, d, r } => ffi::Gen::Circle {
-                    c: *c,
-                    x: *x,
-                    y: *y,
-                    d: *d,
-                    r: *r,
-                },
-            },
-            point: *point,
-            axis: *axis,
-            swap: *swap,
-        },
-    };
-    ffi::Case {
-        face_tol: i.face_tol,
-        vertex_loop: i.vertex_loop,
-        uv: i.uv,
-        tol3d: i.tol3d,
-        surface,
-        edges: i
-            .edges
-            .iter()
-            .map(|e| ffi::Edge {
-                curve: match &e.curve {
-                    CurveIn::Line { a, b } => ffi::Curve3::Line { a: *a, b: *b },
-                    CurveIn::Circle { c, x, y, d, r } => ffi::Curve3::Circle {
-                        c: *c,
-                        x: *x,
-                        y: *y,
-                        d: *d,
-                        r: *r,
-                    },
-                    CurveIn::Bspline(n) => ffi::Curve3::BSpline(ffi_nurb(n)),
-                    CurveIn::Hermite { p1, d1, p2, d2 } => ffi::Curve3::Hermite {
-                        p1: *p1,
-                        d1: *d1,
-                        p2: *p2,
-                        d2: *d2,
-                    },
-                },
-                interval: e.interval,
-                tol: e.tol,
-            })
-            .collect(),
-        edgeuses: i
-            .edgeuses
-            .iter()
-            .map(|eu| ffi::Edgeuse {
-                edge: eu.edge,
-                same: eu.same,
-                trim: ffi_nurb(&eu.trim),
-            })
-            .collect(),
-    }
-}
-
 fn answer(containment: i64, on_edge: i64, edge_param: f64, orientation: i64) -> Output {
     Output::new()
         .int("containment", containment)
         .int("on_edge", on_edge)
         .scalar("edge_param", edge_param)
         .int("orientation", orientation)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let a = ffi::contains(&ffi_case(i)).map_err(|e| harness(format!("C++: {e}")))?;
-    match a.build {
-        0 => Ok(answer(
-            i64::from(a.containment),
-            a.on_edge,
-            a.edge_param,
-            i64::from(a.orientation),
-        )),
-        1 => Ok(Output::err("surface")),
-        b => Err(harness(format!("C++ face build failed at step {b}"))),
-    }
 }
 
 // ---- Rust ---------------------------------------------------------------------------
@@ -1140,13 +1031,8 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            let Some(i) = gen_case(rng) else { continue };
-            // keep cases the C++ side builds as requested (the shim rejects a point
-            // the surface cannot evaluate and a loop the constructor realises
-            // differently)
-            match ffi::contains(&ffi_case(&i)) {
-                Ok(a) if a.build == 0 => return serde_json::to_value(i).ok(),
-                _ => {}
+            if let Some(i) = gen_case(rng) {
+                return serde_json::to_value(i).ok();
             }
         }
         None
@@ -1158,10 +1044,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

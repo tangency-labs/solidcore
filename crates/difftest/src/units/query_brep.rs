@@ -1,34 +1,32 @@
 //! Runner for unit `query.brep`.
 //!
-//! C++: `solidcore_ffi::units::query_brep` (the public `SM_API` entry points). Rust:
+//! Ported from upstream's public `SM_API` entry points; checked against its golden. Rust:
 //! `solidcore::query::brep`.
 //!
 //! An `evaluate` case is an entry point (`point`, `normal` or `derivatives`), an optional
 //! surface (`null` for a `NULL` surface), a parameter `uv` (entries may be `"NaN"`, `"inf"`
-//! or `"-inf"`) and the values the outputs hold before the call. Both sides produce the
-//! status (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`) and
+//! or `"-inf"`) and the values the outputs hold before the call. The Rust side produces
+//! the status (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`) and
 //! `P Du Dv` as the entry point leaves them: the sentinels where it does not write them
 //! (upstream evaluates into locals and writes the outputs only on success).
 //!
 //! An `attribute` case is a decimation attribute class (`decimate_vertex`,
 //! `quadric_vertex` or `quadric_edge`), its id, an optional behaviour (`null` for the
-//! constructor's default) and optional data written before the copy, laid out as the
-//! ffi module documents. Both sides produce `id behavior type data` of the constructed
+//! constructor's default) and optional data written before the copy, laid out as
+//! [`set_data`] reads it. The Rust side produces `id behavior type data` of the constructed
 //! attribute, then of its `MakeCopy` (the quadric edge's sort index NaN while unset).
 //!
 //! A `box` case is a B-rep (unit `topology.edgeuse_p1`'s B-rep block, as in the
-//! `query.face_p1` runner: the C++ side builds a real `SmBrep`; the Rust side builds the
-//! same source with the Rust kernel, or reads an `.smb` file with the Rust reader,
-//! renumbered into the shim's traversal order, `query_face_p1::own_model`) and up to
+//! `query.face_p1` runner: built with the Rust kernel, or read from an `.smb` file with
+//! the Rust reader, in upstream's traversal order, `query_face_p1::own_model`) and up to
 //! [`MAX_BOX_STEPS`] steps run on it in order: `box` (the arguments of
-//! `CalculateBoundingBox`, or its defaults), `tight`, `lock` and `unlock`. Both sides
-//! produce every step's status and box (seeded, so what a failing call leaves is
-//! compared). No C++ state reaches the Rust side.
+//! `CalculateBoundingBox`, or its defaults), `tight`, `lock` and `unlock`. The Rust side
+//! produces every step's status and box (seeded, so what a failing call leaves is
+//! recorded).
 //!
 //! A `classify` case is such a B-rep, a point (a vertex's point, a face surface point at
-//! fractions of the face's UV domain, or given coordinates; plus an offset, each side
-//! computing it on its own B-rep: the C++ side on the import of its export, the Rust side
-//! on its own build), a tolerance and `do_bnd`. Both sides produce the
+//! fractions of the face's UV domain, or given coordinates; plus an offset,
+//! computed on the build), a tolerance and `do_bnd`. The Rust side produces the
 //! status of `SmBrep::Point3DClassify` and the classification (class, object kind and
 //! index, gap, source tolerance, pre-snap parameter, curve and surface parameters,
 //! parameters-set flag, face kind and index); on failure the classification as the
@@ -50,19 +48,25 @@ use solidcore::geom::attribute::{Attribute, AttributeValue, Behavior};
 use solidcore::math::{Point2, Vec3};
 use solidcore::query::brep::{self as qb, PolyVertexClass};
 use solidcore::surface::surface::Surface;
-use solidcore_ffi::units::query_brep::{
-    self as ffi, AttrKind, BoxStep, EvalOp, CLASSIFICATION_LEN, MAX_BOX_STEPS, SEED_BOX,
-};
 
 use super::surface_surface_cache_p1::harness;
-use super::surface_surface_cache_p3::{gen_surf, push_surf, surf_domain, surface_in, SurfIn};
-use super::query_face_p1::{gen_face_brep, model, own_model, Model, NoGeometry};
+use super::surface_surface_cache_p3::{gen_surf, surf_domain, surface_in, SurfIn};
+use super::query_face_p1::{gen_face_brep, own_model, Model, NoGeometry};
 use super::surface_surface_p7::{st, Fail};
-use super::topology_edgeuse_p1::{fixture_input, gen_brep, BrepIn};
+use super::topology_edgeuse_p1::{gen_brep, BrepIn};
 use crate::case::CaseContext;
 use crate::util::flag;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Largest number of box steps a case runs.
+const MAX_BOX_STEPS: usize = 8;
+
+/// The box every box step starts from, `min max` (no box computation gives it).
+const SEED_BOX: [f64; 6] = [-17.0, -19.0, -23.0, 29.0, 31.0, 37.0];
+
+/// The classification values of a `classify` output (after the status).
+const CLASSIFICATION_LEN: usize = 12;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 600;
@@ -102,16 +106,6 @@ enum What {
     Derivatives,
 }
 
-impl What {
-    fn ffi(self) -> EvalOp {
-        match self {
-            Self::Point => EvalOp::Point,
-            Self::Normal => EvalOp::Normal,
-            Self::Derivatives => EvalOp::Derivatives,
-        }
-    }
-}
-
 /// An `evaluate` case.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct EvalIn {
@@ -132,23 +126,13 @@ enum Kind {
     QuadricEdge,
 }
 
-impl Kind {
-    fn ffi(self) -> AttrKind {
-        match self {
-            Self::DecimateVertex => AttrKind::DecimateVertex,
-            Self::QuadricVertex => AttrKind::QuadricVertex,
-            Self::QuadricEdge => AttrKind::QuadricEdge,
-        }
-    }
-}
-
 /// An `attribute` case.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AttrIn {
     kind: Kind,
     id: u64,
     behavior: Option<u8>,
-    /// The data written before the copy (see the ffi module, without the sort index):
+    /// The data written before the copy (without the sort index):
     /// `class distance error N`, `Q0 Q1 Q2 b c` or `P error`.
     data: Option<Vec<f64>>,
     /// The sort index written with the data (decimate vertex and quadric edge).
@@ -210,27 +194,6 @@ enum StepIn {
     Unlock,
 }
 
-impl StepIn {
-    fn ffi(self) -> BoxStep {
-        match self {
-            Self::Box {
-                approx,
-                tight,
-                expand,
-                defaults,
-            } => BoxStep::Box {
-                approx,
-                tight,
-                expand,
-                defaults,
-            },
-            Self::Tight => BoxStep::Tight,
-            Self::Lock { tight, defaults } => BoxStep::Lock { tight, defaults },
-            Self::Unlock => BoxStep::Unlock,
-        }
-    }
-}
-
 /// A `box` case.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BoxIn {
@@ -264,18 +227,6 @@ mod non_finite2 {
     }
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn eval_input(i: &EvalIn) -> Result<Vec<f64>, HarnessError> {
-    let mut o = vec![flag(i.surf.is_some())];
-    if let Some(s) = &i.surf {
-        push_surf(&mut o, s)?;
-    }
-    o.extend(i.uv);
-    o.extend(i.sentinel);
-    Ok(o)
-}
-
 fn eval_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
         .split_first()
@@ -285,43 +236,9 @@ fn eval_output(flat: &[f64]) -> Output {
         .values("p_du_dv", rest.to_vec())
 }
 
-fn cpp_evaluate(i: &EvalIn) -> Result<Output, HarnessError> {
-    let flat = ffi::evaluate(i.what.ffi(), &eval_input(i)?).map_err(|e| harness(e.to_string()))?;
-    Ok(eval_output(&flat))
-}
-
 /// An `ULONG` as its exact 32-bit halves `hi lo`.
 fn halves(v: u64) -> [f64; 2] {
     [(v >> 32) as f64, (v & 0xffff_ffff) as f64]
-}
-
-fn attr_input(i: &AttrIn) -> Vec<f64> {
-    let mut o = halves(i.id).to_vec();
-    o.extend([
-        flag(i.behavior.is_some()),
-        f64::from(i.behavior.unwrap_or(0)),
-        flag(i.data.is_some()),
-    ]);
-    if let Some(d) = &i.data {
-        o.extend(d);
-        if !matches!(i.kind, Kind::QuadricVertex) {
-            o.push(flag(i.sort.is_some()));
-            o.extend(halves(i.sort.unwrap_or(0)));
-        }
-    }
-    o
-}
-
-fn cpp_attribute(i: &AttrIn) -> Result<Output, HarnessError> {
-    let flat = ffi::attribute(i.kind.ffi(), &attr_input(i)).map_err(|e| harness(e.to_string()))?;
-    Ok(Output::new().values("attributes", flat))
-}
-
-fn cpp_box(i: &BoxIn) -> Result<Output, HarnessError> {
-    let (path, block) = fixture_input(i.brep.clone())?;
-    let steps: Vec<BoxStep> = i.steps.iter().map(|s| s.ffi()).collect();
-    let flat = ffi::box_steps(&path, &block, &steps).map_err(|e| harness(e.to_string()))?;
-    Ok(Output::new().values("steps", flat))
 }
 
 /// The classified point of a `classify` case on a side's B-rep; `None` when the selected
@@ -357,16 +274,6 @@ fn classify_point(m: &Model, i: &ClassifyIn) -> Result<Option<[f64; 3]>, Harness
     };
     let [dx, dy, dz] = i.offset;
     Ok(Some([p.x + dx, p.y + dy, p.z + dz]))
-}
-
-fn cpp_classify(i: &ClassifyIn) -> Result<Output, HarnessError> {
-    let m = model(&i.brep)?;
-    let Some(p) = classify_point(&m, i)? else {
-        return Ok(Output::new().values("classify", vec![NO_ENTITY]));
-    };
-    let flat = ffi::classify(&m.path, &m.block, p, i.tol, i.do_bnd)
-        .map_err(|e| harness(e.to_string()))?;
-    Ok(Output::new().values("classify", flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -936,13 +843,7 @@ impl UnitDiff for Runner {
             };
         }
         for _ in 0..64 {
-            let Ok(i) = gen_eval(rng) else {
-                continue;
-            };
-            let Ok(input) = eval_input(&i) else {
-                continue;
-            };
-            if ffi::validate_evaluate(&input).is_ok() {
+            if let Ok(i) = gen_eval(rng) {
                 return serde_json::to_value(Inputs::Evaluate(i)).ok();
             }
         }
@@ -955,15 +856,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        match case.parse::<Inputs>()? {
-            Inputs::Evaluate(i) => cpp_evaluate(&i),
-            Inputs::Attribute(i) => cpp_attribute(&i),
-            Inputs::Box(i) => cpp_box(&i),
-            Inputs::Classify(i) => cpp_classify(&i),
-        }
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

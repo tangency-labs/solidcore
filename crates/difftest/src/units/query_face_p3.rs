@@ -1,34 +1,30 @@
-//! Runner for unit `query.face_p3`. C++: `solidcore_ffi::units::query_face_p3`. Rust:
-//! `solidcore::query::face::p3` (and, for `sm_FaceClassifyUVLine`,
+//! Runner for unit `query.face_p3`. Ported from upstream `SmFace`'s classifications;
+//! checked against its golden. Rust: `solidcore::query::face::p3` (and, for `sm_FaceClassifyUVLine`,
 //! `solidcore::topology::face::p2::calculate_an_internal_point`).
 //!
-//! **B-reps.** The C++ side builds a real `SmBrep` per call with unit `query.face_p4`'s
-//! builders (an upstream `.smb` file, `CreateFaceFromSurface` over a B-spline or `SmPlane`,
-//! `MakeFaceWithCurves` with line and circle UV trims and vertex loops over a B-spline or a
-//! real `SmCylinder` / `SmSphere` / `SmTorus` / `SmCone`, or an analytic surface's natural
-//! face). The Rust side makes the same B-rep with the Rust kernel (unit `query.face_p4`'s
-//! `own_brep`, in the shim's traversal order) and resolves the case on it as the shim
-//! does (the face, `SetProps_Stage3`'s props and closed loops for the bisector, the sector
-//! line's edge uses, parameters and ends: [`resolve`], in the shim's call order), so no
-//! C++ state reaches its geometry, topology or case. Every face is compared: the native geometry needs
-//! no `inexact_geometry` skip.
+//! **B-reps.** Each case makes a B-rep with the Rust kernel (unit `query.face_p4`'s
+//! `own_brep`, in upstream's traversal order: an upstream `.smb` file,
+//! `CreateFaceFromSurface` over a B-spline or `SmPlane`, `MakeFaceWithCurves` with line
+//! and circle UV trims and vertex loops over a B-spline or an `SmCylinder` / `SmSphere` /
+//! `SmTorus` / `SmCone`, or an analytic surface's natural face) and resolves the case on
+//! it (the face, `SetProps_Stage3`'s props and closed loops for the bisector, the sector
+//! line's edge uses, parameters and ends: [`resolve`], in upstream's call order).
 //!
 //! **Operations.**
 //! - `tight`: `SmFace::CalculateTightBoundingBox` of a face: status and box.
 //! - `internal`: `SmFace::CalculateAnInternalPoint`, the only caller of the file-static
 //!   `sm_FaceClassifyUVLine`: status and point.
 //! - `bisector`: `sms_FindAndClassifyLoopBisector` on the face props and closed loops
-//!   `SetProps_Stage3` builds (each side builds its own, as unit `query.face_p4`'s
-//!   props mode 1), with chosen loops marked as
+//!   `SetProps_Stage3` builds (as unit `query.face_p4`'s props mode 1), with chosen loops marked as
 //!   classified: status, seam flags, closure, whether a curve was built, the UV trim
 //!   line's ends and the classification's intervals (bounds and start / mid / end point
 //!   classes and vertices).
 //! - `sector`: `SmFace::SectorClassifyCurveOn` of a line (3D or UV) from a point where it
-//!   crosses an edge's interior or a vertex (resolved by the shim to edge uses,
+//!   crosses an edge's interior or a vertex (resolved to edge uses,
 //!   parameters, orientations and the line's ends): status, inside, possible problem and
 //!   the problem.
 //!
-//! A case the shim rejects (see the FFI wrapper) is `rejected` on both sides.
+//! A case outside the operation's defined inputs (see [`resolve`]) is `rejected`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -46,10 +42,9 @@ use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::query::face::p3 as qf3;
 use solidcore::query::face::p4::ZEROED_CLASSIFY_LOOP_IO;
 use solidcore::topology::{Brep, EdgeId, EdgeuseId, FaceId, LoopId, VertexId};
-use solidcore_ffi::units::query_face_p3::{self as ffi, Kind};
 
 use super::query_face_p4::{
-    brep_input, brep_path, gen_scale, gen_seam_face, own_brep, rect, setup_error, stage3_props,
+    gen_scale, gen_seam_face, own_brep, rect, setup_error, stage3_props,
     AnySrf, BrepIn, CurveIn,
 };
 use super::topology_edgeuse_p1::{domain, gen_surface, FILES};
@@ -141,95 +136,6 @@ struct Inputs {
     face: u32,
     #[serde(flatten)]
     op: OpIn,
-}
-
-fn kind_of(op: &OpIn) -> Kind {
-    match op {
-        OpIn::Tight => Kind::Tight,
-        OpIn::Internal => Kind::Internal,
-        OpIn::Bisector { .. } => Kind::Bisector,
-        OpIn::Sector { .. } => Kind::Sector,
-    }
-}
-
-fn input_of(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut v = brep_input(&i.brep, i.validate_only, i.init_gaps)?;
-    v.push(f64::from(i.face));
-    let flag = |b: bool| f64::from(u8::from(b));
-    match &i.op {
-        OpIn::Tight | OpIn::Internal => {}
-        OpIn::Bisector { target, mask, containment } => {
-            v.extend([f64::from(*target), f64::from(*mask), f64::from(*containment)]);
-        }
-        OpIn::Sector {
-            loop_sel,
-            eu,
-            mode,
-            frac,
-            curve,
-            ta,
-            tb,
-            curve_tol,
-            edge_tol,
-            singular,
-            sa,
-            sb,
-            uv_ok,
-        } => v.extend([
-            f64::from(*loop_sel),
-            f64::from(*eu),
-            f64::from(*mode),
-            *frac,
-            f64::from(*curve),
-            *ta,
-            *tb,
-            *curve_tol,
-            *edge_tol,
-            flag(*singular),
-            *sa,
-            *sb,
-            flag(*uv_ok),
-        ]),
-    }
-    Ok(v)
-}
-
-fn run_ffi(i: &Inputs, export_only: bool) -> Result<Vec<f64>, HarnessError> {
-    ffi::eval(kind_of(&i.op), export_only, &brep_path(&i.brep)?, &input_of(i)?)
-        .map_err(|e| harness(format!("c++: {e}")))
-}
-
-/// Sequential reader of shim output.
-struct Rd<'a> {
-    v: &'a [f64],
-    at: usize,
-}
-
-impl Rd<'_> {
-    fn num(&mut self) -> Result<f64, HarnessError> {
-        let x = self
-            .v
-            .get(self.at)
-            .copied()
-            .ok_or_else(|| harness("shim output too short"))?;
-        self.at += 1;
-        Ok(x)
-    }
-
-    fn int(&mut self) -> Result<i64, HarnessError> {
-        Ok(self.num()? as i64)
-    }
-
-    fn count(&mut self) -> Result<usize, HarnessError> {
-        usize::try_from(self.int()?)
-            .ok()
-            .filter(|&n| n <= 1 << 20)
-            .ok_or_else(|| harness("bad count in shim output"))
-    }
-
-    fn pt(&mut self) -> Result<Point3, HarnessError> {
-        Ok(Point3::new(self.num()?, self.num()?, self.num()?))
-    }
 }
 
 // ---- the resolved cases -------------------------------------------------------------------
@@ -524,71 +430,8 @@ fn sector_setup(
     })))
 }
 
-// ---- C++ side -----------------------------------------------------------------------------
-
 fn status_err(status: f64) -> Output {
     Output::err(format!("status_{status}"))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let o = run_ffi(i, false)?;
-    let mut rd = Rd { v: &o, at: 0 };
-    if rd.num()? != 0.0 {
-        return Ok(Output::err(format!("build_failed: {}", rd.num()?)));
-    }
-    if rd.num()? != 0.0 {
-        return Ok(Output::err("rejected"));
-    }
-    let status = rd.num()?;
-    Ok(match &i.op {
-        OpIn::Tight => {
-            if status != 0.0 {
-                return Ok(status_err(status));
-            }
-            let min = rd.pt()?;
-            let max = rd.pt()?;
-            box_output(min, max)
-        }
-        OpIn::Internal => {
-            if status != 0.0 {
-                return Ok(status_err(status));
-            }
-            Output::new().values("point", rd.pt()?.to_array())
-        }
-        OpIn::Bisector { .. } => {
-            if status != 0.0 {
-                return Ok(status_err(status));
-            }
-            let start = rd.int()?;
-            let stop = rd.int()?;
-            let closed = rd.int()?;
-            let has_curve = rd.int()?;
-            let line = if has_curve != 0 {
-                vec![rd.num()?, rd.num()?, rd.num()?, rd.num()?]
-            } else {
-                Vec::new()
-            };
-            let n = rd.count()?;
-            let mut bounds = Vec::new();
-            let mut classes = Vec::new();
-            for _ in 0..n {
-                bounds.extend([rd.num()?, rd.num()?]);
-                for _ in 0..6 {
-                    classes.push(rd.int()?);
-                }
-            }
-            bisector_output(start, stop, closed, has_curve, line, bounds, classes)
-        }
-        OpIn::Sector { .. } => {
-            if status != 0.0 {
-                return Ok(status_err(status));
-            }
-            let inside = rd.int()?;
-            let problem = rd.int()?;
-            let kind = rd.int()?;
-            Output::new().ints("sector", vec![inside, problem, kind])
-        }
-    })
 }
 
 fn box_output(min: Point3, max: Point3) -> Output {
@@ -1051,10 +894,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse::<Inputs>()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse::<Inputs>()?)
     }
@@ -1069,8 +908,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// The generated cases reach every operation, and a good share of them is compared
-    /// (neither rejected nor deferred).
+    /// The generated cases reach every operation, and a good share of them runs to a
+    /// result (neither rejected nor deferred).
     #[test]
     fn generated_cases_compare() {
         let mut rng = Rng::new(7);
@@ -1081,11 +920,10 @@ mod tests {
             let i = gen_case(&mut rng).unwrap();
             let op = serde_json::to_value(&i).unwrap()["op"].clone();
             let kind = serde_json::to_value(&i.brep).unwrap()["kind"].clone();
-            let c = cpp(&i).unwrap();
             let r = rust(&i).unwrap();
             let key = if let Some(d) = &r.deferred {
                 format!("{op} {kind} deferred {} {}", d.unit, d.symbol)
-            } else if let Some(e) = &c.error {
+            } else if let Some(e) = &r.error {
                 format!("{op} {kind} error {e}")
             } else {
                 compared += 1;
