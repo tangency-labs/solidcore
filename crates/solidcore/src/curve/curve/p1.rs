@@ -1041,12 +1041,12 @@ fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
     }
     fn add_word(words: &mut [u64; 66], word: u64, shift: usize) -> bool {
         let mut index = shift / 64;
-        let mut carry = (word as u128) << (shift % 64);
+        let mut carry = u128::from(word) << (shift % 64);
         while carry != 0 {
             let Some(slot) = words.get_mut(index) else {
                 return false;
             };
-            let sum = (*slot as u128) + (carry & u128::from(u64::MAX));
+            let sum = u128::from(*slot) + (carry & u128::from(u64::MAX));
             *slot = sum as u64;
             carry = (carry >> 64) + (sum >> 64);
             index += 1;
@@ -1116,7 +1116,7 @@ impl AffineDefinition {
     }
 }
 
-fn affine_definition(curve: &Curve, interval: Extent1d) -> Result<Option<AffineDefinition>> {
+fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefinition> {
     if let CurveKind::Line(line) = curve.kind() {
         let point = iv_point(line.line_point());
         let vector = iv_point(line.line_vector());
@@ -1143,7 +1143,7 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Result<Option<AffineD
             [x + scale * dx, y + scale * dy, z + scale * dz]
         };
         let v = line.line_vector();
-        return Ok(Some(AffineDefinition {
+        return Some(AffineDefinition {
             start: endpoint(interval.min()),
             end: endpoint(interval.max()),
             interval,
@@ -1155,16 +1155,16 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Result<Option<AffineD
                     [v.x, v.y, v.z]
                 },
             ),
-        }));
+        });
     }
     let CurveKind::BSpline(spline) = curve.kind() else {
-        return Ok(None);
+        return None;
     };
     let Some(nurb) = spline.gw_nurb() else {
-        return Ok(None);
+        return None;
     };
     if nurb.degree() != 1 {
-        return Ok(None);
+        return None;
     }
     // A right-sided lookup at the lower boundary avoids rounding a tiny span's
     // midpoint onto a knot. A leaf crossing a knot is not certified affine here.
@@ -1173,17 +1173,17 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Result<Option<AffineD
         .partition_point(|t| *t <= interval.min())
         .saturating_sub(1);
     let Some((&lo, &hi)) = nurb.knots().get(index).zip(nurb.knots().get(index + 1)) else {
-        return Ok(None);
+        return None;
     };
     if hi <= lo || interval.min() < lo || interval.max() > hi || index == 0 {
-        return Ok(None);
+        return None;
     }
     let Some((a, b)) = nurb.cpts().get(index - 1).zip(nurb.cpts().get(index)) else {
-        return Ok(None);
+        return None;
     };
     let nonrational = a.w == crate::nurbs::math::NOW && b.w == crate::nurbs::math::NOW;
     if !nonrational && !(a.w == b.w && a.w > 0.0 && a.w.is_finite()) {
-        return Ok(None);
+        return None;
     }
     let coords = |p: &crate::nurbs::math::CPoint| {
         let z = if p.z == crate::nurbs::math::NOZ {
@@ -1196,12 +1196,12 @@ fn affine_definition(curve: &Curve, interval: Extent1d) -> Result<Option<AffineD
     let ac = coords(a);
     let bc = coords(b);
     let w = Ivl::from(if nonrational { 1.0 } else { a.w });
-    Ok(Some(AffineDefinition {
+    Some(AffineDefinition {
         start: ac.map(|x| Ivl::from(x) / w),
         end: bc.map(|x| Ivl::from(x) / w),
         interval: Extent1d::from_min_max(lo, hi),
         direction_points: (ac, bc),
-    }))
+    })
 }
 
 impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
@@ -1226,7 +1226,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         branch: &Branch,
         owner: Option<O>,
     ) -> Result<bool> {
-        let Some(definition) = affine_definition(curve, interval)? else {
+        let Some(definition) = affine_definition(curve, interval) else {
             return Ok(false);
         };
         let normal = self.opt(0)?;
