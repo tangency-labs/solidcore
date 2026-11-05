@@ -692,7 +692,31 @@ fn chamfer_dispatch_preserves_order_direction_sizes_and_operand() {
         .unwrap()
         .unwrap();
         assert!(out.order.is_none());
-        let (made, _) = out.body.to_record().unwrap();
+        let (made, made_order) = out.body.to_record().unwrap();
+        let (_, mapped) = out.body.copy_with_order(&made_order).unwrap();
+        assert!(
+            made_order
+                .edges
+                .iter()
+                .zip(&mapped.edges)
+                .any(|(a, b)| a != b),
+            "the measurement-copy check must exercise renumbered entities"
+        );
+        for edge in 0..made.edges.len() {
+            let pair =
+                edge_faces_along_ordered(&out.body, &made_order, edge, [0.0, 0.0, 1.0]).unwrap();
+            for (face, lean) in pair {
+                assert!(made.edges[edge]
+                    .uses
+                    .iter()
+                    .any(|u| u.face as usize == face));
+                let normal = out
+                    .body
+                    .face_normal_at_edge(&made_order, edge, face)
+                    .unwrap();
+                assert!((lean - normal.value[2]).abs() < 1e-12);
+            }
+        }
         for target in [[x, 0.0, 20.0], [20.0, 0.0, z]] {
             assert!(
                 made.vertices.iter().any(|v| v
