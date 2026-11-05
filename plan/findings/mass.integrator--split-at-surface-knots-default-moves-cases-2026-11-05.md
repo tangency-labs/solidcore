@@ -53,6 +53,7 @@ kernel otherwise default). The figures are the largest error over the compared c
   `bVFromLeft = TRUE`), so at a C0 knot the piece's last sample is the next span's value.
   `issue1435_multispan_full_*_flags63` then fails at accuracies 1e-9 and tighter (step underflow
   approaching v = 0.5 from below), and the sub-domain at 1e-10. With
-  `precise_properties_span_end_from_below` (WR-670) on, the full face holds at 1e-11. Making
-  WR-670 the only path is the next item.
+  `precise_properties_span_end_from_below` (WR-670) on, the full face holds at 1e-11. Done
+  2026-11-05: WR-670 is the only path
+  (mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md).
 - `integrate_opt_in` (curve length) still accepts on the embedded estimate alone.

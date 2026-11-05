@@ -704,7 +704,7 @@ why = "old corner code deleted, #2400 (plan/findings/blend.fillet_corner_p3--ble
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "sweep4-bottle-e29-r0.1"
-why = "old corner code deleted, #2400 (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md): the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.mass_properties[0]: cpp=3.311823065493446e1 rust=3.31182287598083e1)"
+why = "old corner code deleted, #2400 (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md): the blend corner is the default now; main with fillet_blend_corner on gives the same result (values.mass_properties[0]: cpp=3.311823065493446e1 rust=3.31182287598083e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, Rust's value moves by 2.9e-10 relative, 3.311819077304608e1 -> 3.311819078265202e1"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
@@ -1028,7 +1028,7 @@ why = "precise properties start each iso-u integral at the trims' lowest v, not 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "source-file-box_w_slot-all-edges"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=5.914378122577172e0 rust=5.914378713807245e0); main with the domain's base passes it"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=5.914378122577172e0 rust=5.914378713807245e0); main with the domain's base passes it; each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, Rust's value moves by 1.7e-10 relative, 5.91438986260717e0 -> 5.9143898616289645e0"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
@@ -1435,22 +1435,22 @@ why = "precise-property steps are accepted on the larger of the embedded and the
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-degenerate-bottle-e0-r0.5"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-degenerate-bottle-e2-r0.5"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-degenerate-bottle-e10-r0.5"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-degenerate-bottle-e13-r0.5"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
@@ -1475,42 +1475,42 @@ why = "precise-property steps are accepted on the larger of the embedded and the
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e30-r0.1"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e32-r0.1"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e27-r2.0"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e29-r2.0"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e30-r2.0"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e32-r2.0"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e8-r0.5"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
 case = "stubs4-delete-edge-bottle-e27-r0.5"
-why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819078265202e1); each iso-u piece's end is evaluated from its own knot span (WR-670, #2091; plan/findings/mass.integrator--span-end-from-below-default-moves-cases-2026-11-05.md): the same integrals, moved again by 2.9e-10 relative (rust was 3.311819077304608e1)"
 
 [[mismatch]]
 unit = "blend.fillet_executive_p3"
