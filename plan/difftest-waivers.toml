@@ -157,12 +157,12 @@ reason = "#1556: precise properties start each iso-u integral at the trims' lowe
 [[waiver]]
 unit = "blend.fillet_executive_p3"
 check = "ratchet"
-reason = "#1556: precise properties start each iso-u integral at the trims' lowest v; 72 passes whose mass properties or property attributes move are known mismatches (plan/findings/mass.integrator--trim-base-v-default-moves-cases-2026-11-05.md). Remove once #1556 has merged."
+reason = "#1556: precise properties start each iso-u integral at the trims' lowest v; 72 passes whose mass properties or property attributes move are known mismatches (plan/findings/mass.integrator--trim-base-v-default-moves-cases-2026-11-05.md), and 71 more with the fifth-order step estimate and the split at the surface's knots (#1435, plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md). Remove once #1556 has merged."
 
 [[waiver]]
 unit = "offset.offset_executive_p2"
 check = "ratchet"
-reason = "#1556: precise properties start each iso-u integral at the trims' lowest v; 2 passes whose volumes move are known mismatches (plan/findings/mass.integrator--trim-base-v-default-moves-cases-2026-11-05.md). Remove once #1556 has merged."
+reason = "#1556: precise properties start each iso-u integral at the trims' lowest v; 2 passes whose volumes move are known mismatches (plan/findings/mass.integrator--trim-base-v-default-moves-cases-2026-11-05.md), and 1 more with the fifth-order step estimate and the split at the surface's knots (#1435, plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md). Remove once #1556 has merged."
 
 [[waiver]]
 unit = "topology.face_p2"

@@ -38,17 +38,17 @@ why = "precise properties start each iso-u integral at the trims' lowest v, not 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_cylinder_cylinder_tee_union"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[7]: cpp=1.2566393434996806e1 rust=1.2566385736280067e1); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[1]: cpp=2.4360288741663078e2 rust=2.4360880277269578e2); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again; integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_cylinder_cylinder_tee_difference"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[7]: cpp=1.2566393434996806e1 rust=1.2566385736280067e1); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[1]: cpp=2.4360288741663078e2 rust=2.4360880277269578e2); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again; integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_cylinder_cylinder_tee_intersection"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[13]: cpp=7.068596307179281e0 rust=7.068591976660313e0); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[1]: cpp=7.718622906465086e0 rust=7.7186228701815995e0); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again; integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -68,7 +68,7 @@ why = "precise properties start each iso-u integral at the trims' lowest v, not 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_box_cylinder_hole_union_temp"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[5]: cpp=1.256639343499679e1 rust=1.2566385736280065e1); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[1]: cpp=1.2566075189122623e1 rust=1.2566371282166118e1); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again; integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -93,12 +93,12 @@ why = "precise properties start each iso-u integral at the trims' lowest v, not 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue1036_coincident_skins_intersection_measured"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[4]: cpp=7.541618570281661e2 rust=7.541618239255179e2); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[1]: cpp=2.6136268142920293e4 rust=2.6136268243625735e4); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again; integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue1519_bench_tubes_union_measured"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[7]: cpp=8.042489855387001e2 rust=8.042487111755097e2); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[1]: cpp=1.0324321400000826e6 rust=1.032433297586718e6); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again; integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -108,7 +108,7 @@ why = "precise properties start each iso-u integral at the trims' lowest v, not 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue2177_crescent_on_top_of_rim_booleaned_measured"
-why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[9]: cpp=3.141598358303025e2 rust=3.1415964340670587e2); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[5]: cpp=5.625765964275136e1 rust=5.626467189784134e1); main with the domain's base passed it before the fifth-order step estimate (#1556), which moves the steps again; integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -314,17 +314,17 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_sphere_box_union"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=9.424581148049778e1 rust=9.424964002179567e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=9.424581148049778e1 rust=9.424803218467548e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_sphere_box_difference"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=9.424581148049778e1 rust=9.424964002179567e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=9.424581148049778e1 rust=9.424803218467548e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_sphere_box_intersection"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=2.1994721343592298e2 rust=2.199174150071801e2)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=2.1994721343592298e2 rust=2.1991151197513608e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -344,7 +344,7 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "attributed_box_cylinder_hole_difference_temp"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=1.2566075189015972e2 rust=1.2566585659970394e2)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.attributes[1]: cpp=1.2566075189015972e2 rust=1.2566371282167236e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -429,52 +429,52 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed4_box_intersection_tangent_torus"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[7]: cpp=1.1249950658949734e2 rust=1.1249215340812957e2)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=1.651174359553111e2 rust=1.6511739824872888e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed4_box_intersection_tangent_torus_no_post_process"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[8]: cpp=8.818803306952663e1 rust=8.81698770370154e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=1.6511739100509547e2 rust=1.6511739900123112e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed4_box_difference_tangent_torus"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[9]: cpp=8.818803306952663e1 rust=8.81698770370154e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=1.381757749837983e3 rust=1.3817575945210033e3); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed4_box_difference_tangent_torus_no_post_process"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[9]: cpp=8.818803306952663e1 rust=8.81698770370154e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=1.381757749837983e3 rust=1.3817575945210033e3); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed86_box_intersection_tangent_torus"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[6]: cpp=4.0710284633701825e1 rust=4.071161305750857e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=1.0483845404732125e2 rust=1.0483841833944041e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed86_box_intersection_tangent_torus_no_post_process"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[7]: cpp=4.07098891625129e1 rust=4.071161305750857e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=1.0483842988136938e2 rust=1.0483841833946828e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed86_box_difference_tangent_torus"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[8]: cpp=4.07098891625129e1 rust=4.071161305750857e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=7.701616505489588e2 rust=7.701615807592341e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "issue383_seed86_box_difference_tangent_torus_no_post_process"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[8]: cpp=4.07098891625129e1 rust=4.071161305750857e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=7.701616505489588e2 rust=7.701615807592341e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "torus_guard_huge_scale_box_intersection"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[8]: cpp=9.959686324003597e11 rust=9.957732705249031e11)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=2.9748331345741536e17 rust=2.974832187008736e17); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "torus_guard_huge_scale_box_difference"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[4]: cpp=9.959686324003597e11 rust=9.957732705249031e11)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.measures[1]: cpp=1.7025167049217362e18 rust=1.7025167812977085e18); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -489,7 +489,7 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "more0049"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[2]: cpp=7.999977865117201e1 rust=7.999532038156356e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[2]: cpp=7.999977865117201e1 rust=7.999504755283256e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -504,7 +504,7 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "more0086"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[3]: cpp=3.732962656502957e2 rust=3.7328467178045304e2)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[2]: cpp=2.840041083340264e2 rust=2.8399679188454235e2); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -514,7 +514,7 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "more0106"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[7]: cpp=8.632255584202603e1 rust=8.630662619215082e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[7]: cpp=8.632255584202603e1 rust=8.630513590280893e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -524,7 +524,7 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "more0116"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[16]: cpp=1.2076709410373787e3 rust=1.2076861684235182e3)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[4]: cpp=5.3124186282292875e1 rust=5.312390074688052e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
@@ -534,12 +534,12 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "more0132"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[14]: cpp=3.458779753770959e1 rust=3.458254957640821e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[9]: cpp=2.1240266987595074e1 rust=2.1237300447676496e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"
 case = "more0138"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[10]: cpp=1.840827808894654e7 rust=1.8407252228835113e7)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[8]: cpp=1.4443060020635858e7 rust=1.4442205879900465e7); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "boolean.api_brep"

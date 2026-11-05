@@ -292,122 +292,122 @@ why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps0.001_orientation0_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1776888347623412e1 rust=1.1775392138355084e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1776888347623412e1 rust=1.1774779172613957e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps0.001_orientation1_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1776888347623412e1 rust=1.1775392138355084e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1776888347623412e1 rust=1.1774779172613957e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps0.001_orientation0_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[18]: cpp=-4.241587938926047e-1 rust=-4.2483504586489174e-1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1773361839289525e1 rust=1.1774752414334227e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps0.001_orientation1_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[18]: cpp=4.241587938926047e-1 rust=4.2483504586489174e-1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1773361839289525e1 rust=1.1774752414334227e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-06_orientation0_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.177475467535339e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.1774753501933382e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-06_orientation1_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.177475467535339e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.1774753501933382e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-06_orientation0_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[18]: cpp=-4.2477861866899047e-1 rust=-4.2477903303738795e-1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774752376213497e1 rust=1.1774753791494568e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-06_orientation1_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[18]: cpp=4.2477861866899047e-1 rust=4.2477903303738795e-1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774752376213497e1 rust=1.1774753791494568e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-08_orientation0_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.177475374989784e1 rust=1.177475380821397e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.177475374989784e1 rust=1.1774753790940473e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-08_orientation1_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.177475374989784e1 rust=1.177475380821397e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.177475374989784e1 rust=1.1774753790940473e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-08_orientation0_flags63"
-why = "the fifth-order step estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md) sees the jump of the iso-u integrand at the surface's double v knot 0.5 (C0); at 1e-8 the steps underflow before the step across it meets its tolerance, and the integration fails (SM_ERR) where the embedded estimate, about 5x lower on a jump, accepted a step whose real error exceeds its tolerance; splitting at the surface's knots (WR-494, precise_properties_split_at_surface_knots) resolves it"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): no step crosses the iso-u integrand's jump at the double v knot 0.5, where it underflowed before; at the requested 1e-8 Rust is 2.8e-11 off a 1e-10 reference, C++ 1.2e-10, so the values differ within the accuracy (values.out[14]: cpp=-6.854952359852559e-2 rust=-6.85495243146485e-2)"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_eps1e-08_orientation1_flags63"
-why = "the fifth-order step estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md) sees the jump of the iso-u integrand at the surface's double v knot 0.5 (C0); at 1e-8 the steps underflow before the step across it meets its tolerance, and the integration fails (SM_ERR) where the embedded estimate, about 5x lower on a jump, accepted a step whose real error exceeds its tolerance; splitting at the surface's knots (WR-494, precise_properties_split_at_surface_knots) resolves it"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): no step crosses the iso-u integrand's jump at the double v knot 0.5, where it underflowed before; at the requested 1e-8 Rust is 2.8e-11 off a 1e-10 reference, C++ 1.2e-10, so the values differ within the accuracy (values.out[14]: cpp=6.854952359852559e-2 rust=6.85495243146485e-2)"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps0.001_orientation0_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.421001904121697e0 rust=6.428119335740146e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.421001904121697e0 rust=6.427805935418449e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps0.001_orientation1_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.421001904121697e0 rust=6.428119335740146e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.421001904121697e0 rust=6.427805935418449e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps0.001_orientation0_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[2]: cpp=1.0567336926324544e-1 rust=1.0533020076599764e-1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.424831399330402e0 rust=6.4277983090872635e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps0.001_orientation1_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[2]: cpp=1.0567336926324544e-1 rust=1.0533020076599764e-1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.424831399330402e0 rust=6.4277983090872635e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-06_orientation0_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798526673785e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798313005562e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-06_orientation1_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798526673785e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798313005562e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-06_orientation0_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[18]: cpp=-1.135463746056116e0 rust=-1.1354642185070927e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798571242889e0 rust=6.4277984463949585e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-06_orientation1_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[18]: cpp=1.135463746056116e0 rust=1.1354642185070927e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798571242889e0 rust=6.4277984463949585e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-08_orientation0_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798496633921e0 rust=6.427798459181755e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798496633921e0 rust=6.427798445140327e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-08_orientation1_flags1"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798496633921e0 rust=6.427798459181755e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798496633921e0 rust=6.427798445140327e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-08_orientation0_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[21]: cpp=5.071854559045567e-3 rust=5.071853276392212e-3)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798471565715e0 rust=6.427798446115222e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_eps1e-08_orientation1_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[21]: cpp=-5.071854559045567e-3 rust=-5.071853276392212e-3)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798471565715e0 rust=6.427798446115222e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
@@ -432,52 +432,52 @@ why = "precise-property steps are accepted on the larger of the embedded estimat
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_query2"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.177475467535339e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.1774753501933382e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_query3"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774754999636038e1 rust=1.1774754223169195e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774754999636038e1 rust=1.177475375578176e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_full_query4"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.177475467535339e1)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1774743123714035e1 rust=1.1774753501933382e1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_query2"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798526673785e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798313005562e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_query3"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798285695551e0 rust=6.427798338241415e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427798285695551e0 rust=6.427798444454616e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_sub_query4"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798526673785e0)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=6.427793875020921e0 rust=6.427798313005562e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_huge_eps0.0001_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[19]: cpp=-2.1729088661078863e7 rust=-2.1728700020696174e7)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.0297775112768044e8 rust=1.0297716026253788e8); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_huge_eps1e-08_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[19]: cpp=-2.1728857328217175e7 rust=-2.1728857454130586e7)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.0297715174510382e8 rust=1.0297715205556473e8); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_tiny_eps0.0001_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[19]: cpp=-2.119139889254206e-7 rust=-2.1707748787151678e-7)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[0]: cpp=1.1771627858807163e0 rust=1.1771676582183037e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "issue1435_multispan_tiny_eps1e-08_flags63"
-why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[19]: cpp=-2.172879610522078e-7 rust=-2.1728857190417777e-7)"
+why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[1]: cpp=-6.94504292286638e-7 rust=-6.945051383403739e-7); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "mass.integrator"

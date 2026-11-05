@@ -1169,3 +1169,360 @@ why = "precise properties start each iso-u integral at the trims' lowest v, not 
 unit = "blend.fillet_executive_p3"
 case = "sweep4-brepForFillet2-all-r0.1"
 why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.4335193835782356e3 rust=1.433519378996719e3); main with the domain's base passes it"
+
+# Precise-property steps on the fifth-order estimate and between the surface's knots (#1556, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): 71 cases whose properties move within their accuracy.
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge0-r2"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.9e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636432e1 rust=3.1415928205415288e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge3-r2"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.3e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.1415931466364306e1 rust=3.1415928205415277e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge7-r2"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.3e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.1415931466364317e1 rust=3.1415928205415284e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge11-r2"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.3e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.1415931466364306e1 rust=3.1415928205415277e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge0-behavior0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.9e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636432e1 rust=3.1415928205415288e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge0-behavior1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.9e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636432e1 rust=3.1415928205415288e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge0-behavior2"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.9e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636432e1 rust=3.1415928205415288e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge0-behavior3"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.9e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636432e1 rust=3.1415928205415288e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge0-behavior4"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.9e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636432e1 rust=3.1415928205415288e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-edge0-blend-g2"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 4.5e-07 off, C++ 9.4e-06 (values.attributes[1]: cpp=3.321443820074307e1 rust=3.321411267586722e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-per-edge-box-edge0-circular"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.9e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636432e1 rust=3.1415928205415288e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-variable-box-edge0-1-to-2"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 4.7e-12 off, C++ 1.7e-05 (values.attributes[1]: cpp=2.3572781767261205e1 rust=2.3572391731867715e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-variable-box-edge6-2-to-1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 4.4e-12 off, C++ 1.7e-05 (values.attributes[1]: cpp=2.3572781767758816e1 rust=2.357239173231066e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-step-edge0-r1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.3e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=1.5707965733182153e1 rust=1.5707964102707633e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-step-edge4-r1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.3e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=1.5707965733182158e1 rust=1.5707964102707642e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-pocket-edge0-r1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.3e-08 off, C++ 1.6e-07 (values.attributes[1]: cpp=3.141593146636433e1 rust=3.141592820541531e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "law-cube20-e0-deg3-asymmetric"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 7.5e-09 off, C++ 4.9e-07 (values.mass_properties[0]: cpp=2.3694069468716816e3 rust=2.3694069855466732e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "law-cube20-e7-deg3-asymmetric"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.6e-09 off, C++ 4.1e-07 (values.mass_properties[0]: cpp=2.3694069354677026e3 rust=2.3694069856233546e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "law-cube20-e0-deg2-smooth-xsect-linear"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 7.6e-10 off, C++ 1.0e-05 (values.mass_properties[0]: cpp=2.345269281988355e3 rust=2.345276012289922e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "law-box10x20x30-e0-deg1-half-to-two"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.1e-10 off, C++ 8.6e-07 (values.mass_properties[0]: cpp=2.1883674061962683e3 rust=2.1883674474157324e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "law-box10x20x30-e0-deg2-edge-map-sub-range"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 9.3e-10 off, C++ 1.3e-06 (values.mass_properties[0]: cpp=2.1841802583509348e3 rust=2.184180175698155e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "law-box10x20x30-e0-deg1-edge-map-degenerate"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.1e-09 off, C++ 5.6e-07 (values.mass_properties[0]: cpp=2.188852611379931e3 rust=2.1888531479364615e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "law-box10x20x30-e0-deg2-edge-map-reversed"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 9.3e-10 off, C++ 1.3e-06 (values.mass_properties[0]: cpp=2.1841802583509348e3 rust=2.184180175698155e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "piecewise-box-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 9.6e-09 off, C++ 1.2e-08 (values.mass_properties[1]: cpp=5.998927039328207e3 rust=5.998927028705683e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "piecewise-file-cyl_on_box-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 7.6e-09 off, C++ 7.1e-06 (values.mass_properties[0]: cpp=1.673443235430799e2 rust=1.6734314423077302e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "piecewise-file-cyl_on_box-edge7"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 4.3e-08 off, C++ 3.5e-06 (values.mass_properties[0]: cpp=1.6734373220593412e2 rust=1.6734314351154777e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "piecewise-file-l_shaped_box-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.5e-09 off, C++ 9.9e-10 (values.mass_properties[1]: cpp=3.749785395125053e2 rust=3.7497854013732325e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "piecewise-box-union-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.3e-09 off, C++ 5.9e-10 (values.mass_properties[0]: cpp=1.3952787604149576e3 rust=1.3952787577197364e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "piecewise-box-edges-0-2-4"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.8e-08 off, C++ 4.2e-08 (values.mass_properties[1]: cpp=5.996781222445913e3 rust=5.99678120120067e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "piecewise-box-edges-0-3-4"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.1e-08 off, C++ 6.4e-08 (values.mass_properties[1]: cpp=5.996781326906142e3 rust=5.99678131628352e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "real-box-single-edge-radius-half"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 9.6e-09 off, C++ 1.2e-08 (values.mass_properties[1]: cpp=5.998927039328606e3 rust=5.998927028706209e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-nurb_box-all-edges"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.2e-09 off, C++ 5.4e-07 (values.mass_properties[0]: cpp=5.656944511712356e2 rust=5.656943113580346e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-cyl_on_box-all-edges"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.0e-09 off, C++ 3.5e-06 (values.mass_properties[0]: cpp=1.6756262620315897e2 rust=1.6756203745532912e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-cyl_on_box_w_fillet-all-edges"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 9.2e-09 off, C++ 3.6e-06 (values.mass_properties[0]: cpp=1.6498740440265814e2 rust=1.649868156548433e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-bague-all-edges"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.2e-08 off, C++ 6.1e-06 (values.mass_properties[0]: cpp=5.146144655294434e2 rust=5.14614402776491e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-box-union-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.3e-09 off, C++ 5.9e-10 (values.mass_properties[0]: cpp=1.395278760415029e3 rust=1.3952787577197719e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-box-union-edge5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.1e-08 off, C++ 5.6e-08 (values.mass_properties[1]: cpp=2.9957081314414368e3 rust=2.9957081465687456e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-l_shaped_box-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.5e-09 off, C++ 9.9e-10 (values.mass_properties[1]: cpp=3.7497853951257224e2 rust=3.749785401373724e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-l_shaped_box-edge3"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.0e-10 off, C++ 1.7e-09 (values.mass_properties[6]: cpp=1.2499468255249238e4 rust=1.249946826847062e4)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-l_shaped_box-edge12"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 6.3e-09 off, C++ 4.2e-09 (values.mass_properties[1]: cpp=3.7498927085436327e2 rust=3.749892713289887e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_with_large_fillet-edge1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.4e-09 off, C++ 2.9e-09 (values.mass_properties[1]: cpp=8.626333665184925e2 rust=8.626333644994273e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-cyl_on_box-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 7.6e-09 off, C++ 1.2e-06 (values.mass_properties[0]: cpp=1.6734334903452867e2 rust=1.673431442307936e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-cyl_on_box-edge4"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 7.5e-09 off, C++ 6.4e-06 (values.mass_properties[0]: cpp=1.6726605094672973e2 rust=1.6726497825301752e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-cyl_on_box-edge7"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 4.3e-08 off, C++ 3.5e-06 (values.mass_properties[0]: cpp=1.6734373266190798e2 rust=1.673431435116569e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-cyl_on_box-edge12"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.0e-09 off, C++ 5.5e-06 (values.mass_properties[0]: cpp=1.6734406532711213e2 rust=1.6734314348671737e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-cyl_on_box-edge14"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.0e-09 off, C++ 3.5e-06 (values.mass_properties[0]: cpp=1.6756262620315897e2 rust=1.6756203745532912e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-corner_box-edge13"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.1e-10 off, C++ 2.3e-08 (values.mass_properties[0]: cpp=3.6422724093562067e2 rust=3.642272493659107e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-nurb_box-edge0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.5e-07 off, C++ 3.4e-07 (values.mass_properties[0]: cpp=5.724612052862121e2 rust=5.724611287528566e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-nurb_box-edge5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.5e-07 off, C++ 2.0e-06 (values.mass_properties[0]: cpp=5.69757717648855e2 rust=5.697588850791481e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-plate-100x100x10-edge0-r1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.9e-10 off, C++ 2.4e-10 (values.mass_properties[10]: cpp=2.4979066313575238e7 rust=2.4979066346758675e7)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-plate-100x100x10-edge5-r1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.1e-10 off, C++ 1.4e-09 (values.mass_properties[6]: cpp=3.3664523015268254e8 rust=3.3664523074113786e8)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-union-inset-side-step-edges13-15-r1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 1.3e-08 off, C++ 9.4e-09 (values.mass_properties[0]: cpp=1.2528147546851808e3 rust=1.2528147409936118e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-bottle-e0-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-bottle-e2-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-bottle-e10-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-bottle-e13-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-nurb_cone-e1-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.0e-07 off, C++ 3.0e-07 (values.mass_properties[0]: cpp=3.1483252600610484e2 rust=3.148325246121948e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-nurb_cone-e3-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.0e-07 off, C++ 3.0e-07 (values.mass_properties[0]: cpp=3.1483252600610484e2 rust=3.148325246121948e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-nurb_cone-e11-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.0e-07 off, C++ 3.0e-07 (values.mass_properties[0]: cpp=3.1483252600610484e2 rust=3.148325246121948e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-nurb_cone-e20-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 3.0e-07 off, C++ 3.0e-07 (values.mass_properties[0]: cpp=3.1483252600610484e2 rust=3.148325246121948e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e30-r0.1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e32-r0.1"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e27-r2.0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e29-r2.0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e30-r2.0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e32-r2.0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e8-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-delete-edge-bottle-e27-r0.5"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 2.4e-08 off, C++ 1.6e-05 (values.mass_properties[0]: cpp=3.31182287598083e1 rust=3.311819077304608e1)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "sweep5-bague-e4-r1.0"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 5.2e-08 off, C++ 6.1e-06 (values.mass_properties[0]: cpp=5.146144655294434e2 rust=5.14614402776491e2)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "real-box-single-edge-linear-radius-two-to-half"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 8.1e-11 off, C++ 5.9e-07 (values.mass_properties[0]: cpp=2.1883674171813504e3 rust=2.1883674474158306e3)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "real-box-single-edge-linear-radius-half-to-two"
+why = "precise-property steps are accepted on the larger of the embedded and the fifth-order estimate (#1556) and integrated between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md): the same integrals by other steps, so the areas and mass properties move within the requested 1e-4; against a 1e-8 reference Rust is 8.1e-11 off, C++ 5.7e-07 (values.mass_properties[0]: cpp=2.1883674061963866e3 rust=2.1883674474159525e3)"

@@ -89,7 +89,7 @@ why = "the trim's du/dt is zero at t: upstream leaves the derivative array as gi
 [[mismatch]]
 unit = "topology.face_p2"
 case = "extra00299"
-why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[7]: cpp=-3.451020071068135e-1 rust=-3.4420827596935305e-1)"
+why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[3]: cpp=-1.7118489571019122e0 rust=-1.7119725300149347e0); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "topology.face_p2"
@@ -109,12 +109,12 @@ why = "the trim's du/dt is zero at t: upstream leaves the derivative array as gi
 [[mismatch]]
 unit = "topology.face_p2"
 case = "extra00518"
-why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[5]: cpp=9.66574826809528e6 rust=9.665546860284824e6)"
+why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[3]: cpp=-2.2386180584339777e5 rust=-2.238626549354779e5); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "topology.face_p2"
 case = "extra00567"
-why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[12]: cpp=-3.6144146196924196e-3 rust=-3.614373042477761e-3)"
+why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[3]: cpp=4.065046701841908e-1 rust=4.0650469780776827e-1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "topology.face_p2"
@@ -129,7 +129,7 @@ why = "the trim's du/dt is zero at t: upstream leaves the derivative array as gi
 [[mismatch]]
 unit = "topology.face_p2"
 case = "extra00622"
-why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[10]: cpp=-2.5952339901995436e-3 rust=-2.595230064254633e-3)"
+why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[3]: cpp=-2.0461963948695913e-1 rust=-2.046196362337494e-1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "topology.face_p2"
@@ -179,7 +179,7 @@ why = "the trim's du/dt is zero at t: upstream leaves the derivative array as gi
 [[mismatch]]
 unit = "topology.face_p2"
 case = "extra01031"
-why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[6]: cpp=-5.5258718090173044e-3 rust=-5.52586070509356e-3)"
+why = "the iso-curve integral's steps are accepted on the larger of the embedded and the fifth-order estimate (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy times the case's error scale (values.state[3]: cpp=1.1368941315913181e-1 rust=1.136893549513527e-1); integrating between the surface's knots (WR-494, #1435; plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md) moves it again, within the requested accuracy"
 
 [[mismatch]]
 unit = "topology.face_p2"

@@ -43,7 +43,8 @@ sides alike (the 1e-11 reference's own error at that level).
   about 5x lower; at 1e-8 with the moment components' scales the step across the jump would have
   to be below SM_EFF_ZERO. The C++ accepts a step whose real error exceeds its tolerance.
   Splitting at the surface's knots (WR-494, `precise_properties_split_at_surface_knots`) is the
-  fix; whether it becomes the default is the owner's call.
+  fix; it is the only path since 2026-11-05
+  (plan/findings/mass.integrator--split-at-surface-knots-default-moves-cases-2026-11-05.md).
 - `review_edge_constant_*`: a zero-length edge, values of order 1e-17 (noise) on both sides.
 - `topology.face_p2` `ode_area_*_vertical`, `gen0000` and some `extra*` cases: the trim's
   `du/dt` is zero at the point asked; upstream returns the caller's array unchanged, Rust the
