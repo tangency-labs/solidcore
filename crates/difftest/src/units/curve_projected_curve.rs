@@ -53,6 +53,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::util::assert_reports::put_assert_reports;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -341,6 +342,108 @@ fn to_output(flat: &[f64]) -> Output {
         .values("out", rest)
 }
 
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 512,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 4.0;
+/// The longest database record.
+const MAX_DB_BYTES: usize = 1 << 16;
+/// The highest derivative order evaluated.
+const MAX_DERIVS: usize = 3;
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+/// A projected curve that keeps the contract: its base curve's domain, whether the base is
+/// a Hermite curve with a 3D component above `1e16`, its projection type and owner flag.
+#[derive(Debug, Clone, Copy)]
+struct Block {
+    a: f64,
+    b: f64,
+    hermite: bool,
+    hermite_big: bool,
+    ptype: u8,
+    owns: u8,
+}
+
+/// The base curve as the shared curve contract takes it, a constructor 0 or 1, finite
+/// optional vectors, a projection type up to 3 and an owner flag up to 2.
+fn block(pc: &PcIn) -> Option<Block> {
+    let max = LIMITS.max_coord;
+    let (a, b, hermite, hermite_big) = match &pc.curve {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            ((2..=3).contains(&bs.dim)).then_some((s.a, s.b, false, false))?
+        }
+        CurveIn::Hermite(h) => {
+            let vs = [h.p1, h.d1, h.p2, h.d2];
+            let big = h.dim == 3 && vs.iter().flatten().any(|c| c.abs() > 1e16);
+            ((2..=3).contains(&h.dim) && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+                .then_some((0.0, 1.0, true, big))?
+        }
+    };
+    let vectors = [pc.point, pc.vec, pc.aux]
+        .iter()
+        .all(|v| vec3(&v.unwrap_or([0.0; 3])));
+    (pc.ctor <= 1 && vectors && pc.ptype <= 3 && pc.owns <= 2).then_some(Block {
+        a,
+        b,
+        hermite,
+        hermite_big,
+        ptype: pc.ptype,
+        owns: pc.owns,
+    })
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_projected_curve.rs`, `validate`, and the
+/// runner's encoder): a record of a projection type in `SmProjectionType` (a larger one is
+/// undefined upstream), a version up to 1000 and at most [`MAX_DB_BYTES`] bytes; a projected
+/// curve for every other op as [`block`] takes it, parameters within [`MAX_REL_DIST`] domain
+/// lengths, derivative orders up to [`MAX_DERIVS`], a positive continuity angle, the copy
+/// constructor only on constructor 0 and never on an owned or unsure Hermite base, no
+/// `AssertValid` test level 3, and no report list for a Hermite base above `1e16` outside
+/// projection type 3.
+fn keeps_contract(i: &Inputs) -> bool {
+    if let OpIn::ReadDb(d) = &i.op {
+        return d.ptype <= 3 && d.version <= 1000 && db_bytes(d).len() <= MAX_DB_BYTES;
+    }
+    let Some(pc) = i.pc.as_ref() else {
+        return false;
+    };
+    let Some(c) = block(pc) else {
+        return false;
+    };
+    let param = |t: f64| {
+        let far = MAX_REL_DIST * (c.b - c.a);
+        contract::finite(t, LIMITS.max_coord) && t >= c.a - far && t <= c.b + far
+    };
+    match &i.op {
+        OpIn::State | OpIn::MakeOrtho | OpIn::Copy | OpIn::Ends | OpIn::ReadDb(_) => true,
+        OpIn::CloneCtor => pc.ctor == 0 && !(c.owns != 0 && c.hermite),
+        OpIn::Eval { t, n, .. } => param(*t) && *n <= MAX_DERIVS,
+        OpIn::EvalPoint { t } => param(*t),
+        OpIn::Knots { ivl } => ivl.unwrap_or([0.0, 0.0]).iter().all(|&t| param(t)),
+        OpIn::Continuities { angle } => contract::finite(*angle, LIMITS.max_coord) && *angle > 0.0,
+        OpIn::EditParam { a, b } | OpIn::Reverse { a, b } => param(*a) && param(*b),
+        OpIn::Trim { a, b, mode } => param(*a) && param(*b) && *mode <= 2,
+        OpIn::Transform { o, x, y, scale } => [o, x, y, &scale.unwrap_or([0.0; 3])]
+            .iter()
+            .all(|v| vec3(v)),
+        OpIn::Equal { other } => other.as_ref().is_none_or(|o| block(o).is_some()),
+        OpIn::AssertValid { level, list } => {
+            *level <= 4 && *level != 3 && !(*list && c.ptype != 3 && c.hermite_big)
+        }
+    }
+}
+
 // ---- Rust side --------------------------------------------------------------------
 
 fn v3(p: [f64; 3]) -> Vec3 {
@@ -484,8 +587,12 @@ fn base_state(o: &mut Vec<f64>, c: &Curve) -> Result<(), HarnessError> {
         }
         CurveKind::Hermite(h) => {
             o.extend([1.0, h.dim() as f64]);
-            let a = h.evaluate(0.0, 1, false).map_err(|e| harness(e.to_string()))?;
-            let e = h.evaluate(1.0, 1, false).map_err(|e| harness(e.to_string()))?;
+            let a = h
+                .evaluate(0.0, 1, false)
+                .map_err(|e| harness(e.to_string()))?;
+            let e = h
+                .evaluate(1.0, 1, false)
+                .map_err(|e| harness(e.to_string()))?;
             for v in a.iter().take(2).chain(e.iter().take(2)) {
                 pv(o, *v);
             }
@@ -1133,7 +1240,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        let i = (0..64).map(|_| gen_case(rng)).find(keeps_contract)?;
+        serde_json::to_value(i).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1149,7 +1257,10 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         for mut c in av.generated_cases("curve.projected_curve:assert_valid", |rng| {
-            serde_json::to_value(gen_assert_valid(rng)).ok()
+            let i = (0..64)
+                .map(|_| gen_assert_valid(rng))
+                .find(keeps_contract)?;
+            serde_json::to_value(i).ok()
         }) {
             c.name = c.name.replacen("gen", "av", 1);
             c.unit = self.id().to_string();
