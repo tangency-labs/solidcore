@@ -2398,7 +2398,16 @@ mod tests {
         let k = Kernel::default();
         let cylinder = |at: Vec3| {
             let mut c = Cone::new_cylinder_bounded(
-                at, Vec3::X, Vec3::Y, 3.0, 0.0, 360.0, 10.0, false, false, false,
+                at,
+                Vec3::X,
+                Vec3::Y,
+                3.0,
+                0.0,
+                360.0,
+                10.0,
+                false,
+                false,
+                false,
             );
             c.make_nurb(&k).unwrap();
             nurbs(&k, &Surface::from(c))
@@ -2407,8 +2416,18 @@ mod tests {
         let far = cylinder(Vec3::new(1000.0, 500.0, -2.0));
         let lk = 3;
         // a box inside one piece of the net, off its middle
-        let ku = span(&near.u, near.p, near.nu, 0.5 * (near.u[near.p] + near.u[near.p + 1]));
-        let kv = span(&near.v, near.q, near.nv, 0.5 * (near.v[near.q] + near.v[near.q + 1]));
+        let ku = span(
+            &near.u,
+            near.p,
+            near.nu,
+            0.5 * (near.u[near.p] + near.u[near.p + 1]),
+        );
+        let kv = span(
+            &near.v,
+            near.q,
+            near.nv,
+            0.5 * (near.v[near.q] + near.v[near.q + 1]),
+        );
         let (u0, u1) = (near.u[ku], near.u[ku + 1]);
         let (v0, v1) = (near.v[kv], near.v[kv + 1]);
         let (um, vm) = (u0 + 0.37 * (u1 - u0), v0 + 0.61 * (v1 - v0));
@@ -2482,9 +2501,116 @@ mod tests {
                 for (c, (n, f)) in [(n.x, f.x), (n.y, f.y), (n.z, f.z)].into_iter().enumerate() {
                     let (wn, wf) = (n.hi - n.lo, f.hi - f.lo);
                     let floor = 1e-9 * (1.0 + f.lo.abs().max(f.hi.abs()));
-                    assert!(wf <= 2.0 * wn + floor, "D[{d}].{c} at {delta}: far {wf:e}, near {wn:e}");
+                    assert!(
+                        wf <= 2.0 * wn + floor,
+                        "D[{d}].{c} at {delta}: far {wf:e}, near {wn:e}"
+                    );
                 }
             }
+        }
+    }
+
+    /// A rational face's partials, and a rational curve's derivatives, over a box are
+    /// enclosed to within the box's square of their ranges (#2690): from a box of 1e-2 of a
+    /// piece to one of 1e-3, each enclosure's excess over its sampled range falls at least
+    /// thirtyfold (the square's hundredfold, less the sampling's). The direct quotient's
+    /// excess, the partial's size times w's spread, falls only tenfold: the cylinder's
+    /// partial along its axis is constant, its direct enclosure 7e-3 wide at 1e-2.
+    #[test]
+    fn a_rational_box_enclosure_exceeds_its_range_by_the_box_s_square() {
+        let k = Kernel::default();
+        let mut c = Cone::new_cylinder_bounded(
+            Vec3::new(0.0, 0.0, -2.0),
+            Vec3::X,
+            Vec3::Y,
+            3.0,
+            0.0,
+            360.0,
+            10.0,
+            false,
+            false,
+            false,
+        );
+        c.make_nurb(&k).unwrap();
+        let n = nurbs(&k, &Surface::from(c));
+        let lk = 3;
+        let ku = span(&n.u, n.p, n.nu, 0.5 * (n.u[n.p] + n.u[n.p + 1]));
+        let kv = span(&n.v, n.q, n.nv, 0.5 * (n.v[n.q] + n.v[n.q + 1]));
+        let (u0, u1) = (n.u[ku], n.u[ku + 1]);
+        let (v0, v1) = (n.v[kv], n.v[kv + 1]);
+        let (um, vm) = (u0 + 0.37 * (u1 - u0), v0 + 0.61 * (v1 - v0));
+        let mut excess = Vec::new();
+        for delta in [1e-2, 1e-3] {
+            let (du, dv) = (delta * (u1 - u0), delta * (v1 - v0));
+            let (ua, ub, va, vb) = (um - du, um + du, vm - dv, vm + dv);
+            let e = nurbs_partials_over_piece(&n, ku, kv, ua, ub, va, vb, lk).unwrap();
+            for a in 0..=lk {
+                for b in 0..=(lk - a) {
+                    let mut lo = [f64::INFINITY; 3];
+                    let mut hi = [f64::NEG_INFINITY; 3];
+                    for i in 0..=16 {
+                        for j in 0..=16 {
+                            let u = ua + (ub - ua) * f64::from(i) / 16.0;
+                            let v = va + (vb - va) * f64::from(j) / 16.0;
+                            let x = nurbs_partials::<f64>(&n, ku, kv, u, v, lk).at(a, b);
+                            for (c, xc) in [x.x, x.y, x.z].into_iter().enumerate() {
+                                lo[c] = lo[c].min(xc);
+                                hi[c] = hi[c].max(xc);
+                            }
+                        }
+                    }
+                    let p = e.at(a, b);
+                    for (c, i) in [p.x, p.y, p.z].into_iter().enumerate() {
+                        assert!(i.lo <= lo[c] && hi[c] <= i.hi, "P[{a}][{b}].{c}");
+                        excess.push(((a, b, c), (i.hi - i.lo) - (hi[c] - lo[c])));
+                    }
+                }
+            }
+        }
+        let (wide, narrow) = excess.split_at(excess.len() / 2);
+        for ((at, e1), (_, e2)) in wide.iter().zip(narrow) {
+            assert!(*e2 <= e1 / 30.0 + 1e-12, "P{at:?}: {e2:e} against {e1:e}");
+        }
+        // the circle r 3 likewise, its derivatives over an interval of the parameter
+        let frame = Axis2Placement::new(Vec3::ZERO, Vec3::X, Vec3::Y);
+        let circle = BSplineCurve::create_circle_segment(
+            3,
+            &frame,
+            3.0,
+            10.0,
+            80.0,
+            NurbCircleParam::Quadratic,
+        )
+        .unwrap();
+        let cn = NurbsCurve::of(&circle).unwrap();
+        let piece = span(&cn.u, cn.p, cn.n, 0.5 * (cn.u[cn.p] + cn.u[cn.p + 1]));
+        let (s0, s1) = (cn.u[piece], cn.u[piece + 1]);
+        let sm = s0 + 0.37 * (s1 - s0);
+        let mut excess = Vec::new();
+        for delta in [1e-2, 1e-3] {
+            let ds = delta * (s1 - s0);
+            let d = curve_derivs_over(&cn, Ivl::new(sm - ds, sm + ds), lk, Some(piece)).unwrap();
+            for (o, dd) in d.iter().enumerate() {
+                let mut lo = [f64::INFINITY; 3];
+                let mut hi = [f64::NEG_INFINITY; 3];
+                for i in 0..=64 {
+                    let s = sm - ds + 2.0 * ds * f64::from(i) / 64.0;
+                    let x = circle.evaluate(s, lk, true, false).unwrap()[o];
+                    for (c, xc) in [x.x, x.y, x.z].into_iter().enumerate() {
+                        lo[c] = lo[c].min(xc);
+                        hi[c] = hi[c].max(xc);
+                    }
+                }
+                for (c, i) in [dd.x, dd.y, dd.z].into_iter().enumerate() {
+                    let slack = 1e-9 * (1.0 + lo[c].abs().max(hi[c].abs()));
+                    assert!(i.lo <= lo[c] + slack && hi[c] - slack <= i.hi, "D[{o}].{c}");
+                    excess.push(((o, c), (i.hi - i.lo) - (hi[c] - lo[c])));
+                }
+            }
+        }
+        let (wide, narrow) = excess.split_at(excess.len() / 2);
+        for ((at, e1), (_, e2)) in wide.iter().zip(narrow) {
+            assert!(*e2 <= e1 / 30.0 + 1e-9, "D{at:?}: {e2:e} against {e1:e}");
         }
     }
 
