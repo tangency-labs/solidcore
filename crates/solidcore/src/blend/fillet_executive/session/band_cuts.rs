@@ -26,7 +26,10 @@
 //! answer is the fork's (an edge or face out of reach has no crossing that counts), but an
 //! error the fork would meet on an out-of-reach edge or face is not met. A station's plane
 //! crossings are found edge by edge as its sections ask for them, not all up front; each
-//! face's trimmed cache is made once per check, not once per section; the check polls the
+//! face's trimmed cache is made once per check, not once per section; the body's cache (the
+//! trees a classification solves through) is made once per check and again when a
+//! tolerance of the body differs from the ones it was made with, not once per
+//! classification; the check polls the
 //! kernel's cancel token. The solutions of
 //! `SmSurface::GlobalCurveIntersect` carry no object handles (the fork reads only their
 //! parameters). Every loop is bounded by fixed counts (32 steps, 40 bisections, halvings
@@ -131,7 +134,21 @@ impl SolutionObject for Operand {
 /// to solver ([`band_cuts_the_part`] and [`band_breaks_through_the_part`] over every solver
 /// of a session, #2648). The body does not change during a check: the trimmed-surface
 /// caches and UV trims its solves make on it change no answer. So each face's trimmed
-/// cache is made once ([`FaceCaches`]), and each face's and edge's box once.
+/// cache is made once ([`FaceCaches`]), the body's cache once ([`BrepQuery`]), and each
+/// face's and edge's box once.
+///
+/// The body's cache holds the trees of its vertices, edges and faces, keyed by the body's
+/// naming scheme and its proven geometry owners, each boxed with its tolerance of the
+/// moment the cache was made (`make_brep_cache`). What the check's solves edit on the body
+/// (a missing UV trim curve made on an edge use for a face's trimmed cache or a ray's
+/// preparation, the edge's tolerance grown to fit it and its vertices' grown with it, and
+/// the vertex uses' gap caches reset) adds, removes and renames nothing the trees hold;
+/// but a tolerance grown after the cache was made is not in its boxes, and a solve's
+/// candidate test reads the boxes (`SmTopologySolver::MayContainAnswer`), where a cache
+/// made for that classification would hold it. So the check keeps, with the cache, every
+/// vertex's, edge's and face's tolerance as the cache was made ([`tolerances`]) and before
+/// each classification compares the body's to them: on any difference it makes the cache
+/// again. Each classification is then that of a cache made for it.
 ///
 /// The boxes keep each section's tests to the geometry within its reach, by construction
 /// giving the answers of testing everything: a curve and a surface (or a plane) whose
@@ -141,6 +158,9 @@ impl SolutionObject for Operand {
 pub struct BandCheck {
     /// The faces' trimmed-surface caches made so far.
     caches: FaceCaches,
+    /// The body's query with its cache, made at the first classification, and the
+    /// tolerances its boxes were made with ([`tolerances`]).
+    query: Option<(BrepQuery<'static>, Vec<u64>)>,
     /// Every face in the body's order, with the box of its surface over the domain its
     /// solves use (`None`: unbounded, or a kind without a certain box; always tested).
     faces: Option<Vec<(FaceId, Option<Extent3d>)>>,
@@ -153,6 +173,7 @@ impl core::fmt::Debug for BandCheck {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("BandCheck")
             .field("caches", &self.caches.len())
+            .field("query", &self.query.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -232,6 +253,53 @@ impl BandCheck {
         }
         solutions
     }
+
+    /// `point`'s classification against `body` (`SmBrep::Point3DClassify`, with the boundary
+    /// intersections) through the body's cache, made at the first classification and again
+    /// when a tolerance of the body differs from the ones the cache was made with.
+    fn classify(
+        &mut self,
+        k: &Kernel,
+        body: &mut Brep,
+        point: Point3,
+        zone: f64,
+    ) -> Result<PointClassification<EntityRef>> {
+        let now = tolerances(body)?;
+        if self
+            .query
+            .as_ref()
+            .is_some_and(|(_, made_with)| *made_with != now)
+        {
+            self.query = None;
+        }
+        let query = if let Some((query, _)) = self.query.as_ref() {
+            query
+        } else {
+            let query = BrepQuery::of_brep(body);
+            query.cache(k, body)?;
+            k.work_counters.add_band_brep_cache();
+            &self.query.insert((query, now)).0
+        };
+        query.point_3d_classify(k, body, point, zone, true)
+    }
+}
+
+/// The tolerance of every vertex, edge and face of `body`, as bits, in the order the body's
+/// cache boxes them: what [`BandCheck`] compares before a classification to know whether
+/// the cache's boxes still carry the body's tolerances (bits, so a NaN compares equal to
+/// itself and does not make the cache again at every classification).
+fn tolerances(body: &Brep) -> Result<Vec<u64>> {
+    let mut out = Vec::new();
+    for v in crate::topology::brep::p1::vertices(body, None)? {
+        out.push(body.vertex(v)?.tolerance.to_bits());
+    }
+    for e in crate::topology::brep::p1::edges(body, None)? {
+        out.push(body.edge(e)?.tolerance.to_bits());
+    }
+    for f in crate::topology::brep::p1::faces(body, None)? {
+        out.push(body.face(f)?.tolerance.to_bits());
+    }
+    Ok(out)
 }
 
 /// A box that bounds something: finite and not inside out.
@@ -567,10 +635,7 @@ fn keeps_material_behind(
         }
     }
     // no crossing: the section between its rails is wholly in the part or wholly outside it
-    let query = BrepQuery::of_brep(body);
-    query.cache(k, body)?;
-    k.work_counters.add_band_brep_cache();
-    let class = query.point_3d_classify(k, body, middle, zone, true)?;
+    let class = check.classify(k, body, middle, zone)?;
     if class.point_class() != PointClassType::Region {
         return Ok(true);
     }
@@ -860,12 +925,12 @@ fn section_breaks_through(
             continue;
         }
         let piece = j + 1;
-        if pieces.class(k, body, piece)? != Piece::Void {
+        if pieces.class(k, body, check, piece)? != Piece::Void {
             continue;
         }
         // the wall: the material beside the piece runs to a rail
-        if pieces.material_to_rail(k, body, (0..piece).rev())?
-            || pieces.material_to_rail(k, body, piece + 1..at.len() - 1)?
+        if pieces.material_to_rail(k, body, check, (0..piece).rev())?
+            || pieces.material_to_rail(k, body, check, piece + 1..at.len() - 1)?
         {
             return Ok(true); // a hollow behind a wall: the section breaks through
         }
@@ -888,7 +953,13 @@ struct Pieces<'a> {
 
 impl Pieces<'_> {
     /// The class of piece `i`.
-    fn class(&mut self, k: &Kernel, body: &mut Brep, i: usize) -> Result<Piece> {
+    fn class(
+        &mut self,
+        k: &Kernel,
+        body: &mut Brep,
+        check: &mut BandCheck,
+        i: usize,
+    ) -> Result<Piece> {
         if let Some(Some(known)) = self.classes.get(i) {
             return Ok(*known);
         }
@@ -900,6 +971,7 @@ impl Pieces<'_> {
         } else if point_in_material(
             k,
             body,
+            check,
             self.section.evaluate_point(k, 0.5 * (t0 + t1))?,
             self.zone,
         )? {
@@ -921,10 +993,11 @@ impl Pieces<'_> {
         &mut self,
         k: &Kernel,
         body: &mut Brep,
+        check: &mut BandCheck,
         run: impl Iterator<Item = usize>,
     ) -> Result<bool> {
         for i in run {
-            if self.class(k, body, i)? == Piece::Void {
+            if self.class(k, body, check, i)? == Piece::Void {
                 return Ok(false);
             }
         }
@@ -961,11 +1034,14 @@ struct Meet {
 /// the zone tolerance of a face, edge or vertex, not counted in: a piece of a section
 /// between two crossings of faces that lies within the tolerance of the boundary is too
 /// shallow to keep material).
-fn point_in_material(k: &Kernel, body: &mut Brep, point: Point3, zone: f64) -> Result<bool> {
-    let query = BrepQuery::of_brep(body);
-    query.cache(k, body)?;
-    k.work_counters.add_band_brep_cache();
-    let class = query.point_3d_classify(k, body, point, zone, true)?;
+fn point_in_material(
+    k: &Kernel,
+    body: &mut Brep,
+    check: &mut BandCheck,
+    point: Point3,
+    zone: f64,
+) -> Result<bool> {
+    let class = check.classify(k, body, point, zone)?;
     if class.point_class() != PointClassType::Region {
         return Ok(false);
     }
@@ -1350,6 +1426,42 @@ mod tests {
         assert_eq!(k.work_counters.band_face_solves(), 4);
         assert_eq!(k.work_counters.band_face_caches(), 2);
         assert_eq!(k.work_counters.band_brep_caches(), 1);
+    }
+
+    /// A tolerance of the body grown between two judgements (as a UV trim curve made for a
+    /// solve grows its edge's and vertices') makes the body's cache again for the second,
+    /// whose boxes carry the tolerances: the answer is that of a cache made for it.
+    #[test]
+    fn a_tolerance_grown_between_judgements_makes_the_body_s_cache_again() {
+        let mut k = Kernel::default();
+        let (mut b, centre, rails) = cube_section(&mut k);
+        let mut check = BandCheck::new();
+        let mut station = Station::new(
+            &k,
+            &mut check,
+            &b,
+            Point3::new(5.0, 0.0, 10.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        )
+        .unwrap();
+        k.work_counters.reset();
+        let e = b.edges().ids().next().unwrap();
+        for grown in [None, Some(2.0 * b.edge(e).unwrap().tolerance), None] {
+            if let Some(tolerance) = grown {
+                edge::set_tolerance(&mut b, e, tolerance, false, true).unwrap();
+            }
+            assert!(keeps_material_behind(
+                &k,
+                &mut b,
+                &mut check,
+                &mut station,
+                centre,
+                rails,
+                false
+            )
+            .unwrap());
+        }
+        assert_eq!(k.work_counters.band_brep_caches(), 2);
     }
 
     /// A token fired before a judgement stops it at the band check's own poll, with the
