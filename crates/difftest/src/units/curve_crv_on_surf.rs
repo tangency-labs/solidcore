@@ -1,25 +1,23 @@
 //! Runner for unit `curve.crv_on_surf`: `SmCrvOnSurf`, a 2D UV curve traced through a
 //! surface.
 //!
-//! C++: `solidcore_ffi::units::curve_crv_on_surf` (upstream
-//! `source/SMLib/src/SmCrvOnSurf.cpp` on objects built from a 2D `SmBSplineCurve` UV
-//! curve, or the UV-line constructor, over a B-spline base or a real
-//! `SmOffsetSurface`). Rust: `solidcore::curve::crv_on_surf` (the `&mut` methods, so
-//! the caches evolve as upstream's; `Info` and `Equal` go through the [`Curve`] dispatch).
+//! Ported from upstream `source/SMLib/src/SmCrvOnSurf.cpp`; checked against its golden.
+//! Rust: `solidcore::curve::crv_on_surf` (the `&mut` methods, so the caches evolve as
+//! upstream's; `Info` and `Equal` go through the [`Curve`] dispatch).
 //!
-//! A case is either an object (`cos`: `uv` (`bspline` or `line`), B-spline `srf` (inline
-//! or an upstream `.sms` file), optional `offset`, `domain`, `owner`, `cache` `{need, breaks}`)
-//! with an op list run in order on it, or a database record (`read_db`). Inline UV
-//! B-splines and surfaces accept `borrow_nurb` to preserve raw knots.
-//! Both sides produce the flat record documented in the ffi module (every op's status,
-//! `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a
-//! Rust error upstream cannot produce, then its outputs), compared as `out`.
+//! A case is either an object (`cos`: `uv` (`bspline` or `line`), B-spline `srf` (inline or
+//! an upstream `.sms` file), optional `offset`, `domain`, `owner`, `cache` `{need,
+//! breaks}`) with an op list run in order on it, or a database record (`read_db`). Inline
+//! UV B-splines and surfaces accept `borrow_nurb` to preserve raw knots. The Rust side
+//! produces a flat record (every op's status, `0` = `SM_SUCCESS`, else the `SmStatus`;
+//! `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce, then
+//! its outputs), compared as `out`.
 //!
 //! Knot and drop operations compare the break-cache state as well as their answers:
 //! a local solve may leave breaks uncached, while a later global solve populates
 //! them through the base curve's virtual knot queries. Every run has at least
-//! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are
-//! redrawn. Any genuinely unported downstream call still defers the whole case.
+//! [`MIN_GENERATED`] generated cases. Any genuinely unported downstream call still
+//! defers the whole case.
 //!
 //! Deviations: the runner-local SMS reader validates counts below the exclusive
 //! `2^usize::BITS` bound, checks dimension and payload arithmetic and the available
@@ -51,9 +49,10 @@ use solidcore::nurbs::srf_basic::Surface;
 use solidcore::surface::offset_surface::{OffsetSurface, SS_UNKNOWN};
 use solidcore::surface::surface::{Surface as SmSurface, SurfaceKind};
 use solidcore::topology::brep::validation::curve_assert_valid;
-use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
+use solidcore::nurbs::math::{NOW, NOZ};
+use solidcore::topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream};
+use solidcore::topology::geometry_write::write_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_crv_on_surf::{self as ffi, ObjOp, Op, NOW, NOZ};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -304,234 +303,8 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn cos_block(v: &mut Vec<f64>, c: &CosIn) -> Result<(), HarnessError> {
-    match &c.uv {
-        UvIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, b(bs.borrow_nurb), n as f64, bs.p as f64, m as f64]);
-            for &[x, y, w] in &bs.cpts {
-                v.extend([x, y, NOZ, w]);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        UvIn::Line(l) => {
-            v.push(1.0);
-            v.extend_from_slice(l);
-        }
-    }
-    v.push(b(c.offset.is_some()));
-    let s = resolve(&c.srf)?;
-    v.push(b(s.borrow_nurb));
-    let n = s.net.len().saturating_sub(1);
-    let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
-    v.extend([
-        n as f64,
-        m as f64,
-        s.p as f64,
-        s.q as f64,
-        s.u.len().saturating_sub(1) as f64,
-        s.v.len().saturating_sub(1) as f64,
-    ]);
-    for c in s.net.iter().flatten() {
-        v.extend_from_slice(c);
-    }
-    v.extend_from_slice(&s.u);
-    v.extend_from_slice(&s.v);
-    if let Some(offset) = &c.offset {
-        v.extend([offset.distance, b(offset.owns_base)]);
-    }
-    v.push(b(c.domain.is_some()));
-    v.extend_from_slice(&c.domain.unwrap_or([0.0; 4]));
-    v.push(c.owner as f64);
-    match &c.cache {
-        None => v.push(0.0),
-        Some(k) => {
-            v.extend([1.0, b(k.need), k.breaks.len() as f64]);
-            v.extend_from_slice(&k.breaks);
-        }
-    }
-    Ok(())
-}
-
-fn obj_op_of(op: &OpIn) -> ObjOp {
-    match op {
-        OpIn::Info { .. } => ObjOp::Info,
-        OpIn::State => ObjOp::State,
-        OpIn::AssertValid { .. } => ObjOp::AssertValid,
-        OpIn::Eval { .. } => ObjOp::Eval,
-        OpIn::EvalPoint { .. } => ObjOp::EvalPoint,
-        OpIn::EvalUv { .. } => ObjOp::EvalUv,
-        OpIn::EvalNormal { .. } => ObjOp::EvalNormal,
-        OpIn::Eval1st { .. } => ObjOp::Eval1st,
-        OpIn::Knots { .. } => ObjOp::Knots,
-        OpIn::Nnk => ObjOp::Nnk,
-        OpIn::Conts { .. } => ObjOp::Conts,
-        OpIn::Equal { .. } => ObjOp::Equal,
-        OpIn::Copy => ObjOp::Copy,
-        OpIn::CopyEval { .. } => ObjOp::CopyEval,
-        OpIn::EditParam { .. } => ObjOp::EditParam,
-        OpIn::Reverse { .. } => ObjOp::Reverse,
-        OpIn::Trim { .. } => ObjOp::Trim,
-        OpIn::Transform { .. } => ObjOp::Transform,
-        OpIn::Approx { .. } => ObjOp::Approx,
-        OpIn::GetOrCreate { .. } => ObjOp::GetOrCreate,
-        OpIn::Bbox { .. } => ObjOp::Bbox,
-        OpIn::Drop { .. } => ObjOp::Drop,
-        OpIn::Gap { .. } => ObjOp::Gap,
-    }
-}
-
-fn op_params(v: &mut Vec<f64>, op: &OpIn) -> Result<(), HarnessError> {
-    match op {
-        OpIn::Info { types } => {
-            v.push(types.len() as f64);
-            v.extend(types.iter().map(|&t| t as f64));
-        }
-        OpIn::State | OpIn::Nnk | OpIn::Copy => {}
-        OpIn::AssertValid { level, list } => v.extend([f64::from(*level), b(*list)]),
-        OpIn::Eval {
-            t,
-            n,
-            left,
-            nonzero,
-        }
-        | OpIn::CopyEval {
-            t,
-            n,
-            left,
-            nonzero,
-        } => v.extend([*t, *n as f64, b(*left), b(*nonzero)]),
-        OpIn::EvalPoint { t } | OpIn::EvalUv { t } => v.push(*t),
-        OpIn::EvalNormal { t, left } => v.extend([*t, b(*left)]),
-        OpIn::Eval1st { t, n, left } => v.extend([*t, *n as f64, b(*left)]),
-        OpIn::Knots { ivl, want } => {
-            let [x, y] = ivl.unwrap_or([0.0, 0.0]);
-            v.extend([b(ivl.is_some()), x, y, b(*want)]);
-        }
-        OpIn::Conts { angle } => v.push(*angle),
-        OpIn::Equal { other } => match other {
-            None => v.push(1.0),
-            Some(o) => {
-                v.push(0.0);
-                cos_block(v, o)?;
-            }
-        },
-        OpIn::EditParam { a, b: bb } | OpIn::Reverse { a, b: bb } | OpIn::Bbox { a, b: bb } => {
-            v.extend([*a, *bb]);
-        }
-        OpIn::Trim { a, b: bb, mode } => v.extend([*a, *bb, *mode as f64]),
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => {
-            v.extend_from_slice(origin);
-            v.extend_from_slice(x);
-            v.extend_from_slice(y);
-            v.push(b(scale.is_some()));
-            v.extend_from_slice(&scale.unwrap_or([1.0, 1.0, 1.0]));
-        }
-        OpIn::Approx {
-            breaks,
-            tol,
-            match_param,
-        } => {
-            v.push(breaks.len() as f64);
-            v.extend_from_slice(breaks);
-            v.extend([*tol, b(*match_param)]);
-        }
-        OpIn::GetOrCreate {
-            tol,
-            breaks,
-            match_param,
-        } => {
-            v.push(*tol);
-            v.push(b(breaks.is_some()));
-            let br = breaks.clone().unwrap_or_default();
-            v.push(br.len() as f64);
-            v.extend_from_slice(&br);
-            v.push(b(match_param.is_some()));
-            v.push(b(match_param.unwrap_or(false)));
-        }
-        OpIn::Drop {
-            a,
-            b: bb,
-            point,
-            vec,
-            tol,
-            guess,
-            solver_op,
-        } => {
-            v.extend([*a, *bb]);
-            v.extend_from_slice(point);
-            v.push(b(vec.is_some()));
-            v.extend_from_slice(&vec.unwrap_or([0.0; 3]));
-            v.push(*tol);
-            v.push(b(guess.is_some()));
-            v.push(guess.unwrap_or(*a));
-            v.push(f64::from(*solver_op));
-        }
-        OpIn::Gap {
-            other,
-            a,
-            b: bb,
-            s0,
-            s1,
-            samples,
-            tol,
-            max,
-        } => {
-            match other {
-                None => v.push(1.0),
-                Some(o) => {
-                    v.push(0.0);
-                    cos_block(v, o)?;
-                }
-            }
-            v.extend([*a, *bb, *s0, *s1, *samples as f64, *tol]);
-            v.push(b(max.is_some()));
-            v.push(max.unwrap_or(0.0));
-        }
-    }
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    match i {
-        Inputs::Object { cos, ops } => {
-            cos_block(&mut v, cos)?;
-            v.push(ops.len() as f64);
-            for op in ops {
-                v.push(f64::from(obj_op_of(op).code()));
-                op_params(&mut v, op)?;
-            }
-            Ok((Op::Object, v))
-        }
-        Inputs::ReadDb { read_db } => {
-            v.extend([
-                b(read_db.binary),
-                read_db.version as f64,
-                read_db.bytes.len() as f64,
-            ]);
-            v.extend(read_db.bytes.iter().map(|&c| f64::from(c)));
-            Ok((Op::ReadDb, v))
-        }
-    }
-}
-
 fn to_output(flat: Vec<f64>) -> Output {
     Output::new().values("out", flat)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -1617,20 +1390,20 @@ fn gen_op(rng: &mut Rng, c: &CosIn, d: [f64; 4], range: &mut (f64, f64), outside
     }
 }
 
-/// A database record written by upstream `WriteToDB` for a random object, sometimes
-/// with the UV curve type replaced by one that is not a curve.
+/// A database record written by `WriteToDB` (the port's `write_curve`) for a random
+/// object, sometimes with the UV curve type replaced by one that is not a curve.
 fn gen_read_db(rng: &mut Rng) -> Option<Inputs> {
     let (c, _) = gen_cos(rng, false);
     let binary = rng.chance(0.5);
     let version = *rng.choose(&[30u64, 33, 40])?;
-    let mut v = vec![b(binary), version as f64];
-    cos_block(&mut v, &c).ok()?;
-    let out = ffi::eval(Op::WriteDb, &v).ok()?;
-    let (&status, bytes) = out.split_first()?;
-    if status != 0.0 {
-        return None;
-    }
-    let mut bytes: Vec<u8> = bytes.iter().map(|&x| x as u8).collect();
+    let cos = build(&c).ok()?.ok()?;
+    let mut w = DatabaseWriter::open_for_write(if binary {
+        FileType::Binary
+    } else {
+        FileType::Ascii
+    });
+    write_curve(&wrap(&cos), &mut w, version).ok()?;
+    let mut bytes = w.into_bytes();
     if binary {
         // the UV curve type follows the domain (4 doubles) and the breaks flag (an int)
         if rng.chance(0.5) {
@@ -1707,13 +1480,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            let Some(i) = gen_case(rng) else {
-                continue;
-            };
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
+            if let Some(i) = gen_case(rng) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -1726,23 +1493,14 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         let mut v = default_cases(self, &main)?;
-        // AssertValid with native report comparison: their own seed stream (the other
+        // AssertValid report records: their own seed stream (the other
         // generated cases are unchanged); named `avNNNN`
         let av = CaseContext {
             seeds: ctx.seeds.max(ASSERT_VALID_CASES),
             ..ctx.clone()
         };
         for mut c in av.generated_cases("curve.crv_on_surf:assert_valid", |rng| {
-            for _ in 0..64 {
-                let i = gen_assert_valid(rng);
-                let Ok((op, input)) = cpp_input(&i) else {
-                    continue;
-                };
-                if ffi::validate(op, &input).is_ok() {
-                    return serde_json::to_value(i).ok();
-                }
-            }
-            None
+            serde_json::to_value(gen_assert_valid(rng)).ok()
         }) {
             c.name = c.name.replacen("gen", "av", 1);
             c.unit = self.id().to_string();
@@ -1751,16 +1509,8 @@ impl UnitDiff for Runner {
         Ok(v)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&i)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
         rust(&i)
     }
 }
