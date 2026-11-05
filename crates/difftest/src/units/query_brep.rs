@@ -52,7 +52,7 @@ use solidcore::surface::surface::Surface;
 
 use super::query_face_p1::{gen_face_brep, own_model, Model, NoGeometry};
 use super::surface_surface_cache_p1::{harness, srf, BssIn};
-use super::surface_surface_cache_p3::{gen_surf, surf_domain, surface_in, PlaneIn, SurfIn};
+use super::surface_surface_cache_p3::{gen_surf, surf_domain, surface_in, SurfIn};
 use super::surface_surface_p7::{st, Fail};
 use super::topology_edgeuse_p1::{gen_brep, BrepIn};
 use crate::case::CaseContext;
@@ -891,30 +891,14 @@ fn bspline_surface(b: &BssIn) -> bool {
         && contract::clamped(&s.v, s.q).is_some()
 }
 
-/// A bounded plane with axes of squared length in `[1e-6, 1e6]` far from parallel, scales in
-/// `[1e-3, 1e3]`, and an ordered domain of sides at least `1e-6` within `1e4`.
-fn plane(p: &PlaneIn) -> bool {
-    let [lx, ly] = [contract::len_sq(p.x), contract::len_sq(p.y)];
-    let d = p.dom;
-    contract::vec3(&p.o, MAX_COORD)
-        && contract::vec3(&p.x, MAX_COORD)
-        && contract::vec3(&p.y, MAX_COORD)
-        && (1e-6..=1e6).contains(&lx)
-        && (1e-6..=1e6).contains(&ly)
-        && contract::frame(&p.x, &p.y, MAX_COORD)
-        && p.scale.iter().all(|&s| fin(s) && (1e-3..=1e3).contains(&s))
-        && d.iter().all(|&v| fin(v) && v.abs() <= 1e4)
-        && d[2] - d[0] >= 1e-6
-        && d[3] - d[1] >= 1e-6
-}
-
 /// Whether an evaluation keeps the input contract of the C++ reference wrapper
 /// (`crates/solidcore-ffi/src/units/query_brep.rs`, `validate_evaluate`): no surface, or a
-/// B-spline, curve-bounded or plane surface as [`bspline_surface`] and [`plane`] take them.
+/// B-spline, curve-bounded or plane surface as [`bspline_surface`] and [`contract::plane`]
+/// take them.
 fn keeps_contract(i: &EvalIn) -> bool {
     i.surf.as_ref().is_none_or(|s| match s {
         SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => bspline_surface(b),
-        SurfIn::Plane(p) => plane(p),
+        SurfIn::Plane(p) => contract::plane(&p.o, &p.x, &p.y, p.scale, p.dom, MAX_COORD),
     })
 }
 

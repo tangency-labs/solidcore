@@ -41,6 +41,7 @@ use solidcore::surface::surface_cache::{BezierAux2d, SurfaceCacheOptions};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract as contract;
 use crate::runner::default_cases;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -188,13 +189,24 @@ struct Setup {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum OpIn {
-    New { kinds: Vec<i64> },
-    Test { nodes: Vec<usize> },
+    New {
+        kinds: Vec<i64>,
+    },
+    Test {
+        nodes: Vec<usize>,
+    },
     BuildSub,
-    Implant { edges: Vec<usize> },
+    Implant {
+        edges: Vec<usize>,
+    },
     Mark,
     Build,
-    Attr { id: u64, behavior: u8, eu: u64, vu: u64 },
+    Attr {
+        id: u64,
+        behavior: u8,
+        eu: u64,
+        vu: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +242,207 @@ fn srf(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
         SrfIn::File { sms } => read_sms(sms),
         SrfIn::Inline(i) => Ok(i.clone()),
     }
+}
+
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest control point index of a surface direction.
+const MAX_INDEX: usize = 24;
+/// The largest surface degree.
+const MAX_DEGREE: usize = 5;
+/// The largest magnitude of a coordinate, knot or scalar.
+const MAX_COORD: f64 = 1e6;
+/// The most tree nodes.
+const MAX_NODES: usize = 256;
+/// The most loops of a poly B-rep.
+const MAX_LOOPS: usize = 8;
+/// The most points of a poly B-rep loop.
+const MAX_LOOP_POINTS: usize = 64;
+/// The largest id, label or index the wrapper passes on.
+const MAX_ID: u64 = 1_000_000;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+fn non_negative(v: f64) -> bool {
+    fin(v) && v >= 0.0
+}
+
+/// The domain of a B-spline surface within the size bounds, with a full net of finite
+/// points of one rationality (weights in `[1e-3, 1e3]`) and clamped knots within range.
+fn bspline_surface(b: &BssIn) -> Option<[f64; 4]> {
+    let s = srf(&b.srf).ok()?;
+    let n = s.net.len().checked_sub(1)?;
+    let m = s.net.first()?.len().checked_sub(1)?;
+    let (r, q_) = (s.u.len().checked_sub(1)?, s.v.len().checked_sub(1)?);
+    let w0 = s.net.first()?.first()?[3];
+    let ok = b.form <= 11
+        && s.net.iter().all(|row| row.len() == m + 1)
+        && n <= MAX_INDEX
+        && m <= MAX_INDEX
+        && s.p <= MAX_DEGREE
+        && s.q <= MAX_DEGREE
+        && r <= MAX_INDEX + MAX_DEGREE + 1
+        && q_ <= MAX_INDEX + MAX_DEGREE + 1
+        && (1..=n).contains(&s.p)
+        && (1..=m).contains(&s.q)
+        && r == n + s.p + 1
+        && q_ == m + s.q + 1
+        && s.net.iter().flatten().all(|&[x, y, z, w]| {
+            [x, y, z].iter().all(|&c| fin(c))
+                && (w == NOW) == (w0 == NOW)
+                && (w == NOW || (1e-3..=1e3).contains(&w))
+        })
+        && s.u.iter().chain(&s.v).all(|&k| fin(k));
+    let (u0, u1) = contract::clamped(&s.u, s.p)?;
+    let (v0, v1) = contract::clamped(&s.v, s.q)?;
+    ok.then_some([u0, v0, u1, v1])
+}
+
+/// An ordered finite domain inside `outer` (and, when `strict`, not smaller than `1e-6` of
+/// it in either direction).
+fn domain_in(d: [f64; 4], outer: [f64; 4], strict: bool) -> bool {
+    let o = outer;
+    d.iter().all(|&v| fin(v))
+        && d[0] <= d[2]
+        && d[1] <= d[3]
+        && d[0] >= o[0]
+        && d[1] >= o[1]
+        && d[2] <= o[2]
+        && d[3] <= o[3]
+        && !(strict && (d[2] - d[0] < 1e-6 * (o[2] - o[0]) || d[3] - d[1] < 1e-6 * (o[3] - o[1])))
+}
+
+/// The edge count of a poly B-rep of non-negative tolerances, a label up to [`MAX_ID`] and
+/// one to [`MAX_LOOPS`] loops of three to [`MAX_LOOP_POINTS`] finite points with
+/// non-negative tolerances.
+fn poly_edges(p: &PolyIn) -> Option<usize> {
+    let ok = non_negative(p.brep_tol)
+        && non_negative(p.face_tol)
+        && p.label <= MAX_ID
+        && (1..=MAX_LOOPS).contains(&p.loops.len())
+        && p.loops.iter().all(|l| {
+            non_negative(l.etol)
+                && (3..=MAX_LOOP_POINTS).contains(&l.pts.len())
+                && l.pts
+                    .iter()
+                    .all(|&[x, y, z, t]| fin(x) && fin(y) && fin(z) && non_negative(t))
+        });
+    ok.then(|| p.loops.iter().map(|l| l.pts.len()).sum())
+}
+
+/// Whether a tree keeps the contract: at most [`MAX_NODES`] nodes with links inside the
+/// tree, aux types 4 or 6, split, class and domain bounds, node 0 the root, and every node
+/// reached once from it through pairs of distinct children that point back.
+fn tree_ok(tree: &[NodeIn], dom: [f64; 4]) -> bool {
+    let n = tree.len();
+    if n > MAX_NODES {
+        return false;
+    }
+    if n == 0 {
+        return true;
+    }
+    let link = |v: i64| (-1..n as i64).contains(&v);
+    let nodes = tree.iter().all(|t| {
+        link(t.parent)
+            && link(t.c1)
+            && link(t.c2)
+            && matches!(t.aux, 4 | 6)
+            && t.split <= 2
+            && t.class <= 3
+            && domain_in(t.dom, dom, false)
+    });
+    if !nodes || tree.first().map(|t| t.parent) != Some(-1) {
+        return false;
+    }
+    let mut seen = vec![false; n];
+    let mut stack = vec![0usize];
+    while let Some(k) = stack.pop() {
+        let (Some(s), Some(t)) = (seen.get_mut(k), tree.get(k)) else {
+            return false;
+        };
+        if *s {
+            return false;
+        }
+        *s = true;
+        match (t.c1, t.c2) {
+            (-1, -1) => {}
+            (a, b) if a >= 0 && b >= 0 && a != b => {
+                for c in [a as usize, b as usize] {
+                    if tree.get(c).map(|l| l.parent) != Some(k as i64) {
+                        return false;
+                    }
+                    stack.push(c);
+                }
+            }
+            _ => return false,
+        }
+    }
+    seen.iter().all(|&s| s)
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/query_tess.rs`, `validate`): the attribute op's id and
+/// behavior bounds; otherwise a setup with a plane ([`contract::plane`]) or a B-spline
+/// surface ([`bspline_surface`]), finite options, a driver kind up to 2, a poly B-rep as
+/// [`poly_edges`] takes it, a tree as [`tree_ok`] takes it, the state's containment and
+/// domain, and each op's needs (a driver where upstream reads it unchecked, a tree, or none
+/// for a subdivision build, a poly B-rep, node and edge indices in range).
+fn keeps_contract(i: &Inputs) -> bool {
+    if let OpIn::Attr {
+        id,
+        behavior,
+        eu,
+        vu,
+    } = &i.op
+    {
+        return *id <= MAX_ID && *behavior <= 4 && *eu <= MAX_ID && *vu <= MAX_ID;
+    }
+    let Some(s) = &i.setup else {
+        return false;
+    };
+    let dom = match (&s.plane, &s.srf) {
+        (Some(p), _) => {
+            contract::plane(&p.o, &p.x, &p.y, p.scale, p.dom, MAX_COORD).then_some(p.dom)
+        }
+        (None, Some(b)) => bspline_surface(b),
+        (None, None) => None,
+    };
+    let Some(dom) = dom else {
+        return false;
+    };
+    let d = &s.driver;
+    let edges = s.poly.as_ref().map(poly_edges);
+    let n = s.tree.len();
+    let setup = s.opts.iter().all(|&v| fin(v))
+        && d.kind <= 2
+        && d.view
+            .iter()
+            .chain([&d.sil_ch, &d.sil_ang])
+            .chain(&d.opts)
+            .all(|&v| fin(v))
+        && edges.is_none_or(|e| e.is_some())
+        && tree_ok(&s.tree, dom)
+        && s.state.containment <= 2
+        && s.state.dom.is_none_or(|sd| domain_in(sd, dom, true));
+    let edges = edges.flatten();
+    setup
+        && match &i.op {
+            OpIn::New { kinds } => {
+                kinds.len() <= 16 && kinds.iter().all(|&k| (0..=MAX_ID as i64).contains(&k))
+            }
+            OpIn::Test { nodes } => {
+                d.kind != 0 && n > 0 && nodes.len() <= 8 && nodes.iter().all(|&k| k < n)
+            }
+            OpIn::BuildSub => d.kind != 0 && n == 0,
+            OpIn::Implant { edges: es } => {
+                edges.is_some_and(|e| n > 0 && es.len() <= 16 && es.iter().all(|&k| k < e))
+            }
+            OpIn::Mark => edges.is_some() && n > 0,
+            OpIn::Build => d.kind != 0,
+            OpIn::Attr { .. } => true,
+        }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -350,7 +563,8 @@ fn poly_of(k: &Kernel, p: &PolyIn) -> Result<(PolyBrep, Vec<PolyEdgeId>), Harnes
     let sh = b.add_shell(r).map_err(|e| hs(&e))?;
     let f = b.add_face(k, sh, p.face_tol, None).map_err(|e| hs(&e))?;
     let label = (p.label > 0).then_some(ObjectKey(p.label));
-    b.face_set_original_face(f, label, false, None).map_err(|e| hs(&e))?;
+    b.face_set_original_face(f, label, false, None)
+        .map_err(|e| hs(&e))?;
     let mut edges = Vec::new();
     for l in &p.loops {
         let mut vs = Vec::new();
@@ -364,7 +578,9 @@ fn poly_of(k: &Kernel, p: &PolyIn) -> Result<(PolyBrep, Vec<PolyEdgeId>), Harnes
         // each point to the next, the last back to the first
         let next = vs.iter().cycle().skip(1);
         for (&(v0, p0), &(_, p1)) in vs.iter().zip(next) {
-            let e = b.add_poly_edge(k, lp, l.etol, p0, p1, v0).map_err(|e| hs(&e))?;
+            let e = b
+                .add_poly_edge(k, lp, l.etol, p0, p1, v0)
+                .map_err(|e| hs(&e))?;
             edges.push(e);
         }
         b.finish_poly_edge_loop(lp).map_err(|e| hs(&e))?;
@@ -486,10 +702,7 @@ fn dump(c: &mut TessSrfCache, edges: &[PolyEdgeId], out: Output) -> Result<Outpu
             let surf = match a.surface {
                 None => -1,
                 Some(TessHandle::CacheSurface) => -3,
-                Some(h) => subs
-                    .iter()
-                    .position(|&s| s == h)
-                    .map_or(-2, |p| p as i64),
+                Some(h) => subs.iter().position(|&s| s == h).map_or(-2, |p| p as i64),
             };
             ni.push(surf);
             ni.push(i64::from(u8::from(aux.chord_height_satisfied)));
@@ -497,10 +710,9 @@ fn dump(c: &mut TessSrfCache, edges: &[PolyEdgeId], out: Output) -> Result<Outpu
             ni.push(aux.poly_edge_list.len() as i64);
             for h in &aux.poly_edge_list {
                 let k = match h {
-                    TessHandle::PolyEdge(e) => edges
-                        .iter()
-                        .position(|x| x == e)
-                        .map_or(-2, |p| p as i64),
+                    TessHandle::PolyEdge(e) => {
+                        edges.iter().position(|x| x == e).map_or(-2, |p| p as i64)
+                    }
                     _ => -2,
                 };
                 ni.push(k);
@@ -604,13 +816,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         min_side_length_ratio_uv: o[4],
         aspect_ratio_3d: o[5],
     };
-    let mut c = TessSrfCache::new(
-        FACE_KEY,
-        surface,
-        poly,
-        driver_of(&s.driver),
-        opts,
-    );
+    let mut c = TessSrfCache::new(FACE_KEY, surface, poly, driver_of(&s.driver), opts);
     put_tree(&mut c, &s.tree)?;
     {
         let b = c.base_mut();
@@ -685,13 +891,13 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                     Ok(t) => {
                         st.push(0);
                         res.push(flag(t.needs_subdivision));
-                        res.push(if t.direction
-                            == solidcore::nurbs::b_spline_surface::SurfParamType::U
-                        {
-                            0.0
-                        } else {
-                            1.0
-                        });
+                        res.push(
+                            if t.direction == solidcore::nurbs::b_spline_surface::SurfParamType::U {
+                                0.0
+                            } else {
+                                1.0
+                            },
+                        );
                     }
                     Err(e) => {
                         let _ = record(Err(e), &mut st);
@@ -830,8 +1036,18 @@ fn gen_plane(rng: &mut Rng, scale: f64) -> PlaneIn {
             rng.uniform(-1.0, 1.0),
         ]
     };
-    let x = if rng.chance(0.5) { [1.0, 0.0, 0.0] } else { v(rng) }.map(|c| c * scale);
-    let y = if rng.chance(0.5) { [0.0, 1.0, 0.0] } else { v(rng) }.map(|c| c * scale);
+    let x = if rng.chance(0.5) {
+        [1.0, 0.0, 0.0]
+    } else {
+        v(rng)
+    }
+    .map(|c| c * scale);
+    let y = if rng.chance(0.5) {
+        [0.0, 1.0, 0.0]
+    } else {
+        v(rng)
+    }
+    .map(|c| c * scale);
     let o = v(rng).map(|c| c * 5.0 * scale);
     let (a, b) = (rng.uniform(-2.0, 2.0), rng.uniform(-2.0, 2.0));
     PlaneIn {
@@ -951,12 +1167,7 @@ fn gen_poly(rng: &mut Rng, dom: [f64; 4]) -> PolyIn {
             .map(|j| {
                 let a = (j as f64 + phase) / k as f64 * std::f64::consts::TAU;
                 let r = if star && j % 2 == 1 { 0.5 } else { 1.0 } * scale;
-                [
-                    c[0] + r * a.cos() * lu,
-                    c[1] + r * a.sin() * lv,
-                    0.0,
-                    tol,
-                ]
+                [c[0] + r * a.cos() * lu, c[1] + r * a.sin() * lv, 0.0, tol]
             })
             .collect();
         if rev {
@@ -1119,8 +1330,16 @@ fn gen_case(rng: &mut Rng) -> Inputs {
             op: OpIn::Attr {
                 id: rng.below(2000),
                 behavior: rng.below(5) as u8,
-                eu: if rng.chance(0.3) { 0 } else { 1 + rng.below(1000) },
-                vu: if rng.chance(0.3) { 0 } else { 1 + rng.below(1000) },
+                eu: if rng.chance(0.3) {
+                    0
+                } else {
+                    1 + rng.below(1000)
+                },
+                vu: if rng.chance(0.3) {
+                    0
+                } else {
+                    1 + rng.below(1000)
+                },
             },
             setup: None,
         },
@@ -1204,7 +1423,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        let i = (0..64).map(|_| gen_case(rng)).find(keeps_contract)?;
+        serde_json::to_value(i).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1258,10 +1478,8 @@ mod tests {
         // whose child is itself. The FFI refuses the tree, so the runner never hands it
         // to the port; run directly, `mark_face_containment` used to descend the cycle
         // forever and now returns an error status.
-        let corpus: Value = serde_json::from_str(include_str!(
-            "../../tests/fuzz_corpus/query.tess.json"
-        ))
-        .unwrap();
+        let corpus: Value =
+            serde_json::from_str(include_str!("../../tests/fuzz_corpus/query.tess.json")).unwrap();
         for name in ["fuzz00241_rust_hang", "fuzz00353_rust_hang"] {
             let case = corpus["cases"]
                 .as_array()
@@ -1283,10 +1501,15 @@ mod tests {
         for seed in 0..MIN_GENERATED as u64 {
             let mut rng = Rng::new(0x7e55_0000 + seed);
             let i = gen_case(&mut rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             let op = i.op.kind();
             let out = rust(&i).expect("harness");
             if let Some(d) = &out.deferred {
-                *tally.entry(format!("{op:?}:deferred:{}", d.unit)).or_default() += 1;
+                *tally
+                    .entry(format!("{op:?}:deferred:{}", d.unit))
+                    .or_default() += 1;
                 continue;
             }
             let st = out.ints.get("status").cloned().unwrap_or_default();

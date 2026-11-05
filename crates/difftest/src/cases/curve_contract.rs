@@ -214,3 +214,30 @@ pub fn transform(
         && vec3(&s, max)
         && (scale.is_none() || s.iter().all(|c| (1e-3..=1.0).contains(&c.abs())))
 }
+
+/// Whether a bounded plane `SmPlane(o, x, y, scale, dom)` keeps the contract: finite data,
+/// axes of squared length in `[1e-6, 1e6]` far from parallel, scales in `[1e-3, 1e3]`, and
+/// an ordered domain of sides at least `1e-6` within `1e4`.
+#[must_use]
+pub fn plane(
+    o: &[f64; 3],
+    x: &[f64; 3],
+    y: &[f64; 3],
+    scale: [f64; 2],
+    dom: [f64; 4],
+    max: f64,
+) -> bool {
+    let [lx, ly] = [len_sq(*x), len_sq(*y)];
+    vec3(o, max)
+        && vec3(x, max)
+        && vec3(y, max)
+        && (1e-6..=1e6).contains(&lx)
+        && (1e-6..=1e6).contains(&ly)
+        && frame(x, y, max)
+        && scale
+            .iter()
+            .all(|&s| finite(s, max) && (1e-3..=1e3).contains(&s))
+        && dom.iter().all(|&v| finite(v, max) && v.abs() <= 1e4)
+        && dom[2] - dom[0] >= 1e-6
+        && dom[3] - dom[1] >= 1e-6
+}
