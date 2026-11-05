@@ -808,3 +808,364 @@ why = "the exact surface extension replaces the fitted one (geometry; plan/findi
 unit = "blend.fillet_executive_p3"
 case = "source-file-corner_box-edge9"
 why = "the fillet's insertion splits body edge 11 where it passes the classified point (7.68e-7 away) instead of at TParam (1.01e-6 away), both within the edge's 1e-5 (#2735, WR-751); the split edge's interval end moves 2.48e-7 relative and its samples with it (plan/findings/blend.fillet_executive_p3--corner-box-edge9-split-nearest-point.md)"
+
+# The trims' lowest v is the only integration base (#1556; plan/findings/mass.integrator--trim-base-v-default-moves-cases-2026-11-05.md): 72 cases whose precise properties move.
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-cylinder-edge0-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[7]: cpp=7.853995896885836e1 rust=7.853991085169494e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-cylinder-edge1-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[9]: cpp=5.02655920414641e1 rust=5.0265542945179476e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-cylinder-edge2-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[9]: cpp=7.853995896885836e1 rust=7.853991085169494e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-chamfer-cylinder-d1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[5]: cpp=2.6973044473151754e2 rust=2.697304439752895e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-circular-cylinder-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[11]: cpp=5.0265592041633944e1 rust=5.026554294509066e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-step-edge9-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[21]: cpp=1.5021461017313925e2 rust=1.5021460877061148e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-step-edge14-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[33]: cpp=5.0214606229607625e1 rust=5.021460210495626e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-pocket-edge12-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[45]: cpp=5.0214582716067156e1 rust=5.021460125221522e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-pocket-edge16-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[9]: cpp=3.002145993696299e2 rust=3.0021460024310454e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-pocket-edge20-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[9]: cpp=3.0021460270188925e2 rust=3.002146034239949e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-cylinder-arc-round-seam-opposite-r2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[37]: cpp=3.1415983587560464e2 rust=3.1415964340670575e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-box-cylinder-arc-round-seam-three-quarter-r2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[37]: cpp=3.1415983587560464e2 rust=3.1415964340670575e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "big-rad-filleted_box-r1.0-top-edges"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=5.642389444081521e2 rust=5.642389452105376e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-issue-1485-plate-cylinder-circular-r2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=1.2566393435027599e3 rust=1.2566385736266745e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-issue-1485-plate-cylinder-circular-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=1.2566393435027599e3 rust=1.2566385736266745e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "attributed-issue-1485-plate-cylinder-circular-r1_5"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=1.2566393435027599e3 rust=1.2566385736266745e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-half-arc-rim-0-setbacks-1-2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.688314897972207e2 rust=8.688314926028892e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-half-arc-rim-0-setbacks-1-1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.688314897972207e2 rust=8.688314926028892e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-half-arc-rim-1-setbacks-1-2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.688314897972207e2 rust=8.688314926028892e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-half-arc-rim-1-setbacks-1-1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.688314897972207e2 rust=8.688314926028892e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-half-arc-rim-whole-offsets-1-1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.434451624958591e2 rust=8.434451635566883e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-half-arc-rim-whole-offsets-1.4437-1.4437"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.311541560390416e2 rust=8.31154161533506e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-half-arc-rim-whole-offsets-1-2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.351544750444693e2 rust=8.351544793732425e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-tilted-cylinder-rim-setbacks-1-2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.013349255927425e2 rust=8.013349165536413e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-tilted-cylinder-rim-setbacks-1-1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.261560341569118e2 rust=8.261560182477533e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-tilted-cylinder-rim-offsets-1-1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.434377561060625e2 rust=8.434377375317813e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue-880-tilted-cylinder-rim-offsets-1-2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=8.326542194355454e2 rust=8.326542036670679e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge1-blend-curve-g2-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.885004141170371e3 rust=1.8850041345274908e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge1-blend-curve-g1-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.885004141170371e3 rust=1.8850041345274908e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge1-variable-constant-law-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.5708143364041498e3 rust=1.5708131700385889e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge1-constant-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.5708143364041498e3 rust=1.5708131700385889e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge1-blend-curve-g2-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.6443686776155464e3 rust=1.6443383125843238e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge1-blend-curve-g1-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.5838378984478904e3 rust=1.5838075325800214e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge1-variable-constant-law-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.571191951465508e3 rust=1.5711909743451035e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge1-constant-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.571191951465508e3 rust=1.5711909743451035e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge2-blend-curve-g2-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.885004141170371e3 rust=1.8850041345274908e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge2-blend-curve-g1-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.885004141170371e3 rust=1.8850041345274908e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge2-variable-constant-law-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.5708139421361416e3 rust=1.5708139388168038e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge2-constant-r10.0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.5708139421361416e3 rust=1.5708139388168038e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge2-blend-curve-g2-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.6443375722831634e3 rust=1.6443136491789805e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue919-cylinder-rim-edge2-blend-curve-g1-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.583775700867363e3 rust=1.5837860453632568e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge2-variable-constant-law-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.571191116649185e3 rust=1.5711911133296603e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "issue920-cylinder-rim-edge2-constant-r9.99"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.571191116649185e3 rust=1.5711911133296603e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_w_slot-all-edges"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=5.914378122577172e0 rust=5.914378713807245e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-all-edges"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.9135582676849514e0 rust=-1.9135582631395527e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-rollover_corner-all-edges"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=5.9976593672650306e4 rust=5.997659464579392e4); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-cylinder-all-edges"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=4.7125142686964665e2 rust=4.7125142520931996e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-cylinder-seam-edge0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=4.7125142686964665e2 rust=4.7125142520931996e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-cylinder-rim-edge1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=4.5731342454559507e2 rust=4.5731903396516105e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-cylinder-rim-edge2"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=4.5731903336298035e2 rust=4.5731903588695343e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-box-union-edge1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.395707956751693e3 rust=1.3957079619444519e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-box-union-edge7"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.3957079749831275e3 rust=1.3957079718801049e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-box-union-edge14"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.3957079567593162e3 rust=1.3957079631509484e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r0.5-edge0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.9135695107901447e0 rust=-1.913569506244614e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r0.5-edge6"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.9128751509149495e0 rust=-1.9128751463697558e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r0.5-edge12"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.9138498248747207e0 rust=-1.9138498203292256e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r0.5-edge14"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[4]: cpp=-9.648096546130106e-1 rust=-9.648096593304284e-1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r2.0-edge0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.913770889695015e0 rust=-1.913770885148966e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r2.0-edge6"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.902693395576049e0 rust=-1.9026933910323975e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r2.0-edge12"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.918339349447699e0 rust=-1.9183393449009367e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "source-file-box_diff_cyl_big_rad-r2.0-edge14"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-1.9089426411508577e0 rust=-1.9089426103118625e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-union-inset-side-step-edges13-17-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[1]: cpp=2.6028651052250393e3 rust=2.602865112893179e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-union-inset-side-step-edges14-15-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.2528147718412522e3 rust=1.2528147598964154e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-union-inset-side-step-edges14-18-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.2549607950685872e3 rust=1.2549607544714456e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-union-inset-side-step-edges16-17-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[1]: cpp=2.6032943661133745e3 rust=2.6032943611180067e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs3-union-inset-side-step-edges16-18-r1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.2541023838416047e3 rust=1.2541023592889749e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-Heart-all-edges-r0.1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[3]: cpp=-4.333409558785982e-2 rust=-4.333409028689806e-2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-brepForFillet2-e5-r0.5"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.4402511167401567e3 rust=1.4402511115516431e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-brepForFillet2-e7-r0.5"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.4344468363075487e3 rust=1.4344468298713973e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "stubs4-degenerate-brepForFillet2-e9-r0.5"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.440267121365471e3 rust=1.4402671161768908e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "sweep4-sphere_diff_3cylinders-all-r0.1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=3.823683329993967e4 rust=3.823647707223819e4); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p3"
+case = "sweep4-brepForFillet2-all-r0.1"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.mass_properties[0]: cpp=1.4335193835782356e3 rust=1.433519378996719e3); main with the domain's base passes it"

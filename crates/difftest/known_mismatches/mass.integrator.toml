@@ -1,0 +1,289 @@
+# Known mismatches of mass.integrator (format: crates/difftest/src/known.rs).
+
+# The trims' lowest v is the only integration base (#1556; plan/findings/mass.integrator--trim-base-v-default-moves-cases-2026-11-05.md): 38 cases on bounded faces, within the requested accuracy on both sides.
+[[mismatch]]
+unit = "mass.integrator"
+case = "disk_face_area_eps1e-06"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853981667916758e-1 rust=7.853981721493388e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "disk_face_centroid_eps1e-06"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853981606601437e-1 rust=7.853981629120825e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "disk_brep_area_eps1e-06"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853981667916758e-1 rust=7.853981721493388e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "annulus_face_area_eps1e-06"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597344606562352e-1 rust=6.597344631539714e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "annulus_face_centroid_eps1e-06"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597344547738021e-1 rust=6.597344570340894e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "annulus_brep_area_eps1e-06"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597344606562352e-1 rust=6.597344631539714e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation0_flags3"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[3]: cpp=-1.6493361681648178e-1 rust=-1.649336165948741e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation1_flags3"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[3]: cpp=-1.6493361681648178e-1 rust=-1.649336165948741e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[2]: cpp=-2.9059732315297954e-1 rust=-2.9059732223617346e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[2]: cpp=-2.9059732315297954e-1 rust=-2.9059732223617346e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation0_flags3"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.854231050186571e-1 rust=7.854140020563323e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation1_flags3"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.854231050186571e-1 rust=7.854140020563323e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853978604653888e-1 rust=7.853991646471536e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853978604653888e-1 rust=7.853991646471536e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.001_orientation0_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853934955010916e-1 rust=7.854027880729091e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.001_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.854043854258602e-1 rust=7.854103471101329e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.001_orientation1_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853934955010916e-1 rust=7.854027880729091e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.001_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.854043854258602e-1 rust=7.854103471101329e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.0001_orientation0_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.854000366462612e-1 rust=7.853991085202785e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.0001_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853994690675159e-1 rust=7.853987660612088e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.0001_orientation1_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.854000366462612e-1 rust=7.853991085202785e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.0001_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853994690675159e-1 rust=7.853987660612088e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps1e-06_orientation0_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853981827437269e-1 rust=7.853981721493386e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps1e-06_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[3]: cpp=-9.503317796851434e-1 rust=-9.50331781843743e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps1e-06_orientation1_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=7.853981827437269e-1 rust=7.853981721493386e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps1e-06_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[3]: cpp=-9.503317796851434e-1 rust=-9.50331781843743e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.001_orientation0_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597283879895861e-1 rust=6.597382172833062e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.001_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.59739231914306e-1 rust=6.59746322332375e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.001_orientation1_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597283879895861e-1 rust=6.597382172833062e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.001_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.59739231914306e-1 rust=6.59746322332375e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.0001_orientation0_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597361066971066e-1 rust=6.597331516226472e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.0001_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597355274010016e-1 rust=6.597347909130447e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.0001_orientation1_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597361066971066e-1 rust=6.597331516226472e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.0001_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597355274010016e-1 rust=6.597347909130447e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps1e-06_orientation0_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597344756021939e-1 rust=6.597344631539711e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps1e-06_orientation0_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[2]: cpp=-9.038362033346841e-1 rust=-9.03836204411831e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps1e-06_orientation1_flags1"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[0]: cpp=6.597344756021939e-1 rust=6.597344631539711e-1)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps1e-06_orientation1_flags63"
+why = "the iso-u integrals start at the trims' lowest v, not the face UV domain's (#1556): the Runge-Kutta steps differ and the result moves within the requested accuracy, both sides holding it against the closed form (values.out[2]: cpp=-9.038362033346841e-1 rust=-9.03836204411831e-1)"
+
+# WR-563 (plan/upstream-issues/WR-563--addendum-2026-11-05-trim-base-v-default.md): 16 cases unbounded or half-open in v, where the C++ is wrong.
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps1e-06_orientation0_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=7.857377377804369e-1 rust=7.853981643758157e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps1e-06_orientation1_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=7.857377377804369e-1 rust=7.853981643758157e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps1e-06_orientation0_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps1e-06_orientation1_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation0_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=2.19905123176286e1 rust=7.854140020563323e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation1_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=2.19905123176286e1 rust=7.854140020563323e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation0_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation1_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps1e-06_orientation0_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=7.857377377804369e-1 rust=7.853981643758157e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps1e-06_orientation1_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=7.857377377804369e-1 rust=7.853981643758157e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps1e-06_orientation0_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps1e-06_orientation1_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation0_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=2.19905123176286e1 rust=7.854140020563323e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation1_flags3"
+cpp_defect = "WR-563"
+why = "the C++ area is a small difference of large terms (values.out[0]: cpp=2.19905123176286e1 rust=7.854140020563323e-1, exact pi/4 = 0.7853981633974483)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation0_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation1_flags63"
+cpp_defect = "WR-563"
+why = "the C++ fails with status 1001 and no values (its iso-u integrals start 1.2e6 below the disk, the moments' error scales cannot be met); solidcore returns all 26 components"

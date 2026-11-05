@@ -23,3 +23,269 @@ case = "rotational_sweep_region_swept_whole"
 libc = "glibc"
 cpp_defect = "ND-491"
 why = "C++ heap-layout dependent (ND-491): SM_ERR in some runs, success equal to the Rust result in others; --heap-pads flags it unstable (in-process)"
+
+# The trims' lowest v is the only integration base (#1556; plan/findings/mass.integrator--trim-base-v-default-moves-cases-2026-11-05.md): 53 cases whose precise properties move.
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=1.2566393434996815e1 rust=1.2566385736280065e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_corner_union"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=2.827438522876846e1 rust=2.8274367906619062e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_cylinder_cylinder_tee_union"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[7]: cpp=1.2566393434996806e1 rust=1.2566385736280067e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_cylinder_cylinder_tee_difference"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[7]: cpp=1.2566393434996806e1 rust=1.2566385736280067e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_cylinder_cylinder_tee_intersection"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[13]: cpp=7.068596307179281e0 rust=7.068591976660313e0); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_reference"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=1.2566393434996815e1 rust=1.2566385736280065e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_standalone_copy"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=1.2566393434996815e1 rust=1.2566385736280065e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_standalone_reference"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[49]: cpp=1.2566393434996815e1 rust=1.2566385736280065e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_temp"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[5]: cpp=1.256639343499679e1 rust=1.2566385736280065e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_keep_other"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[145]: cpp=1.2566393434996797e1 rust=1.2566385736280067e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_keep_other_copy"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[145]: cpp=1.2566393434996797e1 rust=1.2566385736280067e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_classify_default"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[153]: cpp=1.2566393434996797e1 rust=1.2566385736280067e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_classify_default_copy"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.attributes[153]: cpp=1.2566393434996797e1 rust=1.2566385736280067e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1036_coincident_skins_intersection_measured"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[4]: cpp=7.541618570281661e2 rust=7.541618239255179e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1519_bench_tubes_union_measured"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[7]: cpp=8.042489855387001e2 rust=8.042487111755097e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2177_crescent_on_top_of_rim_measured"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[5]: cpp=6.381552855260678e1 rust=6.381551531190245e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2177_crescent_on_top_of_rim_booleaned_measured"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.measures[9]: cpp=3.141598358303025e2 rust=3.1415964340670587e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "b2d_disk_sheet_union"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.2513272176716103e2 rust=1.2513273103265647e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "b2d_disk_sheet_exclusive_or"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=2.5132736430214027e1 rust=2.5132734375659314e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "b2d_disk_sheet_merge"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=2.5132736430214027e1 rust=2.5132734375659314e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "sweep_disk_no_stitch"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.2566393434996808e1 rust=1.2566385736280072e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_face0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.9634834070639116e1 rust=1.96249561516088e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_edge"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=7.853978924222086e1 rust=7.853982869698491e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_sheet"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.1780849114851733e1 rust=1.1780885819068324e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_disk_no_stitch"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.2566393434996801e1 rust=1.256638573628006e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_region_null_face0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=7.853933628267094e1 rust=7.849982460612205e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_region_swept_face0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=7.853933628267094e1 rust=7.849982460612205e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_sweep_disk_no_stitch"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.2566393434996808e1 rust=1.2566385736280072e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_face0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.9634834070639116e1 rust=1.96249561516088e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_edge"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=7.853978924222086e1 rust=7.853982869698491e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_region_null_face0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=7.853933628267094e1 rust=7.849982460612205e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_region_swept_face0"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=7.853933628267094e1 rust=7.849982460612205e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_face0_reference"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.9634834070639116e1 rust=1.96249561516088e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_face0_standalone_copy"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.9634834070639116e1 rust=1.96249561516088e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_face0_standalone_reference"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.9634834070639116e1 rust=1.96249561516088e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_face0_temp"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.9634834070639116e1 rust=1.96249561516088e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_sweep_disk_no_stitch_reference"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.2566393434996808e1 rust=1.2566385736280072e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0021"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.021291798183876e1 rust=1.021291172496735e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0033"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=3.523639512726349e-5 rust=3.5236393636520196e-5); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0040"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.2331425122745816e1 rust=1.2331412178947371e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0052"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=2.024836500498853e-5 rust=2.024835266175723e-5); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0055"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.4447159004608585e2 rust=1.4447150153613674e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0063"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[3]: cpp=3.3404123636334766e1 rust=3.340410207871945e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0069"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.1027512272327249e2 rust=1.1027505516367255e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0083"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=5.728109135398694e3 rust=5.728105626089711e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0101"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[2]: cpp=4.690797258157244e1 rust=4.690820816319683e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0111"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[2]: cpp=4.868086763858737e3 rust=4.868083847728114e3); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0112"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=2.6692200972432826e1 rust=2.669218461960208e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0119"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=1.2023887163564007e2 rust=1.2023885366900666e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0124"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=7.963184748069243e2 rust=7.963185322717948e2); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0126"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=4.994343384675034e1 rust=4.994341089851702e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0130"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[1]: cpp=8.205601696153362e1 rust=8.205596669026981e1); main with the domain's base passes it"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0158"
+why = "precise properties start each iso-u integral at the trims' lowest v, not the face UV domain's (#1556): the same integral by a different adaptive step sequence, so the value moves within the integration's error (values.areas[2]: cpp=1.1742889229437455e2 rust=1.1742882035204224e2); main with the domain's base passes it"
