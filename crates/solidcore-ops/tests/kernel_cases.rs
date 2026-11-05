@@ -18,7 +18,7 @@
 //! The corpus's rules: `transform` is a copy, then the copy moved in place; `tagged` changes no
 //! geometry and its history is not graded; picks are record indices, passed to the operations
 //! with the body's record [`Order`] (the one face index convention).
-//! Shell, face offset and thicken copy their inputs before editing, as SolidCraft does.
+//! Shell, face offset, thicken and stitch copy their inputs before editing, as SolidCraft does.
 //! A copy gets its own entity IDs; an existing pick order follows the kernel's copy map.
 //!
 //! The test is `#[ignore]`d, out of the workspace run: run it with `--ignored`.
@@ -53,6 +53,7 @@ use solidcore_ops::blend::{
     blend, chamfer_sides_ordered, edge_faces_along_ordered, Blend, ChamferSecond, Corners,
 };
 use solidcore_ops::boolean::{boolean, BooleanOp};
+use solidcore_ops::stitch::stitch;
 use solidcore_ops::sweep::{extrude, loft, revolve, Curve, DraftCorner};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
 use solidcore_record::brep::Brep as Record;
@@ -77,6 +78,7 @@ const PORTED: &[&str] = &[
     "loft",
     "blend_dropping",
     "chamfer_sides",
+    "stitch",
 ];
 
 /// The relative tolerance the rig grades volume and area with when a case states none.
@@ -479,6 +481,14 @@ fn call_with_copy(
             }
             let r = blend(&s.body, kind, &unique, &each, &[], Corners::Filled).map(|_| ());
             in_place(Slot { order: None, ..s }, r)
+        }
+        "stitch" => {
+            let s = copy_for_edit(&first()?)?;
+            let t = p["tolerance"].as_f64().ok_or_else(|| bad("tolerance"))?;
+            let body = Arc::try_unwrap(s.body)
+                .map_err(|_| Stop::Fail("copy before stitch: the copy is shared".to_owned()))?;
+            // whether the result closed into a solid is not traced: the body is the output
+            made(stitch(body, t).map(|(b, _closed)| b))
         }
         other => {
             return Err(Stop::Fail(format!(
@@ -1291,9 +1301,9 @@ fn two_squares() -> (PathBuf, Value, Slot) {
 #[test]
 fn a_stitch_sews_a_copy_at_the_traced_tolerance() {
     let (entry, e, input) = two_squares();
-    let stitch = &e["calls"][1];
-    assert_eq!(stitch["op"], "stitch");
-    let out = call(stitch, &mut [input.clone()]).unwrap().unwrap();
+    let step = &e["calls"][1];
+    assert_eq!(step["op"], "stitch");
+    let out = call(step, &mut [input.clone()]).unwrap().unwrap();
     // the shared edge is one edge of both faces, and its two vertex pairs are one each
     assert_eq!(out.body.counts().unwrap(), [2, 7, 6]);
     assert_eq!(input.body.counts().unwrap(), [2, 8, 8]);
