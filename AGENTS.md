@@ -65,7 +65,10 @@ ask the maintainers on the area's hub issue before you build.
 **Show the problem first, then research it.** Before you build a fix, show the person you work
 for what you are solving: a schematic of the problem drawn in VectorCraft (house style:
 [docs/agent-style.md](docs/agent-style.md#figures)), or a rendition of the failing case, next to
-what the correct result is. Then find how the problem is solved in the literature: search for
+what the correct result is. For a body in an `.smb` file,
+`cargo run --release -p diagnostics -- FILE.smb --out DIR` draws it through `solidcore-tess` with
+its large-tolerance edges over everything (`--highlight` and `--see-through` take face indices)
+and writes a JSON report of every face and edge with its tolerance and label pixel. Then find how the problem is solved in the literature: search for
 the papers, read the ones that apply, and design from them. Say in the issue what you read and
 how the design follows it. A fix nobody has seen the problem of, or built without that research,
 is not ready for review.
