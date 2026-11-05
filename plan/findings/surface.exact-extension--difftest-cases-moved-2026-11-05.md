@@ -874,3 +874,50 @@ replaced) fails as a new mismatch: `values.geometry[447]` C++ 5.238277689001029e
 - The others keep their state: the box volumes agree within 6e-11, the generated cases within
   3e-6, `gen0007` within 2.4e-4 and `fc0008` within 1.3e-3. The listing is
   `notes-localop/moved-cases.tsv`.
+
+### The 11 non-manifold cases, measured on fc0000 (2026-11-05, later)
+
+The hypothesis holds, but it is only half the cause.
+
+- *Kept edges (proved).* Each kept edge's two offset edges are lifted from their own face's UV
+  trim curve. One lies on the original 3D curve (1e-15 off), and the other is off by up to the
+  original edge's tolerance. Edge 14 (tolerance 7.27e-3) has offsets 6.6e-3 and 3.1e-3 from it,
+  and 7.3e-3 from each other. Edges 13 and 43: 3.2e-3 and 3.6e-3 apart. Edges with 1e-5
+  tolerance agree to 1e-12.
+- *Fix (commit ce5ab9faf, WIP).* Just before the merge (after the surfaces are extended),
+  `OffsetExecutive::restore_kept_edges` gives both offset edges of each kept edge the
+  original's 3D curve, interval and tolerance, and the original edge uses' orientations and UV
+  curves. Their vertices get the original points and tolerances. Measured after this, the
+  offsets of every kept edge agree (d < 1e-9). The original body's edges have tolerances up to
+  7.27e-3, which its 1e-5 tolerance allows (check #59 is edge tolerance < 1000 × body
+  tolerance). The offset B-rep is at half the body tolerance (5e-6), and `move_faces` sets the
+  result body to that. So the offset B-rep is raised to the original body's tolerance. With
+  that, #59 and #82 are gone on fc0000.
+  - If the restore runs before the surfaces are extended, `replace_surface` re-drops the
+    copied curves and their tolerances grow to 1.8e-2.
+  - Without the UV copy, the merge drops the 3D curve again: the same 1.8e-2, and #59 fails
+    at 0.0179 > 0.01.
+- *Second cause (not fixed): the edge between the kept sphere and the moved plane is never
+  mated.* fc0000 moves face 11 (the plane x = -2). Face 5 is the r = 5 sphere about the
+  origin, and it stays. Their edge 20 is not kept. In `mate_edges`, the intersection of the
+  extended sphere (exact extension) with the moved plane comes back as one exact full circle
+  (an Ellipse kind) with *no UV curves on either surface*, so `mate_edges` returns
+  `SM_ERR_NULL_POINTER` (1006). The mate is noted unmated; its fixes ignore the soft error.
+  - The result: face 5's offset edge keeps the original curve with moved vertices (edge 31).
+    Face 11's edge (53) has a curve from z 6.97 to 3.51, which does not reach its vertices.
+    These are the two #61 bad edges and the "one edge too many" (48 vs 47).
+  - Dropping the circle onto the extended sphere fails: 0 curves, because the full circle
+    leaves the extended domain. Upstream's marched intersection of fitted extensions is
+    bounded by the domains and carries UV curves. The fix belongs to the exact-extension SSI:
+    the circle has to be clipped to the extended domains, with its UV pieces.
+- *Probe at ce5ab9faf (all 165, `notes-localop/sound-restore.tsv` vs `sound-kept.tsv`).*
+  - The 11 cases lose #59/#82 (fc0000 6 → 3 lines) but stay not manifold.
+  - Regressions: `fc0006` and `fc0008` go from 4 to 98 lines: 94 × `SmEdgeuse #6 Bad
+    UVTrimCurve Owner` (manifold, volume moves 1.4e-3). The probe keys the check by each
+    curve's recorded owner, so #6 means a copied UV trim curve reaches the result without an
+    owner. Every box case has the same 24 lines on the baseline. Where the owner is lost
+    (somewhere in `move_faces`/the copy) is not found yet.
+  - `fc0016` was not manifold (55 edges). It is now manifold with 16 edges and volume
+    -877.59: still unsound.
+  - The generated cases move their volumes by ≤ 2.6e-5 relative.
+  - The suite and the difftest were not run at ce5ab9faf.
