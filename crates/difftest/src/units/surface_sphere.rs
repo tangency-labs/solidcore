@@ -41,7 +41,6 @@ use solidcore::surface::surface::p2::{
     TYPE,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_sphere as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -237,30 +236,6 @@ struct Inputs {
 }
 
 // ---- C++ side -------------------------------------------------------------------------
-
-fn ffi_sphere(s: &SphereIn) -> ffi::SphereIn {
-    ffi::SphereIn {
-        mode: if s.mode == 0 {
-            ffi::Mode::Canonical
-        } else {
-            ffi::Mode::Ctor
-        },
-        origin: s.origin,
-        x: s.x,
-        y: s.y,
-        radius: s.radius,
-        swap: s.swap,
-        inside_out: s.inside_out,
-        dom: s.dom,
-        circle: s.circle.as_ref().map(|c| ffi::CircleIn {
-            c: c.c,
-            x: c.x,
-            y: c.y,
-            d: c.d,
-            r: c.r,
-        }),
-    }
-}
 
 /// Splits a record into `build`, `status` and `out`.
 fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
@@ -1439,13 +1414,6 @@ fn const_make_input(value: Value) -> Result<SphereIn, HarnessError> {
         return Err(harness("const_make: constructor mode required"));
     }
     Ok(s)
-}
-
-/// The native side of a sphere `common_const_make` case.
-pub(super) fn const_make_cpp(value: Value) -> Result<Output, HarnessError> {
-    let s = const_make_input(value)?;
-    let flat = ffi::const_make(&ffi_sphere(&s)).map_err(|e| harness(e.to_string()))?;
-    super::surface_cone_p1::const_make_nurb_cpp(&flat)
 }
 
 /// The Rust side: the sphere as its constructor leaves it (no NURB), then the shared

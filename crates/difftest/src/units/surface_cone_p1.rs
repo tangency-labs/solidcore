@@ -50,7 +50,6 @@ use solidcore::surface::surface::p2::{
     B_SPLINE_SURFACE_TYPE, CONE_TYPE, CYLINDER_TYPE, SURF_OF_REVOLUTION_TYPE, TYPE,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_cone_p1 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -273,205 +272,6 @@ struct Inputs {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn ffi_mode(m: &ModeIn) -> ffi::Mode {
-    match *m {
-        ModeIn::CanonicalSemi {
-            bot,
-            semi,
-            height,
-            swap,
-            inside,
-        } => ffi::Mode::CanonicalSemi {
-            bot,
-            semi,
-            height,
-            swap,
-            inside,
-        },
-        ModeIn::Canonical {
-            bot,
-            top,
-            height,
-            swap,
-            inside,
-        } => ffi::Mode::Canonical {
-            bot,
-            top,
-            height,
-            swap,
-            inside,
-        },
-        ModeIn::CylCanonical { radius } => ffi::Mode::CylCanonical { radius },
-        ModeIn::ConeUnbounded {
-            base,
-            semi,
-            swap,
-            inside,
-        } => ffi::Mode::ConeUnbounded {
-            base,
-            semi,
-            swap,
-            inside,
-        },
-        ModeIn::ConeBounded {
-            bot,
-            top,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        } => ffi::Mode::ConeBounded {
-            bot,
-            top,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        },
-        ModeIn::CylBounded {
-            radius,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        } => ffi::Mode::CylBounded {
-            radius,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        },
-        ModeIn::CylUnbounded {
-            radius,
-            swap,
-            inside,
-        } => ffi::Mode::CylUnbounded {
-            radius,
-            swap,
-            inside,
-        },
-    }
-}
-
-fn ffi_cone(c: &ConeIn) -> ffi::Build {
-    ffi::Build {
-        mode: ffi_mode(&c.mode),
-        origin: c.origin,
-        x: c.x,
-        y: c.y,
-        oob: c.oob,
-    }
-}
-
-fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c.clone() {
-        CurveIn::Line { a, b } => ffi::CurveIn::Line { a, b },
-        CurveIn::Circle { c, x, y, d, r } => ffi::CurveIn::Circle { c, x, y, d, r },
-        CurveIn::Ellipse { c, x, y, d, rx, ry } => ffi::CurveIn::Ellipse { c, x, y, d, rx, ry },
-    }
-}
-
-fn cpp_with_roundtrip(i: &Inputs, roundtrip: Option<bool>, subdomain: bool) -> Result<Output, HarnessError> {
-    let flat = if let OpIn::Coincidence {
-        a,
-        a_dom,
-        b,
-        b_dom,
-        tol,
-    } = &i.op
-    {
-        ffi::coincidence(&ffi_curve(a), *a_dom, &ffi_curve(b), *b_dom, *tol)
-    } else {
-        let c = i.cone.as_ref().ok_or_else(|| harness("missing cone"))?;
-        let op = match &i.op {
-            OpIn::Build {} => ffi::Op::Build,
-            OpIn::EvalStep {
-                u,
-                v,
-                hu,
-                hv,
-                point,
-            } => ffi::Op::EvalStep {
-                u: *u,
-                v: *v,
-                hu: *hu,
-                hv: *hv,
-                point: *point,
-            },
-            OpIn::Eval {
-                u,
-                v,
-                hu,
-                hv,
-                u_left,
-                v_left,
-                upper,
-                non_zero,
-            } => ffi::Op::Eval {
-                u: *u,
-                v: *v,
-                hu: *hu,
-                hv: *hv,
-                u_left: *u_left,
-                v_left: *v_left,
-                upper: *upper,
-                non_zero: *non_zero,
-            },
-            OpIn::EvalPoint { u, v } => ffi::Op::EvalPoint { u: *u, v: *v },
-            OpIn::ToStep { u, v } => ffi::Op::ToStep { u: *u, v: *v },
-            OpIn::ToNurbs { u, v } => ffi::Op::ToNurbs { u: *u, v: *v },
-            OpIn::Iso {
-                param,
-                iso,
-                dom,
-                uv,
-            } => ffi::Op::Iso {
-                param: *param,
-                iso: *iso,
-                dom: *dom,
-                uv: *uv,
-            },
-            OpIn::IsoCircle { p, tol } => ffi::Op::IsoCircle { p: *p, tol: *tol },
-            OpIn::Inversion { p, tol, guess } => ffi::Op::Inversion {
-                p: *p,
-                tol: *tol,
-                guess: *guess,
-            },
-            OpIn::Positive { p } => ffi::Op::Positive { p: *p },
-            OpIn::Adjust { dom } => ffi::Op::Adjust { dom: *dom },
-            OpIn::Transform {
-                origin,
-                x,
-                y,
-                scale,
-            } => ffi::Op::Transform {
-                origin: *origin,
-                x: *x,
-                y: *y,
-                scale: *scale,
-            },
-            OpIn::Eq { other } => ffi::Op::Eq {
-                other: Box::new(ffi_cone(other)),
-            },
-            OpIn::Copy {} => ffi::Op::Copy,
-            OpIn::Coincidence { .. } => return Err(harness("unreachable")),
-        };
-        if subdomain { ffi::inversion_subdomain(&ffi_cone(c), &op) }
-        else if let Some(binary) = roundtrip { ffi::roundtrip_op(&ffi_cone(c), &op, binary) }
-        else { ffi::cone_op(&ffi_cone(c), &op) }
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
-}
 
 /// Splits a record into `build`, `status` and `out`.
 fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
@@ -1170,33 +970,6 @@ pub(super) fn common_cases(ctx: &CaseContext) -> Result<Vec<Case>, HarnessError>
     Ok(cases)
 }
 
-pub(super) fn common_cpp(value: Value, database: Option<&Value>, lazy: bool, subdomain: bool, queries: bool) -> Result<Output, HarnessError> {
-    let i: Inputs = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
-    if queries {
-        let build = ffi_cone(i.cone.as_ref().ok_or_else(|| harness("missing cone"))?);
-        return to_output(&i, &ffi::common_queries(&build, subdomain).map_err(|e| harness(e.to_string()))?);
-    }
-    if lazy {
-        let OpIn::EvalPoint {u, v} = i.op else { return Err(harness("lazy parameters")); };
-        let build = ffi_cone(i.cone.as_ref().ok_or_else(|| harness("missing cone"))?);
-        return to_output(&i, &ffi::lazy_cone(&build, [u, v]).map_err(|e| harness(e.to_string()))?);
-    }
-    let mut output = cpp_with_roundtrip(&i, database.and_then(|v| v.get("binary")).and_then(Value::as_bool), subdomain)?;
-    // Surface's fallible inversion API exposes UV/location only on success. Direct
-    // cone_p1 cases separately compare the native outputs retained on failure.
-    if matches!(i.op, OpIn::Inversion { .. }) && output.values.get("status").is_some_and(|v| v != &[SUCCESS]) {
-        output.values.insert("out".into(), Vec::new());
-    }
-    Ok(output)
-}
-
-/// The native side of a `common_const_make` case ([`ffi::const_make`]).
-pub(super) fn const_make_cpp(value: Value) -> Result<Output, HarnessError> {
-    let i: Inputs = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
-    let build = ffi_cone(i.cone.as_ref().ok_or_else(|| harness("missing cone"))?);
-    const_make_output(&ffi::const_make(&build).map_err(|e| harness(e.to_string()))?)
-}
-
 /// A `common_const_make` record: the build status, then the sequence's values.
 fn const_make_output(flat: &[f64]) -> Result<Output, HarnessError> {
     let (b, rest) = flat.split_first().ok_or_else(|| harness("empty record"))?;
@@ -1366,12 +1139,6 @@ pub(super) fn const_make_nurb_rust(k: &Kernel, built: solidcore::Result<solidcor
     })();
     if let Err(e) = result { return Ok(Output::unported(&e).unwrap_or_else(|| Output::err(e.to_string()))); }
     nurb_output(&out)
-}
-
-/// The native side of a sphere, torus or surface of revolution `common_const_make` case:
-/// the shim record (`const_make_output` splits off the build status).
-pub(super) fn const_make_nurb_cpp(flat: &[f64]) -> Result<Output, HarnessError> {
-    nurb_output(flat)
 }
 
 /// A sphere, torus or revolution `common_const_make` record: the build status (`0` =

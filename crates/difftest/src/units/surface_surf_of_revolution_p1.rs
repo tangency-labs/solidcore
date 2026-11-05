@@ -1221,13 +1221,6 @@ fn const_make_input(value: Value) -> Result<SurfIn, HarnessError> {
     Ok(s)
 }
 
-/// The native side of a surface of revolution `common_const_make` case.
-pub(super) fn const_make_cpp(value: Value) -> Result<Output, HarnessError> {
-    let s = const_make_input(value)?;
-    let flat = ffi::const_make(&ffi_surf(&s)?).map_err(|e| harness(e.to_string()))?;
-    super::surface_cone_p1::const_make_nurb_cpp(&flat)
-}
-
 /// The Rust side: the surface as its constructor leaves it (no NURB), then the shared
 /// const-query, `Copy`, `==` and `Transform` sequence.
 pub(super) fn const_make_rust(value: Value) -> Result<Output, HarnessError> {

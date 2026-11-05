@@ -385,20 +385,6 @@ pub(crate) fn push_bss(o: &mut Vec<f64>, b: &BssIn) -> Result<(), HarnessError> 
     push_srf(o, &srf(&b.srf)?)
 }
 
-pub(crate) fn push_crv(o: &mut Vec<f64>, c: &CrvIn) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([
-        c.dim as f64,
-        n as f64,
-        c.p as f64,
-        c.u.len().saturating_sub(1) as f64,
-    ]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
         .split_first()
