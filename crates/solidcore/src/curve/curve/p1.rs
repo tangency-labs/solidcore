@@ -1260,6 +1260,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         // for every guess point
         for i in 0..num_guesses {
             let guess = guesses.get(i).copied().unwrap_or(0.0);
+            let mut projected_endpoint = false;
 
             // for projected, directed, and signed pivot cases
             if matches!(
@@ -1347,10 +1348,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                     } else {
                         continue;
                     }
-                    // A constrained extremum need not be a stationary point.
-                    // Retain the boundary selected above for value comparison.
-                    found_solution = true;
-                    solution.solution_type = SolutionType::SingleValue;
+                    projected_endpoint = true;
                 }
 
                 if op == SolverOperation::SignedPivotMinimize {
@@ -1373,9 +1371,17 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                         op,
                     ) {
                         Ok(d) => d,
-                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() || projected_endpoint => {
+                            return Err(e);
+                        }
                         Err(e) => status_value(&e),
                     };
+                    if projected_endpoint {
+                        // A constrained extremum need not be a stationary point.
+                        // Keep the boundary only after its distance evaluates.
+                        found_solution = true;
+                        solution.solution_type = SolutionType::SingleValue;
+                    }
                 }
             } else {
                 // else try SmCurve::LocalPointSolve for current guess

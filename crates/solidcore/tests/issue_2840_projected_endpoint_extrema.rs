@@ -155,3 +155,84 @@ fn projected_line_extrema_cover_boundaries_and_stationary_points() {
         }
     }
 }
+
+#[test]
+fn projected_parabola_extrema_include_constrained_endpoints() {
+    use solidcore::nurbs::crv_basic::Curve as NurbCurve;
+    use solidcore::nurbs::math::CPoint;
+
+    // Quadratic Bernstein control points give exactly C(t) = (t, t^2, 0).
+    let control_points = vec![
+        CPoint::from_point(Vec3::ZERO),
+        CPoint::from_point(Vec3::new(0.5, 0.0, 0.0)),
+        CPoint::from_point(Vec3::new(1.0, 1.0, 0.0)),
+    ];
+    let nurb = NurbCurve::new(control_points, 2, vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
+    let curve = Curve::from(BSplineCurve::from_nurb(nurb, 3, false));
+    let k = Kernel::default();
+    let interval = Extent1d::from_min_max(0.0, 1.0);
+    let normal = [Vec3::Z];
+
+    // For P=(a,b,z), projected squared distance is
+    // f(t)=(t-a)^2+(t^2-b)^2, f'(t)=2(t-a)+4t(t^2-b).
+    // (-2,-2): f'>0 throughout [0,1]; (3,3): f'<0 throughout.
+    // (3/4,0): f' vanishes at 1/2 and f''=2+12t^2>0;
+    // comparing the endpoint values gives the unique maximum at t=1.
+    // z=7 deliberately exercises removal of the projection-normal component.
+    for (point, minimum, maximum) in [
+        (Vec3::new(-2.0, -2.0, 7.0), 0.0, 1.0),
+        (Vec3::new(3.0, 3.0, 7.0), 1.0, 0.0),
+        (Vec3::new(0.75, 0.0, 7.0), 0.5, 1.0),
+    ] {
+        for (op, expected_parameter) in [
+            (SolverOperation::ProjectedMinimize, minimum),
+            (SolverOperation::ProjectedMaximize, maximum),
+        ] {
+            let expected_point = Vec3::new(expected_parameter, expected_parameter.powi(2), 0.0);
+            let projected_gap =
+                Vec3::new(expected_point.x - point.x, expected_point.y - point.y, 0.0);
+            let expected_distance = projected_gap.length();
+            for request in [SolutionRequested::Single, SolutionRequested::All] {
+                let answers = curve
+                    .global_point_solve::<Object>(
+                        &k,
+                        &interval,
+                        op,
+                        point,
+                        1e-10,
+                        request,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&normal),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                let context = format!("parabola point={point:?}, op={op:?}, request={request:?}");
+                assert!(!answers.is_empty(), "missing curved extremum: {context}");
+                if request == SolutionRequested::Single {
+                    assert_eq!(answers.len(), 1, "{context}");
+                }
+                for answer in answers.as_slice() {
+                    assert_eq!(answer.solution_type, SolutionType::SingleValue, "{context}");
+                    let parameter = answer.start.parameters[0];
+                    assert!(
+                        close(parameter, expected_parameter),
+                        "parameter {parameter} != {expected_parameter}: {context}"
+                    );
+                    assert!(
+                        close(answer.start.solution_value, expected_distance),
+                        "distance {} != {expected_distance}: {context}",
+                        answer.start.solution_value
+                    );
+                    let evaluated = curve.evaluate_point(&k, parameter).unwrap();
+                    assert!(
+                        close(evaluated.x, expected_point.x)
+                            && close(evaluated.y, expected_point.y)
+                            && close(evaluated.z, 0.0),
+                        "curve evaluation: {context}"
+                    );
+                }
+            }
+        }
+    }
+}
