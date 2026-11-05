@@ -2,8 +2,8 @@
 //! net / surface-sample chord heights and turning angles, allocation and copying,
 //! Bezier decomposition, splitting, the degenerate-surface test).
 //!
-//! C++: `solidcore_ffi::units::nurbs_nurbs_srf` (upstream
-//! `source/SMLib/src/SmNurbsSrf.cpp`). Rust: `solidcore::nurbs::nurbs_srf`.
+//! Ported from upstream
+//! `source/SMLib/src/SmNurbsSrf.cpp`; checked against its golden. Rust: `solidcore::nurbs::nurbs_srf`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok; an NLib error
@@ -35,8 +35,6 @@ use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::nurbs_srf::{self as ns, ConstantsRequest, NetConstants};
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nurbs_nurbs_srf::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -155,25 +153,6 @@ fn resolve(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn encode(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
 fn build(s: &InlineSrf) -> Result<Surface, HarnessError> {
     let net = s
         .net
@@ -262,67 +241,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
         )));
     }
     Ok(out)
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    if let Some(s) = i.sur() {
-        encode(&resolve(s)?, &mut o)?;
-    }
-    let op = match i {
-        Inputs::NetConstants {
-            zone_tol,
-            want,
-            surface_domain,
-            ..
-        } => {
-            o.push(*zone_tol);
-            o.extend(want.map(flag));
-            o.push(flag(surface_domain.is_some()));
-            let d = surface_domain.unwrap_or_else(|| {
-                // Unused; any domain inside the knots passes the wrapper.
-                let k = i.sur().and_then(|s| resolve(s).ok());
-                k.map_or([0.0; 4], |s| {
-                    let u0 = s.u.first().copied().unwrap_or(0.0);
-                    let v0 = s.v.first().copied().unwrap_or(0.0);
-                    [u0, v0, u0, v0]
-                })
-            });
-            o.extend_from_slice(&d);
-            Op::NetConstants
-        }
-        Inputs::SurfConstants { domain, want, .. } => {
-            o.extend_from_slice(domain);
-            o.extend(want.map(flag));
-            Op::SurfConstants
-        }
-        Inputs::Allocate { dims } => {
-            o.extend(dims.map(|k| k as f64));
-            Op::Allocate
-        }
-        Inputs::Copy { .. } => Op::Copy,
-        Inputs::Decompose { .. } => Op::Decompose,
-        Inputs::Split { t, dir, .. } => {
-            o.extend([*t, f64::from(*dir)]);
-            Op::Split
-        }
-        Inputs::Degenerate { tol, .. } => {
-            o.push(*tol);
-            Op::Degenerate
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -861,10 +779,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

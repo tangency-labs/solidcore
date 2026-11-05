@@ -4,8 +4,8 @@
 //! canonical data, control net), bounding boxes, parallelism, transformation, STEP
 //! inversion and reading from a database stream.
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_surface_p1` (upstream
-//! `source/SMLib/src/SmBSplineSurface.cpp`). Rust: `solidcore::nurbs::b_spline_surface`.
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineSurface.cpp`; checked against its golden. Rust: `solidcore::nurbs::b_spline_surface`.
 //!
 //! A case is `this` (how the surface the op runs on is built: `ctor` `empty`,
 //! `fast_owned`, `fast_borrowed`, `data`, `gw_copy` or `copy`, with `oob`
@@ -50,7 +50,6 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_surface_p1::{self as ffi, Ctor, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -107,19 +106,6 @@ enum CtorIn {
     Data,
     GwCopy,
     Copy,
-}
-
-impl CtorIn {
-    fn ffi(self) -> Ctor {
-        match self {
-            CtorIn::Empty => Ctor::Empty,
-            CtorIn::FastOwned => Ctor::FastOwned,
-            CtorIn::FastBorrowed => Ctor::FastBorrowed,
-            CtorIn::Data => Ctor::Data,
-            CtorIn::GwCopy => Ctor::GwCopy,
-            CtorIn::Copy => Ctor::Copy,
-        }
-    }
 }
 
 /// A surface block.
@@ -292,36 +278,6 @@ struct Inputs {
 }
 
 impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::State => Op::State,
-            OpIn::Counts => Op::Counts,
-            OpIn::Domain => Op::Domain,
-            OpIn::Knots { .. } => Op::Knots,
-            OpIn::Greville { .. } => Op::Greville,
-            OpIn::GetCanonical => Op::GetCanonical,
-            OpIn::Net => Op::Net,
-            OpIn::ControlPoints => Op::ControlPoints,
-            OpIn::Parallel { .. } => Op::Parallel,
-            OpIn::BBox { .. } => Op::BBox,
-            OpIn::Transform { .. } => Op::Transform,
-            OpIn::Eq { .. } => Op::Eq,
-            OpIn::IsKindOf { .. } => Op::IsKindOf,
-            OpIn::Type => Op::Type,
-            OpIn::MakeNurb => Op::MakeNurb,
-            OpIn::Copy => Op::Copy,
-            OpIn::Offset { .. } => Op::Offset,
-            OpIn::DegenCurve { .. } => Op::DegenCurve,
-            OpIn::StepInv { .. } => Op::StepInv,
-            OpIn::SetForm { .. } => Op::SetForm,
-            OpIn::Bilinear { .. } => Op::Bilinear,
-            OpIn::Canonical { .. } => Op::Canonical,
-            OpIn::Cone { .. } => Op::Cone,
-            OpIn::Sweep { .. } => Op::Sweep,
-            OpIn::ReadDb { .. } => Op::ReadDb,
-        }
-    }
-
     /// Whether a successful op is followed by the state of a new surface.
     fn creates(&self) -> bool {
         matches!(
@@ -350,16 +306,6 @@ fn resolve(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
         SrfIn::File { sms } => read_sms(sms),
         SrfIn::Inline(i) => Ok(i.clone()),
     }
-}
-
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
 }
 
 fn v3(a: [f64; 3]) -> Vec3 {
@@ -414,199 +360,6 @@ fn db_bytes(binary: bool, version: u64, db: &DbIn) -> Result<Vec<u8>, HarnessErr
             }
             Ok(b)
         }
-    }
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn encode_srf(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([
-        n as f64,
-        m as f64,
-        s.p as f64,
-        s.q as f64,
-        s.u.len().saturating_sub(1) as f64,
-        s.v.len().saturating_sub(1) as f64,
-    ]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn encode_this(t: &This, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    o.extend([t.ctor.ffi().code(), flag(t.oob), f64::from(t.form)]);
-    if t.ctor != CtorIn::Empty {
-        let s = t
-            .srf
-            .as_ref()
-            .ok_or_else(|| harness("this: ctor needs a surface"))?;
-        encode_srf(&resolve(s)?, o)?;
-    }
-    Ok(())
-}
-
-fn encode_frame(f: &Frame, o: &mut Vec<f64>) {
-    for v in f {
-        o.extend_from_slice(v);
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match &i.this {
-        Some(t) => encode_this(t, &mut o)?,
-        None => o.push(Ctor::None.code()),
-    }
-    match &i.op {
-        OpIn::State
-        | OpIn::Counts
-        | OpIn::Domain
-        | OpIn::GetCanonical
-        | OpIn::Net
-        | OpIn::ControlPoints
-        | OpIn::Type
-        | OpIn::MakeNurb
-        | OpIn::Copy => {}
-        OpIn::Knots { v_dir, ivl } => {
-            let [a, b] = ivl.unwrap_or([0.0, 0.0]);
-            o.extend([flag(*v_dir), flag(ivl.is_some()), a, b]);
-        }
-        OpIn::Greville { v_dir, index } => o.extend([flag(*v_dir), *index as f64]),
-        OpIn::Parallel { vec } => o.extend_from_slice(vec),
-        OpIn::BBox {
-            domain,
-            normal,
-            pseudo,
-            polar,
-            pseudo_guess,
-            polar_guess,
-            expand,
-        } => {
-            o.extend_from_slice(domain);
-            o.extend([flag(*normal), flag(*pseudo), flag(*polar), flag(pseudo_guess.is_some())]);
-            encode_frame(
-                &pseudo_guess.unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
-                &mut o,
-            );
-            let vs = polar_guess.as_deref().unwrap_or(&[]);
-            o.extend([flag(polar_guess.is_some()), vs.len() as f64]);
-            for v in vs {
-                o.extend_from_slice(v);
-            }
-            o.push(flag(*expand));
-        }
-        OpIn::Transform { frame, scale } => {
-            encode_frame(frame, &mut o);
-            o.push(flag(scale.is_some()));
-            o.extend_from_slice(&scale.unwrap_or([1.0, 1.0, 1.0]));
-        }
-        OpIn::Eq { other } => encode_this(other, &mut o)?,
-        OpIn::IsKindOf { t } => o.push(*t as f64),
-        OpIn::Offset { dist, tol } => o.extend([*dist, *tol]),
-        OpIn::DegenCurve { angle, domain, tol } => {
-            o.extend([*angle, flag(domain.is_some())]);
-            o.extend_from_slice(&domain.unwrap_or([0.0; 4]));
-            o.push(*tol);
-        }
-        OpIn::StepInv {
-            domain,
-            point,
-            tol,
-            guess,
-        } => {
-            o.extend_from_slice(domain);
-            o.extend_from_slice(point);
-            o.extend([*tol, flag(guess.is_some())]);
-            o.extend_from_slice(&guess.unwrap_or([0.0, 0.0]));
-        }
-        OpIn::SetForm { form } => o.push(f64::from(*form)),
-        OpIn::Bilinear { p00, p10, p01, p11 } => {
-            for p in [p00, p10, p01, p11] {
-                o.extend_from_slice(p);
-            }
-        }
-        OpIn::Canonical {
-            ud,
-            vd,
-            cps,
-            form,
-            uk,
-            um,
-            vk,
-            vm,
-            kt,
-            weights,
-            domain,
-        } => {
-            if uk.len() != um.len() || vk.len() != vm.len() {
-                return Err(harness("canonical: one multiplicity per knot"));
-            }
-            o.extend([*ud as f64, *vd as f64, cps.len() as f64]);
-            for p in cps {
-                o.extend_from_slice(p);
-            }
-            o.push(f64::from(*form));
-            o.push(uk.len() as f64);
-            o.extend_from_slice(uk);
-            o.extend(um.iter().map(|&m| m as f64));
-            o.push(vk.len() as f64);
-            o.extend_from_slice(vk);
-            o.extend(vm.iter().map(|&m| m as f64));
-            o.push(f64::from(*kt));
-            o.push(flag(weights.is_some()));
-            if let Some(w) = weights {
-                o.push(w.len() as f64);
-                o.extend_from_slice(w);
-            }
-            o.push(flag(domain.is_some()));
-            o.extend_from_slice(&domain.unwrap_or([0.0; 4]));
-        }
-        OpIn::Cone {
-            frame,
-            rb,
-            rt,
-            a0,
-            a1,
-            h,
-            quintic,
-        } => {
-            encode_frame(frame, &mut o);
-            o.extend([*rb, *rt, *a0, *a1, *h, flag(*quintic)]);
-        }
-        OpIn::Sweep { dim, crv, vec } => {
-            o.push(*dim as f64);
-            encode_crv(crv, &mut o);
-            o.extend_from_slice(vec);
-        }
-        OpIn::ReadDb {
-            binary,
-            version,
-            db,
-        } => {
-            let bytes = db_bytes(*binary, *version, db)?;
-            o.extend([flag(*binary), *version as f64, bytes.len() as f64]);
-            o.extend(bytes.iter().map(|&b| f64::from(b)));
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    match ffi::eval(i.op.ffi(), &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(e) => Err(harness(e.to_string())),
     }
 }
 
@@ -1707,10 +1460,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

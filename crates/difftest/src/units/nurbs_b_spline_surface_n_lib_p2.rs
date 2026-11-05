@@ -1,8 +1,8 @@
 //! Runner for unit `nurbs.b_spline_surface_n_lib_p2`: `SmBSplineSurface::Evaluate`,
 //! `TrimWithDomain`, `CreateSkinnedSurface` and `CreateCornerBlend`.
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_surface_n_lib_p2` (upstream
-//! `source/SMLib/src/SmBSplineSurfaceNLib.cpp`). Rust:
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineSurfaceNLib.cpp`; checked against its golden. Rust:
 //! `solidcore::nurbs::b_spline_surface_n_lib::p2`.
 //!
 //! A case is `this` (the surface a member op runs on: `empty` for a surface without
@@ -41,7 +41,6 @@ use solidcore::surface::sphere::Sphere;
 use solidcore::surface::surface::Surface as SmSurface;
 use solidcore::surface::torus::{Torus, TorusOptions};
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_surface_n_lib_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -191,17 +190,6 @@ enum OpIn {
     },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Eval { .. } => Op::Eval,
-            OpIn::Trim { .. } => Op::Trim,
-            OpIn::Skin { .. } => Op::Skin,
-            OpIn::Corner { .. } => Op::Corner,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -253,189 +241,8 @@ fn crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend(
-        [
-            n,
-            m,
-            s.p,
-            s.q,
-            s.u.len().saturating_sub(1),
-            s.v.len().saturating_sub(1),
-        ]
-        .map(|x| x as f64),
-    );
-    for row in &s.net {
-        for p in row {
-            o.extend_from_slice(p);
-        }
-    }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &InlineCrv) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([
-        3.0,
-        n as f64,
-        c.p as f64,
-        c.u.len().saturating_sub(1) as f64,
-    ]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match &i.this {
-        None => o.push(0.0),
-        Some(t) => {
-            o.push(if t.empty { 1.0 } else { 2.0 });
-            o.push(flag(t.oob));
-            o.push(f64::from(t.form));
-            if !t.empty {
-                let s = t.srf.as_ref().ok_or_else(|| harness("this: missing srf"))?;
-                push_srf(&mut o, &srf(s)?)?;
-            }
-        }
-    }
-    match &i.op {
-        OpIn::Eval {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-            upper,
-            nzt,
-        } => {
-            o.extend_from_slice(uv);
-            o.extend([
-                *hu as f64,
-                *hv as f64,
-                flag(*u_left),
-                flag(*v_left),
-                flag(*upper),
-                flag(*nzt),
-            ]);
-        }
-        OpIn::Trim { dom } => o.extend_from_slice(dom),
-        OpIn::Skin {
-            sections,
-            sync,
-            dir,
-            tol,
-            rail1,
-            rail2,
-            spine,
-            params,
-            derivs,
-            degree,
-        } => {
-            o.push(sections.len() as f64);
-            for c in sections {
-                push_crv(&mut o, &crv(c)?);
-            }
-            o.extend([flag(*sync), f64::from(*dir), *tol]);
-            for r in [rail1, rail2] {
-                o.push(flag(r.is_some()));
-                if let Some(c) = r {
-                    push_crv(&mut o, &crv(c)?);
-                }
-            }
-            o.push(flag(*spine));
-            o.push(flag(params.is_some()));
-            if let Some(p) = params {
-                o.push(p.len() as f64);
-                o.extend_from_slice(p);
-            }
-            o.push(flag(derivs.is_some()));
-            if let Some(ds) = derivs {
-                for d in ds.iter() {
-                    o.push(flag(d.is_some()));
-                    if let Some(s) = d {
-                        push_srf(&mut o, &srf(s)?)?;
-                    }
-                }
-            }
-            o.push(*degree as f64);
-        }
-        OpIn::Corner {
-            curves,
-            orients,
-            uvs,
-            srfs,
-            tol,
-            ang,
-            bilinear,
-        } => {
-            o.push(curves.len() as f64);
-            for c in curves {
-                push_crv(&mut o, &crv(c)?);
-            }
-            for &k in orients {
-                o.push(f64::from(k));
-            }
-            for u in uvs {
-                o.push(flag(u.is_some()));
-                if let Some(c) = u {
-                    push_crv(&mut o, &crv(c)?);
-                }
-            }
-            for s in srfs {
-                match s {
-                    None => o.push(0.0),
-                    Some(NbrIn::Srf(s)) => {
-                        o.push(1.0);
-                        push_srf(&mut o, &srf(s)?)?;
-                    }
-                    Some(NbrIn::Analytic { analytic: a }) => {
-                        o.push(2.0);
-                        o.push(f64::from(a.kind));
-                        o.extend(a.origin);
-                        o.extend(a.x);
-                        o.extend(a.y);
-                        o.extend(a.p);
-                    }
-                }
-            }
-            o.extend([*tol, *ang, flag(*bilinear)]);
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(i.op.ffi(), &input).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 // ---- output splitting ---------------------------------------------------------------
@@ -1615,10 +1422,6 @@ impl UnitDiff for Runner {
         Ok(v)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &Kernel::default();
         rust(k, &case.parse()?)
@@ -1646,13 +1449,16 @@ mod tests {
                     derivs,
                     ..
                 } => format!(
-                    "Skin r{}{} s{} d{}",
+                    "skin r{}{} s{} d{}",
                     u8::from(rail1.is_some()),
                     u8::from(rail2.is_some()),
                     u8::from(*spine),
                     u8::from(derivs.is_some())
                 ),
-                _ => format!("{:?}", i.op.ffi()),
+                _ => serde_json::to_value(&i.op).expect("op")["op"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
             };
             let out = rust(k, &i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
@@ -1666,7 +1472,7 @@ mod tests {
         for (k, v) in &tally {
             eprintln!("{k:?} {v}");
         }
-        for op in ["Eval", "Trim", "Skin", "Corner"] {
+        for op in ["eval", "trim", "skin", "corner"] {
             let ok = tally
                 .iter()
                 .any(|((o, k), _)| o.starts_with(op) && k == "status:0");

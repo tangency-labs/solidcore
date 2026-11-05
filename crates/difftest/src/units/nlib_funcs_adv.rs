@@ -231,8 +231,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
 // ---- Rust side --------------------------------------------------------------------
 
 fn dump_fun(o: &mut Vec<f64>, f: &CurveFunction) {

@@ -3,8 +3,8 @@
 //! and derivatives, point / derivative evaluation, knot removal, basis maxima,
 //! degenerate-curve test, frame extraction).
 //!
-//! C++: `solidcore_ffi::units::nurbs_nurbs_crv` (upstream
-//! `source/SMLib/src/SmNurbsCrv.cpp`). Rust: `solidcore::nurbs::nurbs_crv`.
+//! Ported from upstream
+//! `source/SMLib/src/SmNurbsCrv.cpp`; checked against its golden. Rust: `solidcore::nurbs::nurbs_crv`.
 //!
 //! Each case runs one routine (`inputs.op`). Both sides produce the same flat record
 //! of doubles, split into keys by [`to_output`]: `status` (the routine's returned flag:
@@ -28,8 +28,6 @@ use solidcore::nurbs::knots::{KnotVector, Side};
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::nurbs_crv as nc;
 use solidcore::{NlibCode, SolidError, Vec3};
-use solidcore_ffi::units::nurbs_nurbs_crv::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -93,12 +91,6 @@ enum SideIn {
 }
 
 impl SideIn {
-    fn flag(self) -> f64 {
-        match self {
-            SideIn::Left => 1.0,
-            SideIn::Right => 2.0,
-        }
-    }
 
     fn side(self) -> Side {
         match self {
@@ -397,127 +389,6 @@ fn to_output(i: &Inputs, p: usize, flat: &[f64]) -> Result<Output, HarnessError>
         )));
     }
     Ok(out)
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs, c: Option<&InlineCrv>) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    if let Some(c) = c {
-        encode_crv(c, &mut o)?;
-    }
-    let (u, v, side) = i.params(c)?;
-    let s = side.flag();
-    let op = match i {
-        Inputs::Knots { u: k, ivl } => {
-            o.push(k.len() as f64);
-            o.extend_from_slice(k);
-            match ivl {
-                Some([a, b]) => o.extend([1.0, *a, *b]),
-                None => o.extend([0.0, 0.0, 0.0]),
-            }
-            Op::Knots
-        }
-        Inputs::Copy { .. } => Op::Copy,
-        Inputs::Fixup { u: k, tol } => {
-            o.push(k.len() as f64);
-            o.extend_from_slice(k);
-            o.push(*tol);
-            Op::Fixup
-        }
-        Inputs::Bez { .. } => Op::Bez,
-        Inputs::Split { .. } => {
-            o.push(u);
-            Op::Split
-        }
-        Inputs::Trim { .. } => {
-            o.extend([u, v]);
-            Op::Trim
-        }
-        Inputs::Epolygon { k, l, .. } => {
-            o.extend([*k as f64, *l as f64]);
-            Op::EPolygon
-        }
-        Inputs::BasisDerivs { der, .. } => {
-            o.extend([u, s, *der as f64]);
-            Op::BasisDerivs
-        }
-        Inputs::RatDerivs { der, .. } => {
-            o.extend([u, s, *der as f64]);
-            Op::RatDerivs
-        }
-        Inputs::CrvDerivs { der, .. } => {
-            o.extend([u, s, *der as f64]);
-            Op::CrvDerivs
-        }
-        Inputs::BasisEval { .. } => {
-            o.extend([u, s]);
-            Op::BasisEval
-        }
-        Inputs::CrvEval { .. } => {
-            o.extend([u, s]);
-            Op::CrvEval
-        }
-        Inputs::RemoveKnots { tol, .. } => {
-            o.push(*tol);
-            Op::RemoveKnots
-        }
-        Inputs::SpanMaxima { i, tol, .. } => {
-            o.extend([*i as f64, *tol]);
-            Op::SpanMaxima
-        }
-        Inputs::BasisIEval { i, .. } => {
-            o.extend([*i as f64, u, s]);
-            Op::BasisIEval
-        }
-        Inputs::MaxErr { r, s: sm, .. } => {
-            o.extend([*r as f64, *sm as f64]);
-            Op::MaxErr
-        }
-        Inputs::BasisIDerivs { i, der, .. } => {
-            o.extend([*i as f64, u, s, *der as f64]);
-            Op::BasisIDerivs
-        }
-        Inputs::GlobalMax { i, tol, .. } => {
-            o.extend([*i as f64, *tol]);
-            Op::GlobalMax
-        }
-        Inputs::Degenerate { tol, .. } => {
-            o.push(*tol);
-            Op::Degenerate
-        }
-        Inputs::Frame { o: po, x, y } => {
-            o.extend_from_slice(po);
-            o.extend_from_slice(x);
-            o.extend_from_slice(y);
-            Op::Frame
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let c = i.crv().map(resolve).transpose()?;
-    let (op, input) = cpp_input(i, c.as_ref())?;
-    let p = c.as_ref().map_or(0, |c| c.p);
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, p, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -1008,10 +879,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

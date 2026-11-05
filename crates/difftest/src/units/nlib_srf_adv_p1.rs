@@ -278,8 +278,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
 /// Status of the upstream bare error flag (no `NL_ERROR` number of its own).
 const BARE_FLAG: f64 = 1000.0;
 

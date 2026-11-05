@@ -163,8 +163,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
 // ---- Rust side --------------------------------------------------------------------
 
 fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {

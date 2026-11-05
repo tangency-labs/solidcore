@@ -324,8 +324,6 @@ fn resolve(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }

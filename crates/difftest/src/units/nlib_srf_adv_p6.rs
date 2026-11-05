@@ -257,8 +257,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
 /// Upstream's `der` array has one entry per curve; missing trailing entries are NULL.
 fn der_entry(der: &[Option<CrvIn>], i: usize) -> Option<&CrvIn> {
     der.get(i).and_then(Option::as_ref)

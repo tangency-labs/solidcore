@@ -389,8 +389,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
 // ---- Rust side --------------------------------------------------------------------
 
 /// `0` ok, the `NL_*_ERR` number, `1000` for the arc-length recursion limit, `-1`

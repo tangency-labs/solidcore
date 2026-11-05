@@ -349,8 +349,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
     Ok(out)
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
 // ---- Rust side --------------------------------------------------------------------
 
 /// `0` for `Ok`, the `NL_*_ERR` number for an NLib error, `1000` for upstream's bare

@@ -4,8 +4,8 @@
 //! the evaluators) and the file-static helpers `sm_CreateNonRationalCurve`,
 //! `sm_MakeKnots`, `sm_CheckTrimBoundaries` and `sm_check_zero_surface_derivs`.
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_surface_n_lib_p1` (upstream
-//! `source/SMLib/src/SmBSplineSurfaceNLib.cpp`). Rust:
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineSurfaceNLib.cpp`; checked against its golden. Rust:
 //! `solidcore::nurbs::b_spline_surface_n_lib::p1`.
 //!
 //! A case is `this` (the surface a member op runs on: `empty` for a surface without
@@ -39,7 +39,6 @@ use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_surface_n_lib_p1::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -219,28 +218,6 @@ enum OpIn {
 }
 
 impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Offset { .. } => Op::Offset,
-            OpIn::Join { .. } => Op::Join,
-            OpIn::ExtEval { .. } => Op::ExtEval,
-            OpIn::Reparam { .. } => Op::Reparam,
-            OpIn::Reverse { .. } => Op::Reverse,
-            OpIn::Expand { .. } => Op::Expand,
-            OpIn::EvalSimple { .. } => Op::EvalSimple,
-            OpIn::EvalPoint { .. } => Op::EvalPoint,
-            OpIn::Coons { .. } => Op::Coons,
-            OpIn::NSided { .. } => Op::NSided,
-            OpIn::Ruled { .. } => Op::Ruled,
-            OpIn::Sweep { .. } => Op::Sweep,
-            OpIn::Swung { .. } => Op::Swung,
-            OpIn::NonRat { .. } => Op::NonRat,
-            OpIn::MakeKnots { .. } => Op::MakeKnots,
-            OpIn::TrimBounds { .. } => Op::TrimBounds,
-            OpIn::ZeroDerivs { .. } => Op::ZeroDerivs,
-        }
-    }
-
     /// Whether the op outputs a new surface (`has` + state).
     fn creates(&self) -> bool {
         matches!(
@@ -300,243 +277,12 @@ fn crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
 fn v3(a: [f64; 3]) -> Vec3 {
     Vec3::new(a[0], a[1], a[2])
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend(
-        [
-            n,
-            m,
-            s.p,
-            s.q,
-            s.u.len().saturating_sub(1),
-            s.v.len().saturating_sub(1),
-        ]
-        .map(|x| x as f64),
-    );
-    for row in &s.net {
-        for p in row {
-            o.extend_from_slice(p);
-        }
-    }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &InlineCrv) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([
-        3.0,
-        n as f64,
-        c.p as f64,
-        c.u.len().saturating_sub(1) as f64,
-    ]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match &i.this {
-        None => o.push(0.0),
-        Some(t) => {
-            o.push(if t.empty { 1.0 } else { 2.0 });
-            o.push(flag(t.oob));
-            o.push(f64::from(t.form));
-            if !t.empty {
-                let s = t.srf.as_ref().ok_or_else(|| harness("this: missing srf"))?;
-                push_srf(&mut o, &srf(s)?)?;
-            }
-        }
-    }
-    match &i.op {
-        OpIn::Offset { dist, tol, param } => o.extend([*dist, *tol, f64::from(*param)]),
-        OpIn::Join { other, dir, tol } => {
-            push_srf(&mut o, &srf(other)?)?;
-            o.extend([f64::from(*dir), *tol]);
-        }
-        OpIn::ExtEval { uv } | OpIn::EvalPoint { uv } => o.extend_from_slice(uv),
-        OpIn::Reparam { dom } => o.extend_from_slice(dom),
-        OpIn::Reverse { dir } => o.push(f64::from(*dir)),
-        OpIn::Expand { param, dir } => o.extend([*param, f64::from(*dir)]),
-        OpIn::EvalSimple {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-            upper,
-        } => {
-            o.extend_from_slice(uv);
-            o.extend([
-                *hu as f64,
-                *hv as f64,
-                flag(*u_left),
-                flag(*v_left),
-                flag(*upper),
-            ]);
-        }
-        OpIn::Coons {
-            tol,
-            bilinear,
-            bdry,
-            ders,
-        } => {
-            o.extend([*tol, flag(*bilinear)]);
-            for c in bdry {
-                push_crv(&mut o, &crv(c)?);
-            }
-            o.push(ders.len() as f64);
-            for c in ders {
-                push_crv(&mut o, &crv(c)?);
-            }
-        }
-        OpIn::NSided {
-            bdry,
-            ders,
-            eps,
-            center,
-        } => {
-            o.push(bdry.len() as f64);
-            for c in bdry {
-                push_crv(&mut o, &crv(c)?);
-            }
-            for d in ders {
-                o.push(flag(d.is_some()));
-                if let Some(c) = d {
-                    push_crv(&mut o, &crv(c)?);
-                }
-            }
-            o.push(*eps);
-            o.push(flag(center.is_some()));
-            let [c, nrm] = center.unwrap_or([[0.0; 3]; 2]);
-            o.extend_from_slice(&c);
-            o.extend_from_slice(&nrm);
-        }
-        OpIn::Ruled { c1, c2, dir } => {
-            push_crv(&mut o, &crv(c1)?);
-            push_crv(&mut o, &crv(c2)?);
-            o.push(f64::from(*dir));
-        }
-        OpIn::Sweep {
-            section,
-            traj,
-            scale,
-            trans,
-            tol,
-        } => {
-            push_crv(&mut o, &crv(section)?);
-            push_crv(&mut o, &crv(traj)?);
-            o.push(flag(scale.is_some()));
-            if let Some(c) = scale {
-                push_crv(&mut o, &crv(c)?);
-            }
-            o.extend([flag(*trans), *tol]);
-        }
-        OpIn::Swung {
-            section,
-            traj,
-            scale,
-        } => {
-            push_crv(&mut o, &crv(section)?);
-            push_crv(&mut o, &crv(traj)?);
-            o.push(*scale);
-        }
-        OpIn::NonRat {
-            curve,
-            uv,
-            base,
-            tol,
-        } => {
-            push_crv(&mut o, &crv(curve)?);
-            o.push(flag(uv.is_some()));
-            if let Some(c) = uv {
-                push_crv(&mut o, &crv(c)?);
-            }
-            o.push(flag(base.is_some()));
-            if let Some(s) = base {
-                push_srf(&mut o, &srf(s)?)?;
-            }
-            o.push(*tol);
-        }
-        OpIn::MakeKnots { n, p, u } => {
-            o.extend([*n as f64, *p as f64]);
-            o.extend_from_slice(u);
-        }
-        OpIn::TrimBounds {
-            knots,
-            tmin,
-            min_idx,
-            tmax,
-            max_idx,
-            dom,
-            dir,
-        } => {
-            o.push(knots.len() as f64);
-            o.extend_from_slice(knots);
-            o.extend([
-                *tmin,
-                min_idx.map_or(0.0, |k| (k + 1) as f64),
-                *tmax,
-                max_idx.map_or(0.0, |k| (k + 1) as f64),
-            ]);
-            o.extend_from_slice(dom);
-            o.push(f64::from(*dir));
-        }
-        OpIn::ZeroDerivs {
-            uv,
-            dom,
-            pt,
-            su,
-            sv,
-            suu,
-            suv,
-            svv,
-            sz,
-        } => {
-            o.extend_from_slice(uv);
-            o.extend_from_slice(dom);
-            for v in [pt, su, sv, suu, suv, svv] {
-                o.extend_from_slice(v);
-            }
-            o.push(*sz);
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(i.op.ffi(), &input).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 // ---- output splitting ---------------------------------------------------------------
@@ -1776,10 +1522,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

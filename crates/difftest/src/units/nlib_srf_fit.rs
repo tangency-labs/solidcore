@@ -317,8 +317,6 @@ fn finish(out: Output, flat: &[f64], at: usize) -> Result<Output, HarnessError> 
     }
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
 // ---- Rust side --------------------------------------------------------------------
 
 /// `0` for `Ok`, the `NL_*_ERR` number for an NLib error, `-1` otherwise.

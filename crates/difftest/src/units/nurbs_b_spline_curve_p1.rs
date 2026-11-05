@@ -5,8 +5,8 @@
 //! (knots, control polygon, ends, counts, Greville abscissae, continuities) and the
 //! fair-blend tangent scaling.
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_curve_p1` (upstream
-//! `source/SMLib/src/SmBSplineCurve.cpp`). Rust: `solidcore::nurbs::b_spline_curve`.
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineCurve.cpp`; checked against its golden. Rust: `solidcore::nurbs::b_spline_curve`.
 //!
 //! A case is `this` (how the curve the op runs on is built: `ctor` `empty`,
 //! `fast_owned`, `fast_borrowed`, `data`, `gw_copy` or `copy`, with `dim`, `oob`
@@ -37,7 +37,6 @@ use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_curve_p1::{self as ffi, Ctor, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -83,19 +82,6 @@ enum CtorIn {
     Data,
     GwCopy,
     Copy,
-}
-
-impl CtorIn {
-    fn ffi(self) -> Ctor {
-        match self {
-            CtorIn::Empty => Ctor::Empty,
-            CtorIn::FastOwned => Ctor::FastOwned,
-            CtorIn::FastBorrowed => Ctor::FastBorrowed,
-            CtorIn::Data => Ctor::Data,
-            CtorIn::GwCopy => Ctor::GwCopy,
-            CtorIn::Copy => Ctor::Copy,
-        }
-    }
 }
 
 /// A curve block.
@@ -245,44 +231,6 @@ struct Inputs {
 }
 
 impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::State => Op::State,
-            OpIn::Evaluate { .. } => Op::Evaluate,
-            OpIn::EvaluatePoint { .. } => Op::EvaluatePoint,
-            OpIn::Intervals => Op::Intervals,
-            OpIn::Knots { .. } => Op::Knots,
-            OpIn::ControlPolygon => Op::ControlPolygon,
-            OpIn::ControlPoints => Op::ControlPoints,
-            OpIn::Ends => Op::Ends,
-            OpIn::Counts => Op::Counts,
-            OpIn::Greville { .. } => Op::Greville,
-            OpIn::Convert2d => Op::Convert2d,
-            OpIn::Convert3d => Op::Convert3d,
-            OpIn::EditParam { .. } => Op::EditParam,
-            OpIn::EditEnd { .. } => Op::EditEnd,
-            OpIn::Fixup { .. } => Op::Fixup,
-            OpIn::RemoveExtra { .. } => Op::RemoveExtra,
-            OpIn::SetFromGw { .. } => Op::SetFromGw,
-            OpIn::Transform { .. } => Op::Transform,
-            OpIn::Mirror { .. } => Op::Mirror,
-            OpIn::Projection { .. } => Op::Projection,
-            OpIn::Eq { .. } => Op::Eq,
-            OpIn::IsKindOf { .. } => Op::IsKindOf,
-            OpIn::Type => Op::Type,
-            OpIn::Continuities { .. } => Op::Continuities,
-            OpIn::Tessellate { .. } => Op::Tessellate,
-            OpIn::MakeNurb => Op::MakeNurb,
-            OpIn::Copy => Op::Copy,
-            OpIn::Canonical { .. } => Op::Canonical,
-            OpIn::Circle { .. } => Op::Circle,
-            OpIn::Arc { .. } => Op::Arc,
-            OpIn::Degenerate { .. } => Op::Degenerate,
-            OpIn::Line { .. } => Op::Line,
-            OpIn::Fair { .. } => Op::Fair,
-        }
-    }
-
     /// Whether a successful op is followed by the state of a new curve.
     fn creates(&self) -> bool {
         matches!(
@@ -319,199 +267,8 @@ fn v3(a: [f64; 3]) -> Vec3 {
     Vec3::new(a[0], a[1], a[2])
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn encode_this(t: &This, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    o.extend([t.ctor.ffi().code(), t.dim as f64, f64::from(u8::from(t.oob))]);
-    if t.ctor != CtorIn::Empty {
-        let c = t
-            .crv
-            .as_ref()
-            .ok_or_else(|| harness("this: ctor needs a curve"))?;
-        encode_crv(&resolve(c)?, o);
-    }
-    Ok(())
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
-}
-
-fn encode_frame(f: &Frame, o: &mut Vec<f64>) {
-    for v in f {
-        o.extend_from_slice(v);
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match &i.this {
-        Some(t) => encode_this(t, &mut o)?,
-        None => o.push(Ctor::None.code()),
-    }
-    match &i.op {
-        OpIn::State
-        | OpIn::Intervals
-        | OpIn::ControlPolygon
-        | OpIn::ControlPoints
-        | OpIn::Ends
-        | OpIn::Counts
-        | OpIn::Convert2d
-        | OpIn::Convert3d
-        | OpIn::Type
-        | OpIn::MakeNurb
-        | OpIn::Copy => {}
-        OpIn::Evaluate {
-            t,
-            nd,
-            from_left,
-            non_zero,
-        } => o.extend([*t, *nd as f64, flag(*from_left), flag(*non_zero)]),
-        OpIn::EvaluatePoint { t } => o.push(*t),
-        OpIn::Knots { ivl } => {
-            let [a, b] = ivl.unwrap_or([0.0, 0.0]);
-            o.extend([flag(ivl.is_some()), a, b]);
-        }
-        OpIn::Greville { index } => o.push(*index as f64),
-        OpIn::EditParam { ivl, notify } => o.extend([ivl[0], ivl[1], flag(*notify)]),
-        OpIn::EditEnd { p, start, w } => {
-            o.extend_from_slice(p);
-            o.extend([flag(*start), flag(w.is_some()), w.unwrap_or(0.0)]);
-        }
-        OpIn::Fixup { tol } | OpIn::RemoveExtra { tol } | OpIn::Continuities { tol } => o.push(*tol),
-        OpIn::SetFromGw { crv } => {
-            o.push(flag(crv.is_some()));
-            if let Some(c) = crv {
-                encode_crv(&resolve(c)?, &mut o);
-            }
-        }
-        OpIn::Transform { frame, scale } => {
-            encode_frame(frame, &mut o);
-            o.push(flag(scale.is_some()));
-            o.extend_from_slice(&scale.unwrap_or([1.0, 1.0, 1.0]));
-        }
-        OpIn::Mirror { frame } => encode_frame(frame, &mut o),
-        OpIn::Projection {
-            kind,
-            point,
-            normal,
-            dir,
-        } => {
-            o.push(f64::from(*kind));
-            o.extend_from_slice(point);
-            o.extend_from_slice(normal);
-            o.extend_from_slice(dir);
-        }
-        OpIn::Eq { other } => encode_this(other, &mut o)?,
-        OpIn::IsKindOf { t } => o.push(*t as f64),
-        OpIn::Tessellate {
-            ivl,
-            chord,
-            angle,
-            min_segments,
-        } => o.extend([ivl[0], ivl[1], *chord, *angle, *min_segments as f64]),
-        OpIn::Canonical {
-            dim,
-            deg,
-            cps,
-            form,
-            knots,
-            mults,
-            kt,
-            weights,
-            trim,
-        } => {
-            o.extend([*dim as f64, *deg as f64, cps.len() as f64]);
-            for p in cps {
-                o.extend_from_slice(p);
-            }
-            o.extend([f64::from(*form), knots.len() as f64]);
-            o.extend_from_slice(knots);
-            if mults.len() != knots.len() {
-                return Err(harness("canonical: one multiplicity per knot"));
-            }
-            o.extend(mults.iter().map(|&m| m as f64));
-            o.push(f64::from(*kt));
-            o.push(flag(weights.is_some()));
-            if let Some(w) = weights {
-                o.push(w.len() as f64);
-                o.extend_from_slice(w);
-            }
-            let [a, b] = trim.unwrap_or([0.0, 0.0]);
-            o.extend([flag(trim.is_some()), a, b]);
-        }
-        OpIn::Circle {
-            dim,
-            frame,
-            r,
-            a0,
-            a1,
-            quintic,
-        } => {
-            o.push(*dim as f64);
-            encode_frame(frame, &mut o);
-            o.extend([*r, *a0, *a1, flag(*quintic)]);
-        }
-        OpIn::Arc {
-            center,
-            p1,
-            p2,
-            quintic,
-        } => {
-            o.extend_from_slice(center);
-            o.extend_from_slice(p1);
-            o.extend_from_slice(p2);
-            o.push(flag(*quintic));
-        }
-        OpIn::Degenerate { dim, p } => {
-            o.push(*dim as f64);
-            o.extend_from_slice(p);
-        }
-        OpIn::Line { dim, p0, p1 } => {
-            o.push(*dim as f64);
-            o.extend_from_slice(p0);
-            o.extend_from_slice(p1);
-        }
-        OpIn::Fair {
-            pts,
-            tans,
-            hi,
-            prevent,
-        } => {
-            o.push(pts.len() as f64);
-            for p in pts {
-                o.extend_from_slice(p);
-            }
-            o.push(tans.len() as f64);
-            for t in tans {
-                o.extend_from_slice(t);
-            }
-            let h = hi.as_deref().unwrap_or(&[]);
-            o.extend([flag(hi.is_some()), h.len() as f64]);
-            for t in h {
-                o.extend_from_slice(t);
-            }
-            o.push(flag(*prevent));
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    match ffi::eval(i.op.ffi(), &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- records ----------------------------------------------------------------------
@@ -1615,10 +1372,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

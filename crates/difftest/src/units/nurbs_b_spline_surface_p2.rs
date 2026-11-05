@@ -4,8 +4,8 @@
 //! tests, control point access and editing, `SetCanonical`, sub-patches, splitting,
 //! `SwapUV`, the maximum analytic domain and `AdjustSTEPUVDomain`).
 //!
-//! C++: `solidcore_ffi::units::nurbs_b_spline_surface_p2` (upstream
-//! `source/SMLib/src/SmBSplineSurface.cpp`). Rust:
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineSurface.cpp`; checked against its golden. Rust:
 //! `solidcore::nurbs::b_spline_surface::p2`.
 //!
 //! A case is `this` (the surface a member op runs on: `empty` for a surface without
@@ -42,7 +42,6 @@ use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::nurbs_b_spline_surface_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -198,29 +197,6 @@ enum OpIn {
     },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Analytics {} => Op::Analytics,
-            OpIn::Iso { .. } => Op::Iso,
-            OpIn::DegenPt { .. } => Op::DegenPt,
-            OpIn::Bilinear {} => Op::Bilinear,
-            OpIn::GetCp { .. } => Op::GetCp,
-            OpIn::Expert { .. } => Op::Expert,
-            OpIn::MaxDomain {} => Op::MaxDomain,
-            OpIn::SetCanon { .. } => Op::SetCanon,
-            OpIn::SetCp { .. } => Op::SetCp,
-            OpIn::SubPatch { .. } => Op::SubPatch,
-            OpIn::Split { .. } => Op::Split,
-            OpIn::Swap {} => Op::Swap,
-            OpIn::Adjust { .. } => Op::Adjust,
-            OpIn::Sphere { .. } => Op::Sphere,
-            OpIn::Revolution { .. } => Op::Revolution,
-            OpIn::TrimPlane { .. } => Op::TrimPlane,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,163 +271,8 @@ fn crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend(
-        [n, m, s.p, s.q, s.u.len().saturating_sub(1), s.v.len().saturating_sub(1)]
-            .map(|x| x as f64),
-    );
-    for row in &s.net {
-        for p in row {
-            o.extend_from_slice(p);
-        }
-    }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &InlineCrv) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn push_dom(o: &mut Vec<f64>, dom: Option<&[f64; 4]>) {
-    o.push(flag(dom.is_some()));
-    o.extend_from_slice(dom.unwrap_or(&[0.0, 0.0, 0.0, 0.0]));
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match &i.this {
-        None => o.push(0.0),
-        Some(t) => {
-            o.push(if t.empty { 1.0 } else { 2.0 });
-            o.push(flag(t.oob));
-            o.push(f64::from(t.form));
-            if !t.empty {
-                let s = t.srf.as_ref().ok_or_else(|| harness("this: missing srf"))?;
-                push_srf(&mut o, &srf(s)?)?;
-            }
-        }
-    }
-    match &i.op {
-        OpIn::Analytics {} | OpIn::Bilinear {} | OpIn::MaxDomain {} | OpIn::Swap {} => {}
-        OpIn::Iso {
-            param,
-            iso,
-            dom,
-            want_uv,
-        } => {
-            o.extend([f64::from(*param), *iso]);
-            push_dom(&mut o, dom.as_ref());
-            o.push(flag(*want_uv));
-        }
-        OpIn::DegenPt { tol, dom } => {
-            o.push(*tol);
-            push_dom(&mut o, dom.as_ref());
-        }
-        OpIn::GetCp { form, u, v } => o.extend([f64::from(*form), *u as f64, *v as f64]),
-        OpIn::Expert {
-            form,
-            su,
-            eu,
-            sv,
-            ev,
-            us,
-            vs,
-        } => {
-            o.push(f64::from(*form));
-            o.extend([su, eu, sv, ev, us, vs].map(|x| *x as f64));
-        }
-        OpIn::SetCanon {
-            ud,
-            vd,
-            pts,
-            form,
-            uk,
-            um,
-            vk,
-            vm,
-            kt,
-            weights,
-        } => {
-            o.extend([*ud as f64, *vd as f64, pts.len() as f64]);
-            for p in pts {
-                o.extend_from_slice(p);
-            }
-            o.push(f64::from(*form));
-            o.push(uk.len() as f64);
-            o.extend_from_slice(uk);
-            o.extend(um.iter().map(|&x| x as f64));
-            o.push(vk.len() as f64);
-            o.extend_from_slice(vk);
-            o.extend(vm.iter().map(|&x| x as f64));
-            o.push(f64::from(*kt));
-            o.push(flag(weights.is_some()));
-            if let Some(w) = weights {
-                o.push(w.len() as f64);
-                o.extend_from_slice(w);
-            }
-        }
-        OpIn::SetCp { form, u, v, pt, w } => {
-            o.extend([f64::from(*form), *u as f64, *v as f64]);
-            o.extend_from_slice(pt);
-            o.push(*w);
-        }
-        OpIn::SubPatch { dom } | OpIn::Adjust { dom } => o.extend_from_slice(dom),
-        OpIn::Split { t, param } => o.extend([*t, f64::from(*param)]),
-        OpIn::Sphere { arcs, tol } => {
-            o.push(arcs.len() as f64);
-            for c in arcs {
-                push_crv(&mut o, &crv(c)?);
-            }
-            o.push(*tol);
-        }
-        OpIn::Revolution {
-            curve,
-            origin,
-            axis,
-            angle,
-            swap,
-        } => {
-            push_crv(&mut o, &crv(curve)?);
-            o.extend_from_slice(origin);
-            o.extend_from_slice(axis);
-            o.extend([*angle, flag(*swap)]);
-        }
-        OpIn::TrimPlane { c1, c2 } => {
-            push_crv(&mut o, &crv(c1)?);
-            push_crv(&mut o, &crv(c2)?);
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(i.op.ffi(), &input).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 // ---- output splitting ---------------------------------------------------------------
@@ -1645,10 +1466,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1666,7 +1483,10 @@ mod tests {
         for seed in 0..1500u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
             let i = gen_case(&mut rng);
-            let op = format!("{:?}", i.op.ffi());
+            let op = serde_json::to_value(&i.op).expect("op")["op"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             let out = rust(&i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.symbol)
@@ -1680,18 +1500,18 @@ mod tests {
             eprintln!("{k:?} {v}");
         }
         for op in [
-            "Iso",
-            "Bilinear",
-            "GetCp",
-            "Expert",
-            "SetCanon",
-            "SetCp",
-            "SubPatch",
-            "Split",
-            "Swap",
-            "Adjust",
-            "Revolution",
-            "TrimPlane",
+            "iso",
+            "bilinear",
+            "get_cp",
+            "expert",
+            "set_canon",
+            "set_cp",
+            "sub_patch",
+            "split",
+            "swap",
+            "adjust",
+            "revolution",
+            "trim_plane",
         ] {
             let ok = tally
                 .iter()
