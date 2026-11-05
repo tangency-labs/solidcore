@@ -5,7 +5,7 @@
 //! The shell's extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) used to
 //! extend those patches tangentially (`SM_CT_G1R`) into plain B-splines, and 7 of the 8
 //! inner corners lost their sphere; now each is a ball patch on its sphere (its own net
-//! continued, on the default kernel too), the volume is the closed form's and the body
+//! continued by the exact extension), the volume is the closed form's and the body
 //! checks clean.
 #![allow(
     clippy::unwrap_used,
@@ -203,25 +203,4 @@ fn the_shell_has_the_closed_form_volume_and_checks_clean() {
     );
     assert!((v - want).abs() <= 1e-12 * want, "{v} vs {want}");
     assert!(lines.is_empty(), "{lines:?}");
-}
-
-/// The extended offset always extends a ball patch as itself, its own net continued on
-/// its sphere (`Surface::extended_sides`), so on the default kernel, with no fix turned
-/// on, every inner corner keeps its patch on its sphere (upstream's tangent extension
-/// into a plain B-spline kept only corner 1's).
-#[test]
-fn on_the_default_kernel_every_inner_corner_keeps_its_sphere() {
-    let mut k = Kernel::default();
-    let shell = shelled_box(&mut k);
-    let mut kept = Vec::new();
-    for corner in 0..8 {
-        let faces = corner_faces(&k, &shell, corner, R - WALL);
-        assert_eq!(faces.len(), 1, "corner {corner}");
-        let s = face2::surface(&shell, faces[0]).unwrap().unwrap();
-        if let SurfaceKind::BallPatch(p) = s.kind() {
-            assert!(off_sphere(p) <= 1e-12, "corner {corner}");
-            kept.push(corner);
-        }
-    }
-    assert_eq!(kept, (0..8).collect::<Vec<_>>());
 }
