@@ -288,7 +288,7 @@ fn extend_side(
         })
     };
     let range = source.range()?;
-    let least = source.least_natural_step()?;
+    let least = source.least_step()?;
     let (e, capped) = match cap {
         Cap::Arc(arc) => {
             let target = distance.min(r * arc);
@@ -347,11 +347,12 @@ pub(super) enum Reach {
 /// The extension parameter where `f` (increasing from 0, `None` where a weight is not
 /// positive) reaches `target`: bracketed by doubling from `e0`, then bisected. A target past
 /// every positive ask is refused naming the longest value found. No ask is below `least`,
-/// the shortest extension the side's knot can carry ([`Local::least_natural_step`]): a
+/// the shortest extension the side's knot can carry ([`Local::least_step`]): a
 /// target shorter than its value is met by it (a rounding-sized reach, where the
-/// bisection would otherwise ask an extension whose knot rounds onto the side's).
+/// bisection would otherwise ask an extension whose knot the knot fixup merges onto the
+/// side's).
 ///
-/// [`Local::least_natural_step`]: super::Local::least_natural_step
+/// [`Local::least_step`]: super::Local::least_step
 pub(super) fn solve(
     f: &dyn Fn(f64) -> Result<Option<f64>>,
     target: f64,

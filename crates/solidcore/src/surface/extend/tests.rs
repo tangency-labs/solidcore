@@ -2,6 +2,7 @@ use super::*;
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::vector2d::Vec2;
 use crate::geom::vector3d::Vec3;
+use crate::math::EFF_ZERO_PARAM;
 use crate::nurbs::knots::Side;
 use crate::nurbs::srf_tool::p1::extract_iso_crv;
 use crate::surface::cone::Cone;
@@ -1488,9 +1489,18 @@ fn a_ball_patch_extends_its_own_net_on_its_sphere_up_to_its_caps() {
     }
 }
 
+/// No knot of `s` repeated past its degree plus one, in either direction (the knot fixup
+/// merges a span shorter than the ends' scaled zero onto its neighbour).
+fn knots_well_formed(s: &BSplineSurface) -> bool {
+    let n = s.gw_nurb().unwrap();
+    let ok = |knots: &[f64], p: usize| knots.chunk_by(|a, b| a == b).all(|run| run.len() <= p + 1);
+    ok(n.u_knots(), n.p()) && ok(n.v_knots(), n.q())
+}
+
 /// A rounding-sized distance (the reach beside a face whose new surface passes through
 /// its old edges) is extended, not refused: the bisection used to ask an extension whose
-/// knot `4 + e` rounded onto the side's knot 4, a span of no length (`SM_ERR`). The
+/// knot `4 + e` rounded onto the side's knot 4, a span of no length (`SM_ERR`), and a
+/// span shorter than the knot fixup's `EFF_ZERO_PARAM` is merged or spread by it. The
 /// shortest extension the knot carries meets it.
 #[test]
 fn a_cylinder_extends_by_a_rounding_sized_distance() {
@@ -1514,8 +1524,9 @@ fn a_cylinder_extends_by_a_rounding_sized_distance() {
             panic!("{d:e}: not a B-spline");
         };
         assert!(lies_on(grown, &on).unwrap(), "{d:e}");
+        assert!(knots_well_formed(grown), "{d:e}");
         // along the rulings: each side extended at least d, by no more than the shortest
-        // step its knot carries (a few ulps of the parameter, unit speed along v)
+        // step its knot carries (about EFF_ZERO_PARAM of the parameter, unit speed along v)
         let mut extended = 0;
         for s in e.sides {
             let (SideExtension::Extended(a) | SideExtension::UpToLimit(a)) = s else {
@@ -1523,7 +1534,7 @@ fn a_cylinder_extends_by_a_rounding_sized_distance() {
             };
             extended += 1;
             assert!(
-                a.enclosure.upper >= d && a.enclosure.lower <= 1e-14,
+                a.enclosure.upper >= d && a.enclosure.lower <= 1e-7,
                 "{d:e} {a:?}"
             );
         }
@@ -1533,10 +1544,11 @@ fn a_cylinder_extends_by_a_rounding_sized_distance() {
 
 /// The B-spline path's own solve, at a rounding-sized distance: the parabola with its u
 /// knots at `[3, 4]`, where the first ask (the range times `d` over the length, about
-/// `1.6e-16`) puts the new knot `4 + e` back on 4 (a span of no length). Every continuity
-/// is built at the shortest step the knot carries: the knot past 4, the source kept, the
-/// length not proved short of `d` and no longer than a few ulps of the parameter (speed
-/// about 2.2 at x = 1).
+/// `1.6e-16`) puts the new knot `4 + e` back on 4 (a span of no length), and any span below
+/// the knot fixup's `EFF_ZERO_PARAM` is merged or spread by it. Every continuity is built
+/// at the shortest step the knot carries: the new end knot `EFF_ZERO_PARAM` or a rounding
+/// more past 4, the source kept, the length not proved short of `d` and about that step
+/// (speed about 2.2 at x = 1).
 #[test]
 fn a_b_spline_extends_by_a_rounding_sized_distance() {
     let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y, 1.0, 1.0]];
@@ -1562,16 +1574,19 @@ fn a_b_spline_extends_by_a_rounding_sized_distance() {
                 panic!("{how:?} {d:e}: not a B-spline");
             };
             let end = dom(&e.surface).max().x;
+            let step = end - 4.0;
             assert!(
-                end > 4.0 && end - 4.0 <= 4.0 * f64::EPSILON,
+                (EFF_ZERO_PARAM..=1.01 * EFF_ZERO_PARAM).contains(&step),
                 "{how:?} {d:e} {end}"
             );
             let knots = b.gw_nurb().unwrap().u_knots().to_vec();
             assert_eq!(knots.iter().filter(|&&x| x == 4.0).count(), 2, "{knots:?}");
+            assert_eq!(knots.iter().filter(|&&x| x == end).count(), 3, "{knots:?}");
+            assert!(knots_well_formed(b), "{how:?} {d:e} {knots:?}");
             let a = e.across;
             assert!(a.converged, "{how:?} {d:e} {a:?}");
             assert!(
-                a.enclosure.upper >= d && a.enclosure.lower <= 1e-14,
+                a.enclosure.upper >= d && a.enclosure.lower <= 1e-7,
                 "{how:?} {d:e} {a:?}"
             );
             assert_eq!(e.source, 0.0);

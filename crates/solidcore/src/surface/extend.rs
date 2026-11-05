@@ -78,8 +78,10 @@ use std::cell::Cell;
 
 use crate::error::{Result, SolidError};
 use crate::geom::extent2d::Extent2d;
+use crate::geom::tol::scaled_zero2;
 use crate::geom::vector2d::Point2;
 use crate::kernel::Kernel;
+use crate::math::EFF_ZERO_PARAM;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::math::gamma;
 use crate::nurbs::math::{CPoint, NOW};
@@ -109,6 +111,9 @@ const SOLVE_TRIES: usize = 200;
 const BACK_OFFS: usize = 30;
 /// Halvings that find the longest extension with positive weights.
 const BISECTIONS: usize = 60;
+
+/// Growth steps of [`Local::least_step`] (each closes the rounding shortfall; two do).
+const LEAST_STEP_TRIES: usize = 8;
 /// A budget on one Tangent or Curvature extension's mirror steps: a limit on its size, not on
 /// any convergence. The step count follows from the ask: about `log2(e / range) + 1` for
 /// Tangent (each step mirrors the whole piece, doubling it), `ceil(e / h)` for Curvature (one
@@ -484,8 +489,8 @@ fn not_exact(distance: Option<f64>) -> SolidError {
 /// naming the longest such ask's distance.
 ///
 /// No ask is below the shortest extension the side's knot can carry
-/// ([`Local::least_natural_step`]; its new knot `b + e` past `b` serves every continuity's
-/// end knot, the mirror's `2 b - (b - e)` too): every halving and scaling stops there. At that
+/// ([`Local::least_step`], for every continuity's new end knot): every halving and
+/// scaling stops there. At that
 /// step a length not proved short of `d` meets it (a rounding-sized distance, which no
 /// shorter extension can be built for), with its own measured enclosure and bound.
 fn solve(
@@ -494,7 +499,7 @@ fn solve(
     source: &Local,
     d: f64,
 ) -> Result<(Made, Across)> {
-    let least = source.least_natural_step()?;
+    let least = source.least_step()?;
     // the first ask: the parameter range times d over the source's length across it
     let range = source.range()?;
     let whole = made(range)?;
@@ -890,31 +895,40 @@ impl Local {
         Ok(self.end()? - self.start()?)
     }
 
-    /// The shortest extension [`Self::natural`] can carry past the end knot `b` (its last
-    /// span `[c, b]`): the step to the next double past `b`, so the new knot `b + e` is past
-    /// `b` (an extension whose knot rounds onto `b` would be a span of no length), and no
-    /// less than `(b - c) EPSILON`, so the de Casteljau parameter `1 + e / (b - c)` is past
-    /// 1 (any `x >= EPSILON (1 - u)` added to 1 rounds up to `1 + EPSILON`). The other
-    /// continuities' end knots (`b + e`, the mirror's `2 b - (b - e)`) are past `b` at it
-    /// too. A solver asks nothing shorter: a rounding-sized target is met by this step.
-    pub(super) fn least_natural_step(&self) -> Result<f64> {
+    /// The shortest extension the side's end knot `b` can carry (its last span `[c, b]`).
+    /// Every continuity's new end knot is `b + e` (the mirror's `2b - (b - e)` too), and it
+    /// must survive the knot fixup every B-spline surface's knots go through
+    /// ([`BSplineSurface::from_gw_nurb`], [`fixup_knot_vector`] at [`EFF_ZERO_PARAM`]): a
+    /// knot nearer its neighbour than the ends' scaled zero is merged onto it (the new span
+    /// gone, the end knot repeated past `p + 1`), and a span shorter than `EFF_ZERO_PARAM`
+    /// is spread, moving the joint knot `b` (the source's net no longer kept). The span as
+    /// the fixup computes it, `fl(b + e) - b`, is at least both. `e` is also at least
+    /// `(b - c) EPSILON`, so Natural's de Casteljau parameter `1 + e / (b - c)` is past 1.
+    /// A solver asks nothing shorter: a shorter target is met by this step.
+    ///
+    /// [`fixup_knot_vector`]: crate::nurbs::nurbs_crv::fixup_knot_vector
+    pub(super) fn least_step(&self) -> Result<f64> {
+        let a = self.start()?;
         let b = self.end()?;
         let c = self.before_end(0)?;
-        if !b.is_finite() {
+        if !(a.is_finite() && b.is_finite() && b > c) {
             return Err(op_err());
         }
-        // the next double past a finite `b`: its bit pattern one further from 0 when b > 0,
-        // one nearer when b < 0 (a finite double's bits are below 0x7ff0..., and a negative
-        // one's above 0x8000..., so neither step wraps)
-        let up = if b > 0.0 {
-            f64::from_bits(b.to_bits() + 1)
-        } else if b < 0.0 {
-            f64::from_bits(b.to_bits() - 1)
-        } else {
-            f64::from_bits(1)
-        };
-        // (two neighbouring doubles: their difference is exact)
-        Ok((up - b).max((b - c) * f64::EPSILON))
+        let mut e = EFF_ZERO_PARAM.max((b - c) * f64::EPSILON);
+        for _ in 0..LEAST_STEP_TRIES {
+            let end = b + e;
+            let span = end - b;
+            // the fixup's own tests, on the knots as they will be (the ends' scaled zero
+            // is even in sign, so a low side's negated knots give the same)
+            let need = EFF_ZERO_PARAM.max(scaled_zero2(&a, &end));
+            if span >= need && 1.0 + e / (b - c) > 1.0 {
+                return Ok(e);
+            }
+            // short by rounding (or by the end's own scaled zero): grow by the shortfall,
+            // and at least by the rounding of `b + e`
+            e += (need - span).max(end.abs() * f64::EPSILON);
+        }
+        Err(op_err())
     }
 
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
@@ -1057,9 +1071,9 @@ impl Local {
                 "the extension is not positive",
             ));
         }
-        // a new end knot that rounds onto the side's is a span of no length, whatever the
-        // continuity
-        if e < self.least_natural_step()? {
+        // a new end knot the knot fixup merges onto the side's or spreads (a span of no
+        // length, or the joint moved), whatever the continuity
+        if e < self.least_step()? {
             return Err(SolidError::invalid_input(
                 OP,
                 "the extension is shorter than the side's knot can carry",
@@ -1145,14 +1159,6 @@ impl Local {
         let b = self.end()?;
         let c = self.before_end(0)?;
         let p = self.p;
-        // a knot or a parameter that rounds back onto the side's is no extension: a span of
-        // no length (`least_natural_step` is the shortest that is one)
-        if !(b + e > b && 1.0 + e / (b - c) > 1.0) {
-            return Err(SolidError::invalid_input(
-                OP,
-                "the extension is shorter than the side's knot can carry",
-            ));
-        }
         // each row's origin: its end point (any point would do: it is exact by choice)
         let origins: Vec<[f64; 3]> = self
             .rows

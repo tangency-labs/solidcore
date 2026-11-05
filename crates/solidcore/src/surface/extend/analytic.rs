@@ -445,12 +445,7 @@ fn extend_side(
     };
     let target = distance.min(cap);
     let capped = target < distance;
-    let e = reach(
-        &value,
-        target,
-        source.range()?,
-        source.least_natural_step()?,
-    )?;
+    let e = reach(&value, target, source.range()?, source.least_step()?)?;
     let (grown, bound) = made(e)?.ok_or_else(|| SolidError::sm_err(OP))?;
     let length = measure(&grown)?;
     certify_iso(&grown, side, middle, f, iso)?;
