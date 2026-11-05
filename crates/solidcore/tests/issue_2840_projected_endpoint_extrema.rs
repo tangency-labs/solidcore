@@ -157,6 +157,34 @@ fn projected_line_extrema_cover_boundaries_and_stationary_points() {
 }
 
 #[test]
+fn projected_maximum_equation_has_its_actual_derivative() {
+    use solidcore::curve::curve::{p4::CurvePropertyEfo, CurvePropertyType};
+    use solidcore::geom::local_solve1d::{EvalFunction, FunctionValue};
+
+    let k = Kernel::default();
+    let curve = Curve::from(BSplineCurve::create_line_segment(3, Vec3::ZERO, Vec3::X).unwrap());
+    // C(t)=(t,0,0), P=0, N=(0,0,s): the maximum's signed stationarity
+    // equation is F(t)=-s^2*t, hence F'(t)=-s^2 exactly.
+    for scale in [0.5, 1.0, 2.0] {
+        let vectors = [Vec3::ZERO, Vec3::Z * scale];
+        let mut evaluator = CurvePropertyEfo::new(
+            &k,
+            &curve,
+            CurvePropertyType::ProjectedPointMaximize,
+            None,
+            Some(&vectors),
+            1e-20,
+        );
+        for t in [0.2, 0.25, 0.3] {
+            let mut value = FunctionValue::default();
+            evaluator.evaluate(t, &mut value, false).unwrap();
+            assert!(close(value.f, -scale * scale * t));
+            assert!(close(value.f_prime, -scale * scale));
+        }
+    }
+}
+
+#[test]
 fn projected_parabola_extrema_include_constrained_endpoints() {
     use solidcore::nurbs::crv_basic::Curve as NurbCurve;
     use solidcore::nurbs::math::CPoint;

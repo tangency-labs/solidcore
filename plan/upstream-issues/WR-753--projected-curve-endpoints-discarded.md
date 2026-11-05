@@ -18,6 +18,12 @@
   and an analytic `SmLine`. No patched object or replacement implementation
   is linked. The permitted `SmCurve.cpp` source was hash-checked against the
   pinned revision before compiling the reproduction.
+- **Rust cross-check on identical inputs:** the corrected library returns one
+  solution for each operation and curve kind: minimum `t=1`, distance
+  `0.01900421005987884`; maximum `t=0`, distance `0.02000399960007998`.
+  These are the closed-form endpoints and distances, rather than the empty C++
+  result. The standalone Rust reproduction links the same library build used by
+  the regression tests.
 - **Cause:** after the stationary-point search reports no root, the code
   explicitly selects each eligible interval endpoint and computes its projected
   distance, but does not set `bFoundSolution`. The subsequent found-solution
