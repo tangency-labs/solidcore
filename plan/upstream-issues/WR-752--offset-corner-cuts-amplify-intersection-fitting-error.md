@@ -1,4 +1,4 @@
-#### WR-749. Independent offset edge cuts amplify intersection fitting error at shallow corners
+#### WR-752. Independent offset edge cuts amplify intersection fitting error at shallow corners
 
 - **Severity:** Wrong result
 - **Area:** Extended offsets
