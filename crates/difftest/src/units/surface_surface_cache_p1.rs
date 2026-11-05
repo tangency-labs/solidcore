@@ -4,20 +4,19 @@
 //! classification, knot continuity, iso boundary curves, lazily built polar boxes, simple
 //! queries) and the file-static helpers of `SmSurfaceCache.cpp`.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_cache_p1` (upstream
-//! `source/SMLib/src/SmSurfaceCache.cpp`; the file-static helpers are verbatim copies in the
-//! shim, decomposition trees are built by hand). Rust: `solidcore::surface::surface_cache::p1`.
+//! Ported from upstream `source/SMLib/src/SmSurfaceCache.cpp` (decomposition trees are built
+//! by hand); checked against its golden. Rust: `solidcore::surface::surface_cache::p1`. The
+//! `push_*` encoders stay for the runners that still feed these inputs to the C++.
 //!
 //! A case is an optional surface `srf` (`oob`, `form` and an inline or `.sms` surface) and an
-//! `op` with its parameters. Both sides produce the flat record documented in the ffi module;
-//! the runner reports its first entry as the `status` (`0` = `SM_SUCCESS`, else the
+//! `op` with its parameters. The Rust side produces a flat record; the runner reports its first entry as the `status` (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce) and the rest as the `out` values.
 //!
 //! Deferred cases: the paths into unported units (`SmSurface::IsSingularity` in every
 //! Bezier approximation, `SmSurface::EvaluateNormal` for collinear boundary samples and the
 //! polar boxes of low degree surfaces, `SmSurface::GetFace`). Every run has at least
-//! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are redrawn.
+//! [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,7 +46,6 @@ use solidcore::surface::surface_cache::p1::{
     PatchBoundaryBoundingPlanes, SurfaceCache, SurfaceCacheOptions,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_cache_p1::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -268,29 +266,6 @@ enum OpIn {
     },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            Self::Plane3 { .. } => Op::Plane3,
-            Self::Halfspace { .. } => Op::Halfspace,
-            Self::BPlanes { .. } => Op::BPlanes,
-            Self::BezApprox { .. } => Op::BezApprox,
-            Self::SizeCorners { .. } => Op::SizeCorners,
-            Self::SizeSurf { .. } => Op::SizeSurf,
-            Self::Corners { .. } => Op::Corners,
-            Self::Alt { .. } => Op::Alt,
-            Self::TreeTop { .. } => Op::TreeTop,
-            Self::Subdiv { .. } => Op::Subdiv,
-            Self::Cont { .. } => Op::Cont,
-            Self::Iso { .. } => Op::Iso,
-            Self::Polar { .. } => Op::Polar,
-            Self::Misc { .. } => Op::Misc,
-            Self::Face => Op::Face,
-            Self::Cull { .. } => Op::Cull,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -379,7 +354,7 @@ pub(crate) fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
-// ---- C++ side -----------------------------------------------------------------------
+// ---- records ------------------------------------------------------------------------
 
 pub(crate) fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
     let (n, m) = shape(s)?;
@@ -424,170 +399,6 @@ pub(crate) fn push_crv(o: &mut Vec<f64>, c: &CrvIn) {
     o.extend_from_slice(&c.u);
 }
 
-pub(crate) fn push_key(o: &mut Vec<f64>, k: &KeyIn) {
-    o.push(flag(k.vec.is_some()));
-    o.extend(k.vec.unwrap_or([0.0; 3]));
-    o.push(flag(k.b.is_some()));
-    o.push(flag(k.b.unwrap_or(false)));
-    o.push(flag(k.l.is_some()));
-    o.push(k.l.unwrap_or(0) as f64);
-    o.push(flag(k.d.is_some()));
-    o.push(k.d.unwrap_or(0.0));
-    o.push(flag(k.p.is_some()));
-    o.push(k.p.unwrap_or(-1) as f64);
-}
-
-pub(crate) fn push_curves(o: &mut Vec<f64>, c: Option<&Vec<CrvIn>>) {
-    match c {
-        None => o.push(-1.0),
-        Some(v) => {
-            o.push(v.len() as f64);
-            for c in v {
-                push_crv(o, c);
-            }
-        }
-    }
-}
-
-fn push_tree(o: &mut Vec<f64>, t: &[NodeIn]) {
-    o.push(t.len() as f64);
-    for n in t {
-        o.extend([
-            n.parent as f64,
-            n.c1 as f64,
-            n.c2 as f64,
-            f64::from(n.aux),
-            f64::from(n.split),
-            flag(n.marked),
-            f64::from(n.class),
-            n.face as f64,
-        ]);
-        o.extend_from_slice(&n.dom);
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = i.op.ffi();
-    if !matches!(op, Op::Plane3 | Op::Cull) {
-        let b = i.srf.as_ref().ok_or_else(|| harness("missing surface"))?;
-        push_bss(&mut o, b)?;
-    }
-    match &i.op {
-        OpIn::Plane3 { p, tol } => {
-            for v in p {
-                o.extend_from_slice(v);
-            }
-            o.push(*tol);
-        }
-        OpIn::Halfspace { base, normal } => {
-            o.extend_from_slice(base);
-            o.extend_from_slice(normal);
-        }
-        OpIn::BPlanes { dom, index } => {
-            o.extend_from_slice(dom);
-            o.push(*index as f64);
-        }
-        OpIn::BezApprox { dom } | OpIn::SizeSurf { dom } => o.extend_from_slice(dom),
-        OpIn::SizeCorners { c } => {
-            for v in c {
-                o.extend_from_slice(v);
-            }
-        }
-        OpIn::Corners { dom, bez } => {
-            o.extend_from_slice(dom);
-            o.push(flag(bez.is_some()));
-            if let Some(b) = bez {
-                push_srf(&mut o, b)?;
-            }
-        }
-        OpIn::Alt { alts, queries } => {
-            o.push(alts.len() as f64);
-            for a in alts {
-                o.extend([f64::from(a.ty), a.approx, a.angle]);
-                push_key(&mut o, &a.key);
-                push_curves(&mut o, a.c3.as_ref());
-                push_curves(&mut o, a.cuv.as_ref());
-            }
-            o.push(queries.len() as f64);
-            for q in queries {
-                o.extend([f64::from(q.ty), q.approx, q.angle]);
-                push_key(&mut o, &q.key);
-                o.push(flag(q.w3));
-                o.push(flag(q.wuv));
-            }
-        }
-        OpIn::TreeTop { nu, nv, nodes } => {
-            o.push(*nu as f64);
-            o.push(*nv as f64);
-            for n in nodes {
-                o.extend_from_slice(&n.bbox[0]);
-                o.extend_from_slice(&n.bbox[1]);
-                o.extend_from_slice(&n.dom);
-            }
-        }
-        OpIn::Subdiv { tree, prog } => {
-            push_tree(&mut o, tree);
-            o.push(prog.len() as f64);
-            for p in prog {
-                match p {
-                    ProgIn::Find { class, stack } => {
-                        o.extend([0.0, f64::from(*class), stack.len() as f64]);
-                        o.extend(stack.iter().map(|&s| s as f64));
-                    }
-                    ProgIn::Region { node } => o.extend([1.0, *node as f64]),
-                    ProgIn::Mark => o.push(2.0),
-                    ProgIn::Set {
-                        node,
-                        marked,
-                        class,
-                        face,
-                    } => o.extend([
-                        3.0,
-                        *node as f64,
-                        flag(*marked),
-                        f64::from(*class),
-                        *face as f64,
-                    ]),
-                    ProgIn::Dump => o.push(4.0),
-                    ProgIn::FirstPatch { node } => o.extend([5.0, *node as f64]),
-                }
-            }
-        }
-        OpIn::Cont { u, v, dom } => {
-            o.push(u.len() as f64);
-            o.extend(u.iter().map(|&c| f64::from(c)));
-            o.push(v.len() as f64);
-            o.extend(v.iter().map(|&c| f64::from(c)));
-            o.extend_from_slice(dom);
-        }
-        OpIn::Iso { cache, calls } => {
-            o.extend_from_slice(cache);
-            o.push(calls.len() as f64);
-            for (d, tol) in calls {
-                o.extend_from_slice(d);
-                o.push(*tol);
-            }
-        }
-        OpIn::Polar { tree, nodes } => {
-            push_tree(&mut o, tree);
-            o.push(nodes.len() as f64);
-            o.extend(nodes.iter().map(|&n| n as f64));
-        }
-        OpIn::Misc { dom, test, uv } => {
-            o.extend_from_slice(dom);
-            o.push(flag(*test));
-            o.extend_from_slice(uv);
-        }
-        OpIn::Face => {}
-        OpIn::Cull { v } => {
-            o.push(v.len() as f64);
-            o.extend_from_slice(v);
-        }
-    }
-    Ok((op, o))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
         .split_first()
@@ -595,12 +406,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1202,7 +1007,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
                     }
                 }
             }
-            // the C++ record has no status: drop the leading 0
+            // a subdivision record has no status: drop the leading 0
             o.remove(0);
             Ok(o)
         }
@@ -1301,18 +1106,6 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         Ok(o) => to_output(&o),
         Err(e) => Output::unported(&e).unwrap_or_else(|| to_output(&[status(&e)])),
     })
-}
-
-/// The C++ record of a subdivision program has no status entry.
-fn cpp_output(i: &Inputs) -> Result<Output, HarnessError> {
-    if matches!(i.op, OpIn::Subdiv { .. }) {
-        let (op, input) = cpp_input(i)?;
-        let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-        return Ok(Output::new()
-            .values("status", vec![0.0])
-            .values("out", flat));
-    }
-    cpp(i)
 }
 
 // ---- generated cases ----------------------------------------------------------------
@@ -1814,16 +1607,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1832,10 +1616,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp_output(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1857,12 +1637,7 @@ mod tests {
         for seed in 0..3000u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
             let i = gen_case(&mut rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
+            let op = serde_json::to_value(&i.op).unwrap()["op"].as_str().unwrap().to_string();
             let out = rust(&i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.unit)
@@ -1870,25 +1645,25 @@ mod tests {
                 let st = out.values.get("status").and_then(|v| v.first()).copied();
                 format!("status:{}", st.unwrap_or(f64::NAN))
             };
-            *tally.entry((format!("{op:?}"), kind)).or_default() += 1;
+            *tally.entry((op, kind)).or_default() += 1;
         }
         for (k, v) in &tally {
             println!("{k:?}: {v}");
         }
         for op in [
-            "Plane3",
-            "Halfspace",
-            "BPlanes",
-            "SizeCorners",
-            "SizeSurf",
-            "Corners",
-            "Alt",
-            "TreeTop",
-            "Subdiv",
-            "Cont",
-            "Iso",
-            "Misc",
-            "Cull",
+            "plane3",
+            "halfspace",
+            "b_planes",
+            "size_corners",
+            "size_surf",
+            "corners",
+            "alt",
+            "tree_top",
+            "subdiv",
+            "cont",
+            "iso",
+            "misc",
+            "cull",
         ] {
             assert!(
                 tally.keys().any(|(n, k)| n == op && k == "status:0"),

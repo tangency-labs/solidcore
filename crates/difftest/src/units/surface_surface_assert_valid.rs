@@ -2,12 +2,12 @@
 //! on real B-spline surfaces, planes, cylinders, cones, spheres, tori, surfaces of
 //! revolution, surfaces of extrusion and curve-bounded surfaces.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_assert_valid` (shim
-//! `harness/cpp/shim/surface_surface_assert_valid.cpp`, which documents the block).
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden. The
+//! input block is the one `harness/cpp/shim/surface_surface_assert_valid.cpp` documents.
 //! Rust: [`solidcore::surface::surface::Surface::assert_valid`].
 //!
-//! A case is the shim's input block (`kind level make` and the kind's construction
-//! data); both sides build their own surface from it. The output is the check's result
+//! A case is the input block (`kind level make` and the kind's construction data); the
+//! Rust side builds its surface from it. The output is the check's result
 //! and every report (all fields, texts included). Generated cases cover valid surfaces
 //! of every kind at levels 0, 1, 2 and `SM_LEVEL_GIVEN`, and corrupted ones: knot
 //! multiplicities above the degree, internal poles, degenerate control rows, collapsed
@@ -56,7 +56,6 @@ use solidcore::surface::surf_of_extrusion::SurfOfExtrusion;
 use solidcore::surface::surf_of_revolution::SurfOfRevolution;
 use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::surface::torus::{Torus, TorusOptions};
-use solidcore_ffi::units::surface_surface_assert_valid as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -99,21 +98,6 @@ fn herr(e: impl std::fmt::Display) -> HarnessError {
 
 fn output(flat: Vec<f64>) -> Output {
     Output::new().values("out", flat)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::eval(&i.block) {
-        Ok(v) => Ok(output(v)),
-        Err(solidcore_ffi::FfiError::InvalidArgument(r)) => Ok(Output::rejected(r)),
-        Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => Ok(Output::rejected(
-            if i.block.first() == Some(&8.0) {
-                "curve-bounded native guard: unwritten base continuity, missing boundary report labels, or uninitialised iso curves"
-            } else {
-                "CreateIsoBoundaries fails: sm_AssertTestSurface6 reads uninitialised curves"
-            },
-        )),
-        Err(e) => Err(herr(e)),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -910,10 +894,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

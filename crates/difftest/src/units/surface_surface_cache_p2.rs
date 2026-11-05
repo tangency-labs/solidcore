@@ -2,13 +2,12 @@
 //! `TestAgainstTolerances`, `SubdivideByBlock` and the Bezier patch block builders
 //! (`sm_CreateBezierPatchBlock`, `sm_CreateApproximateBezierPatchBlock`) of `SmSurfaceCache.cpp`.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_cache_p2` (the file-static builders are verbatim
-//! copies in the shim; subdivision nodes are built by hand). Rust:
-//! `solidcore::surface::surface_cache::p2`.
+//! Ported from upstream `source/SMLib/src/SmSurfaceCache.cpp` (subdivision nodes are built by
+//! hand); checked against its golden. Rust: `solidcore::surface::surface_cache::p2`.
 //!
 //! A case is a surface `surf` (a B-spline, a bounded plane or a curve-bounded surface over a
-//! B-spline) and an `op` with its parameters. Both sides produce the flat record documented in
-//! the ffi module; the runner reports its first entry as the `status` (`0` = `SM_SUCCESS`, else
+//! B-spline) and an `op` with its parameters. The Rust side produces a flat record; the runner
+//! reports its first entry as the `status` (`0` = `SM_SUCCESS`, else
 //! the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce) and the rest as the `out` values.
 //!
@@ -16,8 +15,7 @@
 //! block subdivision of a node with a surface, `SmSurface::IsSingularity` in the Bezier
 //! approximation of B-splines, `SmSurface::CalculateBoundingBox` / `CreateIsoParametricCurve`
 //! of planes and curve-bounded surfaces, `SmSurface::EvaluateNormal` in the bounding planes).
-//! Every run has at least [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper
-//! rejects are redrawn.
+//! Every run has at least [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,13 +40,11 @@ use solidcore::surface::surface_cache::p1::{
 };
 use solidcore::surface::surface_cache::p2 as sc;
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_cache_p2::{self as ffi, Op};
 
 use super::surface_surface_cache_p1::{
     alt_type, bss_of, curves_of, domain_of_srf, flag, gen_bss, gen_curve, gen_key, gen_srf,
-    gen_sub_dom, gvec, harness, key_of, perturb_key, push3, push_box, push_bss, push_curves,
-    push_dom, push_key, push_srf, srf, status, surface_of, v3, BssIn, CrvIn, InlineSrf, KeyIn,
-    SrfIn,
+    gen_sub_dom, gvec, harness, key_of, perturb_key, push3, push_box, push_dom, srf, status,
+    surface_of, v3, BssIn, CrvIn, InlineSrf, KeyIn, SrfIn,
 };
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -180,19 +176,6 @@ enum OpIn {
     },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Nth { .. } => Op::Nth,
-            OpIn::Add { .. } => Op::Add,
-            OpIn::BezBlock => Op::BezBlock,
-            OpIn::ApproxBlock => Op::ApproxBlock,
-            OpIn::Test { .. } => Op::Test,
-            OpIn::SubdivBlock { .. } => Op::SubdivBlock,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     surf: SurfIn,
@@ -200,114 +183,7 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_surf(o: &mut Vec<f64>, s: &SurfIn) -> Result<(), HarnessError> {
-    match s {
-        SurfIn::Bspline(b) => {
-            o.push(0.0);
-            push_bss(o, b)
-        }
-        SurfIn::Plane(p) => {
-            o.push(1.0);
-            o.extend(p.o);
-            o.extend(p.x);
-            o.extend(p.y);
-            o.extend(p.scale);
-            o.extend(p.dom);
-            Ok(())
-        }
-        SurfIn::CurveBounded(b) => {
-            o.push(2.0);
-            push_bss(o, b)
-        }
-        SurfIn::RawBspline(b) => {
-            o.push(3.0);
-            push_bss(o, b)
-        }
-        SurfIn::RawCurveBounded(b) => {
-            o.push(4.0);
-            push_bss(o, b)
-        }
-    }
-}
-
-fn push_opts(o: &mut Vec<f64>, p: &OptsIn) {
-    o.extend([
-        p.chord, p.ang, p.aspect, p.max_side, p.min_side, p.ratio, p.start,
-    ]);
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    match &i.op {
-        OpIn::BezBlock => {
-            let SurfIn::Bspline(b) = &i.surf else {
-                return Err(harness("bez_block needs a B-spline"));
-            };
-            push_bss(&mut o, b)?;
-        }
-        op => {
-            push_surf(&mut o, &i.surf)?;
-            match op {
-                OpIn::BezBlock | OpIn::ApproxBlock => {}
-                OpIn::Nth { dom, idx } => {
-                    o.extend(dom);
-                    o.push(idx.len() as f64);
-                    o.extend(idx.iter().map(|&k| f64::from(k)));
-                }
-                OpIn::Add { adds, queries } => {
-                    o.push(adds.len() as f64);
-                    for a in adds {
-                        o.extend([f64::from(a.ty), a.approx, a.angle]);
-                        push_key(&mut o, &a.key);
-                        push_curves(&mut o, a.c3.as_ref());
-                        push_curves(&mut o, a.cuv.as_ref());
-                    }
-                    o.push(queries.len() as f64);
-                    for q in queries {
-                        o.extend([f64::from(q.ty), q.approx, q.angle]);
-                        push_key(&mut o, &q.key);
-                    }
-                }
-                OpIn::Test {
-                    cache_dom,
-                    opts,
-                    aux,
-                    children,
-                    chsat,
-                    angsat,
-                    dom,
-                    bez,
-                    ivl,
-                } => {
-                    o.extend(cache_dom);
-                    push_opts(&mut o, opts);
-                    o.extend([
-                        f64::from(*aux),
-                        flag(*children),
-                        flag(*chsat),
-                        flag(*angsat),
-                    ]);
-                    o.extend(dom);
-                    if *aux == 3 {
-                        let b = bez.as_ref().ok_or_else(|| harness("aux 3 needs a Bezier"))?;
-                        push_srf(&mut o, &srf(b)?)?;
-                        for [lo, hi] in ivl {
-                            o.extend([*lo, *hi]);
-                        }
-                    }
-                }
-                OpIn::SubdivBlock { opts, dom, nosurf } => {
-                    push_opts(&mut o, opts);
-                    o.extend(dom);
-                    o.push(flag(*nosurf));
-                }
-            }
-        }
-    }
-    Ok((i.op.ffi(), o))
-}
+// ---- records ------------------------------------------------------------------------
 
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
@@ -316,12 +192,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1003,13 +873,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            let Ok(i) = gen_case(rng) else {
-                continue;
-            };
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
+            if let Ok(i) = gen_case(rng) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -1022,10 +886,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1050,12 +910,7 @@ mod tests {
             let Ok(i) = gen_case(&mut rng) else {
                 continue;
             };
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
+            let op = serde_json::to_value(&i.op).unwrap()["op"].as_str().unwrap().to_string();
             let out = rust(&i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.unit)
@@ -1063,12 +918,12 @@ mod tests {
                 let st = out.values.get("status").and_then(|v| v.first()).copied();
                 format!("status:{}", st.unwrap_or(f64::NAN))
             };
-            *tally.entry((format!("{op:?}"), kind)).or_default() += 1;
+            *tally.entry((op, kind)).or_default() += 1;
         }
         for (k, v) in &tally {
             println!("{k:?}: {v}");
         }
-        for op in ["Nth", "Add", "BezBlock", "ApproxBlock", "Test"] {
+        for op in ["nth", "add", "bez_block", "approx_block", "test"] {
             assert!(
                 tally.keys().any(|(n, k)| n == op && k == "status:0"),
                 "{op} never succeeds"

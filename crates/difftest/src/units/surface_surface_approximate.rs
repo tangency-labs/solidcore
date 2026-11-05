@@ -3,13 +3,13 @@
 //! bare or inside up to three offset, curve bounded, STEP and volume (rigid transform)
 //! surfaces, so every `GetRootSurface` override is reached.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_approximate` (shim
-//! `harness/cpp/shim/surface_surface_approximate.cpp`, which documents the block).
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden. The
+//! input block is the one `harness/cpp/shim/surface_surface_approximate.cpp` documents.
 //! Rust: [`solidcore::surface::surface::Surface::approximate_surface_ignoring_status`].
 //!
-//! A case is the shim's input block (`tol level just_copy n_wraps wraps.. kind` and the
-//! kind's construction data, as `surface.surface_assert_valid`'s); both sides build their
-//! own surface from it. The output is the status, the achieved tolerance and, when a
+//! A case is the input block (`tol level just_copy n_wraps wraps.. kind` and the kind's
+//! construction data, as `surface.surface_assert_valid`'s); the Rust side builds its
+//! surface from it. The output is the status, the achieved tolerance and, when a
 //! surface comes back, its type and its `SmBSplineSurface` part (degrees, control point
 //! counts, knots with multiplicities, every control point and weight). Generated cases
 //! cover every kind with and without wraps (offsets at positive, negative, zero and
@@ -51,7 +51,6 @@ use solidcore::surface::surf_of_revolution::SurfOfRevolution;
 use solidcore::surface::surface::{StepSurface, Surface, SurfaceKind};
 use solidcore::surface::torus::{Torus, TorusOptions};
 use solidcore::surface::volume::{Volume, VolumeKind};
-use solidcore_ffi::units::surface_surface_approximate as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -78,15 +77,6 @@ fn herr(e: impl std::fmt::Display) -> HarnessError {
 
 fn output(flat: Vec<f64>) -> Output {
     Output::new().values("out", flat)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    // each case in a fresh child: a native crash fails that case, not the unit run
-    match solidcore_ffi::isolate::fresh_process(|| ffi::eval(&i.block)) {
-        Ok(v) => Ok(output(v)),
-        Err(solidcore_ffi::FfiError::InvalidArgument(r)) => Ok(Output::rejected(r)),
-        Err(e) => Err(herr(e)),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -573,10 +563,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
