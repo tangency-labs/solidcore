@@ -19,6 +19,9 @@
 //! | [`Curve::tessellate`], [`Curve::tessellate_base`] | `Tessellate` (virtual), `SmCurve::Tessellate`    |
 //!
 //! Deviations:
+//! - **Projected endpoint extrema.** A selected boundary candidate is a found
+//!   solution even when the stationary-point search has no root (#2840). The
+//!   constrained minimum or maximum can occur at an interval endpoint.
 //! - **Out-params.** Outputs are returned: [`SpanAccuracy`], [`CurveApproximation`]
 //!   (whose `achieved_tol` is `None` where upstream leaves `rdAchievedTol` unwritten,
 //!   the degenerate curve), [`TangentPoint`] (written only for a range classified as
@@ -1344,6 +1347,10 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                     } else {
                         continue;
                     }
+                    // A constrained extremum need not be a stationary point.
+                    // Retain the boundary selected above for value comparison.
+                    found_solution = true;
+                    solution.solution_type = SolutionType::SingleValue;
                 }
 
                 if op == SolverOperation::SignedPivotMinimize {

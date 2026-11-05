@@ -100,6 +100,29 @@ fn export_elbow_for_diagnostics() {
     for (name, radius, leg) in [("small", 1e-3, 1e-2), ("control", 1e-1, 1.)] {
         let mut k = Kernel::default();
         let mut body = elbow(&mut k, radius, leg, 1e-7);
+        let mut edge_points = Vec::new();
+        for edge in solidcore::topology::brep::p1::edges(&body, None).unwrap() {
+            let record = body.edge(edge).unwrap();
+            if let Some(curve) = &record.curve {
+                let points: Vec<_> = (0..=128)
+                    .map(|i| {
+                        let p = curve
+                            .evaluate_point(&k, record.interval.evaluate(f64::from(i) / 128.))
+                            .unwrap();
+                        [p.x, p.y, p.z]
+                    })
+                    .collect();
+                edge_points.push(serde_json::json!({"id": edge.index(), "points": points}));
+            }
+        }
+        std::fs::write(
+            std::path::Path::new(&out).join(format!("{name}-edges.json")),
+            serde_json::to_vec(
+                &serde_json::json!({"radius": radius, "leg": leg, "edges": edge_points}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         for vertex in solidcore::topology::brep::p1::vertices(&body, None).unwrap() {
             let point = body.vertex(vertex).unwrap().point;
             let gap = solidcore::topology::vertex::corner::is_within_xsect_tol_3d_of_faces(
