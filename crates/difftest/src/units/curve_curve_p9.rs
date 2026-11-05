@@ -42,6 +42,7 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -86,18 +87,6 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
-}
-
-impl CircleIn {
-    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
-    /// arc that would end past 360 degrees starts one turn back.
-    fn turned_back(mut self) -> Self {
-        if self.a1 > 360.0 {
-            self.a0 -= 360.0;
-            self.a1 -= 360.0;
-        }
-        self
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +165,178 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
+}
+
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 128,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 2.0;
+/// The solver operations that take no option vectors.
+const PLAIN_OPS: [i32; 4] = [3, 4, 5, 6];
+/// The solver operations that take three option vectors.
+const VECTOR_OPS: [i32; 12] = [9, 11, 12, 13, 14, 15, 16, 17, 18, 21, 22, 23];
+/// `SM_SO_AT_DISTANCE`, which needs a target distance.
+const AT_DISTANCE: i32 = 6;
+/// The most planes of a `PositiveSide` case.
+const MAX_PLANES: usize = 8;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+/// An ellipse upstream builds: two non-zero, non-parallel axes, an increasing domain
+/// within 720 degrees spanning `[1e-4, 360]` degrees, and radii in `[1e-6, 1e6]`.
+fn ellipse(e: &EllipseIn) -> bool {
+    let max = LIMITS.max_coord;
+    let [x, y] = [e.x, e.y];
+    let cross = [
+        x[1] * y[2] - x[2] * y[1],
+        x[2] * y[0] - x[0] * y[2],
+        x[0] * y[1] - x[1] * y[0],
+    ];
+    let [d0, d1] = e.domain;
+    vec3(&e.c)
+        && contract::nonzero3(&x, max)
+        && contract::nonzero3(&y, max)
+        && contract::len_sq(cross) >= 1e-12
+        && fin(d0)
+        && fin(d1)
+        && d0.abs() <= 720.0
+        && d1.abs() <= 720.0
+        && (1e-4..=360.0).contains(&(d1 - d0))
+        && e.radii.iter().all(|&r| fin(r) && (1e-6..=1e6).contains(&r))
+}
+
+/// The domain a curve's parameters are bounded by, if the curve keeps the contract
+/// (analytic curves evaluate anywhere: only their parameters are bounded).
+fn domain(c: &CurveIn) -> Option<(f64, f64)> {
+    let max = LIMITS.max_coord;
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some((s.a, s.b))
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+        .then_some((0.0, 1.0)),
+        CurveIn::Line(l) => {
+            contract::line(&l.p, &l.v, l.domain, l.scale, max).map(|_| (-max / 8.0, max / 8.0))
+        }
+        CurveIn::Ellipse(e) => ellipse(&e).then_some((-1e3, 1e3)),
+        CurveIn::Circle(_) => None,
+    }
+}
+
+/// A non-decreasing interval whose ends are finite and at most [`MAX_REL_DIST`] domain
+/// lengths outside `(a, b)`.
+fn interval((a, b): (f64, f64), ivl: [f64; 2]) -> bool {
+    let far = MAX_REL_DIST * (b - a);
+    let param = |t: f64| fin(t) && t >= a - far && t <= b + far;
+    param(ivl[0]) && param(ivl[1]) && ivl[0] <= ivl[1]
+}
+
+fn tol(v: f64) -> bool {
+    fin(v) && v >= 0.0
+}
+
+fn is_unit(v: [f64; 3]) -> bool {
+    (contract::len_sq(v).sqrt() - 1.0).abs() <= 1e-9
+}
+
+/// The projection operations' unit option vectors.
+fn projection_vectors(sop: i32, vecs: &[[f64; 3]]) -> bool {
+    let v = |i: usize| vecs.get(i).copied().unwrap_or([0.0; 3]);
+    match sop {
+        16 => is_unit(v(0)),
+        17 => is_unit(v(1)) && is_unit(v(2)),
+        18 => is_unit(v(1)),
+        _ => true,
+    }
+}
+
+/// Whether `x` and `y` are far from parallel (`|cos| < 1 - 1e-6`).
+fn independent(x: [f64; 3], y: [f64; 3]) -> bool {
+    let dot: f64 = x.iter().zip(&y).map(|(a, b)| a * b).sum();
+    (dot / (contract::len_sq(x).sqrt() * contract::len_sq(y).sqrt())).abs() < 1.0 - 1e-6
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_curve_p9.rs`, `validate`): curves as [`domain`]
+/// takes them (arcs within the arc constructor's `[-360, 360]` degrees, ellipses as
+/// [`ellipse`]), non-decreasing intervals within [`MAX_REL_DIST`] domain lengths,
+/// non-negative tolerances, a supported solver operation with its three option vectors
+/// (unit where a projection needs them) or none, a target for `AT_DISTANCE`, transform axes
+/// that are not parallel, and the plane bound.
+fn keeps_contract(op: &OpIn) -> bool {
+    let max = LIMITS.max_coord;
+    match op {
+        OpIn::Gcs {
+            c1,
+            ivl1,
+            c2,
+            ivl2,
+            sop,
+            tol: t,
+            target,
+            vecs,
+            requested,
+            transform1,
+        } => {
+            let Some(d1) = domain(c1) else {
+                return false;
+            };
+            let Some(d2) = c2.as_ref().map_or(Some(d1), domain) else {
+                return false;
+            };
+            let needs_vectors = VECTOR_OPS.contains(sop);
+            interval(d1, *ivl1)
+                && interval(d2, *ivl2)
+                && (needs_vectors || PLAIN_OPS.contains(sop))
+                && tol(*t)
+                && fin(target.unwrap_or(0.0))
+                && !(*sop == AT_DISTANCE && target.is_none())
+                && vecs.len() == if needs_vectors { 3 } else { 0 }
+                && vecs.iter().all(vec3)
+                && projection_vectors(*sop, vecs)
+                && (0..=1).contains(requested)
+                && transform1.is_none_or(|[o, x, y]| {
+                    vec3(&o)
+                        && contract::nonzero3(&x, max)
+                        && contract::nonzero3(&y, max)
+                        && independent(x, y)
+                })
+        }
+        OpIn::SelfIntersect { c, ivl, tol: t } => {
+            domain(c).is_some_and(|d| interval(d, *ivl)) && tol(*t)
+        }
+        OpIn::TightBox { c, ivl } => domain(c).is_some_and(|d| interval(d, *ivl)),
+        OpIn::TightPseudoBox { c, ivl, basis } => {
+            domain(c).is_some_and(|d| interval(d, *ivl)) && basis.iter().all(vec3)
+        }
+        OpIn::OnPlane {
+            c,
+            p,
+            n,
+            tol: t,
+            ivl,
+        } => domain(c)
+            .is_some_and(|d| vec3(p) && vec3(n) && fin(*t) && ivl.is_none_or(|i| interval(d, i))),
+        OpIn::PositiveSide { c, planes } => {
+            domain(c).is_some()
+                && planes.len() <= MAX_PLANES
+                && planes.iter().all(|[p, n]| vec3(p) && vec3(n))
+        }
+    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -458,7 +619,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    }.turned_back())
+    })
 }
 
 fn gen_ellipse(rng: &mut Rng, full: bool) -> CurveIn {
@@ -516,7 +677,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
-            }.turned_back());
+            });
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -1112,9 +1273,17 @@ fn gen_gcs(k: &Kernel, rng: &mut Rng) -> OpIn {
     let target = if sop == 6 {
         // mostly a distance some pair of points of the two curves really has
         if rng.chance(0.8) {
-            let p = point_at(k, &c1, ivl1[0] + (ivl1[1] - ivl1[0]) * rng.uniform(0.0, 1.0));
+            let p = point_at(
+                k,
+                &c1,
+                ivl1[0] + (ivl1[1] - ivl1[0]) * rng.uniform(0.0, 1.0),
+            );
             let other = c2.as_ref().unwrap_or(&c1);
-            let q = point_at(k, other, ivl2[0] + (ivl2[1] - ivl2[0]) * rng.uniform(0.0, 1.0));
+            let q = point_at(
+                k,
+                other,
+                ivl2[0] + (ivl2[1] - ivl2[0]) * rng.uniform(0.0, 1.0),
+            );
             let d = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
             Some(d.iter().map(|x| x * x).sum::<f64>().sqrt().max(0.05))
         } else {
@@ -1273,7 +1442,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(&Kernel::default(), rng)).ok()
+        let k = &Kernel::default();
+        let op = (0..64).map(|_| gen_case(k, rng)).find(keeps_contract)?;
+        serde_json::to_value(op).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1297,10 +1468,9 @@ mod tests {
     /// The corpus case `name` of `tests/fuzz_corpus/curve.curve_p9.json`, run on the
     /// Rust side only (as the library would be called; the runner refuses it first).
     fn corpus_rust(name: &str) -> Output {
-        let corpus: Value = serde_json::from_str(include_str!(
-            "../../tests/fuzz_corpus/curve.curve_p9.json"
-        ))
-        .unwrap();
+        let corpus: Value =
+            serde_json::from_str(include_str!("../../tests/fuzz_corpus/curve.curve_p9.json"))
+                .unwrap();
         let case = corpus["cases"]
             .as_array()
             .unwrap()
