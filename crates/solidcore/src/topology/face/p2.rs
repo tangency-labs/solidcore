@@ -2339,15 +2339,12 @@ impl OdeArea<'_> {
         // knot, and a step across any knot has an error its estimate does not measure.
         // Integrated span by span, as the trim curve is (WR-494; the SolidCraft fork's
         // tangency-labs/smlib@08d9a14).
-        let mut breaks = surface_knots_inside(k, self.surface, SurfParamType::V, self.min_v, p0.y)?;
-        breaks.insert(0, self.min_v);
-        breaks.push(p0.y);
+        let knots = surface_knots_inside(k, self.surface, SurfParamType::V, self.min_v, p0.y)?;
         let mut piece_y = Vec::new();
         piece_y.resize(num_components, 0.0);
-        for pair in breaks.windows(2) {
-            let &[a, b] = pair else {
-                continue;
-            };
+        // (the pieces `[a, b]` between `min_v`, the knots and `p0.y`, in that order)
+        let mut a = self.min_v;
+        for b in knots.into_iter().chain(core::iter::once(p0.y)) {
             piece_y.fill(0.0);
             // Each piece's end (a v knot, or the trim point) is evaluated in the
             // piece's own span: the integral over [a, b] is of the integrand's
@@ -2376,6 +2373,7 @@ impl OdeArea<'_> {
             for (total, part) in dy.iter_mut().zip(piece_y.iter()) {
                 *total += *part;
             }
+            a = b;
         }
         dydx.clear();
         dydx.push(0.0);
