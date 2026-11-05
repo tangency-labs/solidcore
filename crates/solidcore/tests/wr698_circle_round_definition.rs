@@ -232,14 +232,17 @@ fn assert_pt(got: Point3, want: [f64; 3], what: &str) {
 
 /// The fork's certificate and points, bit for bit (436 values in all: the bounds, the
 /// spans, and the net's and the definition's points at u in {0, 0.37, 1}, v in 0..=8/8,
-/// compared by `dump_for_the_fork` against the fork driver's output).
+/// compared by `dump_for_the_fork` against the fork driver's output). The bound is the
+/// port's own since #2690 (the fork's was 9.034561390963572e-5): the certificate's
+/// enclosures are tighter, so a span certifies at a coarser cut, and the bound is that
+/// cut's; the spans and every point are the fork's.
 #[test]
 fn the_root_round_is_the_fork_s_order_1_definition() {
     let k = kernel(true);
     let (s, bound, spans) = root_round(&k);
     assert!(matches!(s.kind(), SurfaceKind::ProceduralBlend(_)));
     assert_eq!(spans, 16);
-    assert_eq!(bound, 9.034_561_390_963_572e-5);
+    assert_eq!(bound, 9.374_184_200_036_38e-5);
     let net = net_of(&s);
     assert_pt(
         net.evaluate_point(Point2::new(0.37, 0.5)).unwrap(),
@@ -279,13 +282,14 @@ fn the_root_round_is_the_fork_s_order_1_definition() {
 }
 
 /// Between two planes the arc's rows are constant along s: one span, the bound at
-/// rounding, the net the quarter circle of radius 3 about (3, y, 3) (the fork's values).
+/// rounding, the net the quarter circle of radius 3 about (3, y, 3) (the fork's values; the
+/// bound at rounding the port's own since #2690, the fork's 1.0369852135855476e-24).
 #[test]
 fn the_square_corner_s_circle_is_one_span() {
     let k = kernel(true);
     let (s, bound, spans) = corner_round(&k);
     assert_eq!(spans, 1);
-    assert_eq!(bound, 1.036_985_213_585_547_6e-24);
+    assert_eq!(bound, 9.757_608_380_629_032e-25);
     assert_pt(
         net_of(&s).evaluate_point(Point2::new(1.0, 0.25)).unwrap(),
         [
@@ -312,7 +316,7 @@ fn flag_off_returns_the_net() {
     let k = kernel(false);
     let (s, bound, spans) = root_round(&k);
     assert!(matches!(s.kind(), SurfaceKind::BSpline(_)));
-    assert_eq!((spans, bound), (16, 9.034_561_390_963_572e-5));
+    assert_eq!((spans, bound), (16, 9.374_184_200_036_38e-5));
 }
 
 /// An approximated, mirrored or larger arc is not the order-1 section `Build` takes.

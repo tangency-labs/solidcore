@@ -245,9 +245,9 @@ fn a_definition_off_its_net_s_domain_is_refused() {
 /// so no station invariant is needed: at the net's knot lines along s, the stations, where a
 /// foot sits on a face's knot line and its box straddles it, the point is still enclosed (a
 /// check of the feet against one piece refused 67 of the 188 the net then had), and so is
-/// every point between two stations; each enclosure holds the evaluator's point. The net
-/// has 181 inner knots since #2690: the certificate accepts a level by each uv parameter's
-/// own error, so some spans certify without being halved.
+/// every point between two stations; each enclosure holds the evaluator's point. Every span
+/// of the net is proved again within the round's bound (its count follows the certificate,
+/// #2690).
 #[test]
 fn every_station_and_every_point_between_is_enclosed() {
     let mut k = solidcraft_kernel();
@@ -281,7 +281,13 @@ fn every_station_and_every_point_between_is_enclosed() {
         .filter(|&x| x > lo && x < hi)
         .collect();
     inner.dedup();
-    assert_eq!(inner.len(), 181);
+    assert!(inner.len() >= 2, "{}", inner.len());
+    let again = pb.recertify(&k).unwrap();
+    assert!(
+        again <= pb.bound(),
+        "recertified {again:e} over {:e}",
+        pb.bound()
+    );
     let mut points = Vec::new();
     for w in inner.windows(2) {
         points.push(w[0]);

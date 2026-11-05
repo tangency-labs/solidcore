@@ -202,6 +202,14 @@ fn circle_definitions(k: &Kernel, b: &Brep, r: f64, depth: u32) -> (usize, f64, 
         }
         graded += 1;
         spans += knots_along_s(pb).len() - 1;
+        // every span of its net proved again within its bound (#2690: the certificate, not
+        // a count of spans, says the net is the definition's)
+        let again = pb.recertify(k).unwrap();
+        assert!(
+            again <= pb.bound(),
+            "recertified {again:e} over {:e}",
+            pb.bound()
+        );
         let u_is_s = u_is_s(pb);
         let dom = pb.net().natural_uv_domain();
         let (lo, hi) = (dom.min(), dom.max());
@@ -398,7 +406,7 @@ fn round_on_a_definition_is_its_definition() {
     );
     assert!(o.sound, "{o:?}");
     assert!(
-        o.graded == 1 && o.spans == 45 && o.circle <= 1e-11 && o.net <= 1.0,
+        o.graded == 1 && o.spans >= 1 && o.circle <= 1e-11 && o.net <= 1.0,
         "{o:?}"
     );
     assert!(

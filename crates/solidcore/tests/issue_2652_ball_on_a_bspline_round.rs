@@ -245,6 +245,46 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     brep_volume(k, b, 1e-11, &attrs).unwrap()
 }
 
+/// How far the certificate lets the part's volume be off its rounds' exact one (see
+/// `a_ball_narrower_than_the_bspline_round_rolls_as_on_the_cylinder`): `2 / 3 rho eps L`
+/// for each round by its definition, eps its bound and L its trimming edges' length (chords
+/// of 512 points each, a hundredth more), rho the half diagonal of the part's box.
+fn certified_volume_tolerance(k: &Kernel, b: &Brep) -> f64 {
+    let pts: Vec<Point3> = b
+        .vertices()
+        .ids()
+        .map(|v| vertex::point(b, v).unwrap())
+        .collect();
+    let (mut lo, mut hi) = (pts[0], pts[0]);
+    for p in &pts {
+        lo = Point3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Point3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+    }
+    let rho = 0.5 * lo.distance(hi);
+    let mut tol = 0.0;
+    for f in b.faces().ids() {
+        let s = b.face(f).unwrap().surface.as_ref().unwrap();
+        let solidcore::surface::surface::SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+            continue;
+        };
+        let mut len = 0.0;
+        for e in solidcore::topology::topology_traverser::face_edges(b, f).unwrap() {
+            let c = edge::curve(b, e).unwrap().unwrap();
+            let ivl = edge::interval(b, e).unwrap();
+            let mut prev = c.evaluate_point(k, ivl.evaluate(0.0)).unwrap();
+            for i in 1..=512 {
+                let p = c
+                    .evaluate_point(k, ivl.evaluate(f64::from(i) / 512.0))
+                    .unwrap();
+                len += prev.distance(p);
+                prev = p;
+            }
+        }
+        tol += 2.0 / 3.0 * rho * pb.bound() * 1.01 * len;
+    }
+    tol
+}
+
 /// The volume the top outline's round R2 removes, and the part after it.
 fn round_top(k: &mut Kernel, b: Brep) -> solidcore::Result<(f64, Brep)> {
     round_top_at(k, b, 2.0)
@@ -305,7 +345,16 @@ fn the_round_over_a_bspline_round_of_its_radius_is_the_ball_s_piece() {
 }
 
 /// A ball smaller than the B-spline round (R1.5 against 2): it matches the face nowhere, so
-/// nothing collapses and the round is the one the exact cylinder's box gets.
+/// nothing collapses and the round is the one the exact cylinder's box gets, within its
+/// certificate (#2690). The volume is integrated on each round's exact definition; what the
+/// certificate leaves free is where the round trims: its net's rails and the feet's uv
+/// curves on the faces beside it lie within its bound eps of the exact round's, so along
+/// each of its trimming edges (length L in all) the faces on both sides are off their true
+/// domains by strips at most eps wide. The integrator takes the flux of `(x - o) . n / 3`
+/// over the faces, o the middle of the part's box, so each strip moves the volume by at
+/// most `rho eps / 3` per unit length, rho the part's box's half diagonal: in all
+/// `2 / 3 rho eps L` per round, plus each volume's own accuracy (1e-11 of it, four of them).
+/// The exact cylinder's round is exact; the B-spline block's is its definition.
 #[test]
 fn a_ball_narrower_than_the_bspline_round_rolls_as_on_the_cylinder() {
     let mut k = kernel();
@@ -318,9 +367,11 @@ fn a_ball_narrower_than_the_bspline_round_rolls_as_on_the_cylinder() {
     let mut kr = kernel();
     let r = reference(&mut kr);
     let (want, _) = round_top_at(&mut kr, r, 1.5).unwrap();
+    // (the four volumes are each under the 10 x 10 x 6 part's 600)
+    let tol = certified_volume_tolerance(&k, &b) + 4.0 * 1e-11 * 600.0;
     assert!(
-        (removed - want).abs() <= 1e-9 * want,
-        "removed {removed}, the cylinder's {want}"
+        (removed - want).abs() <= tol,
+        "removed {removed}, the cylinder's {want}, within {tol:e}"
     );
 }
 

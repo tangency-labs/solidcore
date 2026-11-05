@@ -184,7 +184,8 @@ impl GnScalar for Aff {
     /// `sqrt self`; the whole line unless the form's interval is positive.
     fn sqrt(self) -> Self {
         let x = self.ivl();
-        if !(x.lo > 0.0) {
+        let positive = x.lo > 0.0;
+        if !positive {
             return Self::WHOLE;
         }
         // concave, increasing: least steep at b; d(x) = sqrt x - x / (2 sqrt b) increases
@@ -268,6 +269,8 @@ impl Mul for Aff {
 
 impl Div for Aff {
     type Output = Self;
+    // a quotient is the product with the reciprocal's form
+    #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, b: Self) -> Self {
         self * b.recip()
     }

@@ -308,14 +308,16 @@ const RAIL_037: [f64; 3] = [3.700_000_000_000_001_07, 0.0, 2.090_715_071_385_112
 
 /// `Build` with the solver's radius: the fork's certificate, replaced rail and points, bit
 /// for bit (240 values in all compared by `dump_for_the_fork`: the inputs at 5 knots, the
-/// bounds and spans, the replaced rail and the net's and the definition's points).
+/// bounds and spans, the replaced rail and the net's and the definition's points). The
+/// bound is the port's own since #2690 (the fork's 5.4032051671095375e-9), the rest the
+/// fork's.
 #[test]
 fn the_ball_s_build_is_the_fork_s() {
     let k = kernel(true);
     let (s, bound, spans, rail) = build(&k, 2.0);
     let s = s.unwrap();
     assert!(matches!(s.kind(), SurfaceKind::ProceduralBlend(_)));
-    assert_eq!((spans, bound), (40, 5.403_205_167_109_537_5e-9));
+    assert_eq!((spans, bound), (40, 5.402_135_245_729_393e-9));
     assert_pt(rail.evaluate_point(0.37).unwrap(), RAIL_037, "rail (0.37)");
     let uv = Point2::new(0.37, 0.5);
     assert_pt(
