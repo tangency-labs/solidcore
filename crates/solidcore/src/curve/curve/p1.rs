@@ -19,9 +19,9 @@
 //! | [`Curve::tessellate`], [`Curve::tessellate_base`] | `Tessellate` (virtual), `SmCurve::Tessellate`    |
 //!
 //! Deviations:
-//! - **Projected endpoint extrema.** A selected boundary candidate is a found
-//!   solution even when the stationary-point search has no root (#2840). The
-//!   constrained minimum or maximum can occur at an interval endpoint.
+//! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
+//!   independently of the stationary-point search (#2840). Finding a stationary
+//!   point does not establish that it beats the interval endpoints.
 //! - **Out-params.** Outputs are returned: [`SpanAccuracy`], [`CurveApproximation`]
 //!   (whose `achieved_tol` is `None` where upstream leaves `rdAchievedTol` unwritten,
 //!   the degenerate curve), [`TangentPoint`] (written only for a range classified as
@@ -1257,10 +1257,44 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             Some(&opt_vectors)
         };
 
+        let projected_extremum = matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        );
+        if projected_extremum {
+            // Constrained extrema include finite boundaries as well as stationary
+            // points. Enumerate them independently: Newton can find an interior
+            // minimum while a requested maximum lies at an endpoint (or vice versa).
+            for (parameter, continuity) in [(bez_ivl.min(), conts[0]), (bez_ivl.max(), conts[1])] {
+                if (continuity as i32) >= (ContinuityType::G1 as i32) {
+                    continue;
+                }
+                let mut endpoint = Solution::new();
+                endpoint.solution_type = SolutionType::SingleValue;
+                endpoint.nodes[0] = branch[0];
+                endpoint.nodes[1] = branch[1];
+                endpoint.num_variables = 1;
+                endpoint.num_objects = 1;
+                endpoint.objects[0] = curve_obj;
+                endpoint.start.parameters[0] = parameter;
+                // A failed evaluation is not a distance or an excluded candidate.
+                endpoint.start.solution_value = proj_dist(
+                    k,
+                    curve,
+                    parameter,
+                    test_pnt,
+                    self.opt(0)?,
+                    true,
+                    Vec3::ZERO,
+                    op,
+                )?;
+                self.add_solution(&endpoint, true)?;
+            }
+        }
+
         // for every guess point
         for i in 0..num_guesses {
             let guess = guesses.get(i).copied().unwrap_or(0.0);
-            let mut projected_endpoint = false;
 
             // for projected, directed, and signed pivot cases
             if matches!(
@@ -1331,24 +1365,10 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                     Err(_) => continue, // If error try another guess
                 }
 
-                // when no solution are found
-                // see if endPoints should be solutions for projected_min/max cases
-                if !found_solution
-                    && (op == SolverOperation::ProjectedMinimize
-                        || op == SolverOperation::ProjectedMaximize)
-                {
-                    if i + 2 == num_guesses && (conts[0] as i32) < (ContinuityType::G1 as i32) {
-                        // save the start point
-                        solution.start.parameters[0] = bez_ivl.evaluate(0.0);
-                    } else if i + 1 == num_guesses
-                        && (conts[1] as i32) < (ContinuityType::G1 as i32)
-                    {
-                        // save the end point
-                        solution.start.parameters[0] = bez_ivl.evaluate(1.0);
-                    } else {
-                        continue;
-                    }
-                    projected_endpoint = true;
+                // A missed stationary point does not rule out another guess.
+                // Boundary candidates have already been evaluated independently.
+                if !found_solution && projected_extremum {
+                    continue;
                 }
 
                 if op == SolverOperation::SignedPivotMinimize {
@@ -1371,17 +1391,9 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                         op,
                     ) {
                         Ok(d) => d,
-                        Err(e) if e.is_unported_or_cancelled() || projected_endpoint => {
-                            return Err(e);
-                        }
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(e) => status_value(&e),
                     };
-                    if projected_endpoint {
-                        // A constrained extremum need not be a stationary point.
-                        // Keep the boundary only after its distance evaluates.
-                        found_solution = true;
-                        solution.solution_type = SolutionType::SingleValue;
-                    }
                 }
             } else {
                 // else try SmCurve::LocalPointSolve for current guess

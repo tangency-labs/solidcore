@@ -1,7 +1,8 @@
 # Projected endpoint extrema and small-profile mitres
 
 Related: #2840; the available geometry follow-up in #2811, under #2794.
-Units: `curve.curve_p1`, caller `primitive.primitive_creation_p2`.
+Units: `curve.curve_p1`, `curve.curve_p4`, `geom.global_solver`;
+caller `primitive.primitive_creation_p2`.
 
 ## Reproduction and geometry
 
@@ -38,10 +39,34 @@ but leaves `found_solution` false, discarding them. The trim then fails and the
 default sweep path continues with untrimmed extensions.
 
 The correction marks an existing endpoint candidate as a `SingleValue` solution
-after its distance evaluates successfully. A failed endpoint evaluation propagates
-its error, rather than admitting an error code as a numeric distance. The existing
-global comparison selects the optimum. No new tolerance, geometry-specific case,
-retry, reference-point adjustment, or compatibility flag is introduced.
+after its distance evaluates successfully. A failed endpoint evaluation returns
+its error locally, rather than admitting an error code as a numeric distance.
+The outer legacy status policy is unchanged. Two further corrections are necessary
+to preserve better interior candidates:
+
+- The objective is `D(V)=|N cross V cross N|`. Writing `q=N dot N`, this is
+  `q` times orthogonal projected distance. A sphere of radius `r` therefore maps
+  inside a projected disk of radius `q*r`. Projected min/max pruning previously
+  compared unscaled sphere bounds against a scaled objective incumbent. Both
+  projected center distance and radii now scale by `q`, with the query tolerance
+  added in objective units. Other projected operations retain their behavior.
+- `ProjectedPointMaximize` negated its stationary function but not its derivative.
+  For `C(t)=(t,0,0)`, `P=0`, `N=(0,0,s)`, that function is `F(t)=-s^2*t`:
+  its derivative must be `-s^2`, not `+s^2`. Both are now negated together.
+
+No new tolerance, geometry-specific case, retry, reference-point adjustment, or
+compatibility flag is introduced.
+
+The independent audit exposed the need for these corrections before readiness:
+the initial endpoint-only candidate displaced an interior minimum in `gen2419`
+(`t=0.19538434989712908`, distance `2.018003877141825`) with an endpoint at
+distance `2.0600868346831587`, outside the query tolerance `0.001`.
+For `gen0002`, its endpoint distance `6.513722074907321` missed the interior
+maximum `9.248675280586827` at `t=0.8258440787616159` (tolerance `0.05`).
+These are permanent regressions with independent rational-quadratic oracles:
+Bernstein coefficient signs establish a unique stationary root, located by
+bisection. The certificates use f64 arithmetic with large sign margins, not
+formal outward-rounded interval arithmetic.
 
 ## Independent checks and references
 
@@ -62,6 +87,13 @@ the elbow volume check retains the existing `1e-4` relative oracle.
   Stanford lecture: a constrained optimum at the boundary need not be a stationary
   point. This is the reason the existing endpoint selection must produce a candidate.
   <https://see.stanford.edu/materials/lsocoee364a/transcripts/ConvexOptimizationI-Lecture05.html>
+- Boyd and Mattingley, *Branch and Bound Methods*, section 1: exclusion requires
+  a bound on the same objective as the incumbent. The sphere-image derivation above
+  supplies that bound for the existing double-cross metric.
+  <https://web.stanford.edu/class/ee364b/lectures/bb_notes.pdf>
+- MIT OpenCourseWare, *Newton's Method*: the update divides the function by its
+  derivative. Changing the sign of only one reverses that update.
+  <https://ocw.mit.edu/courses/18-s997-introduction-to-matlab-programming-fall-2011/pages/root-finding/newtons-method/>
 
 The standalone pinned C++ reproduction confirms that both analytic and B-spline
 lines return success with zero projected extrema for an exterior query point.

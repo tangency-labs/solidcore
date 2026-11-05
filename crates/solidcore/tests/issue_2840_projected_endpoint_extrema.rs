@@ -157,6 +157,44 @@ fn projected_line_extrema_cover_boundaries_and_stationary_points() {
 }
 
 #[test]
+fn projected_constant_distance_keeps_its_solution_range() {
+    let k = Kernel::default();
+    let curve = Curve::from(BSplineCurve::create_line_segment(3, Vec3::ZERO, Vec3::Z).unwrap());
+    let interval = Extent1d::from_min_max(0.2, 0.8);
+    let normal = [Vec3::Z];
+    for op in [
+        SolverOperation::ProjectedMinimize,
+        SolverOperation::ProjectedMaximize,
+    ] {
+        let answers = curve
+            .global_point_solve::<Object>(
+                &k,
+                &interval,
+                op,
+                Vec3::new(0.4, 0.0, 0.3),
+                1e-10,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&normal),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(
+            answers.as_slice().iter().any(|s| {
+                s.solution_type == SolutionType::RangeOfValues
+                    && close(s.start.parameters[0], 0.2)
+                    && close(s.end.parameters[0], 0.8)
+            }),
+            "the whole interval has projected distance 0.4: {op:?}"
+        );
+        for answer in answers.as_slice() {
+            assert!(close(answer.start.solution_value, 0.4));
+        }
+    }
+}
+
+#[test]
 fn projected_maximum_equation_has_its_actual_derivative() {
     use solidcore::curve::curve::{p4::CurvePropertyEfo, CurvePropertyType};
     use solidcore::geom::local_solve1d::{EvalFunction, FunctionValue};
