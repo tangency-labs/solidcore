@@ -16,6 +16,7 @@
 //! | [`BSplineCurve::create_helix_segment`], [`HelixSpec`]  | `SmBSplineCurve::CreateHelixSegment`           |
 //! | [`BSplineCurve::create_extended_curve`]                | `SmBSplineCurve::CreateExtendedCurve` (parameter) |
 //! | [`BSplineCurve::create_extended_curve_by_distance`]    | `SmBSplineCurve::CreateExtendedCurve` (distance) |
+//! | [`BSplineCurve::create_continued_curve`]               | (solidcore's: `CreateExtendedCurve`, C-infinity, never closed) |
 //! | [`BSplineCurve::create_interpolating_curve`]           | `SmBSplineCurve::CreateInterpolatingCurve`     |
 //! | [`BSplineCurve::create_interpolating_curve_with_params`] | `SmBSplineCurve::CreateInterpolatingCurve` (fork `cpOptParams`) |
 //! | [`BSplineCurve::create_approximating_curve`]           | `SmBSplineCurve::CreateApproximatingCurve` (unit `nlib.crv_fit_p4`) |
@@ -702,6 +703,37 @@ impl BSplineCurve {
             .map_err(SolidError::nl_ser(OP_EXT))?;
 
         // build output: new SMBSplineCurve object from ecur
+        Ok(state.ext.map(|ecur| Self::from_gw_nurb(self.dim, &ecur)))
+    }
+
+    /// The curve continued to the parameter `parameter` as the polynomials of its end spans
+    /// (`C-infinity`), for a curve read as a function of its parameter, such as a radius law
+    /// (solidcore's, not upstream). It is [`BSplineCurve::create_extended_curve`] with
+    /// [`ContinuityType::CInfinity`] and a precise extension, the same steps and the same
+    /// curve, except that the curve is never taken as closed: a function of its parameter
+    /// does not wrap round, so its ends are not tested for G1 closure, a test that has no
+    /// answer where an end's derivative vanishes (a curve that is one point). `None` when
+    /// the parameter is inside the interval (nothing to extend).
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` without a NURB, or when the extension fails.
+    pub fn create_continued_curve(&self, parameter: f64) -> Result<Option<Self>> {
+        let cur = nurb_of(self, OP_EXT)?;
+        let (us, ue) = cur.param_bounds();
+        if (us..=ue).contains(&parameter) {
+            return Ok(None);
+        }
+        // the state eval_unbounded_pts_and_derivs keeps once it has copied a curve it
+        // found open: that copy, extended as far as needed
+        let mut state = UnboundedEval {
+            ext: None,
+            g1_closed: false,
+        };
+        cur.copy_into(&mut state.ext)?;
+        let gflg = extension_continuity(ContinuityType::CInfinity, OP_EXT)?;
+        cur.eval_unbounded_pts_and_derivs(parameter, 0, gflg, &mut state)
+            .map_err(SolidError::nl_ser(OP_EXT))?;
         Ok(state.ext.map(|ecur| Self::from_gw_nurb(self.dim, &ecur)))
     }
 

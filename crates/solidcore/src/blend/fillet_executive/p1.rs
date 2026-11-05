@@ -62,12 +62,16 @@
 //!   `CreateExtendedCurve` only allocates, so no `Kernel` is needed.
 //! - The "unable to extend non-B-spline laws" branch is unreachable (both the law curve
 //!   and its extension are B-splines) and not ported.
-//! - A G1-closed law curve is not extended: `CreateExtendedCurve` hands back an
-//!   unextended copy (NLib evaluates such a curve periodically) and the evaluation
-//!   clamps, as upstream. `CreateExtendedCurve` returning no curve at all (its
-//!   `Ok(None)`: the parameter lies inside the NURB's own bounds, possible only if they
-//!   disagreed with `natural_interval`) is a `NULL` dereference upstream and
-//!   `SM_ERR_NULL_POINTER` ([`SolidError::null_pointer`]) here.
+//! - The law curve is extended as the function of its parameter it is (solidcore's, #2706):
+//!   [`BSplineCurve::create_continued_curve`], upstream's `CreateExtendedCurve` (C-infinity,
+//!   precise) without its test for G1 closure. Upstream hands a G1-closed law curve back
+//!   unextended, so its evaluation clamps at the ends, and fails on a law curve that is one
+//!   point (a constant law with all its control points equal), whose end derivatives vanish
+//!   so the closure test has no answer. Every other law curve is extended as upstream, to
+//!   the bit. The extension returning no curve at all (its `Ok(None)`: the parameter lies
+//!   inside the NURB's own bounds, possible only if they disagreed with
+//!   `natural_interval`) is a `NULL` dereference upstream and `SM_ERR_NULL_POINTER`
+//!   ([`SolidError::null_pointer`]) here.
 //! - `GetClassType` / `GetClassTypeString` (the `SM_COMMON` statics) are not ported.
 //! - The out-parameter `dValues[3]` is the returned `[f64; 3]`.
 //! - Error info: the overloads of `NoteError` and `NoteFilletError` have their own
@@ -120,7 +124,6 @@ use crate::boolean::topology_intersector::p1::TopologyIntersector;
 use crate::error::EntityRef;
 use crate::error::{Result, SolidError};
 use crate::geom::extent1d::Extent1d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::object;
 use crate::geom::solution_array::SolutionObject;
 use crate::intersect::point_class::ClassObject;
@@ -350,8 +353,10 @@ fn bspline_evaluate(
 
             // precise extension (otherwise it adds another length of sIvl);
             // C-infinity works better than G1_G2.  [B551]
-            new_extension =
-                Some(law.create_extended_curve(ext_param, ContinuityType::CInfinity, true)?);
+            // The law is the function x(t) of its parameter, so it is continued as one and
+            // never wrapped round as a closed curve (#2706: upstream's CreateExtendedCurve
+            // tests the curve for G1 closure, which fails on a law that is one point).
+            new_extension = Some(law.create_continued_curve(ext_param)?);
         } // end need to extend fillet-radius function check after snapping to endPoints
     } // end need to extend fillet-radius function check
 
@@ -1841,20 +1846,50 @@ mod tests {
     }
 
     #[test]
-    fn closed_law_curve_extension_is_a_copy() {
-        // smFilletTest.cpp:307: the cubic r, 1.2r, 0.8r, r is G1-closed, so NLib hands
-        // back an unextended copy and the evaluation clamps to the end
-        let mut law = bspline(
-            radius_curve(&[1.0, 1.2, 0.8, 1.0], 3, 0.0, 10.0),
-            Extent1d::from_min_max(0.0, 10.0),
-        );
+    fn closed_law_curve_is_continued_as_its_cubic() {
+        // smFilletTest.cpp:307's cubic r, 1.2r, 0.8r, r, its control points on the x axis,
+        // is G1-closed as a curve in space. Upstream hands back an unextended copy and the
+        // evaluation clamps to the end (1.0 at 12); the law is the function x(t), so it is
+        // continued as its cubic, the radius the same radii give with a curve that is not
+        // closed, its control points' y the Greville abscissae (#2706).
+        let closed = radius_curve(&[1.0, 1.2, 0.8, 1.0], 3, 0.0, 10.0);
+        let pw = [(1.0, 0.0), (1.2, 1.0 / 3.0), (0.8, 2.0 / 3.0), (1.0, 1.0)]
+            .map(|(x, y)| CPoint::new(x, y, 0.0, NOW))
+            .to_vec();
+        let u = [0.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0, 10.0].to_vec();
+        let open = BSplineCurve::from_nurb(NurbCurve::new(pw, 3, u).expect("curve"), 3, false);
+        let mut law = bspline(closed, Extent1d::from_min_max(0.0, 10.0));
+        let mut graded = bspline(open, Extent1d::from_min_max(0.0, 10.0));
         let ivl = Extent1d::from_min_max(0.0, 10.0);
         let v = law.evaluate(5.0, &ivl, false).expect("eval");
         assert!(close(v[0], 1.0), "{v:?}");
+        // the cubic at u = 1.2: -0.008 + 0.1728 - 0.6912 + 1.728
         let v = law.evaluate(12.0, &ivl, false).expect("eval");
-        assert!(close(v[0], 1.0), "{v:?}");
-        let ext = law.extended_curve().expect("copy").natural_interval();
-        assert_eq!((ext.min(), ext.max()), (0.0, 10.0));
+        assert!(close(v[0], 1.2016), "{v:?}");
+        let ext = law.extended_curve().expect("extended").natural_interval();
+        assert!(ext.max() >= 12.0, "{ext:?}");
+        for t in [-3.0, 5.0, 12.0] {
+            let a = law.evaluate(t, &ivl, false).expect("eval");
+            let b = graded.evaluate(t, &ivl, false).expect("eval");
+            assert!(
+                a.iter().zip(b).all(|(&a, b)| close(a, b)),
+                "at {t}: {a:?} {b:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn single_point_law_curve_is_continued_as_its_constant() {
+        // #2706: every control point (3, 0, 0), so the curve is one point and its end
+        // derivatives vanish; the law is the constant 3 on and past the curve
+        let mut law = bspline(
+            radius_curve(&[3.0, 3.0], 1, 0.0, 1.0),
+            Extent1d::from_min_max(0.0, 1.0),
+        );
+        let ivl = Extent1d::from_min_max(0.0, 20.0);
+        for t in [-5.0, 0.0, 10.0, 20.0, 25.0] {
+            assert_eq!(law.evaluate(t, &ivl, false).expect("eval"), [3.0, 0.0, 0.0]);
+        }
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

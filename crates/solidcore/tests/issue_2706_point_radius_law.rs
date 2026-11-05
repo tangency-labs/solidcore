@@ -99,15 +99,60 @@ fn constant_removed() -> f64 {
     (1.0 - core::f64::consts::FRAC_PI_4) * 9.0 * 20.0
 }
 
+/// The removed volume within the fork's bound for a variable round, 1e-4 of the volume
+/// removed (as `wr646_variable_round_follows_law`). The variable round's own fit on the
+/// default kernel is 5.3e-5 of it here, for any constant law (#2706's separate note).
+const REMOVED_TOL: f64 = 1e-4;
+
 #[test]
 fn a_single_point_law_is_the_constant_round() {
     let law = linear_law(Vec3::new(3.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0));
-    let v = rounded_box(law);
-    let removed = 6000.0 - v;
+    let removed = 6000.0 - rounded_box(law);
     let want = constant_removed();
     eprintln!("point law removes {removed:.12}, want {want:.12}");
     assert!(
-        (removed - want).abs() <= 1e-6 * want,
+        (removed - want).abs() <= REMOVED_TOL * want,
         "removed {removed}, want {want}"
     );
+}
+
+/// The point law and the law whose curve runs in y, (3, 0, 0) to (3, 1, 0), are the same
+/// radius, so they build the same round.
+#[test]
+fn a_single_point_law_rounds_as_the_graded_constant_law() {
+    let point = 6000.0
+        - rounded_box(linear_law(
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::new(3.0, 0.0, 0.0),
+        ));
+    let graded = 6000.0
+        - rounded_box(linear_law(
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::new(3.0, 1.0, 0.0),
+        ));
+    eprintln!("point {point:.12}, graded {graded:.12}");
+    assert!(
+        (point - graded).abs() <= 1e-9 * graded,
+        "point {point}, graded {graded}"
+    );
+}
+
+/// The law is continued past its curve's ends as the function it is: the point law is 3,
+/// with no slope, before and after the edge.
+#[test]
+fn a_single_point_law_evaluates_past_its_ends() {
+    let mut law = linear_law(Vec3::new(3.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0));
+    let ivl = Extent1d::from_min_max(0.0, 20.0);
+    for t in [-5.0, 0.0, 10.0, 20.0, 25.0] {
+        assert_eq!(
+            law.evaluate(t, &ivl, false).unwrap(),
+            [3.0, 0.0, 0.0],
+            "at {t}"
+        );
+        assert_eq!(
+            law.evaluate(t, &ivl, true).unwrap(),
+            [3.0, 0.0, 0.0],
+            "at {t}"
+        );
+    }
 }
