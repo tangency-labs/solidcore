@@ -47,9 +47,9 @@ first, then Rust.
 | mass gen0054 / 0237 / 0509 / 1177 (edges) | 1e-6 | 6.3e-9 / 3.0e-9 / 9.3e-9 / -7.3e-8 | 8.5e-9 / 4.6e-9 / 1.1e-8 / -6.9e-8 |
 | mass gen0339 / 0426 (integrate) | 1e-6 | -2.0e-8 / -2.4e-7 | -1.9e-8 / -2.5e-7 |
 | mass gen0994 (amplitude 4.7e-16) | 1e-9 | -4.4e-6 | -4.7e-6 |
-| mass review_edge_constant x5 (point curve) | - | noise ~3e-17 | noise ~3e-17; 0 at 1e-9 [0,1] |
+| mass review_edge_constant x6 (point curve) | - | noise ~3e-17 | exactly 0 (after the rounding floor below) |
 
-## Open: a point curve's length at tight accuracy
+## Resolved: a point curve's length at tight accuracy
 
 The `review_edge_constant` curves are points (three equal control points). `|C'|` is pure
 rounding noise there, about 1e-17, so its error relative to itself is O(1). The embedded
@@ -59,3 +59,21 @@ underflow. With the default kernel the failure is hidden as 0, which is exact. W
 `mass::integrator::step_control` 1001. The root is that the error scale has no floor at the
 integrand's own rounding (about ε·max|P|·p/Δknot, not ε·|C'|). Choosing that floor, or making
 a span that is a point to rounding exact zero, is left for a decision.
+
+Resolved (same branch, follow-on commits). The fix does both:
+- **A floor at the integrand's rounding.** A step's error scale is floored at the rounding
+  of its error estimates over the accuracy. That rounding is
+  `E = |h| sum |w_j| (delta + gamma_8 |g_j|)`, where `delta` bounds each sample's absolute
+  rounding (`OdeOptions::rounding`, `mass/integrator.rs` `estimate_rounding`). For a
+  B-spline's speed on a knot span of length D, `delta = gamma_(7p+10) S max|P|`, with
+  `S = 2p/D`, or `4 p (w_max/w_min)/D` for a rational curve
+  (`BSplineCurve::speed_rounding_bound`). An accuracy below that cannot be resolved; the
+  tolerance is not loosened. Where the rounding is not known (the area/volume integrands,
+  a Hermite curve, the raw ODE) there is no floor, and the step control is upstream's.
+- **Exact zero for a point span.** A span whose control points are exactly one point has
+  length 0 (`BSplineCurve::is_point_on`, exact homogeneous products). The floor alone
+  leaves noise.
+
+The six `review_edge_constant_*_1` cases give exactly 0 under both kernel settings: 5
+re-worded, 1 new known mismatch (`0.001_[0, 1]_1`, C++ 7.1e-17). Nothing else moves in
+curve.curve_p3, curve.curve_p5, mass.integrator or boolean.api_brep.

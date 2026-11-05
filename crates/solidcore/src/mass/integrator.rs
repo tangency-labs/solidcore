@@ -320,7 +320,7 @@ impl OdeIntegrator {
                     scratch,
                     i,
                 )?;
-                errmax = errmax.max((error / s.max(floor)).abs());
+                errmax = errmax.max((error / floored(*s, floor)).abs());
             }
             if accuracy <= errmax * EFF_ZERO {
                 return Err(SolidError::invalid_input(OP, UNACHIEVABLE));
@@ -593,6 +593,16 @@ fn estimate_rounding(
     Ok(h.abs() * sum)
 }
 
+/// The error scale `s` floored at `floor` when there is one (a zero floor leaves `s`
+/// as upstream's, also a negative one a caller's lower bound gave).
+fn floored(s: f64, floor: f64) -> f64 {
+    if floor > 0.0 {
+        s.max(floor)
+    } else {
+        s
+    }
+}
+
 /// The floor of component `i`'s error scale for an estimate of weights `weights`:
 /// [`estimate_rounding`] over `accuracy`; zero without sample rounding bounds (the
 /// integrand's rounding is then not known, and the step control is upstream's) and at a
@@ -664,7 +674,7 @@ fn quadrature_error(
             + w5 * at(&s.ak5, i)?
             + w6 * at(&s.ak6, i)?;
         let floor = rounding_floor(QUADRATURE_ERROR_WEIGHTS, dydx, h, accuracy, rounding, s, i)?;
-        errmax = errmax.max((h * FIFTH_ORDER_ERROR_ON_S5 * difference / sc.max(floor)).abs());
+        errmax = errmax.max((h * FIFTH_ORDER_ERROR_ON_S5 * difference / floored(*sc, floor)).abs());
     }
     if errmax.is_finite() {
         Ok(errmax)
