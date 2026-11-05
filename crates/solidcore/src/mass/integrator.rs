@@ -180,7 +180,7 @@ impl OdeIntegrator {
                     *s = s.max(at(lower, i)?);
                 }
             }
-            if (x + h - x2) * (x + h - x1) > 0.0 {
+            if (x2 > x1 && x + h > x2) || (x2 < x1 && x + h < x2) {
                 h = x2 - x;
             }
             let step = Self::step_in(
