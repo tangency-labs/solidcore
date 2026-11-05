@@ -6,7 +6,7 @@ use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use solidcore::mass::integrator::{integrate, IntegrationAlgorithm, OdeIntegrator, OdeOptions};
+use solidcore::mass::integrator::{integrate, OdeIntegrator, OdeOptions};
 use solidcore::SolidError;
 use solidcore_ffi::units::mass_integrator as ffi;
 
@@ -94,7 +94,8 @@ impl UnitDiff for Runner {
             return Ok(geometry_rust(&g));
         }
         let i: Input = case.parse()?;
-        let [a, b, eps, h, hmin, tiny, algorithm] = i.controls;
+        // (the C++ side's algorithm selector: both of its values run Cash–Karp)
+        let [a, b, eps, h, hmin, tiny, _algorithm] = i.controls;
         let integrator =
             OdeIntegrator::new(i.max_steps, tiny).map_err(|e| HarnessError::new(e.to_string()))?;
         let mut y = i.initial.clone();
@@ -103,11 +104,6 @@ impl UnitDiff for Runner {
             0 => integrate(
                 a,
                 b,
-                if algorithm == 0.0 {
-                    IntegrationAlgorithm::Romberg
-                } else {
-                    IntegrationAlgorithm::Simpsons
-                },
                 eps,
                 |t| {
                     let mut dy = [0.0];
@@ -608,7 +604,6 @@ fn geometry_rust(g: &Geometry) -> Output {
                             let area = integrate(
                                 dom.min().x,
                                 dom.max().x,
-                                IntegrationAlgorithm::Romberg,
                                 accuracy,
                                 |t| eval.evaluate(&fk, t),
                             )?;

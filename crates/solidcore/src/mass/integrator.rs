@@ -43,16 +43,6 @@ const MAX_COMPONENTS: usize = 4096;
 const MAX_STEPS: u32 = 1_000_000;
 const MAX_RETRIES: u32 = 1024;
 
-/// Historical selector; both values use Cash–Karp in the pinned upstream.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum IntegrationAlgorithm {
-    /// `SM_IA_ROMBERG`.
-    #[default]
-    Romberg,
-    /// `SM_IA_SIMPSONS`.
-    Simpsons,
-}
-
 /// Controls of `SmODEIntegrator::RungeKuttaODEIntegrate`.
 #[derive(Debug, Clone, Copy)]
 pub struct OdeOptions<'a> {
@@ -352,30 +342,19 @@ impl OdeIntegrator {
                     *s = EFF_ZERO;
                 }
                 let embedded = at(&scratch.errors, i)?;
-                let embedded_rounding = sample_rounding(
-                    EMBEDDED_ERROR_WEIGHTS,
-                    dydx,
-                    h,
-                    accuracy,
-                    rounding,
-                    scratch,
-                    i,
-                )?;
+                let samples = step_samples(dydx, scratch, i)?;
+                let delta = sample_rounding(accuracy, rounding, i)?;
+                let rounding_of = |weights| {
+                    delta.map_or(0.0, |delta| estimate_rounding(weights, h, delta, samples))
+                };
+                let embedded_rounding = rounding_of(EMBEDDED_ERROR_WEIGHTS);
                 let mut raw = (embedded / *s).abs();
                 let mut ratio = (embedded / floored(*s, embedded_rounding / accuracy)).abs();
                 embedded_max = embedded_max.max(ratio);
                 let mut bound = embedded_rounding;
                 if quadrature {
-                    let estimate = quadrature_estimate(dydx, h, scratch, i)?;
-                    let rounding = sample_rounding(
-                        QUADRATURE_ERROR_WEIGHTS,
-                        dydx,
-                        h,
-                        accuracy,
-                        rounding,
-                        scratch,
-                        i,
-                    )?;
+                    let estimate = quadrature_estimate(h, samples)?;
+                    let rounding = rounding_of(QUADRATURE_ERROR_WEIGHTS);
                     raw = raw.max((estimate / *s).abs());
                     ratio = ratio.max((estimate / floored(*s, rounding / accuracy)).abs());
                     bound = bound.max(rounding);
@@ -518,7 +497,7 @@ where
         ak4,
         ak5,
         ak6,
-        errors,
+        errors: _,
         debt: _,
     } = s;
     // (`max` then `min`: no panic; `x` and `end` are ordered as the step's direction)
@@ -576,19 +555,38 @@ where
                 + (125.0 / 594.0) * at(ak4, i)?
                 + (512.0 / 1771.0) * at(ak6, i)?);
     }
-    // (`ak2`'s weight is zero)
-    let [e0, _, e3, e4, e5, e6] = EMBEDDED_ERROR_WEIGHTS;
-    for (i, e) in errors.iter_mut().enumerate() {
-        *e = h
-            * (e0 * at(dydx, i)?
-                + e3 * at(ak3, i)?
-                + e4 * at(ak4, i)?
-                + e5 * at(ak5, i)?
-                + e6 * at(ak6, i)?);
-    }
     finite(temp)?;
-    finite(errors)?;
+    for i in 0..y.len() {
+        let estimate = weighted(EMBEDDED_ERROR_WEIGHTS, h, step_samples(dydx, s, i)?);
+        let e = s
+            .errors
+            .get_mut(i)
+            .ok_or_else(|| SolidError::invalid_input(OP, "component missing"))?;
+        *e = estimate;
+    }
+    finite(&s.errors)?;
     Ok(())
+}
+
+/// Component `i`'s six samples of the step in `s`, in node order: the derivative at the
+/// step's start, then `ak2` to `ak6`.
+fn step_samples(dydx: &[f64], s: &CashKarpScratch, i: usize) -> Result<[f64; 6]> {
+    Ok([
+        at(dydx, i)?,
+        at(&s.ak2, i)?,
+        at(&s.ak3, i)?,
+        at(&s.ak4, i)?,
+        at(&s.ak5, i)?,
+        at(&s.ak6, i)?,
+    ])
+}
+
+/// `h sum_j w_j g_j`: a step's estimate of weights `weights` on its samples `samples`
+/// ([`step_samples`]), summed in node order. The embedded estimate, the quadrature
+/// estimate and their rounding bound ([`estimate_rounding`]) are each one.
+fn weighted(weights: [f64; 6], h: f64, samples: [f64; 6]) -> f64 {
+    let sum: f64 = weights.iter().zip(samples).map(|(w, g)| w * g).sum();
+    h * sum
 }
 
 /// The weights of the embedded error estimate (fifth- minus fourth-order Cash–Karp
@@ -624,15 +622,19 @@ pub fn gamma(n: u32) -> f64 {
 
 /// Not upstream: the bound on the rounding error of a step's error estimate
 /// `h sum_j w_j g_j` (weights `weights`, [`EMBEDDED_ERROR_WEIGHTS`] or
-/// [`QUADRATURE_ERROR_WEIGHTS`]) for component `i`, from the bound `delta` on the
-/// absolute rounding error of each sample ([`OdeOptions::rounding`]):
+/// [`QUADRATURE_ERROR_WEIGHTS`]) on the samples `samples` ([`step_samples`]), from the
+/// bound `delta` on the absolute rounding error of each sample ([`OdeOptions::rounding`]):
 ///
-/// `E = |h| sum_j |w_j| (delta + gamma_8 |g_j|)`.
+/// `E = (1 + gamma_16) |h| sum_j |w_j| (delta + gamma_11 |g_j|)`, `g_j` the computed samples.
 ///
-/// Each computed sample is `g_j + e_j`, `|e_j| <= delta + gamma_3 |g_j|` (the caller's
-/// absolute part, plus up to three roundings relative to the sample, as a Euclidean norm
-/// takes); the weighted sum of six terms and its product with `h` add at most `gamma_5`
-/// relative to `sum_j |w_j g_j|` (Higham, eq. 3.5), and `gamma_3 + gamma_5 <= gamma_8`.
+/// Each computed sample is `g_j` with `|g_j - g*_j| <= delta + gamma_3 |g*_j|` against
+/// the exact `g*_j` (the caller's absolute part, plus up to three roundings relative to
+/// the sample, as a Euclidean norm takes), so `gamma_3 |g*_j| <= gamma_4 (|g_j| + delta)`.
+/// The estimate ([`weighted`]: six products, five additions and the product with `h`)
+/// rounds by at most `gamma_7 |h| sum_j |w_j g_j|` (Higham, eq. 3.5), and
+/// `gamma_4 + gamma_7 <= gamma_11`. That bound, `|h| sum_j |w_j| ((1 + gamma_4) delta +
+/// gamma_11 |g_j|)`, is itself evaluated in at most ten roundings of non-negative terms:
+/// the factor `1 + gamma_16` covers them and the `gamma_4` on `delta`.
 /// The computed estimate is then within `E` of the estimate of the exact samples:
 /// an estimate at or below `E` cannot be told from zero.
 ///
@@ -648,29 +650,14 @@ pub fn gamma(n: u32) -> f64 {
 /// difference form ([`crate::nurbs::b_spline_curve::speed::SpanSpeed`]), it only
 /// accepts steps at a zero of the integrand; where its rounding is above it, the
 /// integration is refused.
-fn estimate_rounding(
-    weights: [f64; 6],
-    dydx: &[f64],
-    h: f64,
-    delta: f64,
-    s: &CashKarpScratch,
-    i: usize,
-) -> Result<f64> {
-    let samples = [
-        at(dydx, i)?,
-        at(&s.ak2, i)?,
-        at(&s.ak3, i)?,
-        at(&s.ak4, i)?,
-        at(&s.ak5, i)?,
-        at(&s.ak6, i)?,
-    ];
-    let relative = gamma(8);
-    let sum: f64 = weights
-        .iter()
-        .zip(samples)
-        .map(|(w, g)| w.abs() * (delta + relative * g.abs()))
-        .sum();
-    Ok(h.abs() * sum)
+fn estimate_rounding(weights: [f64; 6], h: f64, delta: f64, samples: [f64; 6]) -> f64 {
+    let relative = gamma(11);
+    (1.0 + gamma(16))
+        * weighted(
+            weights.map(f64::abs),
+            h.abs(),
+            samples.map(|g| delta + relative * g.abs()),
+        )
 }
 
 /// The error scale `s` floored at `floor` when there is one (a zero floor leaves `s`
@@ -683,26 +670,15 @@ fn floored(s: f64, floor: f64) -> f64 {
     }
 }
 
-/// The rounding `E` of component `i`'s estimate of weights `weights`
-/// ([`estimate_rounding`]); zero without sample rounding bounds (the integrand's rounding
-/// is then not known, and the step control is upstream's) and at a non-positive
-/// accuracy, which the step refuses as unachievable.
-fn sample_rounding(
-    weights: [f64; 6],
-    dydx: &[f64],
-    h: f64,
-    accuracy: f64,
-    rounding: Option<&[f64]>,
-    s: &CashKarpScratch,
-    i: usize,
-) -> Result<f64> {
-    let Some(rounding) = rounding else {
-        return Ok(0.0);
-    };
-    if accuracy <= 0.0 {
-        return Ok(0.0);
+/// The bound `delta` on the rounding of component `i`'s samples
+/// ([`OdeOptions::rounding`]); `None` without sample rounding bounds (the integrand's
+/// rounding is then not known, and the step control is upstream's: no floor) and at a
+/// non-positive accuracy, which the step refuses as unachievable.
+fn sample_rounding(accuracy: f64, rounding: Option<&[f64]>, i: usize) -> Result<Option<f64>> {
+    match rounding {
+        Some(rounding) if accuracy > 0.0 => at(rounding, i).map(Some),
+        _ => Ok(None),
     }
-    estimate_rounding(weights, dydx, h, at(rounding, i)?, s, i)
 }
 
 /// The weights of the fifth divided difference on the Cash–Karp nodes `0, 1/5, 3/10, 3/5,
@@ -720,7 +696,8 @@ const DIVIDED_DIFFERENCE_5: [f64; 6] = [
 /// `37/378 (3/10)^5 + 250/621 (3/5)^5 + 125/594 + 512/1771 (7/8)^5 - 1/6`.
 const FIFTH_ORDER_ERROR_ON_S5: f64 = -1.0 / 960.0;
 
-/// Not upstream: the error of a quadrature step's fifth-order value for component `i`.
+/// Not upstream: the error of a quadrature step's fifth-order value from its samples
+/// `samples` ([`step_samples`]).
 ///
 /// For a derivative of `x` alone, a Cash–Karp step is a quadrature rule on six samples
 /// of `g(s) = f(x + s h)`: the fifth-order value integrates polynomials of degree 4
@@ -734,15 +711,8 @@ const FIFTH_ORDER_ERROR_ON_S5: f64 = -1.0 / 960.0;
 /// misses only where both vanish together. (A pair of null rules of consecutive
 /// degrees: Berntsen and Espelid, "Error estimation in automatic quadrature routines",
 /// ACM TOMS 17 (1991).)
-fn quadrature_estimate(dydx: &[f64], h: f64, s: &CashKarpScratch, i: usize) -> Result<f64> {
-    let [w0, w2, w3, w4, w5, w6] = DIVIDED_DIFFERENCE_5;
-    let difference = w0 * at(dydx, i)?
-        + w2 * at(&s.ak2, i)?
-        + w3 * at(&s.ak3, i)?
-        + w4 * at(&s.ak4, i)?
-        + w5 * at(&s.ak5, i)?
-        + w6 * at(&s.ak6, i)?;
-    let error = h * FIFTH_ORDER_ERROR_ON_S5 * difference;
+fn quadrature_estimate(h: f64, samples: [f64; 6]) -> Result<f64> {
+    let error = weighted(QUADRATURE_ERROR_WEIGHTS, h, samples);
     if error.is_finite() {
         Ok(error)
     } else {
@@ -756,17 +726,11 @@ fn quadrature_estimate(dydx: &[f64], h: f64, s: &CashKarpScratch, i: usize) -> R
 ///
 /// Use [`integrate_with_kernel`] or [`integrate_opt_in`] to honour
 /// [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] (WR-94).
-pub fn integrate<F>(
-    a: f64,
-    b: f64,
-    algorithm: IntegrationAlgorithm,
-    accuracy: f64,
-    evaluate: F,
-) -> Result<f64>
+pub fn integrate<F>(a: f64, b: f64, accuracy: f64, evaluate: F) -> Result<f64>
 where
     F: FnMut(f64) -> Result<f64>,
 {
-    integrate_opt_in(a, b, algorithm, accuracy, false, evaluate)
+    integrate_opt_in(a, b, accuracy, false, evaluate)
 }
 
 /// [`integrate`] reading `k.fixes.integrator_propagates_failure` (WR-94).
@@ -774,7 +738,6 @@ pub fn integrate_with_kernel<F>(
     k: &Kernel,
     a: f64,
     b: f64,
-    _algorithm: IntegrationAlgorithm,
     accuracy: f64,
     evaluate: F,
 ) -> Result<f64>
@@ -833,7 +796,6 @@ where
 pub fn integrate_opt_in<F>(
     a: f64,
     b: f64,
-    _algorithm: IntegrationAlgorithm,
     accuracy: f64,
     propagate_failure: bool,
     evaluate: F,
@@ -973,17 +935,12 @@ mod tests {
                 |_, _, _| Ok(())
             )
             .is_err());
-        assert_eq!(
-            integrate(0.0, 1.0, IntegrationAlgorithm::Romberg, 0.0, |_| Ok(1.0)).unwrap(),
-            0.0
-        );
-        assert!(
-            integrate(0.0, 1.0, IntegrationAlgorithm::Romberg, 1e-6, |_| Err(
-                SolidError::unported("test", "test")
-            ))
-            .unwrap_err()
-            .is_unported()
-        );
+        assert_eq!(integrate(0.0, 1.0, 0.0, |_| Ok(1.0)).unwrap(), 0.0);
+        assert!(integrate(0.0, 1.0, 1e-6, |_| Err(SolidError::unported(
+            "test", "test"
+        )))
+        .unwrap_err()
+        .is_unported());
     }
 
     #[test]
@@ -995,58 +952,19 @@ mod tests {
         // Zero, negative, and NaN accuracy fail inside OdeIntegrator; default hides as 0.0.
         for bad_accuracy in [0.0, -1e-6, f64::NAN] {
             assert_eq!(
-                integrate(
-                    0.0,
-                    1.0,
-                    IntegrationAlgorithm::Romberg,
-                    bad_accuracy,
-                    |_| Ok(1.0),
-                )
-                .unwrap(),
+                integrate(0.0, 1.0, bad_accuracy, |_| Ok(1.0),).unwrap(),
                 0.0
             );
             assert_eq!(
-                integrate_opt_in(
-                    0.0,
-                    1.0,
-                    IntegrationAlgorithm::Romberg,
-                    bad_accuracy,
-                    false,
-                    |_| Ok(1.0),
-                )
-                .unwrap(),
+                integrate_opt_in(0.0, 1.0, bad_accuracy, false, |_| Ok(1.0),).unwrap(),
                 0.0
             );
             assert_eq!(
-                integrate_with_kernel(
-                    &k_default,
-                    0.0,
-                    1.0,
-                    IntegrationAlgorithm::Romberg,
-                    bad_accuracy,
-                    |_| Ok(1.0),
-                )
-                .unwrap(),
+                integrate_with_kernel(&k_default, 0.0, 1.0, bad_accuracy, |_| Ok(1.0),).unwrap(),
                 0.0
             );
-            assert!(integrate_opt_in(
-                0.0,
-                1.0,
-                IntegrationAlgorithm::Romberg,
-                bad_accuracy,
-                true,
-                |_| Ok(1.0),
-            )
-            .is_err());
-            assert!(integrate_with_kernel(
-                &k_fix,
-                0.0,
-                1.0,
-                IntegrationAlgorithm::Romberg,
-                bad_accuracy,
-                |_| Ok(1.0),
-            )
-            .is_err());
+            assert!(integrate_opt_in(0.0, 1.0, bad_accuracy, true, |_| Ok(1.0),).is_err());
+            assert!(integrate_with_kernel(&k_fix, 0.0, 1.0, bad_accuracy, |_| Ok(1.0),).is_err());
         }
 
         // Evaluator failing partway through [0.0, 1.0] and evaluator returning NaN/Inf.
@@ -1058,77 +976,44 @@ mod tests {
             }
         };
         assert_eq!(
-            integrate_with_kernel(
-                &k_default,
-                0.0,
-                1.0,
-                IntegrationAlgorithm::Romberg,
-                1e-6,
-                partial_err,
-            )
-            .unwrap(),
+            integrate_with_kernel(&k_default, 0.0, 1.0, 1e-6, partial_err,).unwrap(),
             0.0
         );
         assert_eq!(
-            integrate_with_kernel(
-                &k_fix,
-                0.0,
-                1.0,
-                IntegrationAlgorithm::Romberg,
-                1e-6,
-                partial_err,
-            )
-            .unwrap_err()
-            .sm_status(),
+            integrate_with_kernel(&k_fix, 0.0, 1.0, 1e-6, partial_err,)
+                .unwrap_err()
+                .sm_status(),
             Some(crate::error::SM_ERR)
         );
         for non_finite in [f64::NAN, f64::INFINITY] {
             assert_eq!(
-                integrate_with_kernel(
-                    &k_default,
-                    0.0,
-                    1.0,
-                    IntegrationAlgorithm::Romberg,
-                    1e-6,
-                    |_| Ok(non_finite),
-                )
-                .unwrap(),
+                integrate_with_kernel(&k_default, 0.0, 1.0, 1e-6, |_| Ok(non_finite),).unwrap(),
                 0.0
             );
             assert_eq!(
-                integrate_with_kernel(
-                    &k_fix,
-                    0.0,
-                    1.0,
-                    IntegrationAlgorithm::Romberg,
-                    1e-6,
-                    |_| Ok(non_finite),
-                )
-                .unwrap_err()
-                .sm_status(),
+                integrate_with_kernel(&k_fix, 0.0, 1.0, 1e-6, |_| Ok(non_finite),)
+                    .unwrap_err()
+                    .sm_status(),
                 Some(crate::error::SM_ERR)
             );
         }
 
         // Unported evaluators always propagate regardless of the flag.
         for k in [&k_default, &k_fix] {
-            assert!(integrate_with_kernel(
-                k,
-                0.0,
-                1.0,
-                IntegrationAlgorithm::Romberg,
-                1e-6,
-                |_| Err(SolidError::unported("test", "test")),
-            )
-            .unwrap_err()
-            .is_unported());
+            assert!(
+                integrate_with_kernel(k, 0.0, 1.0, 1e-6, |_| Err(SolidError::unported(
+                    "test", "test"
+                )),)
+                .unwrap_err()
+                .is_unported()
+            );
         }
 
         // Degenerate intervals shorter than EFF_ZERO return Ok(0.0) without calling evaluate.
         for k in [&k_default, &k_fix] {
             for (a, b) in [(2.0, 2.0), (2.0, 2.0 + 0.5 * EFF_ZERO)] {
                 assert_eq!(
-                    integrate_with_kernel(k, a, b, IntegrationAlgorithm::Romberg, 0.0, |_| {
+                    integrate_with_kernel(k, a, b, 0.0, |_| {
                         panic!("degenerate interval must not evaluate")
                     })
                     .unwrap(),
@@ -1139,16 +1024,8 @@ mod tests {
 
         // Valid integrals agree bit-for-bit in both modes (including reversed bounds).
         for (a, b, expected) in [(0.0, 2.0, 8.0), (2.0, 0.0, -8.0)] {
-            let v_def =
-                integrate_with_kernel(&k_default, a, b, IntegrationAlgorithm::Romberg, 1e-8, |t| {
-                    Ok(3.0 * t * t)
-                })
-                .unwrap();
-            let v_fix =
-                integrate_with_kernel(&k_fix, a, b, IntegrationAlgorithm::Romberg, 1e-8, |t| {
-                    Ok(3.0 * t * t)
-                })
-                .unwrap();
+            let v_def = integrate_with_kernel(&k_default, a, b, 1e-8, |t| Ok(3.0 * t * t)).unwrap();
+            let v_fix = integrate_with_kernel(&k_fix, a, b, 1e-8, |t| Ok(3.0 * t * t)).unwrap();
             assert_eq!(v_def, v_fix);
             assert!((v_def - expected).abs() < 1e-12, "{v_def} vs {expected}");
         }
@@ -1219,26 +1096,16 @@ mod tests {
         assert_eq!(bad_inner.evaluate(&k_default, mid_u).unwrap(), 0.0);
         assert!(bad_inner.evaluate(&k_fix, mid_u).is_err());
         assert_eq!(
-            integrate_with_kernel(
-                &k_default,
-                dom.min().x,
-                dom.max().x,
-                IntegrationAlgorithm::Romberg,
-                1e-6,
-                |u| bad_inner.evaluate(&k_default, u),
-            )
+            integrate_with_kernel(&k_default, dom.min().x, dom.max().x, 1e-6, |u| bad_inner
+                .evaluate(&k_default, u),)
             .unwrap(),
             0.0
         );
-        assert!(integrate_with_kernel(
-            &k_fix,
-            dom.min().x,
-            dom.max().x,
-            IntegrationAlgorithm::Romberg,
-            1e-6,
-            |u| bad_inner.evaluate(&k_fix, u),
-        )
-        .is_err());
+        assert!(
+            integrate_with_kernel(&k_fix, dom.min().x, dom.max().x, 1e-6, |u| bad_inner
+                .evaluate(&k_fix, u),)
+            .is_err()
+        );
 
         // Surface evaluator failure (an uninitialised BSplineSurface without a NURB).
         let missing_nurb = Surface::from(BSplineSurface::new());
@@ -1261,23 +1128,13 @@ mod tests {
         assert_eq!(strip_def, strip_fix);
         assert!(strip_def > 0.0);
 
-        let area_def = integrate_with_kernel(
-            &k_default,
-            dom.min().x,
-            dom.max().x,
-            IntegrationAlgorithm::Romberg,
-            1e-6,
-            |u| ok_area.evaluate(&k_default, u),
-        )
+        let area_def = integrate_with_kernel(&k_default, dom.min().x, dom.max().x, 1e-6, |u| {
+            ok_area.evaluate(&k_default, u)
+        })
         .unwrap();
-        let area_fix = integrate_with_kernel(
-            &k_fix,
-            dom.min().x,
-            dom.max().x,
-            IntegrationAlgorithm::Romberg,
-            1e-6,
-            |u| ok_area.evaluate(&k_fix, u),
-        )
+        let area_fix = integrate_with_kernel(&k_fix, dom.min().x, dom.max().x, 1e-6, |u| {
+            ok_area.evaluate(&k_fix, u)
+        })
         .unwrap();
         assert_eq!(area_def, area_fix);
         let expected_area = PI * SQRT3;
@@ -1352,7 +1209,8 @@ mod tests {
     }
 
     /// The fifth divided difference's weights are zero on polynomials of degree 4 and one
-    /// on `s^5`, and the fifth-order weights miss `s^5` by `-1/960`.
+    /// on `s^5` (so the quadrature estimate's are `-1/960` there), and the fifth-order
+    /// weights miss `s^5` by `-1/960`.
     #[test]
     fn quadrature_error_constants() {
         let nodes = [0.0, 0.2, 0.3, 0.6, 1.0, 0.875];
@@ -1372,6 +1230,11 @@ mod tests {
                 .sum();
             let want = if power == 5 { 1.0 } else { 0.0 };
             assert!((d - want).abs() < 1e-9, "s^{power}: {d}");
+            let q = weighted(QUADRATURE_ERROR_WEIGHTS, 1.0, nodes.map(|c| c.powi(power)));
+            assert!(
+                (q - want * FIFTH_ORDER_ERROR_ON_S5).abs() < 1e-12,
+                "s^{power}: {q}"
+            );
         }
         let miss: f64 = fifth
             .iter()
@@ -1388,16 +1251,8 @@ mod tests {
     #[test]
     fn a_quadrature_step_is_not_accepted_on_a_blind_embedded_estimate() {
         let nodes = [0.0, 0.2, 0.3, 0.6, 1.0, 0.875];
-        let embedded = [
-            37.0 / 378.0 - 2825.0 / 27648.0,
-            0.0,
-            250.0 / 621.0 - 18575.0 / 48384.0,
-            125.0 / 594.0 - 13525.0 / 55296.0,
-            -277.0 / 14336.0,
-            512.0 / 1771.0 - 0.25,
-        ];
         let on = |power: i32| -> f64 {
-            embedded
+            EMBEDDED_ERROR_WEIGHTS
                 .iter()
                 .zip(nodes)
                 .map(|(w, c): (&f64, f64)| w * c.powi(power))
