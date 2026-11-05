@@ -181,7 +181,7 @@
 {"case":"gen0000","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0001","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0002","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-33864533509.648296,44969931338.84535,-4701674561467.039],[-34085943816.74034,45111769953.26709,-4136679490280.6914]],"n":479}}}
-{"case":"gen0003","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0003","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-239.84462356372254,1791.3229456622435,-15637.490202961451]],"n":121}}}
 {"case":"gen0004","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0005","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[16592.94205348272,21327.275680290935,195001.35378728877]],"n":219}}}
 {"case":"gen0006","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[12272.841661698729,22916.206011067614,-569849.5200112042],[-3536.934112363228,8437.417348071922,-424571.91293890076]],"n":479}}}
@@ -272,7 +272,7 @@
 {"case":"gen0091","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[8557461708.362901,15761570925.618994,888604725553.5049]],"n":219}}}
 {"case":"gen0092","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[20086.45233403064,20699.569726470185,613441.4241472906]],"n":219}}}
 {"case":"gen0093","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
-{"case":"gen0094","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0094","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0095","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[8690.268999182807,22455.53987575542,-809423.4103523196]],"n":219}}}
 {"case":"gen0096","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-4126.035695005239,9706.18705431724,-516826.8529532295],[-1601.9724804118277,4110.899074606306,-86038.26323740857]],"n":361}}}
 {"case":"gen0097","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["NaN","NaN","NaN"]],"n":53}}}
@@ -305,7 +305,7 @@
 {"case":"gen0124","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0125","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[37015426471.99167,68176901442.881744,3843678398551.4023]],"n":219}}}
 {"case":"gen0126","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
-{"case":"gen0127","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0127","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0128","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[19614.631728143875,24669.623573540597,573944.7870529045]],"n":219}}}
 {"case":"gen0129","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[2027.916999632093,5483.969862041601,245094.37836587586],[249.57813853755133,667.4936040416901,3556.4791963047082]],"n":281}}}
 {"case":"gen0130","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
@@ -406,7 +406,7 @@
 {"case":"gen0225","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0226","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[24160.95062732271,25302.135487665713,1118950.1779963204]],"n":219}}}
 {"case":"gen0227","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[8231.305867609164,24400.060410307993,-1056585.9332098567],[-7460.821195564945,8253.30329227273,-909681.5566508117]],"n":479}}}
-{"case":"gen0228","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0228","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-588.5246438141249,2253.14155165475,-37305.98482629327]],"n":121}}}
 {"case":"gen0229","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0230","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[1107.2845629603366,1571.0789391727656,30691.12713217643]],"n":49}}}
 {"case":"gen0231","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
@@ -434,7 +434,7 @@
 {"case":"gen0253","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[1143.3081688042969,1409.9069378818833,73648.91679967997]],"n":121}}}
 {"case":"gen0254","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[27.90562928184033,134.6489598404278,338.488680889454]],"n":85}}}
 {"case":"gen0255","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-155.28021505793407,947.6346595546889,-7629.837306098869]],"n":111}}}
-{"case":"gen0256","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0256","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0257","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0258","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[2191.173055727787,2191.173055727787,137519.2577875602]],"n":121}}}
 {"case":"gen0259","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-2571.9295311166898,2698.076690041549,-119003.98897538148]],"n":85}}}
@@ -571,7 +571,7 @@
 {"case":"gen0390","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-415.9030448349038,2603.2817047214903,-53313.918367063336],[370.5685545408549,400.91018111221206,3604.300629888273]],"n":271}}}
 {"case":"gen0391","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-53.205372748741325,421.494922086991,-1661.1964459057053]],"n":45}}}
 {"case":"gen0392","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[16145.857621769595,19692.984938896865,-69643.19635078745],[458.04377841256303,3182.0610836308115,61857.291288953034]],"n":479}}}
-{"case":"gen0393","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0393","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[67.41231634882463,338.68777377510696,1469.1658404905545]],"n":49}}}
 {"case":"gen0394","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[157.7347980343475,232.88191284373696,6943.698618684859]],"n":85}}}
 {"case":"gen0395","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0396","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
@@ -655,7 +655,7 @@
 {"case":"gen0474","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[22977.185336905237,23399.37615257714,986215.2068225556]],"n":219}}}
 {"case":"gen0475","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[2260.57241595173,4162.986103711342,283386.0471928163],[274.82607254067824,441.91361090945196,3477.767765859666]],"n":281}}}
 {"case":"gen0476","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[19117.090897800856,21507.862118082507,392421.42997824476],[3533.535156516165,5516.39503647584,428015.086288642]],"n":479}}}
-{"case":"gen0477","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0477","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[444.64864937913217,715.4993738818558,26710.58258879359]],"n":121}}}
 {"case":"gen0478","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-12778211455.280249,28269396805.1805,-1558003299275.063],[-5227450032.011486,11564753403.575953,-276195696065.4341]],"n":361}}}
 {"case":"gen0479","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-2550.5043788436,3167.6287926722352,-315968.9620409783],[-262.0629230820036,344.5050468730934,-3668.042627983874]],"n":281}}}
 {"case":"gen0480","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
@@ -759,7 +759,7 @@
 {"case":"gen0578","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[12073.385840037337,19058.77066554045,-377906.40794751735]],"n":219}}}
 {"case":"gen0579","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[13836.510722223222,21369.216594815844,-171974.84566471353]],"n":219}}}
 {"case":"gen0580","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
-{"case":"gen0581","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0581","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0582","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-170.59989422218095,581.541804739517,-8000.204084433556]],"n":63}}}
 {"case":"gen0583","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0584","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
@@ -774,7 +774,7 @@
 {"case":"gen0593","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[16191.809734669489,22805.77592026719,-74867.96357810614],[449.9498232505848,7953.822125778732,56418.67455075703]],"n":479}}}
 {"case":"gen0594","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
 {"case":"gen0595","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[16130.534055942113,23869.837375842395,93060.72358601526]],"n":219}}}
-{"case":"gen0596","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0596","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen0597","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[12699.191285370598,22290.66554752595,-305421.7738319487]],"n":219}}}
 {"case":"gen0598","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[3675.738544072219,5196.53738272273,368743.8697465501]],"n":201}}}
 {"case":"gen0599","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[1132.16446309723,1132.16446309723,72053.608829495]],"n":121}}}
@@ -822,7 +822,7 @@
 {"case":"gen0641","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0642","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[437.6416582772453,1189.4223963109544,26942.022836158285]],"n":121}}}
 {"case":"gen0643","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[371.269082442444,1345.392001135111,20468.826965356984]],"n":121}}}
-{"case":"gen0644","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0644","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[20541.414837992244,20706.43680061207,695380.9285294017]],"n":219}}}
 {"case":"gen0645","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[6.121320955691713e+18,6.040559763158079e+19,-2.438771634732753e+21],[7.707107551897227e+18,4.9020820182252814e+19,1.204454485271737e+21]],"n":479}}}
 {"case":"gen0646","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-52812135432.58548,52812169077.289055,-6742947832098.366]],"n":219}}}
 {"case":"gen0647","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[10310.220158214208,22832.013819579897,-603815.7068685428]],"n":219}}}
@@ -1110,7 +1110,7 @@
 {"case":"gen0929","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[4826.737709124235,4826.737709124235,592542.4622813183],[562.0394441489469,562.0394441489469,7408.923088409221]],"n":281}}}
 {"case":"gen0930","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[7330.720936546892,23648.394665498,-980027.2182089833]],"n":219}}}
 {"case":"gen0931","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[23187.80776892411,24350.541505274578,1000404.1358420398]],"n":219}}}
-{"case":"gen0932","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen0932","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen0933","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[19240.82601224955,19595.794785062644,525671.4668106381]],"n":219}}}
 {"case":"gen0934","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
 {"case":"gen0935","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[2525.495434035536,2737.4789718491465,305260.1799261369],["-inf","inf","-inf"],["-inf","inf","-inf"]],"n":644}}}
@@ -1292,7 +1292,7 @@
 {"case":"gen1111","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[20596.729099886248,21321.738447598338,699312.3266616572]],"n":219}}}
 {"case":"gen1112","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen1113","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-15745735187.112696,68340138628.32292,-2121077032416.6848],[-17446702959.713,69664369073.10828,-2050351882628.1265]],"n":479}}}
-{"case":"gen1114","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1023.0]}}
+{"case":"gen1114","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen1115","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[16062230200.163431,16062240303.788946,2052949715898.7026]],"n":219}}}
 {"case":"gen1116","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen1117","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[34.915632033728016,891.3912966588205,247.26568488405564]],"n":49}}}
@@ -1600,7 +1600,7 @@
 {"case":"gen1419","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen1420","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[9036487221.885948,9036487651.101517,1154972861408.1394]],"n":219}}}
 {"case":"gen1421","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
-{"case":"gen1422","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1023.0]}}
+{"case":"gen1422","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen1423","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[18046.100238454772,19820.11206712768,340213.2130818379]],"n":219}}}
 {"case":"gen1424","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[8585061985.765092,15812392253.28914,891470901556.789]],"n":219}}}
 {"case":"gen1425","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[1140.856279138946,4278.669919755378,144707.9847087559],[399.3706891176312,438.26929773519873,3721.0457719916703]],"n":271}}}
@@ -1660,11 +1660,11 @@
 {"case":"gen1479","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen1480","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen1481","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[19849.82302883228,27918.215477510712,599941.6987229676]],"n":219}}}
-{"case":"gen1482","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen1482","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1007.0]}}
 {"case":"gen1483","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[15532.666236818824,19731.210506412957,-146777.53909744078],[-165.29548737113538,3096.5848056767154,-13145.140368539016]],"n":479}}}
 {"case":"gen1484","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[-4770.299662061285,4980.300042061286,-598718.9431328129],[-557.8275877321981,563.8276077321981,-7612.171459136204]],"n":281}}}
 {"case":"gen1485","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[10694.37670098992,20263.649415425552,-550528.6169350159]],"n":219}}}
-{"case":"gen1486","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":[1001.0]}}
+{"case":"gen1486","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[17827.03995518407,21785.67775958503,310927.28289231943]],"n":219}}}
 {"case":"gen1487","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[22656598518.75972,41730072379.99025,2352658470034.207]],"n":219}}}
 {"case":"gen1488","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[["-inf","inf","-inf"]],"n":153}}}
 {"case":"gen1489","deferred":null,"error":null,"ints":{},"topology":null,"values":{"rec":{"blocks":[[15929.506344561192,17322.13620276962,19353.166878272765],[177.4311067254167,1251.5676325956551,20913.914622687997]],"n":479}}}

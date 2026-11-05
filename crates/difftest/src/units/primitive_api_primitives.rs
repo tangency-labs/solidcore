@@ -1182,13 +1182,167 @@ fn gen_offset_case(rng: &mut Rng) -> Inputs {
     i
 }
 
+// ---- input contract --------------------------------------------------------------------
+
+/// Largest sphere radius magnitude a generated `sphere` case passes on.
+const MAX_SPHERE_RADIUS: f64 = 6.0e9;
+/// Smallest radius magnitude a generated `sphere_no_pole` case passes on.
+const MIN_NO_POLE_RADIUS: f64 = 3.0e-4;
+/// Largest radius magnitude a generated `sphere_no_pole` case passes on.
+const MAX_NO_POLE_RADIUS: f64 = 3.0e8;
+/// Largest coordinate or dimension magnitude of the entry points without validation,
+/// and largest origin coordinate of `cylindrical_box`.
+const MAX_KERNEL_COORD: f64 = 1.0e6;
+/// Smallest inside-arc chord (`ri * sweep`, sweep in radians) of `cylindrical_box`.
+const MIN_ARC_CHORD: f64 = 1.0e-4;
+/// Smallest inside-arc sagitta (`ri * sweep^2 / 8`) of `cylindrical_box`.
+const MIN_ARC_SAGITTA: f64 = 1.0e-8;
+/// Smallest gap (degrees) between a `cylindrical_box` sweep and a full turn.
+const MIN_FULL_TURN_GAP: f64 = 1.0e-8;
+/// Largest edge/face index of `blend_primitive`.
+const MAX_BLEND_ENTITY: usize = 64;
+/// `SM_EFF_ZERO`.
+const EFF_ZERO: f64 = 1.0e-12;
+
+/// `SM_IS_VALID_DOUBLE`: not NaN, finite and within `SM_BIG_DOUBLE / 100`.
+fn valid_double(a: f64) -> bool {
+    (-1.0e18..=1.0e18).contains(&a)
+}
+
+/// Every value finite and at most [`MAX_KERNEL_COORD`] in magnitude.
+fn bounded(xs: &[f64]) -> bool {
+    xs.iter()
+        .all(|x| x.is_finite() && x.abs() <= MAX_KERNEL_COORD)
+}
+
+/// The generator's input contract, ported from the upstream harness guard: past each
+/// entry point's own validation (inputs it refuses itself always pass), the inputs on
+/// which upstream `SmPrimitiveCreation` crashes or does not return are not generated,
+/// so the generated cases exercise the working path (hostile inputs are fixtures).
+/// - `plane_surface`: no NaN length or width;
+/// - `torus_surface`: with both radii above `SM_EFF_ZERO`, a finite origin, finite
+///   radii whose sum does not overflow and a minor radius not within `1e-8`
+///   (relative) of `f64::MAX`;
+/// - `sphere`: with a valid radius, a finite center and a radius magnitude at most
+///   [`MAX_SPHERE_RADIUS`];
+/// - `sphere_no_pole`: with a valid radius, a magnitude in
+///   [`MIN_NO_POLE_RADIUS`]`..=`[`MAX_NO_POLE_RADIUS`];
+/// - `cylindrical_box`: with valid arguments, an origin within [`MAX_KERNEL_COORD`],
+///   an inside arc of chord at least [`MIN_ARC_CHORD`] and sagitta at least
+///   [`MIN_ARC_SAGITTA`], and a sweep at least [`MIN_FULL_TURN_GAP`] degrees short of
+///   a full turn;
+/// - the entry points without validation and `swung` (its arcs too): every value
+///   [`bounded`];
+/// - `blend_primitive`: a [`bounded`] box, entity indices integers in
+///   `0..=`[`MAX_BLEND_ENTITY`] and a `0`/`1` direction flag;
+/// - `offset_profile`: a [`bounded`] distance, an integer offset type in
+///   `0..=`[`MAX_OFFSET_TYPE`] and `0`/`1` flags.
+fn accepted(i: &Inputs) -> bool {
+    let a = |k: usize| i.args.get(k).map_or(f64::NAN, |f| f.0);
+    let args: Vec<f64> = i.args.iter().map(|f| f.0).collect();
+    let origin = [a(0), a(1), a(2)];
+    match i.op {
+        OpName::PlaneSurface => !(a(3).is_nan() || a(4).is_nan()),
+        OpName::TorusSurface => {
+            let (major, minor) = (a(3), a(4));
+            !(major > EFF_ZERO
+                && minor > EFF_ZERO
+                && (!origin.iter().all(|x| x.is_finite())
+                    || major == f64::INFINITY
+                    || minor == f64::INFINITY
+                    || (major + minor).is_infinite()
+                    || minor > f64::MAX * (1.0 - 1.0e-8)))
+        }
+        OpName::Sphere => {
+            let r = a(3);
+            let valid = valid_double(r) && r.abs() > EFF_ZERO;
+            !(valid && (!origin.iter().all(|x| x.is_finite()) || r.abs() > MAX_SPHERE_RADIUS))
+        }
+        OpName::SphereNoPole => {
+            let r = a(3).abs();
+            let valid = valid_double(a(3)) && r > EFF_ZERO;
+            !valid || (MIN_NO_POLE_RADIUS..=MAX_NO_POLE_RADIUS).contains(&r)
+        }
+        OpName::CylindricalBox => {
+            let (len, ri, ro, a0, a1) = (a(3), a(4), a(5), a(6), a(7));
+            let positive = |v: f64| valid_double(v) && v > EFF_ZERO;
+            let valid = positive(len)
+                && positive(ri)
+                && valid_double(ro)
+                && ro > ri + EFF_ZERO
+                && valid_double(a0)
+                && valid_double(a1)
+                && (-360.0..=360.0).contains(&a0)
+                && a1 > a0 + EFF_ZERO
+                && a1 - a0 <= 360.0;
+            if !valid {
+                return true;
+            }
+            let sweep = a1 - a0;
+            let theta = sweep.to_radians();
+            origin
+                .iter()
+                .all(|x| x.is_finite() && x.abs() <= MAX_KERNEL_COORD)
+                && ri * theta >= MIN_ARC_CHORD
+                && ri * theta * theta / 8.0 >= MIN_ARC_SAGITTA
+                && 360.0 - sweep >= MIN_FULL_TURN_GAP
+        }
+        OpName::PlaneBrep
+        | OpName::PlanarCircle
+        | OpName::Torus
+        | OpName::PartialSphere
+        | OpName::PartialCone
+        | OpName::ConeEllipticEnds
+        | OpName::PartialCylinder
+        | OpName::PartialTorus => bounded(&args),
+        OpName::Swung => {
+            bounded(&args)
+                && i.xy.iter().chain(&i.xz).all(|c| {
+                    bounded(&c.center) && bounded(&[c.radius, c.start_deg, c.end_deg])
+                })
+        }
+        OpName::BlendPrimitive => {
+            (0..6).all(|k| bounded(&[a(k)]))
+                && (6..10).all(|k| {
+                    let v = a(k);
+                    v >= 0.0 && v <= MAX_BLEND_ENTITY as f64 && v == v.trunc()
+                })
+                && (a(10) == 0.0 || a(10) == 1.0)
+        }
+        OpName::OffsetProfile => {
+            let flag = |v: f64| v == 0.0 || v == 1.0;
+            let kind = a(1);
+            bounded(&[a(0)])
+                && kind >= 0.0
+                && kind <= MAX_OFFSET_TYPE as f64
+                && kind == kind.trunc()
+                && flag(a(2))
+                && flag(a(3))
+        }
+        OpName::CylinderSurface
+        | OpName::ConeSurface
+        | OpName::Box
+        | OpName::Cylinder
+        | OpName::Cone
+        | OpName::Pyramid => true,
+    }
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "primitive.api_primitives"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        // Redraw the (rare) inputs outside the contract, at most 64 times.
+        let mut case = gen_case(rng);
+        for _ in 0..64 {
+            if accepted(&case) {
+                break;
+            }
+            case = gen_case(rng);
+        }
+        serde_json::to_value(case).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
