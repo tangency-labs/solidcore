@@ -2705,7 +2705,7 @@ pub fn gn_certify_span(
             }
             let (ea, eb, depth) = (p.a, p.b, p.depth);
             k.work_counters.add_certificate_piece(u64::from(depth));
-            let ((pm, puv, pm_lo, _, puv_fork, puv_lo_fork), series) = gn_try!(
+            let ((pm, puv, pm_lo, puv_lo, _, _), series) = gn_try!(
                 gn_fourth_over_series(
                     k,
                     faces_n,
@@ -2775,9 +2775,8 @@ pub fn gn_certify_span(
                     p.terms = Some(PieceTerms {
                         m4: pm,
                         uv4: puv,
-                        uv4_fork: puv_fork,
                         m4_lo: pm_lo,
-                        uv4_lo_fork: puv_lo_fork,
+                        uv4_lo: puv_lo,
                         rows,
                     });
                 }
@@ -2809,15 +2808,13 @@ pub fn gn_certify_span(
         }
         // the span's bound over its pieces, and each piece's own
         let terms: Vec<&PieceTerms> = pieces.iter().filter_map(|p| p.terms.as_ref()).collect();
-        // steered by the fork's uv term, certified by each parameter's own (#2690)
-        let bound = span_bound(&terms, h, &bar, l_jets, rows_vary, arc, true);
+        let bound = span_bound(&terms, h, &bar, l_jets, rows_vary, arc);
         // a bound that is not proved (varying rows whose remainder is not yet below their
         // least weight) is no stop: every piece is cut, as the fork's next level
         let finite = bound.is_finite();
         let mut halved = false;
         if finite {
-            let own = span_bound(&terms, h, &bar, l_jets, rows_vary, arc, false);
-            bound_out = cmin(bound_out, round_up(own * (1.0 + 1.0e-12)));
+            bound_out = cmin(bound_out, round_up(bound * (1.0 + 1.0e-12)));
             if bound_out <= target {
                 break;
             }
@@ -2827,7 +2824,7 @@ pub fn gn_certify_span(
             let k4 = h * h * h * h / 384.0;
             let mut lower = 0.0_f64;
             for t in &terms {
-                for (m4lf, &uvl) in t.m4_lo.iter().zip(&t.uv4_lo_fork) {
+                for (m4lf, &uvl) in t.m4_lo.iter().zip(&t.uv4_lo) {
                     let mut sum = 0.0_f64;
                     for &m in m4lf.iter().take(l_jets + 1) {
                         sum += k4 * m;
@@ -2856,7 +2853,7 @@ pub fn gn_certify_span(
             .iter()
             .map(|p| {
                 p.terms.as_ref().map_or(f64::INFINITY, |t| {
-                    span_bound(&[t], h, &bar, l_jets, rows_vary, arc, true)
+                    span_bound(&[t], h, &bar, l_jets, rows_vary, arc)
                 })
             })
             .collect();
@@ -2928,12 +2925,10 @@ struct CertPiece {
 /// values ([`Fourth`]), and its varying rows' terms.
 struct PieceTerms {
     m4: [[f64; MAX_E + 1]; 2],
-    /// The uv curves' term per parameter, which certifies (#2690).
+    /// The uv curves' term, each parameter's own (#2690).
     uv4: [f64; 2],
-    /// The fork's, which steers the cuts, with its least value.
-    uv4_fork: [f64; 2],
     m4_lo: [[f64; MAX_E + 1]; 2],
-    uv4_lo_fork: [f64; 2],
+    uv4_lo: [f64; 2],
     rows: GnRowTerms,
 }
 
@@ -2997,7 +2992,6 @@ fn span_bound(
     l_jets: usize,
     rows_vary: bool,
     arc: bool,
-    fork_uv: bool,
 ) -> f64 {
     let mut m4 = [[0.0_f64; MAX_E + 1]; 2];
     let mut uv4 = [0.0_f64; 2];
@@ -3014,8 +3008,7 @@ fn span_bound(
                 *m = cmax(*m, p);
             }
         }
-        let tu = if fork_uv { &t.uv4_fork } else { &t.uv4 };
-        for (u, &p) in uv4.iter_mut().zip(tu) {
+        for (u, &p) in uv4.iter_mut().zip(&t.uv4) {
             *u = cmax(*u, p);
         }
         for (x, &p) in rows.x.iter_mut().zip(&t.rows.x) {
