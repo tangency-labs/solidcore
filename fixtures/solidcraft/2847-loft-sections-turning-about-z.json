@@ -1,0 +1,474 @@
+{
+ "issue": "https://github.com/tangency-labs/solidcraft/issues/2847",
+ "pr": "https://github.com/tangency-labs/solidcraft/pull/3452",
+ "test": "crates/kernel/src/tests.rs: loft_through_identical_sections_turning_about_an_axis_keeps_its_volume",
+ "summary": "A loft through identical sections whose plane turns about Z by more than 90 degrees. On SolidCraft's truck kernel the start vertex of each section was matched to the next by projecting directions onto each plane, which flattened and then flipped past 90 degrees: at 180 degrees the solid came out folded, 6% off Pappus, with no error. The original test used a periodic spline through 12 points ((30 + 3 cos a, 5 sin a), a = k*30 degrees) and planes 10 degrees apart. Here the section is a circle of radius 5 centred 30 mm from the Z axis (the same centroid radius, a closed form area), drawn in the plane through Z (`xz`, u along X, v along Z) and turned about Z with the loft section's `turn_deg` (new in this fixture's PR), in steps of 15 degrees, for spans of 90, 120 and 180 degrees. SmApiCreateSkinPrimitive builds the ruled (degree 1) loft through the sections in order. Volume by Pappus's second theorem, V = area * centroid radius * angle. A ruled loft is a chord approximation of the turn, so it is under the exact value by the factor sin(d)/d for a step d (0.9886 at 15 degrees, 1.1 percent, which the runner measures at every span); the 3% tolerance is the original test's and is not loosened.",
+ "cases": [
+  {
+   "name": "span_90",
+   "note": "Circle of radius 5 centred 30 from the Z axis in a plane that contains Z, lofted through 7 identical sections 15 degrees apart, turning 90 degrees about Z.",
+   "steps": [
+    {
+     "op": "loft",
+     "id": "result",
+     "sections": [
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 0.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 15.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 30.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 45.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 60.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 75.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 90.0
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "lumps": 1,
+    "volume": {
+     "value": 3701.101650408509,
+     "tol": 111.03304951225527,
+     "formula": "Pappus: V = A * Rc * theta = pi*r^2 * R * theta, r = 5, R = 30, theta = 90 degrees = 1.570796 rad: A = 78.539816, V = 3701.1017"
+    }
+   }
+  },
+  {
+   "name": "span_120",
+   "note": "Circle of radius 5 centred 30 from the Z axis in a plane that contains Z, lofted through 9 identical sections 15 degrees apart, turning 120 degrees about Z.",
+   "steps": [
+    {
+     "op": "loft",
+     "id": "result",
+     "sections": [
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 0.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 15.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 30.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 45.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 60.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 75.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 90.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 105.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 120.0
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "lumps": 1,
+    "volume": {
+     "value": 4934.802200544678,
+     "tol": 148.04406601634034,
+     "formula": "Pappus: V = A * Rc * theta = pi*r^2 * R * theta, r = 5, R = 30, theta = 120 degrees = 2.094395 rad: A = 78.539816, V = 4934.8022"
+    }
+   }
+  },
+  {
+   "name": "span_180",
+   "note": "Circle of radius 5 centred 30 from the Z axis in a plane that contains Z, lofted through 13 identical sections 15 degrees apart, turning 180 degrees about Z.",
+   "steps": [
+    {
+     "op": "loft",
+     "id": "result",
+     "sections": [
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 0.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 15.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 30.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 45.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 60.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 75.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 90.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 105.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 120.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 135.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 150.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 165.0
+      },
+      {
+       "profile": [
+        {
+         "kind": "circle",
+         "center": [
+          30.0,
+          0
+         ],
+         "radius": 5.0
+        }
+       ],
+       "plane": "xz",
+       "turn_deg": 180.0
+      }
+     ]
+    }
+   ],
+   "expect": {
+    "lumps": 1,
+    "volume": {
+     "value": 7402.203300817018,
+     "tol": 222.06609902451055,
+     "formula": "Pappus: V = A * Rc * theta = pi*r^2 * R * theta, r = 5, R = 30, theta = 180 degrees = 3.141593 rad: A = 78.539816, V = 7402.2033"
+    }
+   }
+  }
+ ]
+}
