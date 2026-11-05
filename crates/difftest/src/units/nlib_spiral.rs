@@ -2,8 +2,8 @@
 //! (`N_CrvApproxSpiral`) and the NURBS volume allocate / copy helpers
 //! (`sm_AllocateNurbVolume`, `sm_AllocateAndCopyNurbVolume`).
 //!
-//! C++: `solidcore_ffi::units::nlib_spiral` (upstream `source/SMLib/src/NL_Spiral.cpp`,
-//! `source/SMLib/src/SmNurbsVol.cpp`). Rust: `solidcore::nurbs::spiral`.
+//! Ported from upstream `source/SMLib/src/NL_Spiral.cpp`,
+//! `source/SMLib/src/SmNurbsVol.cpp`; checked against its golden. Rust: `solidcore::nurbs::spiral`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record
 //! (see the ffi module), split into keys. `spiral`: `status` (`0` ok, else the
@@ -13,8 +13,8 @@
 //! `<v>_dims = [l, m, n, p, q, r, ku, kv, kw]`, `<v>_knots` and `<v>_cpts`.
 //!
 //! Upstream crashes on the input errors it detects before initialising its local
-//! stacks (`plan/findings.md`), so those inputs are neither generated nor in the
-//! fixtures; the Rust unit tests cover them.
+//! stacks (`plan/findings.md`); the port refuses them, and the generator draws them
+//! like any other input.
 
 // Harness code: the record parsers index slices they have length-checked; a panic
 // would fail the case (runner panics are caught).
@@ -25,8 +25,6 @@ use serde_json::Value;
 
 use solidcore::nurbs::spiral::{self as sp, Hand, SpiralSpec, Volume};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_spiral as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -140,35 +138,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 
 // ---- C++ side ---------------------------------------------------------------------
 
-fn cpp_flat(i: &Inputs) -> Result<Vec<f64>, FfiError> {
-    match i {
-        Inputs::Spiral {
-            height,
-            rad0,
-            rad1,
-            turns,
-            rorl,
-            num_points,
-            tol,
-        } => ffi::approx_spiral(*height, *rad0, *rad1, *turns, *rorl, *num_points, *tol),
-        Inputs::Volume {
-            cp_hi,
-            degree,
-            knot_hi,
-            knots,
-            cpts,
-        } => ffi::volume_copy(*cp_hi, *degree, *knot_hi, knots, cpts),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match cpp_flat(i) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
-
 // ---- Rust side --------------------------------------------------------------------
 
 /// `0` for `Ok`, the `NL_*_ERR` number for an NLib error, `-1` otherwise.
@@ -278,25 +247,6 @@ fn gen_radius(rng: &mut Rng) -> f64 {
 }
 
 fn gen_spiral(rng: &mut Rng) -> Inputs {
-    // Upstream crashes on its early input errors (see the ffi module): redraw.
-    loop {
-        let i = gen_spiral_any(rng);
-        if let Inputs::Spiral {
-            height,
-            rad0,
-            rad1,
-            turns,
-            ..
-        } = i
-        {
-            if !ffi::hits_early_input_error(height, rad0, rad1, turns) {
-                return i;
-            }
-        }
-    }
-}
-
-fn gen_spiral_any(rng: &mut Rng) -> Inputs {
     let height = match rng.below(20) {
         0 => *rng.choose(&[0.0, -1.0, 5e-8, 1e-7]).unwrap_or(&0.0),
         _ => log_uniform(rng, 1e-4, 1e4),
@@ -374,10 +324,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

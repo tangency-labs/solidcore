@@ -1,8 +1,8 @@
 //! Runner for unit `nlib.math`: NLib control-point arithmetic, quadratic solver,
 //! floating-point range checks, real matrices, power-basis surfaces, reallocation.
 //!
-//! C++: `solidcore_ffi::units::nlib_math` (upstream `source/SMLib/src/NL_Math.cpp`,
-//! `NL_SrfPoly.cpp`, `NL_Util.cpp`). Rust: `solidcore::nurbs::math`.
+//! Ported from upstream `source/SMLib/src/NL_Math.cpp`,
+//! `NL_SrfPoly.cpp`, `NL_Util.cpp`; checked against its golden. Rust: `solidcore::nurbs::math`.
 //!
 //! | op (`inputs.op`) | Rust                                             | upstream |
 //! |------------------|--------------------------------------------------|----------|
@@ -38,8 +38,6 @@ use solidcore::nurbs::math::{
     RealMatrix, MODEL_TOL, NOW, NOZ,
 };
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::nlib_math as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -112,9 +110,6 @@ enum Mt {
 }
 
 impl Mt {
-    fn code(self) -> i32 {
-        self.rust().code()
-    }
     fn rust(self) -> MatrixType {
         match self {
             Mt::Full => MatrixType::Full,
@@ -136,12 +131,6 @@ struct Mat {
 }
 
 impl Mat {
-    fn flat(&self) -> Vec<f64> {
-        self.rows.iter().flatten().copied().collect()
-    }
-    fn cols(&self) -> usize {
-        self.rows.first().map_or(0, Vec::len)
-    }
     fn rust(&self) -> Result<RealMatrix, SolidError> {
         RealMatrix::from_rows(self.n, self.m, self.rows.clone(), self.mtp.rust(), self.bw)
     }
@@ -294,15 +283,6 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
-/// C++ failure -> normalised output (operation error) or harness error.
-fn cpp_err(e: &FfiError) -> Result<Output, HarnessError> {
-    match e {
-        FfiError::Status(code) if *code > 0 => Ok(Output::err(format!("nlib_{code}"))),
-        FfiError::Status(_) => Err(harness(format!("shim failure: {e}"))),
-        FfiError::InvalidArgument(m) => Err(harness(format!("ffi rejected: {m}"))),
-    }
-}
-
 /// Rust failure -> normalised output. Non-NLib errors (`InvalidInput`: an index
 /// upstream would take outside its arrays) cannot match any C++ output, so such a
 /// case fails, as it should inside the wrapper's domain.
@@ -316,274 +296,12 @@ fn rust_err(e: &SolidError) -> Output {
     }
 }
 
-/// Builds the FFI view of `m` over `flat` (its flattened storage).
-fn view<'a>(m: &Mat, flat: &'a [f64]) -> ffi::Matrix<'a> {
-    ffi::Matrix {
-        data: flat,
-        rows: m.rows.len(),
-        cols: m.cols(),
-        n: m.n,
-        m: m.m,
-        mtp: m.mtp.code(),
-        bw: m.bw,
-    }
-}
-
-fn mat_out(prefix: &str, o: ffi::MatrixOut, out: Output) -> Output {
-    out.ints(&format!("{prefix}meta"), vec![o.n, o.m, o.mtp, o.bw])
-        .values(&format!("{prefix}region"), o.region)
-}
-
 fn cpt_arr(p: [f64; 4]) -> CPoint {
     CPoint::new(p[0], p[1], p[2], p[3])
 }
 
 fn pt_arr(p: [f64; 3]) -> Vec3 {
     Vec3::new(p[0], p[1], p[2])
-}
-
-fn split_layout(flat: &[f64]) -> Result<Output, HarnessError> {
-    let total: usize = POINT_OPS_LAYOUT.iter().map(|(_, n)| n).sum();
-    if flat.len() != total {
-        return Err(harness(format!(
-            "point_ops returned {} values, layout has {total}",
-            flat.len()
-        )));
-    }
-    let mut out = Output::new();
-    let mut at = 0usize;
-    for (key, n) in POINT_OPS_LAYOUT {
-        let part = flat
-            .get(at..at + n)
-            .ok_or_else(|| harness("point_ops layout"))?;
-        out = out.values(key, part.to_vec());
-        at += n;
-    }
-    Ok(out)
-}
-
-/// True when some matrix of the inputs has storage rows of different lengths. The
-/// C++ side gets the flattened rows (a truncated row plus a longer one can still
-/// have the right total), the Rust side the rows themselves: not a valid matrix.
-fn has_ragged_matrix(v: &Value) -> bool {
-    match v {
-        Value::Object(o) => {
-            let ragged = o.contains_key("mtp")
-                && o.get("rows").and_then(Value::as_array).is_some_and(|rows| {
-                    let len = |r: &Value| r.as_array().map(Vec::len);
-                    rows.iter().any(|r| len(r) != rows.first().and_then(len))
-                });
-            ragged || o.values().any(has_ragged_matrix)
-        }
-        Value::Array(a) => a.iter().any(has_ragged_matrix),
-        _ => false,
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let value = serde_json::to_value(i).map_err(|e| harness(format!("inputs: {e}")))?;
-    if has_ragged_matrix(&value) {
-        return Err(harness("matrix storage rows differ in length"));
-    }
-    let out = match i {
-        Inputs::PointOps {
-            a,
-            b,
-            c,
-            d,
-            pa,
-            pb,
-            pc,
-            pd,
-            alpha,
-            beta,
-            gamma,
-            delta,
-            w,
-            mat,
-            i1,
-            i2,
-        } => {
-            let mut input = Vec::with_capacity(ffi::POINT_OPS_INPUTS);
-            for p in [a, b, c, d] {
-                input.extend_from_slice(p);
-            }
-            for p in [pa, pb, pc, pd] {
-                input.extend_from_slice(p);
-            }
-            input.extend_from_slice(&[*alpha, *beta, *gamma, *delta, *w]);
-            input.extend_from_slice(mat);
-            match ffi::point_ops(&input, [*i1, *i2]) {
-                Ok(flat) => return split_layout(&flat),
-                Err(e) => Err(e),
-            }
-        }
-        Inputs::FloatOp { x, y, flag } => {
-            ffi::float_op(*x, *y, *flag).map(|b| Output::new().int("bad", i64::from(b)))
-        }
-        Inputs::Quadratic { a, b, c } => ffi::quadratic(*a, *b, *c).map(|(n, r)| {
-            let roots = match n {
-                1 => vec![r[0]],
-                2 => vec![r[0], r[1]],
-                _ => vec![],
-            };
-            // n = 1 always has r1 == r2 upstream; record that too.
-            let same = i64::from(n != 1 || r[0].to_bits() == r[1].to_bits());
-            Output::new()
-                .int("n", n)
-                .values("roots", roots)
-                .int("one_root_r1_eq_r2", same)
-        }),
-        Inputs::Pascal { row } => ffi::pascal(*row).map(|v| Output::new().ints("tri", v)),
-        Inputs::CheckMem {
-            existing,
-            n,
-            m,
-            mtp,
-            bw,
-        } => {
-            let flat = existing.as_ref().map(Mat::flat).unwrap_or_default();
-            let ex = existing.as_ref().map(|e| view(e, &flat));
-            ffi::check_mem(ex.as_ref(), (*n, *m, mtp.code(), *bw))
-                .map(|r| Output::new().ints("meta", r.to_vec()))
-        }
-        Inputs::Multiply { a, b, c } => {
-            let (fa, fb) = (a.flat(), b.flat());
-            let fc = c.as_ref().map(Mat::flat).unwrap_or_default();
-            let cv = c.as_ref().map(|m| view(m, &fc));
-            ffi::multiply(&view(a, &fa), &view(b, &fb), cv.as_ref())
-                .map(|o| mat_out("", o, Output::new()))
-        }
-        Inputs::Transpose { a, in_place, b } => {
-            let fa = a.flat();
-            let fb = b.as_ref().map(Mat::flat).unwrap_or_default();
-            let bv = b.as_ref().map(|m| view(m, &fb));
-            ffi::transpose(&view(a, &fa), *in_place, bv.as_ref())
-                .map(|o| mat_out("", o, Output::new()))
-        }
-        Inputs::MulPts { a, pts } => {
-            let fa = a.flat();
-            let flat: Vec<f64> = pts.iter().flatten().copied().collect();
-            ffi::mul_pts(&view(a, &fa), &flat, false).map(|v| Output::new().values("q", v))
-        }
-        Inputs::MulCpts { a, pts } => {
-            let fa = a.flat();
-            let flat: Vec<f64> = pts.iter().flatten().copied().collect();
-            ffi::mul_pts(&view(a, &fa), &flat, true).map(|v| Output::new().values("q", v))
-        }
-        Inputs::Lu { a, pivot } => {
-            let fa = a.flat();
-            ffi::lu(&view(a, &fa), *pivot)
-                .map(|(ind, r)| Output::new().ints("ind", ind).values("region", r))
-        }
-        Inputs::ForBackPts { a, decompose, rhs } => {
-            let fa = a.flat();
-            let flat: Vec<f64> = rhs.iter().flatten().copied().collect();
-            ffi::for_back(&view(a, &fa), *decompose, &flat, false)
-                .map(|v| Output::new().values("q", v))
-        }
-        Inputs::ForBackCpts { a, decompose, rhs } => {
-            let fa = a.flat();
-            let flat: Vec<f64> = rhs.iter().flatten().copied().collect();
-            ffi::for_back(&view(a, &fa), *decompose, &flat, true)
-                .map(|v| Output::new().values("q", v))
-        }
-        Inputs::RightForBack { a, decompose, y } => {
-            let fa = a.flat();
-            ffi::right_for_back(&view(a, &fa), *decompose, y).map(|v| Output::new().values("x", v))
-        }
-        Inputs::SolvePivot { a, b } => {
-            let fa = a.flat();
-            ffi::solve_pivot(&view(a, &fa), b).map(|v| Output::new().values("x", v))
-        }
-        Inputs::Inverse { a, lud, b } => {
-            let fa = a.flat();
-            let fb = b.as_ref().map(Mat::flat).unwrap_or_default();
-            let bv = b.as_ref().map(|m| view(m, &fb));
-            ffi::inverse(&view(a, &fa), *lud, bv.as_ref())
-                .map(|(o, ar)| mat_out("", o, Output::new()).values("a_region", ar))
-        }
-        Inputs::Lstsq { a, rhs } => {
-            let fa = a.flat();
-            ffi::lstsq(&view(a, &fa), rhs).map(|v| Output::new().values("x", v))
-        }
-        Inputs::SrfEval { net, n, m, u, v } => {
-            let (rows, cols, flat) = net_flat(net)?;
-            ffi::srf_eval(&flat, rows, cols, *n, *m, *u, *v).map(|r| {
-                Output::new()
-                    .values("eval_pts", r[..3].to_vec())
-                    .values("eval_pt", r[3..].to_vec())
-            })
-        }
-        Inputs::SrfDerivs {
-            net,
-            p,
-            q,
-            u,
-            v,
-            mfl,
-            udr,
-            vdr,
-        } => {
-            let (rows, cols, flat) = net_flat(net)?;
-            ffi::srf_derivs(&flat, rows, cols, *p, *q, *u, *v, *mfl, *udr, *vdr)
-                .map(|r| Output::new().values("sd", r))
-        }
-        Inputs::Realloc1d { kind, items, n, m } => {
-            let (k, width) = match kind {
-                Item1::Flag => (0, 1),
-                Item1::Real => (1, 1),
-                Item1::Pt => (2, 3),
-                Item1::Cpt => (3, 4),
-            };
-            // Ragged items would shift the flattened data (the Rust side reads each
-            // item on its own): not a valid array.
-            if items.iter().any(|x| x.len() != width) {
-                return Err(harness("realloc1d: item width"));
-            }
-            let flat: Vec<f64> = items.iter().flatten().copied().collect();
-            ffi::realloc(k, &flat, 0, 0, [*n, *m, 0, 0]).map(|r| Output::new().values("block", r))
-        }
-        Inputs::Realloc2d {
-            kind,
-            items,
-            n,
-            m,
-            k,
-            l,
-        } => {
-            let rows = items.len();
-            let cols = items.first().map_or(0, Vec::len);
-            let (kd, width) = match kind {
-                Item2::Real => (4, 1),
-                Item2::Cpt => (5, 4),
-            };
-            if items
-                .iter()
-                .any(|r| r.len() != cols || r.iter().any(|x| x.len() != width))
-            {
-                return Err(harness("realloc2d: ragged rows or items"));
-            }
-            let flat: Vec<f64> = items.iter().flatten().flatten().copied().collect();
-            ffi::realloc(kd, &flat, rows, cols, [*n, *m, *k, *l])
-                .map(|r| Output::new().values("block", r))
-        }
-    };
-    out.or_else(|e| cpp_err(&e))
-}
-
-fn net_flat(net: &[Vec<[f64; 4]>]) -> Result<(usize, usize, Vec<f64>), HarnessError> {
-    let rows = net.len();
-    let cols = net.first().map_or(0, Vec::len);
-    if net.iter().any(|r| r.len() != cols) {
-        return Err(harness("ragged net"));
-    }
-    Ok((
-        rows,
-        cols,
-        net.iter().flatten().flatten().copied().collect(),
-    ))
 }
 
 fn net_rust(net: &[Vec<[f64; 4]>]) -> Vec<Vec<CPoint>> {
@@ -1674,10 +1392,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
