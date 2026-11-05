@@ -1051,6 +1051,9 @@ impl OffsetExecutive {
                 self.resolve_crossing_loops(kernel, original, notifications)?;
             }
 
+            // (not upstream) each kept edge is the original edge on both its faces
+            self.restore_kept_edges(kernel, original, notifications)?;
+
             let mut result = self.piecewise_merge(kernel, original, Some(&mut *notifications))?;
             // (WR-341: with the opt-in this also runs for a solid input whatever
             // `m_bCreateOffsetSolid` says: a sheet's side walls, built for an offset solid,

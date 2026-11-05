@@ -62,6 +62,11 @@ fn sm_err() -> SolidError {
     SolidError::sm_err(OP)
 }
 
+/// The mate of an edge use.
+fn required_mate(b: &Brep, u: EdgeuseId) -> Result<EdgeuseId> {
+    eu::mate(b, u)?.ok_or_else(|| null("edge use without mate"))
+}
+
 /// The vertex of an edge use's vertex use (`GetVertexuse()->GetVertex()`).
 fn edgeuse_vertex(b: &Brep, u: EdgeuseId) -> Result<VertexId> {
     let vu = eu::vertexuse(b, u)?.ok_or_else(|| null("edge use without vertex use"))?;
@@ -99,6 +104,115 @@ fn closest_on(
 }
 
 impl OffsetExecutive {
+    /// Not upstream: in a local operation, each kept edge ([`Self::keep_unmoved_edges`])
+    /// is the original edge on both of its faces. Each offset face lifts its edges from
+    /// its own UV trim curves, so the two offset edges of one kept edge differ from the
+    /// original's 3D curve, and from each other, by up to the original edge's tolerance
+    /// (the merge, which no longer intersects their surfaces, cannot join them). Both
+    /// offset edges get the original edge's 3D curve, interval and tolerance, and their
+    /// edge uses its edge uses' orientations and UV trim curves (the faces keep copies of
+    /// their surfaces, so the UV curves hold), and their vertices the original vertices'
+    /// points and tolerances: the same edge, copied, with no new approximation. The
+    /// offset B-rep, which now holds the original's edges, gets at least the original
+    /// body's tolerance, which bounds theirs. This runs after the faces' surfaces are
+    /// extended, just before the merge.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] for missing topology; those of the curve and vertex
+    /// edits.
+    pub(super) fn restore_kept_edges(
+        &mut self,
+        kernel: &mut Kernel,
+        original: &Brep,
+        notifications: &mut OffsetNotifications<'_>,
+    ) -> Result<()> {
+        if self.kept_edges.is_empty() {
+            return Ok(());
+        }
+        let mut b = self
+            .take_offset_brep()
+            .ok_or_else(|| null("no offset B-rep"))?;
+        let r = self.restore_kept_edges_in(kernel, original, &mut b, notifications);
+        self.set_offset_brep(b);
+        r
+    }
+
+    fn restore_kept_edges_in(
+        &self,
+        kernel: &mut Kernel,
+        original: &Brep,
+        b: &mut Brep,
+        notifications: &mut OffsetNotifications<'_>,
+    ) -> Result<()> {
+        if b.tolerance() < original.tolerance() {
+            crate::topology::brep::p2::set_tolerance(kernel, b, original.tolerance(), true, true)?;
+        }
+        for &e in &self.kept_edges {
+            let Some(curve) = edge::curve(original, e)? else {
+                continue;
+            };
+            let curve = curve.clone();
+            let interval = edge::interval(original, e)?;
+            let tolerance = edge::tolerance(original, e)?;
+            for u in edge::edgeuses(original, e, None, None)? {
+                let Some(offset_u) = self.offset_edgeuse(u) else {
+                    continue;
+                };
+                let offset_e =
+                    eu::edge(b, offset_u)?.ok_or_else(|| null("edge use without edge"))?;
+                let offset_mate = required_mate(b, offset_u)?;
+                let orientation = eu::orientation(original, u)?;
+                let opposite = match orientation {
+                    OrientType::Same => OrientType::Opposite,
+                    OrientType::Opposite => OrientType::Same,
+                    other => other,
+                };
+                eu::set_orientation(b, offset_u, orientation)?;
+                eu::set_orientation(b, offset_mate, opposite)?;
+                set_edge_curve(kernel, b, offset_e, curve.clone(), notifications)?;
+                edge::set_interval(b, offset_e, &interval)?;
+                edge::set_tolerance(b, offset_e, tolerance, false, false)?;
+                let uv = eu::uv_trim_curve(original, u)?.0.cloned();
+                if let Some(uv) = uv {
+                    eu::set_uv_trim_curve(
+                        b,
+                        offset_u,
+                        eu::UvTrimCurveArg::New(Box::new(uv)),
+                        0.0,
+                        true,
+                        None,
+                    )?;
+                }
+                for (ou, au) in [(u, offset_u), (required_mate(original, u)?, offset_mate)] {
+                    let v = edgeuse_vertex(original, ou)?;
+                    let offset_v = edgeuse_vertex(b, au)?;
+                    let point = original.vertex(v)?.point;
+                    let key_of = notifications.result_key_of;
+                    crate::topology::vertex::set_point(
+                        b,
+                        offset_v,
+                        point,
+                        &mut *notifications.records,
+                        &mut *notifications.attributes,
+                        None,
+                        key_of(EntityRef::Vertex(offset_v)),
+                        &|vu| key_of(EntityRef::Vertexuse(vu)),
+                    )?;
+                    let vertex_tolerance = original.vertex(v)?.tolerance;
+                    crate::topology::vertex::set_tolerance(
+                        b,
+                        offset_v,
+                        vertex_tolerance,
+                        false,
+                        false,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `CloseLoopGaps` (fork, opt-in `Kernel::fixes.local_operation_step_walls` for a
     /// local operation, `Kernel::fixes.offset_closes_loop_gaps` for every extended
     /// offset): where consecutive edge uses of an offset face no longer meet at their
@@ -997,7 +1111,7 @@ fn set_edge_curve(
     kernel: &mut Kernel,
     b: &mut Brep,
     e: EdgeId,
-    curve: BSplineCurve,
+    curve: impl Into<Curve>,
     notifications: &mut OffsetNotifications<'_>,
 ) -> Result<()> {
     let mut stores = NotificationStores {
@@ -1012,7 +1126,7 @@ fn set_edge_curve(
         call_notify: true,
     };
     state.with_env(kernel, |env| {
-        edge::set_curve(b, e, Some(Curve::from(curve)), options, env, [None, None])?;
+        edge::set_curve(b, e, Some(curve.into()), options, env, [None, None])?;
         let owner = (env.key_of)(EntityRef::Edge(e));
         if let Some(c) = b.edge_mut(e)?.curve.as_mut() {
             c.set_owner(Some(owner), None);
