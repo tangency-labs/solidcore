@@ -91,7 +91,7 @@ pub fn write_curve_at(
         CurveKind::Hyperbola(h) => h.write_to_db(db, version),
         CurveKind::Projected(_) => Err(unported("SmProjectedCurve::WriteToDB")),
         CurveKind::Iso(_) => Err(unported("SmIsoCurve::WriteToDB")),
-        CurveKind::Offset(_) => Err(unported("SmOffsetCurve::WriteToDB")),
+        CurveKind::Offset(o) => o.write_to_db(db, version, depth),
         CurveKind::Conic(_) => Err(unported("SmConic::WriteToDB")),
         CurveKind::CrvInVolume(_) => Err(unported("SmCrvInVolume::WriteToDB")),
         CurveKind::CrvOnSurf(c) => write_crv_on_surf(c, db, version, depth),
