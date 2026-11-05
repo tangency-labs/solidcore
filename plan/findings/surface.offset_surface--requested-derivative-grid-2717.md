@@ -74,6 +74,20 @@ new mismatch marker, generator change, case exclusion, guard broadening or
 tolerance change is part of this follow-up. Neither PR's diagnostic hold is
 released by the native regression results.
 
+## Native request-shape localization
+
+A separate Rust-only diagnostic replays the original prefix before every
+unequal upper evaluation in the 79 newly failing scripts. It runs that
+request and an otherwise identical `(3,3,true)` control from the same prefix,
+then compares only the named coordinates requested by the original call.
+All 95 requests complete successfully; all 1146 compared components agree
+within relative `1e-9`, without an absolute floor. Neither C++ output nor
+C++ process state is used by this check. Script prefixes preserve prior
+operations and extension state rather than evaluating on a fresh replacement
+surface. This is request-shape consistency evidence, not an independent
+mathematical oracle for those generated surfaces, and it does not justify
+parking their C++ mismatches or releasing either draft hold.
+
 ## Newly failing case identities
 
 `gen0094`, `gen0125`, `gen0138`, `gen0153`, `gen0242`, `gen0405`, `gen0450`, `gen0511`, `gen0513`, `gen0523`, `gen0548`, `gen0576`, `gen0597`, `gen0605`, `gen0632`, `gen0649`, `gen0685`, `gen0711`, `gen0764`, `gen0776`, `gen0787`, `gen0790`, `gen0853`, `gen0857`, `gen0861`, `gen0881`, `gen0887`, `gen0934`, `gen0956`, `gen0989`, `gen1062`, `gen1085`, `gen1172`, `gen1183`, `gen1205`, `gen1219`, `gen1233`, `gen1346`, `gen1415`, `gen1457`, `gen1461`, `gen1526`, `gen1533`, `gen1561`, `gen1604`, `gen1657`, `gen1687`, `gen1714`, `gen1755`, `gen1810`, `gen1867`, `gen1869`, `gen1954`, `gen2059`, `gen2078`, `gen2111`, `gen2115`, `gen2125`, `gen2220`, `gen2224`, `gen2275`, `gen2358`, `gen2379`, `gen2432`, `gen2452`, `gen2460`, `gen2468`, `gen2603`, `gen2639`, `gen2708`, `gen2730`, `gen2796`, `gen2816`, `gen2820`, `gen2835`, `gen2912`, `gen2940`, `gen2982`, `gen2998`.
