@@ -20,6 +20,8 @@
 //! cargo run -p difftest --features cpp -- --green --digest-dir <dir> [--digest-debug]   # Rust side
 //!          only, one `<dir>/<unit>.digest` per unit (native vs wasm32: scripts/wasm-digest.sh)
 //! ```
+//! cargo run -p difftest --features cpp -- --all --goldens [--reverse] [--goldens-dir <dir>]   # check
+//!          every unit against its golden (`difftest::golden`); --bless rewrites the goldens
 //! Exit status: 0 no failures (deferred cases are not failures), 1 any failure,
 //! 2 usage / harness setup error.
 
@@ -34,6 +36,7 @@ use difftest::{fuzz, plan, registry, report, run_unit, CaseContext, RunOptions, 
 const USAGE: &str = "usage: difftest [--unit <id>]... [--green] [--all] [--list]
        [--status-of <id>] [--seeds N] [--filter <substr>] [--perturb] [--run-parked] [--report-dir <dir>] [--no-report] [--jobs N]
        [--baseline <dir>] [--compare-reports <dir>] [--digest-dir <dir> [--digest-debug]]
+       [--goldens [--bless] [--reverse] [--goldens-dir <dir>]]
        [--heap-pads N[,N...]]
        difftest --unit <id>... --fuzz N [--fuzz-out <dir>] [--seeds N] [--filter <substr>]
        difftest --ssi-corpus [--tol 1e-6|default] [--jobs N] [--report-dir <dir>] [--no-report] [case-glob]
@@ -83,6 +86,14 @@ struct Args {
     digest_dir: Option<PathBuf>,
     digest_debug: bool,
     case_timeout: Option<u64>,
+    /// `--goldens`: check each unit against its golden (Rust side only).
+    goldens: bool,
+    /// `--bless`: rewrite each unit's golden from this run.
+    bless: bool,
+    /// `--goldens-dir`: where the goldens live (default `crates/difftest/goldens`).
+    goldens_dir: Option<PathBuf>,
+    /// `--reverse`: run each unit's cases in reverse order.
+    reverse: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -126,6 +137,13 @@ fn parse_args() -> Result<Args, String> {
             "--fuzz-out" => a.fuzz_out = Some(PathBuf::from(val("--fuzz-out")?)),
             "--digest-dir" => a.digest_dir = Some(PathBuf::from(val("--digest-dir")?)),
             "--digest-debug" => a.digest_debug = true,
+            "--goldens" => a.goldens = true,
+            "--bless" => {
+                a.goldens = true;
+                a.bless = true;
+            }
+            "--goldens-dir" => a.goldens_dir = Some(PathBuf::from(val("--goldens-dir")?)),
+            "--reverse" => a.reverse = true,
             "--case-timeout" => {
                 let v = val("--case-timeout")?;
                 a.case_timeout = Some(v.parse().map_err(|_| format!("bad --case-timeout `{v}`"))?);
@@ -435,7 +453,7 @@ fn main() -> ExitCode {
     // Several units run one at a time still get a child process each: C++ state that one
     // unit's in-process calls latch (ND-3's `sdStaticStep`) would otherwise reach a later
     // unit's `fresh_process` children, which fork from this process.
-    if jobs > 1 || (wanted.len() > 1 && args.digest_dir.is_none()) {
+    if jobs > 1 || (wanted.len() > 1 && args.digest_dir.is_none() && !args.goldens) {
         let fwd = difftest::jobs::forwarded_args(&raw);
         // Previous reports order the queue; a fresh --report-dir falls back to the default,
         // and a unit with no report anywhere to its fixture size (reports are not committed).
@@ -452,6 +470,11 @@ fn main() -> ExitCode {
             &root.join("fixtures"),
             times.as_deref(),
         );
+    }
+
+    if args.goldens {
+        let dir = args.goldens_dir.clone().unwrap_or_else(difftest::golden::default_dir);
+        return goldens_main(&wanted, &reg, &ctx, &opts, &dir, args.bless, args.reverse);
     }
 
     if let Some(dir) = &args.digest_dir {
@@ -798,6 +821,102 @@ fn digest_main(
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `--goldens`: the Rust side of each unit only, checked against `DIR/<unit>.jsonl`; with
+/// `--bless`, the goldens are rewritten from this run instead (a case whose Rust side fails as
+/// a harness error or panics is never blessed). Prints one line per unit and, for a unit that
+/// changed, its first changes.
+fn goldens_main(
+    wanted: &[String],
+    reg: &[Box<dyn difftest::UnitDiff>],
+    ctx: &CaseContext,
+    opts: &RunOptions,
+    dir: &Path,
+    bless: bool,
+    reverse: bool,
+) -> ExitCode {
+    use difftest::golden;
+    let mut failed = 0usize;
+    for id in wanted {
+        let Some(unit) = reg.iter().find(|u| u.id() == id.as_str()) else {
+            println!("FAIL {id} (no runner registered for this unit)");
+            failed += 1;
+            continue;
+        };
+        let start = Instant::now();
+        let old = match golden::read(dir, id) {
+            Ok(g) => g,
+            Err(e) => {
+                println!("FAIL {id} ({e})");
+                failed += 1;
+                continue;
+            }
+        };
+        let res = golden::check_unit(unit.as_ref(), ctx, opts, &old, reverse);
+        if let Some(e) = &res.harness_error {
+            println!("FAIL {id} ({e})");
+            failed += 1;
+            continue;
+        }
+        let secs = start.elapsed().as_secs_f64();
+        let counts = format!(
+            "cases={} changed={} added={} removed={} broken={} rust={secs:.3}s",
+            res.cases,
+            res.changed.len(),
+            res.added.len(),
+            res.removed.len(),
+            res.broken.len()
+        );
+        if bless && opts.filter.is_none() && res.broken.is_empty() {
+            if let Err(e) = golden::write(dir, id, &res.now) {
+                println!("FAIL {id} ({e})");
+                failed += 1;
+                continue;
+            }
+            println!("BLESSED {id} {counts}");
+            print_golden_changes(&res);
+            continue;
+        }
+        if res.passed() {
+            println!("PASS {id} {counts}");
+        } else {
+            println!("FAIL {id} {counts}");
+            print_golden_changes(&res);
+            failed += 1;
+        }
+    }
+    println!(
+        "goldens: {} unit(s), {} passed, {failed} failed",
+        wanted.len(),
+        wanted.len() - failed
+    );
+    if failed > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// Lines printed per kind of change for one unit.
+const MAX_GOLDEN_LINES: usize = 10;
+
+fn print_golden_changes(res: &difftest::golden::GoldenResult) {
+    for c in res.changed.iter().take(MAX_GOLDEN_LINES) {
+        println!("  changed {} ({} differences)", c.case, c.count);
+        for d in &c.details {
+            println!("    {d}");
+        }
+    }
+    for name in res.added.iter().take(MAX_GOLDEN_LINES) {
+        println!("  added {name}");
+    }
+    for name in res.removed.iter().take(MAX_GOLDEN_LINES) {
+        println!("  removed {name}");
+    }
+    for (name, why) in res.broken.iter().take(MAX_GOLDEN_LINES) {
+        println!("  broken {name}: {why}");
     }
 }
 

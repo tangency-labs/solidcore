@@ -48,6 +48,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--fuzz-out",
     "--baseline",
     "--digest-dir",
+    "--goldens-dir",
 ];
 
 /// In a `--jobs` child: exits the process once the parent closes our stdin (the parent

@@ -574,7 +574,7 @@ impl UnitResult {
     }
 }
 
-fn guarded(f: impl FnOnce() -> Result<Output, HarnessError>, side: &str) -> Result<Output, String> {
+pub(crate) fn guarded(f: impl FnOnce() -> Result<Output, HarnessError>, side: &str) -> Result<Output, String> {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(o)) => Ok(o),
         Ok(Err(e)) => Err(format!("{side}: {e}")),
