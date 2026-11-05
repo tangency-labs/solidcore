@@ -2744,23 +2744,23 @@ mod tests {
             2.0_f64.powi(500),
             f64::MAX,
         ] {
-            assert!(super::exact_parallel_difference(
+            assert!(exact_parallel_difference(
                 [0.0; 3],
                 [scale, -scale, scale],
                 Vec3::new(1.0, -1.0, 1.0)
             ));
-            assert!(super::exact_parallel_difference(
+            assert!(exact_parallel_difference(
                 [-scale, scale, -scale],
                 [scale, -scale, scale],
                 Vec3::new(1.0, -1.0, 1.0)
             ));
         }
-        assert!(super::exact_parallel_difference(
+        assert!(exact_parallel_difference(
             [3.0, -7.0, 9.0],
             [5.0, -4.0, 14.0],
             Vec3::new(-4.0, -6.0, -10.0)
         ));
-        assert!(super::exact_parallel_difference(
+        assert!(exact_parallel_difference(
             [0.0; 3],
             [1.0, 1.0, 0.0],
             Vec3::new(1.0, 1.0, 0.0)
@@ -2769,30 +2769,30 @@ mod tests {
 
     #[test]
     fn affine_parallel_identity_rejects_near_parallel_and_nonfinite() {
-        assert!(!super::exact_parallel_difference(
+        assert!(!exact_parallel_difference(
             [0.0; 3],
             [1.0, 1.0_f64.next_up(), 0.0],
             Vec3::new(1.0, 1.0, 0.0)
         ));
         // Ordinary products underflow here; the exact determinant is nonzero.
         let tiny = f64::from_bits(1);
-        assert!(!super::exact_parallel_difference(
+        assert!(!exact_parallel_difference(
             [0.0; 3],
             [tiny, tiny * 2.0, 0.0],
             Vec3::new(tiny, tiny, 0.0)
         ));
         // Ordinary products overflow; exact cancellation still establishes parallelism.
-        assert!(super::exact_parallel_difference(
+        assert!(exact_parallel_difference(
             [0.0; 3],
             [f64::MAX, f64::MAX, 0.0],
             Vec3::new(f64::MAX, f64::MAX, 0.0)
         ));
-        assert!(!super::exact_parallel_difference(
+        assert!(!exact_parallel_difference(
             [0.0; 3],
             [f64::MAX, f64::MAX.next_down(), 0.0],
             Vec3::new(f64::MAX, f64::MAX, 0.0)
         ));
-        assert!(!super::exact_parallel_difference(
+        assert!(!exact_parallel_difference(
             [0.0; 3],
             [f64::INFINITY, 1.0, 0.0],
             Vec3::Z
