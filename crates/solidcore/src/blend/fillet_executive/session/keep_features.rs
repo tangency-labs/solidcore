@@ -744,6 +744,7 @@ impl FilletSession<'_> {
                 continue;
             }
             for wall in feature.walls.clone() {
+                k.work_counters.add_wall_body_copy();
                 let wall_body: Brep = if feature.boss {
                     sheet.clone_standing_for_self()?
                 } else {
