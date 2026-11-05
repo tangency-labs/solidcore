@@ -13,8 +13,8 @@
 //! `<v>_dims = [l, m, n, p, q, r, ku, kv, kw]`, `<v>_knots` and `<v>_cpts`.
 //!
 //! Upstream crashes on the input errors it detects before initialising its local
-//! stacks (`plan/findings.md`); the port refuses them, and the generator draws them
-//! like any other input.
+//! stacks (`plan/findings.md`), so those inputs are neither generated nor in the
+//! fixtures; the Rust unit tests cover them.
 
 // Harness code: the record parsers index slices they have length-checked; a panic
 // would fail the case (runner panics are caught).
@@ -244,7 +244,38 @@ fn gen_radius(rng: &mut Rng) -> f64 {
     }
 }
 
+/// Upstream `NL_MTOL` (default).
+const MTOL: f64 = 1.0e-07;
+
+/// The spiral input contract: `N_CrvApproxSpiral` fails none of the input checks it
+/// makes before initialising its local stacks (upstream then crashes freeing them;
+/// such inputs are fixtures and Rust unit tests).
+fn passes_early_input_checks(height: f64, rad0: f64, rad1: f64, turns: f64) -> bool {
+    let r0 = if rad0 < MTOL { 0.0 } else { rad0 };
+    let r1 = if rad1 < MTOL { 0.0 } else { rad1 };
+    !(height < MTOL || rad0 < -MTOL || rad1 < -MTOL || (r0 + r1) < MTOL || turns < MTOL)
+}
+
+/// A spiral case within [`passes_early_input_checks`] (redrawn until it holds).
 fn gen_spiral(rng: &mut Rng) -> Inputs {
+    loop {
+        let i = gen_spiral_any(rng);
+        if let Inputs::Spiral {
+            height,
+            rad0,
+            rad1,
+            turns,
+            ..
+        } = i
+        {
+            if passes_early_input_checks(height, rad0, rad1, turns) {
+                return i;
+            }
+        }
+    }
+}
+
+fn gen_spiral_any(rng: &mut Rng) -> Inputs {
     let height = match rng.below(20) {
         0 => *rng.choose(&[0.0, -1.0, 5e-8, 1e-7]).unwrap_or(&0.0),
         _ => log_uniform(rng, 1e-4, 1e4),
