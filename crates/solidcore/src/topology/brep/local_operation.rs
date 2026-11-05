@@ -854,6 +854,7 @@ mod tests {
             ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -1.0), r, 4.0).unwrap(),
         );
         let face = curved_face(&b);
+        let tolerance = b.tolerance();
         let (input, _) = volume_and_manifold(&k, &mut b);
         with_notifications(&mut b, |b, notes| {
             local_operation(&mut k, b, &[face], vec![s], notes)
@@ -861,10 +862,93 @@ mod tests {
         .unwrap();
         let (v, manifold) = volume_and_manifold(&k, &mut b);
         assert!(manifold);
+        // no edge is kept (each touches the side), and the body keeps the input's tolerance
+        // all the same (review finding 7)
+        assert_eq!(b.tolerance(), tolerance);
         // the new caps' edges are re-intersected B-splines within the body's tolerance of
         // the circles (as for any moved cylinder side), so the volume is within the
         // tolerance times the area (2 pi r h + 2 pi r^2) of the input's
         let bound = b.tolerance() * 6.0 * std::f64::consts::PI;
         assert!((v - input).abs() <= bound, "{v} vs {input}");
+    }
+
+    /// Review findings 7 and 8: a box's top raised, its bottom's four edges kept (their
+    /// faces and their vertices' faces all stay). Each is the original edge in the result:
+    /// the same curve over the same interval, its tolerance and its vertices' not below
+    /// the input's; the body's tolerance is the input's; the result is a manifold solid.
+    #[test]
+    fn a_raised_top_keeps_the_bottom_edges_as_they_were() {
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Point3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let input = create_box(&mut k, Point3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let top = bp1::faces(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                let s = face_ops::surface(&b, f).unwrap().unwrap();
+                let p = s
+                    .evaluate_point(
+                        &k,
+                        s.natural_uv_domain_with_nurb(&k)
+                            .unwrap()
+                            .evaluate(0.5, 0.5),
+                    )
+                    .unwrap();
+                (p.z - 2.0).abs() < 1e-9
+            })
+            .unwrap();
+        let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 3.0), Vec3::Z));
+        with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[top], vec![raised], notes)
+        })
+        .unwrap();
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v - 12.0).abs() <= 1e-6 * 12.0, "{v}");
+        assert_eq!(b.tolerance(), input.tolerance());
+        // the curve's points at its interval's ends and quarters, bit for bit
+        let points = |br: &Brep, e: crate::topology::EdgeId| {
+            let c = crate::topology::edge::curve(br, e).unwrap().unwrap();
+            let i = crate::topology::edge::interval(br, e).unwrap();
+            [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| {
+                c.evaluate_point(&k, i.min() + t * (i.max() - i.min()))
+                    .unwrap()
+            })
+        };
+        let bottom: Vec<_> = input
+            .edges()
+            .iter()
+            .map(|(e, _)| e)
+            .filter(|&e| points(&input, e).iter().all(|p| p.z == 0.0))
+            .collect();
+        assert_eq!(bottom.len(), 4);
+        for e in bottom {
+            let want = points(&input, e);
+            let interval = crate::topology::edge::interval(&input, e).unwrap();
+            let kept: Vec<_> = b
+                .edges()
+                .iter()
+                .map(|(f, _)| f)
+                .filter(|&f| points(&b, f) == want)
+                .collect();
+            let &[f] = kept.as_slice() else {
+                panic!("edge {e:?}: {} copies", kept.len());
+            };
+            let got = crate::topology::edge::interval(&b, f).unwrap();
+            assert_eq!(
+                (got.min().to_bits(), got.max().to_bits()),
+                (interval.min().to_bits(), interval.max().to_bits())
+            );
+            assert!(b.edge(f).unwrap().tolerance >= input.edge(e).unwrap().tolerance);
+            let (s0, s1) = crate::topology::edge::start_end_vertices(&input, e).unwrap();
+            let (t0, t1) = crate::topology::edge::start_end_vertices(&b, f).unwrap();
+            for (s, t) in [(s0, t0), (s1, t1)] {
+                let (s, t) = (
+                    input.vertex(s.unwrap()).unwrap(),
+                    b.vertex(t.unwrap()).unwrap(),
+                );
+                assert_eq!(s.point, t.point);
+                assert!(t.tolerance >= s.tolerance);
+            }
+        }
     }
 }

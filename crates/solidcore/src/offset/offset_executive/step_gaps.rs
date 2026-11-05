@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::p1::{forget_seconds, OffsetExecutive};
+use super::p1::{forget_seconds, OffsetExecutive, OffsetOperation};
 use super::p2::OffsetNotifications;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::{Curve, CurveKind};
@@ -112,29 +112,42 @@ impl OffsetExecutive {
     /// offset edges get the original edge's 3D curve, interval and tolerance, and their
     /// edge uses its edge uses' orientations and UV trim curves (the faces keep copies of
     /// their surfaces, so the UV curves hold), and their vertices the original vertices'
-    /// points and tolerances: the same edge, copied, with no new approximation. The
-    /// offset B-rep, which now holds the original's edges, gets at least the original
-    /// body's tolerance, which bounds theirs. This runs after the faces' surfaces are
-    /// extended, just before the merge.
+    /// points: the same edge, copied, with no new approximation. No tolerance is lowered:
+    /// an edge or vertex takes the original's where that is larger than what earlier steps
+    /// gave it, and a moved vertex then grows to cover every edge end at it (an edge
+    /// intersected again beside a kept one ends where it was found, not at the original
+    /// point). This runs after the faces' surfaces are extended, just before the merge.
+    ///
+    /// Before it, in every local operation (kept edges or not), the offset B-rep takes the
+    /// input body's tolerance (owner rule: the result's tolerance is the input's), which
+    /// bounds the original edges it now holds; the executive's own is half of it.
     ///
     /// # Errors
     ///
     /// [`SolidError::InvalidInput`] for missing topology; [`SolidError::PortInvariant`]
     /// for a kept edge without a 3D curve, or an edge use of one that has no offset, nor
-    /// its mate, on a face whose offset is there; those of the curve and vertex edits.
+    /// its mate, on a face whose offset is there; those of the tolerance, curve and vertex
+    /// edits and the edge ends' evaluations.
     pub(super) fn restore_kept_edges(
         &mut self,
         kernel: &mut Kernel,
         original: &Brep,
         notifications: &mut OffsetNotifications<'_>,
     ) -> Result<()> {
-        if self.kept_edges.is_empty() {
+        if self.operation() != OffsetOperation::LocalOperation {
             return Ok(());
         }
         let mut b = self
             .take_offset_brep()
             .ok_or_else(|| null("no offset B-rep"))?;
-        let r = self.restore_kept_edges_in(kernel, original, &mut b, notifications);
+        let r = crate::topology::brep::p2::set_tolerance(
+            kernel,
+            &mut b,
+            original.tolerance(),
+            true,
+            true,
+        )
+        .and_then(|()| self.restore_kept_edges_in(kernel, original, &mut b, notifications));
         self.set_offset_brep(b);
         r
     }
@@ -146,9 +159,8 @@ impl OffsetExecutive {
         b: &mut Brep,
         notifications: &mut OffsetNotifications<'_>,
     ) -> Result<()> {
-        if b.tolerance() < original.tolerance() {
-            crate::topology::brep::p2::set_tolerance(kernel, b, original.tolerance(), true, true)?;
-        }
+        // the offset vertices moved back to the original points
+        let mut moved = BTreeSet::new();
         for &e in &self.kept_edges {
             // a kept edge is restored from its 3D curve; one without (a degenerate edge)
             // would keep its two lifted offsets apart
@@ -188,7 +200,7 @@ impl OffsetExecutive {
                 eu::set_orientation(b, offset_mate, opposite)?;
                 set_edge_curve(kernel, b, offset_e, curve.clone(), notifications)?;
                 edge::set_interval(b, offset_e, &interval)?;
-                edge::set_tolerance(b, offset_e, tolerance, false, false)?;
+                edge::set_tolerance(b, offset_e, tolerance, true, false)?;
                 let uv = eu::uv_trim_curve(original, u)?.0.cloned();
                 if let Some(uv) = uv {
                     eu::set_uv_trim_curve(
@@ -220,11 +232,25 @@ impl OffsetExecutive {
                         b,
                         offset_v,
                         vertex_tolerance,
-                        false,
+                        true,
                         false,
                     )?;
+                    moved.insert(offset_v);
                 }
             }
+        }
+        // each moved vertex covers the ends of its edges (the kept ones all restored now)
+        for v in moved {
+            let point = b.vertex(v)?.point;
+            let mut reach = 0.0_f64;
+            for e in crate::topology::vertex::edges(b, v, None)? {
+                for u in edge::edgeuses(b, e, None, None)? {
+                    if edgeuse_vertex(b, u)? == v {
+                        reach = reach.max((point_at(kernel, b, u, 0.0)? - point).length());
+                    }
+                }
+            }
+            crate::topology::vertex::set_tolerance(b, v, reach, true, false)?;
         }
         Ok(())
     }
