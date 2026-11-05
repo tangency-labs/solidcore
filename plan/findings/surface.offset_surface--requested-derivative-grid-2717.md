@@ -88,6 +88,16 @@ surface. This is request-shape consistency evidence, not an independent
 mathematical oracle for those generated surfaces, and it does not justify
 parking their C++ mismatches or releasing either draft hold.
 
+The fixed report retains 276 mismatch samples across all 79 newly failing
+cases. Mapping their `values.out[index]` fields through each original
+script prefix and its requested matrix shows that **all 276 samples land
+in named slots overwritten by an unrequested mixed write under the old
+predicates**. No sampled difference falls outside those slots. Reports
+retain only a limited sample of mismatches, so this does not inventory every
+failing value, establish every generated derivative's mathematical result,
+or explain the parent's other 236 failures. It is structural localization
+of the newly exposed differences; no failure is parked on its strength.
+
 ## Newly failing case identities
 
 `gen0094`, `gen0125`, `gen0138`, `gen0153`, `gen0242`, `gen0405`, `gen0450`, `gen0511`, `gen0513`, `gen0523`, `gen0548`, `gen0576`, `gen0597`, `gen0605`, `gen0632`, `gen0649`, `gen0685`, `gen0711`, `gen0764`, `gen0776`, `gen0787`, `gen0790`, `gen0853`, `gen0857`, `gen0861`, `gen0881`, `gen0887`, `gen0934`, `gen0956`, `gen0989`, `gen1062`, `gen1085`, `gen1172`, `gen1183`, `gen1205`, `gen1219`, `gen1233`, `gen1346`, `gen1415`, `gen1457`, `gen1461`, `gen1526`, `gen1533`, `gen1561`, `gen1604`, `gen1657`, `gen1687`, `gen1714`, `gen1755`, `gen1810`, `gen1867`, `gen1869`, `gen1954`, `gen2059`, `gen2078`, `gen2111`, `gen2115`, `gen2125`, `gen2220`, `gen2224`, `gen2275`, `gen2358`, `gen2379`, `gen2432`, `gen2452`, `gen2460`, `gen2468`, `gen2603`, `gen2639`, `gen2708`, `gen2730`, `gen2796`, `gen2816`, `gen2820`, `gen2835`, `gen2912`, `gen2940`, `gen2982`, `gen2998`.
