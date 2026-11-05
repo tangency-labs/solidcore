@@ -77,8 +77,8 @@ fn part21(data: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// The volume of `brep`, or `None` where the integrator gives none.
-fn volume(brep: &Brep) -> Option<f64> {
+/// The volume of `brep`, preserving the integrator's error on failure.
+fn volume(brep: &Brep) -> solidcore::Result<f64> {
     let kernel = Kernel::default();
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
@@ -86,7 +86,7 @@ fn volume(brep: &Brep) -> Option<f64> {
         key_of: &|_| ObjectKey(0),
     };
     let mut copy = brep.clone();
-    brep_volume(&kernel, &mut copy, 1e-9, &attrs).ok()
+    brep_volume(&kernel, &mut copy, 1e-9, &attrs)
 }
 
 /// (bodies, closed bodies, faces over all bodies) of `report`.
@@ -127,6 +127,21 @@ fn faceted_brep_cube_of_poly_loops_has_volume_1000() {
         (measured - 1000.0).abs() <= 1e-9 * 1000.0,
         "volume {measured}, closed form 1000"
     );
+}
+
+/// A standalone `FACE` without a shell imports as one open single-face sheet body.
+/// This keeps loose-face import covered independently of whether `FCTBR` is recognised.
+#[test]
+fn standalone_face_without_shell_is_single_face_sheet() {
+    let data = "#101=CARTESIAN_POINT('',(0.0,0.0,0.0));\
+#102=CARTESIAN_POINT('',(10.0,0.0,0.0));\
+#103=CARTESIAN_POINT('',(10.0,10.0,0.0));\
+#104=CARTESIAN_POINT('',(0.0,10.0,0.0));\
+#200=FACE('',(#201));#201=FACE_OUTER_BOUND('',#202,.T.);\
+#202=POLY_LOOP('',(#101,#102,#103,#104));";
+    let report = import_with_report(&part21(data), &Limits::default()).expect("imports");
+    assert_eq!(counts(&report), (1, 0, 1), "(bodies, closed, faces)");
+    assert!(report.skipped.is_empty(), "skipped: {:?}", report.skipped);
 }
 
 /// The four faceted AP203 corpus files of #2581 import as closed solids, one per
