@@ -120,8 +120,8 @@ impl OffsetExecutive {
     /// # Errors
     ///
     /// [`SolidError::InvalidInput`] for missing topology; [`SolidError::PortInvariant`]
-    /// for a kept edge without a 3D curve or an edge use of one without its offset; those
-    /// of the curve and vertex edits.
+    /// for a kept edge without a 3D curve or an edge use of one that has no offset, nor
+    /// its mate; those of the curve and vertex edits.
     pub(super) fn restore_kept_edges(
         &mut self,
         kernel: &mut Kernel,
@@ -158,10 +158,17 @@ impl OffsetExecutive {
             let interval = edge::interval(original, e)?;
             let tolerance = edge::tolerance(original, e)?;
             for u in edge::edgeuses(original, e, None, None)? {
-                // every edge use of the original has its offset before the merge
-                let offset_u = self.offset_edgeuse(u).ok_or_else(|| {
-                    SolidError::port_invariant(OP, "a kept edge use without its offset")
-                })?;
+                // of an edge use and its mate (the other side of its face), one is related
+                // to its offset, which restores both
+                let Some(offset_u) = self.offset_edgeuse(u) else {
+                    if self.offset_edgeuse(required_mate(original, u)?).is_none() {
+                        return Err(SolidError::port_invariant(
+                            OP,
+                            "neither a kept edge use nor its mate has an offset",
+                        ));
+                    }
+                    continue;
+                };
                 let offset_e =
                     eu::edge(b, offset_u)?.ok_or_else(|| null("edge use without edge"))?;
                 let offset_mate = required_mate(b, offset_u)?;
