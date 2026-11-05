@@ -4,10 +4,9 @@
 //! planar offset derivatives (`N_CrvPlanarOffsetGetDeriv`) and the extensions by arc
 //! length (`ST_curxcdr`) and by parameter (`ST_curxcrr`).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_adv_p1` (upstream
-//! `source/SMLib/src/NL_CrvAdv.cpp`; the file-private extension routines are reached
-//! through their one-line public wrappers `N_CrvExtendByDist` /
-//! `N_CrvExtendByParamDist`, which call them at depth 0). Rust:
+//! Ported from upstream `source/SMLib/src/NL_CrvAdv.cpp` (the file-private extension
+//! routines are reached through their one-line public wrappers `N_CrvExtendByDist` /
+//! `N_CrvExtendByParamDist`, which call them at depth 0); checked against its golden. Rust:
 //! `solidcore::nurbs::crv_adv::p1` (methods on `solidcore::nurbs::crv_basic::Curve`).
 //!
 //! Each case runs one routine (`inputs.op`) on one curve. Both sides produce the same
@@ -38,12 +37,9 @@ use solidcore::nurbs::crv_geom::ToleranceKind;
 use solidcore::nurbs::knots::Side;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::nlib_crv_adv_p1::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
-use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -123,9 +119,6 @@ impl SideIn {
             SideIn::Left => Side::Left,
             SideIn::Right => Side::Right,
         }
-    }
-    fn flag(self) -> f64 {
-        f64::from(self.side().flag())
     }
 }
 
@@ -333,90 +326,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let c = resolve(i.crv())?;
-    let mut o = Vec::new();
-    encode_crv(&c, &mut o)?;
-    let op = match i {
-        Inputs::EvalPt { u, side, .. } => {
-            o.extend([u.get(&c)?, side.flag()]);
-            Op::EvalPt
-        }
-        Inputs::DerivsAtKnot { u, side, der, .. } => {
-            o.extend([u.get(&c)?, side.flag(), *der as f64]);
-            Op::DerivsAtKnot
-        }
-        Inputs::EvenSpaced { u0, u1, n, tol, .. } => {
-            o.extend([u0.get(&c)?, u1.get(&c)?, *n as f64, *tol]);
-            Op::EvenSpaced
-        }
-        Inputs::Max2ndDeriv { .. } => Op::Max2ndDeriv,
-        Inputs::PlanarOffset {
-            u, d, normal, side, ..
-        } => {
-            o.extend([u.get(&c)?, *d]);
-            o.extend_from_slice(normal);
-            o.push(side.flag());
-            Op::PlanarOffset
-        }
-        Inputs::ExtendDist {
-            dist,
-            relative,
-            end,
-            cont,
-            inplace,
-            ..
-        } => {
-            o.extend([
-                *dist,
-                f64::from(if *relative {
-                    ToleranceKind::Relative
-                } else {
-                    ToleranceKind::Absolute
-                }
-                .flag()),
-                f64::from(end.end().flag()),
-                f64::from(cont.cont().flag()),
-                flag(*inplace),
-            ]);
-            Op::ExtendDist
-        }
-        Inputs::ExtendParam {
-            par,
-            end,
-            cont,
-            inplace,
-            ..
-        } => {
-            o.extend([
-                par.get(&c)?,
-                f64::from(end.end().flag()),
-                f64::from(cont.cont().flag()),
-                flag(*inplace),
-            ]);
-            Op::ExtendParam
-        }
-    };
-    match ffi::eval(op, &o) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -964,10 +873,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -1,7 +1,7 @@
 //! Runner for unit `nlib.basis_adv`: merging knot vectors with multiplicities, knot
 //! vector refinement, multiplicity raising and basis derivatives at parameter arrays.
 //!
-//! C++: `solidcore_ffi::units::nlib_basis_adv` (upstream `source/SMLib/src/NL_BasisAdv.cpp`).
+//! Ported from upstream `source/SMLib/src/NL_BasisAdv.cpp`; checked against its golden.
 //! Rust: `solidcore::nurbs::basis_adv`.
 //!
 //! | op (`inputs.op`) | Rust                         | upstream                       |
@@ -31,8 +31,6 @@ use serde_json::Value;
 use solidcore::nurbs::basis_adv as ba;
 use solidcore::nurbs::knots::{KnotVector, Side};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_basis_adv as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -98,21 +96,8 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
-fn i32_of(v: usize) -> Result<i32, HarnessError> {
-    i32::try_from(v).map_err(|_| harness(format!("{v} does not fit i32")))
-}
-
 fn i64_of(v: usize) -> Result<i64, HarnessError> {
     i64::try_from(v).map_err(|_| harness(format!("{v} does not fit i64")))
-}
-
-/// C++ failure -> normalised output (operation error) or harness error.
-fn cpp_err(e: &FfiError) -> Result<Output, HarnessError> {
-    match e {
-        FfiError::Status(code) if *code > 0 => Ok(Output::err(format!("nlib_{code}"))),
-        FfiError::Status(_) => Err(harness(format!("shim failure: {e}"))),
-        FfiError::InvalidArgument(m) => Err(harness(format!("ffi rejected: {m}"))),
-    }
 }
 
 /// Rust failure -> normalised output (`Unported` -> deferred case). `InvalidInput`
@@ -136,51 +121,6 @@ fn cube(out: Output, nd: &[Vec<Vec<f64>>]) -> Output {
     let flat: Vec<f64> = nd.iter().flatten().flatten().copied().collect();
     out.ints("nd_shape", vec![rows, cols, cnt])
         .values("nd", flat)
-}
-
-fn cpp(i: Inputs) -> Result<Output, HarnessError> {
-    let out = match i {
-        Inputs::CompatMult { r, s, p } => {
-            let p = i32_of(p)?;
-            ffi::compat_mult_reads_in_bounds(&r, &s, p).and_then(|in_bounds| {
-                if !in_bounds {
-                    return Ok(Output::err(PAST_END));
-                }
-                ffi::compat_mult(&r, &s, p).map(|m| {
-                    Output::new()
-                        .values("r", m.r)
-                        .values("s", m.s)
-                        .values("xr", m.xr)
-                        .values("xs", m.xs)
-                })
-            })
-        }
-        Inputs::Insert { r, p, x } => {
-            ffi::insert(&r, i32_of(p)?, &x).map(|s| Output::new().values("s", s))
-        }
-        Inputs::IncMult { u, p, t } => {
-            ffi::inc_mult(&u, i32_of(p)?, i64_of(t)?).map(|x| {
-                Output::new()
-                    .int("n", x.len() as i64)
-                    .values("x", x)
-            })
-        }
-        Inputs::DerivsArray {
-            knots,
-            degree,
-            u,
-            flag,
-            der,
-        } => ffi::derivs_array(
-            &knots,
-            i32_of(degree)?,
-            &u,
-            flag.side().flag(),
-            i64_of(der)?,
-        )
-        .map(|d| cube(Output::new().ints("spans", d.spans), &d.nd)),
-    };
-    out.or_else(|e| cpp_err(&e))
 }
 
 fn rust(i: Inputs) -> Result<Output, HarnessError> {
@@ -574,10 +514,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

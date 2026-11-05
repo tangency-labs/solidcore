@@ -3,7 +3,7 @@
 //! one Bernstein polynomial, degree reduction, splitting, arc length, extension of
 //! curves and surface strips).
 //!
-//! C++: `solidcore_ffi::units::nlib_bezier` (upstream `source/SMLib/src/NL_Bezier.cpp`).
+//! Ported from upstream `source/SMLib/src/NL_Bezier.cpp`; checked against its golden.
 //! Rust: `solidcore::nurbs::bezier`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
@@ -28,12 +28,9 @@ use solidcore::nurbs::bezier::{
 use solidcore::nurbs::math::{CPoint, RealMatrix, NOW, NOZ};
 use solidcore::nurbs::srf_basic::{Direction, Surface, SurfaceIndices};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_bezier::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
-use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -286,23 +283,6 @@ fn shape(s: &InlineSrf) -> Result<([usize; 4], [usize; 4]), HarnessError> {
     Ok((big, used))
 }
 
-fn encode_srf(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (big, used) = shape(s)?;
-    o.extend(big.iter().map(|&k| k as f64));
-    o.extend([
-        used[0] as f64,
-        used[1] as f64,
-        s.p as f64,
-        s.q as f64,
-        used[2] as f64,
-        used[3] as f64,
-    ]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
 fn build_srf(s: &InlineSrf) -> Result<Surface, HarnessError> {
     let (_, used) = shape(s)?;
     let idx = SurfaceIndices {
@@ -410,144 +390,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn push_cpts(o: &mut Vec<f64>, pts: &[[f64; 4]]) {
-    o.extend(pts.iter().flatten());
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::ElevMatrix { p, t } => {
-            o.extend([*p as f64, *t as f64]);
-            Op::ElevMatrix
-        }
-        Inputs::ProdMatrix { p, q } => {
-            o.extend([*p as f64, *q as f64]);
-            Op::ProdMatrix
-        }
-        Inputs::Elevate { p, t, f, l, pre, pw } => {
-            o.extend([*p as f64, *t as f64, *f as f64, *l as f64, flag(*pre)]);
-            push_cpts(&mut o, &pw.first(p + 1)?);
-            Op::Elevate
-        }
-        Inputs::FuncFunc {
-            p,
-            q,
-            s,
-            e,
-            pre,
-            f,
-            g,
-        } => {
-            o.extend([*p as f64, *q as f64, *s as f64, *e as f64, flag(*pre)]);
-            o.extend_from_slice(f.get(..=*p).ok_or_else(|| harness("f too short"))?);
-            o.extend_from_slice(g.get(..=*q).ok_or_else(|| harness("g too short"))?);
-            Op::FuncFunc
-        }
-        Inputs::FuncCrv {
-            p,
-            q,
-            s,
-            e,
-            pre,
-            four_d,
-            f,
-            pw,
-        } => {
-            o.extend([*p as f64, *q as f64, *s as f64, *e as f64, flag(*pre)]);
-            o.extend_from_slice(f.get(..=*p).ok_or_else(|| harness("f too short"))?);
-            push_cpts(&mut o, &pw.first(q + 1)?);
-            if *four_d {
-                Op::FuncCrv4d
-            } else {
-                Op::FuncCrv
-            }
-        }
-        Inputs::SrfElevate {
-            r,
-            t,
-            dir,
-            f,
-            l,
-            roc,
-            pre,
-            net,
-        } => {
-            let cols = net.first().map_or(0, Vec::len);
-            if net.iter().any(|row| row.len() != cols) {
-                return Err(harness("net rows differ in length"));
-            }
-            o.extend([
-                *r as f64,
-                *t as f64,
-                f64::from(*dir),
-                *f as f64,
-                *l as f64,
-                *roc as f64,
-                flag(*pre),
-                net.len() as f64,
-                cols as f64,
-            ]);
-            o.extend(net.iter().flatten().flatten());
-            Op::SrfElevate
-        }
-        Inputs::OneBasis { p, i, u } => {
-            o.extend([*p as f64, *i as f64, *u]);
-            Op::OneBasis
-        }
-        Inputs::ReduceCoefs { p } => {
-            o.push(*p as f64);
-            Op::ReduceCoefs
-        }
-        Inputs::Reduce { p, pw } => {
-            o.push(*p as f64);
-            push_cpts(&mut o, &pw.first(p + 1)?);
-            Op::Reduce
-        }
-        Inputs::Split { p, u, pw } => {
-            o.extend([*p as f64, *u]);
-            push_cpts(&mut o, &pw.first(p + 1)?);
-            Op::Split
-        }
-        Inputs::ArcLength { p, eps, len, pw } => {
-            o.extend([*p as f64, *eps, *len]);
-            push_cpts(&mut o, &pw.first(p + 1)?);
-            Op::ArcLength
-        }
-        Inputs::Length { p, tol, pw } => {
-            o.extend([*p as f64, *tol]);
-            push_cpts(&mut o, &pw.first(p + 1)?);
-            Op::Length
-        }
-        Inputs::CrvExtend { p, whr, rev, pw } => {
-            o.extend([*p as f64, f64::from(*whr), flag(*rev)]);
-            push_cpts(&mut o, &pw.first(p + 1)?);
-            Op::CrvExtend
-        }
-        Inputs::SrfExtend {
-            dir,
-            whr,
-            rev,
-            in_place,
-            sur,
-        } => {
-            o.extend([f64::from(*dir), f64::from(*whr), flag(*rev), flag(*in_place)]);
-            encode_srf(&resolve(sur)?, &mut o)?;
-            Op::SrfExtend
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -1054,10 +896,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -1,8 +1,8 @@
 //! Runner for unit `nlib.crv_common`: NURBS circles, circular arcs, ellipses and
 //! elliptical arcs (quadratic, quartic, quintic) and circle weights.
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_common` (upstream
-//! `source/SMLib/src/NL_CrvCommon.cpp`). Rust: `solidcore::nurbs::crv_common`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvCommon.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_common`.
 //!
 //! Each case runs one routine (`inputs.op`). Both sides produce the same flat record
 //! of doubles, split into keys by [`to_output`]: `status` (`0` ok, else the
@@ -17,8 +17,6 @@ use serde_json::Value;
 use solidcore::nurbs::crv_basic::{ConicType, Curve};
 use solidcore::nurbs::crv_common::{self as cc, AngleType, Arc, EllipseArc};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_crv_common::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -158,75 +156,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn enc_circ(a: &CircIn, o: &mut Vec<f64>) {
-    o.extend(a.c);
-    o.extend(a.x);
-    o.extend(a.y);
-    o.extend([a.r, a.a_s, a.ae]);
-}
-
-fn enc_ell(e: &EllIn, o: &mut Vec<f64>) {
-    o.extend(e.c);
-    o.extend(e.x);
-    o.extend(e.y);
-    o.extend([e.r1, e.r2, e.a_s, e.ae]);
-}
-
-fn cpp_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::QuadraticArcTol { arc, at } => {
-            enc_circ(arc, &mut o);
-            o.push(*at);
-            Op::QuadraticArcTol
-        }
-        Inputs::QuarticArcTol { arc, at } => {
-            enc_circ(arc, &mut o);
-            o.push(*at);
-            Op::QuarticArcTol
-        }
-        Inputs::QuinticArcTol { arc, at } => {
-            enc_circ(arc, &mut o);
-            o.push(*at);
-            Op::QuinticArcTol
-        }
-        Inputs::CircArc { arc, ctp } => {
-            enc_circ(arc, &mut o);
-            o.push(f64::from(*ctp));
-            Op::CircArc
-        }
-        Inputs::CircArcTol { arc, at, ctp } => {
-            enc_circ(arc, &mut o);
-            o.extend([*at, f64::from(*ctp)]);
-            Op::CircArcTol
-        }
-        Inputs::CircWeights { a_s, ae, ctp } => {
-            o.extend([*a_s, *ae, f64::from(*ctp)]);
-            Op::CircWeights
-        }
-        Inputs::EllipticalArcTol { ell, at, ctp } => {
-            enc_ell(ell, &mut o);
-            o.extend([*at, f64::from(*ctp)]);
-            Op::EllipticalArcTol
-        }
-        Inputs::EllipticalArcAngTypeTol { ell, at, atp, ctp } => {
-            enc_ell(ell, &mut o);
-            o.extend([*at, f64::from(*atp), f64::from(*ctp)]);
-            Op::EllipticalArcAngTypeTol
-        }
-    };
-    (op, o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i);
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -475,10 +404,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

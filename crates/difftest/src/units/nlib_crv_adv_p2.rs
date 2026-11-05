@@ -9,8 +9,8 @@
 //! (`N_CrvReparamRat`, `N_CrvReparamWeights`, `N_SrfReparamMultKnots`,
 //! `N_SrfReparamWeights`).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_adv_p2` (upstream
-//! `source/SMLib/src/NL_CrvAdv.cpp`). Rust: `solidcore::nurbs::crv_adv::p2` (methods on
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvAdv.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_adv::p2` (methods on
 //! `solidcore::nurbs::crv_basic::Curve`).
 //!
 //! Each case runs one routine (`inputs.op`). Both sides produce the same flat record
@@ -43,8 +43,6 @@ use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::crv_geom::ToleranceKind;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::nlib_crv_adv_p2::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -56,6 +54,10 @@ mod smc;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
+
+/// Interior knots of the second curve of a generated rational `sum_diff` are snapped
+/// onto knots of the first that are closer than this many parameter ranges.
+const NEAR_KNOT_REL: f64 = 1e-9;
 
 /// `nlib.crv_adv_p2` runner.
 pub struct Runner;
@@ -415,141 +417,6 @@ fn to_output(i: &Inputs, c: &InlineCrv, flat: &[f64]) -> Result<Output, HarnessE
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn end_flag(e: EndIn) -> f64 {
-    f64::from(e.end().flag())
-}
-
-fn cont_flag(c: ContIn) -> f64 {
-    f64::from(c.cont().flag())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let c = resolve(i.crv())?;
-    let mut o = Vec::new();
-    encode_crv(&c, &mut o)?;
-    let op = match i {
-        Inputs::ExtendDist {
-            dist,
-            relative,
-            end,
-            cont,
-            inplace,
-            ..
-        } => {
-            o.extend([
-                *dist,
-                f64::from(kind(*relative).flag()),
-                end_flag(*end),
-                cont_flag(*cont),
-                flag(*inplace),
-            ]);
-            Op::ExtendDist
-        }
-        Inputs::ExtendParam {
-            par,
-            end,
-            cont,
-            inplace,
-            ..
-        } => {
-            o.extend([par.get(&c)?, end_flag(*end), cont_flag(*cont), flag(*inplace)]);
-            Op::ExtendParam
-        }
-        Inputs::OffsetMax2nd { d, normal, .. } => {
-            o.push(*d);
-            o.extend_from_slice(normal);
-            Op::OffsetMax2nd
-        }
-        Inputs::EvalUnbounded { cont, evals, .. } => {
-            o.extend([cont_flag(*cont), evals.len() as f64]);
-            for e in evals {
-                o.extend([e.u.get(&c)?, e.ndr as f64]);
-            }
-            Op::EvalUnbounded
-        }
-        Inputs::RemoveKnotsDeriv {
-            tol,
-            whr,
-            der,
-            inplace,
-            ..
-        } => {
-            o.extend([*tol, f64::from(*whr), *der as f64, flag(*inplace)]);
-            Op::RemoveKnotsDeriv
-        }
-        Inputs::RefineToKnots { x, .. } => {
-            o.push(x.len() as f64);
-            for k in x {
-                o.push(k.get(&c)?);
-            }
-            Op::RefineToKnots
-        }
-        Inputs::SumDiff { other, minus, .. } => {
-            encode_crv(&resolve(other)?, &mut o)?;
-            o.push(f64::from(sum_diff(*minus).flag()));
-            Op::SumDiff
-        }
-        Inputs::NonRatDeriv { d, .. } => {
-            o.push(*d as f64);
-            Op::NonRatDeriv
-        }
-        Inputs::RatDeriv { .. } => Op::RatDeriv,
-        Inputs::ConstMul { alpha, .. } => {
-            o.push(*alpha);
-            Op::ConstMul
-        }
-        Inputs::LinearMul { s0, s1, .. } => {
-            o.extend([*s0, *s1]);
-            Op::LinearMul
-        }
-        Inputs::ConstMul4d { alpha, .. } => {
-            o.push(*alpha);
-            Op::ConstMul4d
-        }
-        Inputs::ReparamRat {
-            alf,
-            bet,
-            gam,
-            del,
-            inplace,
-            ..
-        } => {
-            o.extend([*alf, *bet, *gam, *del, flag(*inplace)]);
-            Op::ReparamRat
-        }
-        Inputs::ReparamWeights { w, c: cc, d, .. } => {
-            o.extend([*w, *cc, *d]);
-            Op::ReparamWeights
-        }
-        Inputs::ReparamMultKnots { tol, inplace, .. } => {
-            o.extend([*tol, flag(*inplace)]);
-            Op::ReparamMultKnots
-        }
-        Inputs::ReparamEndWeights { wt0, wtn, .. } => {
-            o.extend([*wt0, *wtn]);
-            Op::ReparamEndWeights
-        }
-    };
-    match ffi::eval(op, &o) {
-        Ok(flat) => to_output(i, &c, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -1019,7 +886,7 @@ fn same_range(mut o: InlineCrv, c: &InlineCrv) -> InlineCrv {
             a + (*u - oa) / (ob - oa) * (b - a)
         };
     }
-    let sep = solidcore_ffi::units::nlib_crv_adv_p2::NEAR_KNOT_REL * (b - a);
+    let sep = NEAR_KNOT_REL * (b - a);
     let snapped: Vec<f64> = o
         .u
         .iter()
@@ -1442,10 +1309,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

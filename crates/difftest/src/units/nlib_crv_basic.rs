@@ -4,9 +4,9 @@
 //! compatibility of curve sets, numerator / denominator split, conic segment counts
 //! and cross-boundary derivative curves.
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_basic` (upstream
+//! Ported from upstream
 //! `source/SMLib/src/NL_CrvBasic.cpp`, `N_CrossBoundDerivCrvNonRatSrf` of
-//! `NL_SrfSymbol.cpp`). Rust: `solidcore::nurbs::crv_basic`.
+//! `NL_SrfSymbol.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_basic`.
 //!
 //! Each case runs one *op* (`inputs.op`, a group of upstream calls). Both sides
 //! produce the same flat record of doubles, split into keys by [`to_output`].
@@ -35,8 +35,6 @@ use solidcore::nurbs::geom::Interval;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_basic::{Surface, SurfaceIndices};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_crv_basic::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -254,34 +252,6 @@ fn shape_of(len: usize, ulen: usize, used: Option<[usize; 2]>) -> Result<([usize
     Ok((big, used))
 }
 
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (big, used) = shape_of(c.cpts.len(), c.u.len(), c.used)?;
-    o.extend([
-        big[0] as f64,
-        big[1] as f64,
-        used[0] as f64,
-        c.p as f64,
-        used[1] as f64,
-    ]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn encode_cfn(f: &InlineCfn, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (big, used) = shape_of(f.fu.len(), f.u.len(), f.used)?;
-    o.extend([
-        big[0] as f64,
-        big[1] as f64,
-        used[0] as f64,
-        f.p as f64,
-        used[1] as f64,
-    ]);
-    o.extend_from_slice(&f.fu);
-    o.extend_from_slice(&f.u);
-    Ok(())
-}
-
 /// Storage `(N, M, R, S)` and indices in use `(n, m, r, s)` of a surface.
 fn srf_shape(s: &InlineSrf) -> Result<([usize; 4], [usize; 4]), HarnessError> {
     let big_n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
@@ -298,23 +268,6 @@ fn srf_shape(s: &InlineSrf) -> Result<([usize; 4], [usize; 4]), HarnessError> {
         return Err(harness("indices in use above the storage"));
     }
     Ok((big, used))
-}
-
-fn encode_srf(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (big, used) = srf_shape(s)?;
-    o.extend(big.iter().map(|&k| k as f64));
-    o.extend([
-        used[0] as f64,
-        used[1] as f64,
-        s.p as f64,
-        s.q as f64,
-        used[2] as f64,
-        used[3] as f64,
-    ]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
 }
 
 fn build_crv(c: &InlineCrv) -> Result<Curve, HarnessError> {
@@ -474,125 +427,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::Inspect { crv, tol, sized } => {
-            encode_crv(&resolve(crv)?, &mut o)?;
-            o.push(*tol);
-            o.extend(sized.iter().map(|&k| k as f64));
-            Op::Inspect
-        }
-        Inputs::Epolygon { crv, k, l } => {
-            encode_crv(&resolve(crv)?, &mut o)?;
-            o.extend([*k as f64, *l as f64]);
-            Op::Epolygon
-        }
-        Inputs::Modify { crv, kind } => {
-            encode_crv(&resolve(crv)?, &mut o)?;
-            match kind {
-                Kind::Compress => o.push(0.0),
-                Kind::To2d => o.push(1.0),
-                Kind::To3d => o.push(2.0),
-                Kind::RatToNonRat => o.push(3.0),
-                Kind::NonRatToRat => o.push(4.0),
-                Kind::MakeNonRat => o.push(5.0),
-                Kind::PruneRat { flg } => o.extend([6.0, if *flg { 1.0 } else { 0.0 }]),
-                Kind::Reparam { interval } => {
-                    o.push(7.0);
-                    o.extend_from_slice(interval);
-                }
-                Kind::SetSize { idx } => {
-                    o.push(8.0);
-                    o.extend(idx.iter().map(|&k| k as f64));
-                }
-                Kind::CopyNull => o.push(9.0),
-                Kind::CopyInto { dst } => {
-                    o.push(10.0);
-                    encode_crv(&resolve(dst)?, &mut o)?;
-                }
-                Kind::SizeArrays { idx } => {
-                    o.push(11.0);
-                    o.extend(idx.iter().map(|&k| k as f64));
-                }
-            }
-            Op::Modify
-        }
-        Inputs::Equal { a, b, tol3d, tol1d } => {
-            encode_crv(&resolve(a)?, &mut o)?;
-            encode_crv(&resolve(b)?, &mut o)?;
-            o.extend([*tol3d, *tol1d]);
-            Op::Equal
-        }
-        Inputs::Compatible { curves } | Inputs::RatCompatible { curves } => {
-            o.push(curves.len() as f64);
-            for c in curves {
-                encode_crv(&resolve(c)?, &mut o)?;
-            }
-            if matches!(i, Inputs::Compatible { .. }) {
-                Op::Compatible
-            } else {
-                Op::RatCompatible
-            }
-        }
-        Inputs::Coincident { a, b, tol } => {
-            encode_crv(&resolve(a)?, &mut o)?;
-            encode_crv(&resolve(b)?, &mut o)?;
-            o.push(*tol);
-            Op::Coincident
-        }
-        Inputs::Conic { ctp, start, end } => {
-            o.extend([f64::from(*ctp), *start, *end]);
-            Op::Conic
-        }
-        Inputs::CrossBoundary { sur, side, dst } => {
-            encode_srf(&resolve_srf(sur)?, &mut o)?;
-            o.push(f64::from(*side));
-            match dst {
-                Some(d) => {
-                    o.push(1.0);
-                    encode_crv(&resolve(d)?, &mut o)?;
-                }
-                None => o.push(0.0),
-            }
-            Op::CrossBoundary
-        }
-        Inputs::NumDenom { crv, mode, dst, den } => {
-            encode_crv(&resolve(crv)?, &mut o)?;
-            o.push(match mode {
-                Mode::NumDenom => 0.0,
-                Mode::DenomFunc => 1.0,
-                Mode::FromNumDenom => 2.0,
-            });
-            match dst {
-                Some(d) => {
-                    o.push(1.0);
-                    encode_crv(&resolve(d)?, &mut o)?;
-                }
-                None => o.push(0.0),
-            }
-            match den {
-                Some(f) => {
-                    o.push(1.0);
-                    encode_cfn(f, &mut o)?;
-                }
-                None => o.push(0.0),
-            }
-            Op::NumDenom
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -1361,10 +1195,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

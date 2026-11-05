@@ -1,7 +1,7 @@
 //! Runner for unit `nlib.basis_basic`: basis extrema and derivatives, knot
 //! reparametrisation and knot merging.
 //!
-//! C++: `solidcore_ffi::units::nlib_basis_basic` (upstream `source/SMLib/src/NL_BasisBasic.cpp`).
+//! Ported from upstream `source/SMLib/src/NL_BasisBasic.cpp`; checked against its golden.
 //! Rust: `solidcore::nurbs::basis_basic`.
 //!
 //! | op (`inputs.op`)    | Rust                                   | upstream                          |
@@ -27,8 +27,6 @@ use solidcore::nurbs::basis_basic as bb;
 use solidcore::nurbs::geom::Interval;
 use solidcore::nurbs::knots::{KnotVector, Side};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_basis_basic as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -109,21 +107,8 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
-fn i32_of(v: usize) -> Result<i32, HarnessError> {
-    i32::try_from(v).map_err(|_| harness(format!("{v} does not fit i32")))
-}
-
 fn i64_of(v: usize) -> Result<i64, HarnessError> {
     i64::try_from(v).map_err(|_| harness(format!("{v} does not fit i64")))
-}
-
-/// C++ failure -> normalised output (operation error) or harness error.
-fn cpp_err(e: &FfiError) -> Result<Output, HarnessError> {
-    match e {
-        FfiError::Status(code) if *code > 0 => Ok(Output::err(format!("nlib_{code}"))),
-        FfiError::Status(_) => Err(harness(format!("shim failure: {e}"))),
-        FfiError::InvalidArgument(m) => Err(harness(format!("ffi rejected: {m}"))),
-    }
 }
 
 /// Rust failure -> normalised output (`Unported` -> deferred case). `InvalidInput`
@@ -143,65 +128,6 @@ fn nested(key: &str, out: Output, rows: &[Vec<f64>]) -> Output {
     let lens: Vec<i64> = rows.iter().map(|r| r.len() as i64).collect();
     let flat: Vec<f64> = rows.iter().flatten().copied().collect();
     out.ints(&format!("{key}_lens"), lens).values(key, flat)
-}
-
-fn cpp(i: Inputs) -> Result<Output, HarnessError> {
-    let out = match i {
-        Inputs::GlobalMax {
-            knots,
-            index,
-            degree,
-            tol,
-        } => ffi::global_max(&knots, i64_of(index)?, i32_of(degree)?, tol)
-            .map(|(m, u)| Output::new().scalar("max", m).scalar("u", u)),
-        Inputs::SpanMaxima {
-            knots,
-            index,
-            degree,
-            tol,
-        } => ffi::span_maxima(&knots, i64_of(index)?, i32_of(degree)?, tol).map(|(mn, mx, u)| {
-            Output::new()
-                .values("min", mn)
-                .values("max", mx)
-                .scalar("u", u)
-        }),
-        Inputs::Reparam {
-            knots,
-            degree,
-            ul,
-            ur,
-        } => {
-            ffi::reparam(&knots, i32_of(degree)?, ul, ur).map(|k| Output::new().values("knots", k))
-        }
-        Inputs::Compatible { knots, tol } => ffi::compatible(&knots, tol).map(|c| {
-            let out = nested("knots", Output::new(), &c.adjusted);
-            nested("new", out, &c.new)
-        }),
-        Inputs::Derivs {
-            knots,
-            degree,
-            u,
-            flag,
-            der,
-        } => ffi::derivs(&knots, i32_of(degree)?, u, flag.side().flag(), i64_of(der)?)
-            .map(|(span, nd)| nested("nd", Output::new().int("span", span), &nd)),
-        Inputs::MakeCompatible { r, s, p, q } => {
-            let (p, q) = (i32_of(p)?, i32_of(q)?);
-            ffi::make_compatible_reads_in_bounds(&r, &s, p, q).and_then(|in_bounds| {
-                if !in_bounds {
-                    return Ok(Output::err(PAST_END));
-                }
-                ffi::make_compatible(&r, &s, p, q).map(|m| {
-                    Output::new()
-                        .values("r", m.r)
-                        .values("s", m.s)
-                        .values("xr", m.xr)
-                        .values("xs", m.xs)
-                })
-            })
-        }
-    };
-    out.or_else(|e| cpp_err(&e))
 }
 
 fn kv(knots: &[f64]) -> Result<KnotVector<'_>, HarnessError> {
@@ -733,10 +659,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

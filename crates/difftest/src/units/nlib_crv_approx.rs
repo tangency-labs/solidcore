@@ -3,8 +3,8 @@
 //! circular arc (`N_ApproxCircArcWithCrvData`) and the non-rational approximation of
 //! a NURBS curve (`N_ApproxNurbsWithNonRatCrv`).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_approx` (upstream
-//! `source/SMLib/src/NL_CrvApprox.cpp`). Rust: `solidcore::nurbs::crv_approx`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvApprox.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_approx`.
 //!
 //! Each case runs one routine (`inputs.op`). Both sides produce the same flat record
 //! of doubles, split into keys: `status` (`0` ok, else the `NL_*_ERR` number, `1000`
@@ -29,8 +29,6 @@ use solidcore::nurbs::crv_fit::p1::ParamMethod;
 use solidcore::nurbs::crv_fit::p3::ParamSource;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_crv_approx::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -245,87 +243,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::NumCpts {
-            tol,
-            ang,
-            deg,
-            mode,
-        } => {
-            let m = match mode {
-                SfnMode::Local => 0.0,
-                SfnMode::Kept => 1.0,
-                SfnMode::Given => 2.0,
-            };
-            o.extend([*tol, *ang, *deg as f64, m]);
-            Op::NumCpts
-        }
-        Inputs::CircArc {
-            cen,
-            x,
-            y,
-            rad,
-            as_,
-            ae,
-            ps,
-            pe,
-            deg,
-            nc,
-        } => {
-            let (ps, pe) = arc_ends(*cen, *x, *y, *rad, *as_, *ae, *ps, *pe);
-            o.extend(cen);
-            o.extend(x);
-            o.extend(y);
-            o.extend([*rad, *as_, *ae]);
-            o.extend(ps);
-            o.extend(pe);
-            o.extend([*deg as f64, *nc as f64]);
-            Op::CircArcData
-        }
-        Inputs::NonRat {
-            crv,
-            tol,
-            deg,
-            par,
-            tan,
-        } => {
-            encode_crv(&resolve(crv)?, &mut o)?;
-            o.extend([
-                *tol,
-                *deg as f64,
-                f64::from(par.source().flag()),
-                if *tan { 1.0 } else { 0.0 },
-            ]);
-            Op::NonRat
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, o) = cpp_input(i)?;
-    match ffi::eval(op, &o) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -670,17 +587,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&i)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
-        rust(&i)
+        rust(&case.parse()?)
     }
 }
 
