@@ -940,30 +940,3 @@ fn an_analytic_widened_keeps_the_sources_parameters() {
         meets(&e, 7.5);
     }
 }
-
-/// Ruled (upstream's `SM_CT_G1R`): the parabola `y = x^2` runs on past `x = 1` as its tangent
-/// there, the line `y = 2 x - 1`, exactly, by the distance along it; the quarter circle's
-/// rows (rational) run on straight along the circle's tangent at its end.
-#[test]
-fn a_ruled_extension_runs_on_as_the_end_tangent() {
-    let s = parabola();
-    let e = s
-        .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, 2.0)
-        .unwrap();
-    meets(&e, 2.0);
-    for p in past(&e, BoxSide::UMax) {
-        assert!((p.y - (2.0 * p.x - 1.0)).abs() <= 1e-12, "{p:?}");
-    }
-    let end = *past(&e, BoxSide::UMax).last().unwrap();
-    let start = Vec3::new(1.0, 1.0, end.z);
-    assert!(((end - start).length() - 2.0).abs() <= 2e-9, "{end:?}");
-    // the quarter of radius 2 ends at (0, 2) going -x: its rows run on along y = 2
-    let q = quarter();
-    let e = q
-        .extended_by_distance(&k(), &dom(&q), BoxSide::UMax, Continuity::Ruled, 1.5)
-        .unwrap();
-    meets(&e, 1.5);
-    for p in past(&e, BoxSide::UMax) {
-        assert!((p.y - 2.0).abs() <= 1e-12 && p.x <= 1e-12, "{p:?}");
-    }
-}

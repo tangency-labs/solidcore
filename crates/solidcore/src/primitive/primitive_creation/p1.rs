@@ -168,12 +168,12 @@ fn evaluate_keep(
     Ok(())
 }
 
-/// The path continued `distance` past `end`, tangent continuous, by the exact extension
+/// The path continued `distance` past `end`, curvature continuous, by the exact extension
 /// ([`BSplineCurve::extended_by_distance`]); its refusal is the path's (no curve is kept
 /// unextended where it was asked to run on).
 fn extend(curve: &mut BSplineCurve, distance: f64, end: CurveEnd) -> Result<()> {
     *curve = curve
-        .extended_by_distance(end, Continuity::Tangent, distance)?
+        .extended_by_distance(end, Continuity::Curvature, distance)?
         .curve;
     Ok(())
 }

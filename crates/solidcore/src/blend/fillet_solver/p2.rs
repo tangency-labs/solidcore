@@ -2592,10 +2592,10 @@ impl FilletSolver {
             adj_surface
         } else {
             let adj = adj_surface.ok_or_else(nul)?;
-            // the exact extension, tangent continuous (upstream's `SM_CT_G1`), #2730
+            // the exact extension, curvature continuous (for upstream's `SM_CT_G1`, owner ruling d2), #2730
             let new_surface = adj.extended_every_side(
                 k,
-                crate::surface::extend::Continuity::Tangent,
+                crate::surface::extend::Continuity::Curvature,
                 extension_dist,
             )?;
             // Copy pNewSurface, when possible as an analytic surface

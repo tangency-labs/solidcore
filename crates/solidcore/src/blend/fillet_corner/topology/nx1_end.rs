@@ -266,11 +266,11 @@ impl FilletCorner {
             // At a tangent end the end face is continued as itself: the end rib's shape
             // there depends on how its curvature differs from the rail's face across the
             // seam, which a linear (G1) extension would not keep (tangency-labs/smlib@856b54e).
-            // (the exact extension, #2730: Natural for `SM_CT_CINFINITY`, Tangent for `SM_CT_G1`)
+            // (the exact extension, #2730: Natural for `SM_CT_CINFINITY`, Curvature for `SM_CT_G1`)
             let extension = if mixed && (tangent_side[0] || tangent_side[1]) {
                 crate::surface::extend::Continuity::Natural
             } else {
-                crate::surface::extend::Continuity::Tangent
+                crate::surface::extend::Continuity::Curvature
             };
             let new_surface = surface.extended_every_side(k, extension, ext_dist)?;
             // Copy pNewSurface, when possible as an analytic surface

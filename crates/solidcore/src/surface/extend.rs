@@ -20,9 +20,12 @@
 //!   tangent (its last leg is no longer than its rounding: a pole) is mirrored through its end
 //!   point, `2 P_n - C(b - s)`, which is C1 on the homogeneous row too. An extension longer than
 //!   the surface's parameter range mirrors in steps, each step the last.
-//! - **Curvature:** the Tangent construction with the extension's second row solved from the C2
-//!   condition on the homogeneous rows (linear, in closed form): the homogeneous surface is C2
-//!   across the side, so the surface is curvature continuous.
+//! - **Curvature:** one span of the rows' degree past the side: its first row from the C1
+//!   condition, its second from the C2 condition on the homogeneous rows (linear, in closed
+//!   form), each further row on the line of the two before it: the homogeneous surface is C2
+//!   across the side, so the surface is curvature continuous, and it bends past the side no
+//!   further than the end's curvature takes it (the curvature-continuous extension, owner
+//!   ruling d2).
 //!
 //! **Knots.** The source's net and knots are kept bit for bit: the end knot stays at
 //! multiplicity `p` as the joint, and the extension's spans follow it. No knot is removed.
@@ -41,7 +44,7 @@
 //! most `1e-6 d` (owner); the extension's own rounding bound ([`Extended::extension`]) is a
 //! rounding part too, held to `1e-6 d`. An extension whose length at `d` cannot be measured
 //! so (a leaf that did not converge, a rounding part past `1e-6 d`, an extension bound past
-//! it, as a Curvature mirror's, whose C2 rows carry the rounding of the rows before them) is
+//! it) is
 //! refused as not exact ([`ExtendRefusal::NotExact`]), naming the longest distance found
 //! whose length does meet it (by bisection on the extension parameter: that need not be
 //! monotone either, so it is a long workable distance, not proved the longest).
@@ -95,17 +98,10 @@ const SOLVE_TRIES: usize = 200;
 const BACK_OFFS: usize = 30;
 /// Halvings that find the longest extension with positive weights.
 const BISECTIONS: usize = 60;
-/// A budget on one Tangent or Curvature extension's mirror steps: a limit on its size, not on
-/// any convergence. The step count follows from the ask: about `log2(e / range) + 1` for
-/// Tangent (each step mirrors the whole piece, doubling it), `ceil(e / h)` for Curvature (one
-/// span of the last span's length `h` a step).
+/// A budget on one Tangent extension's mirror steps: a limit on its size, not on any
+/// convergence. The step count follows from the ask: about `log2(e / range) + 1` (each step
+/// mirrors the whole piece, doubling it).
 const MAX_STEPS: usize = 4096;
-
-/// A budget on the control points of one row of a Tangent or Curvature extension: each
-/// Tangent step mirrors the whole piece, so the row grows with the ask over the source's
-/// parameter range, and an ask the distance solve scales up (a length across that is near
-/// zero) would grow it without bound.
-const MAX_ROW_POINTS: usize = 1 << 16;
 
 /// How a surface continues past its side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,12 +110,8 @@ pub enum Continuity {
     Natural,
     /// Tangent continuous: the boundary piece mirrored.
     Tangent,
-    /// Curvature continuous: the mirror with its second row from the C2 condition.
+    /// Curvature continuous: one span, C2 across the side, then straight.
     Curvature,
-    /// Ruled: each row run on as the line of its end tangent (its homogeneous end point and
-    /// derivative continued linearly), tangent continuous across the side (upstream's
-    /// `SM_CT_G1R`): a row stays straight past the side however it curved before it.
-    Ruled,
 }
 
 /// Why an extension is refused ([`SolidError::ExtendRefused`]).
@@ -273,7 +265,6 @@ impl Surface {
             let grown = match source.extended(how, e)? {
                 Grown::Made(g) => g,
                 Grown::WeightNotPositive => return Ok(None),
-                Grown::OverBudget => return Ok(Some((None, f64::INFINITY))),
             };
             // a net that overflowed is no extension to measure: unproved, not refused
             if !grown.is_finite() {
@@ -794,10 +785,6 @@ enum Grown {
     Made(Local),
     /// A weight would not be positive.
     WeightNotPositive,
-    /// Its mirror steps or a row's control points would run past their budgets: no extension
-    /// to measure, as one whose net overflowed (the solve takes it as unproved, so a long ask
-    /// is refused naming a distance that works).
-    OverBudget,
 }
 
 /// A homogeneous point `(w x, w y, w z, w)`.
@@ -1088,30 +1075,23 @@ impl Local {
         };
         let grown = match how {
             Continuity::Natural => self.natural(e)?,
-            Continuity::Ruled => self.ruled(e)?,
-            Continuity::Tangent | Continuity::Curvature => {
+            Continuity::Curvature => self.curvature(e)?,
+            Continuity::Tangent => {
                 let mut cur = self.clone();
                 let mut left = e;
                 let mut steps = 0;
                 while left > 0.0 {
                     steps += 1;
                     if steps > MAX_STEPS {
-                        return Ok(Grown::OverBudget);
+                        return Err(SolidError::Unsupported {
+                            operation: OP,
+                            reason: "the extension needs more mirror steps than its budget",
+                        });
                     }
-                    // Curvature mirrors at most the last Bezier span a step, so its C2 point is
-                    // that span's end and the extension is continuous in e; Tangent mirrors
-                    // the whole piece (a prefix family in e either way)
-                    let most = if how == Continuity::Curvature {
-                        cur.end()? - cur.before_end(0)?
-                    } else {
-                        cur.range()?
-                    };
-                    let step = left.min(most);
-                    cur = cur.mirrored(step, how == Continuity::Curvature)?;
+                    // each step mirrors the whole piece (a prefix family in e)
+                    let step = left.min(cur.range()?);
+                    cur = cur.mirrored(step)?;
                     left -= step;
-                    if cur.rows.first().map_or(0, Vec::len) > MAX_ROW_POINTS {
-                        return Ok(Grown::OverBudget);
-                    }
                 }
                 cur
             }
@@ -1154,34 +1134,56 @@ impl Local {
     /// Natural: the last span's Bezier points (from a copy with its start knot at multiplicity
     /// `p`) continued past `b` by de Casteljau at `t = 1 + e / (b - c)`: the points
     /// `blossom(1^(p-i), t^i)` are the polynomial's Bezier points over `[b, b + e]`.
-    /// Ruled: each row's homogeneous end point `H_n` and end derivative
-    /// `D = p (H_n - H_(n-1)) / h` (`h` the last span, the end clamped) continued as the line
-    /// `H_n + s D` over `[b, b + e]`, as a Bezier piece of the row's degree: the points
-    /// `H_n + (k e / p) D`. Homogeneous C1 across the joint, so the surface is C1 there (where
-    /// `w > 0`); each row's piece is a straight line.
-    fn ruled(&self, e: f64) -> Result<Self> {
-        let b = self.end()?;
-        let h = b - self.before_end(0)?;
+    /// Curvature: one Bezier span over `[b, b + e]` of the row's degree, C2 across the joint on
+    /// the homogeneous rows and run on straight after: `Q_0 = P_n`, `Q_1` from the C1
+    /// condition (`p (Q_1 - Q_0) / e = p (P_n - P_(n-1)) / h_1`), `Q_2` from the C2 condition,
+    /// and each further point the line of the two before it (`Q_k = 2 Q_(k-1) - Q_(k-2)`), so
+    /// the extension matches the end's curvature and then bends no further than its first
+    /// points make it. Each point a few-term combination of the end points, its rounding
+    /// bounded once (no step carries another's).
+    fn curvature(&self, e: f64) -> Result<Self> {
         let p = self.p;
-        #[allow(clippy::cast_precision_loss)]
-        let pf = p as f64;
+        if p < 2 {
+            return self.natural(e);
+        }
+        let b = self.end()?;
+        let h1 = b - self.before_end(0)?;
+        let h2 = b - self.before_end(1)?;
+        let g = e;
         let mut ext = Vec::new();
+        let mut size = 0.0_f64;
         for row in &self.rows {
-            let (Some(&pn), Some(&pn1)) = (row.last(), row.iter().rev().nth(1)) else {
+            let mut back = row.iter().rev();
+            let (Some(&pn), Some(&pn1), Some(&pn2)) = (back.next(), back.next(), back.next())
+            else {
                 return Err(op_err());
             };
-            let d = lin(pf / h, pn, -pf / h, pn1);
-            #[allow(clippy::cast_precision_loss)]
-            let q: Vec<H> = (1..=p)
-                .map(|k| lin(1.0, pn, k as f64 * e / pf, d))
-                .collect();
+            let q1 = lin(1.0 + g / h1, pn, -g / h1, pn1);
+            // Q2 = Q1 + g [(g / h1) ((Pn - Pn1) / h1 - (Pn1 - Pn2) / h2) + (Q1 - Pn) / g]
+            let second = lin(1.0 / h1, sub(pn, pn1), -1.0 / h2, sub(pn1, pn2));
+            let step = lin(g / h1, second, 1.0 / g, sub(q1, pn));
+            let q2 = lin(1.0, q1, g, step);
+            let mut q = vec![q1, q2];
+            let (mut a, mut c) = (q1, q2);
+            for _ in 2..p {
+                let next = lin(2.0, c, -1.0, a);
+                q.push(next);
+                (a, c) = (c, next);
+            }
+            size = [pn, pn1, pn2]
+                .iter()
+                .flatten()
+                .fold(size, |m, c| m.max(c.abs()));
             ext.push(q);
         }
-        let knots = vec![b + e; p + 1];
-        // each point a two-term combination of the end points scaled by up to `2 e / h`: its
-        // rounding gamma_6 of that, on top of the rows' own
+        let knots = vec![b + g; p + 1];
+        // the C1 and C2 points' coefficients are at most `1 + 2 g / h1 (1 + g / h1 + g / h2)`,
+        // each further point doubles the line's step: gamma_12 of that over `p` points
+        let r = g / h1;
+        let gain =
+            (1.0 + 2.0 * r * (1.0 + r + g / h2)) * 2f64.powi(i32::try_from(p).unwrap_or(i32::MAX));
         let mut out = self.joined(ext, &knots)?;
-        out.err = (1.0 + 2.0 * e / h) * (self.err + gamma(6) * self.size());
+        out.err = gain * (self.err + gamma(12) * size);
         Ok(out)
     }
 
@@ -1227,9 +1229,8 @@ impl Local {
     }
 
     /// One mirror step by `e <= range`: the piece over `[b - e, b]` (from a copy with `b - e`
-    /// at multiplicity `p`) mapped by each row's `L` and reversed; for Curvature its second
-    /// row then from the C2 condition.
-    fn mirrored(&self, e: f64, curvature: bool) -> Result<Self> {
+    /// at multiplicity `p`) mapped by each row's `L` and reversed.
+    fn mirrored(&self, e: f64) -> Result<Self> {
         let b = self.end()?;
         let a = self.start()?;
         let p = self.p;
@@ -1274,39 +1275,6 @@ impl Local {
                 }
             }
             ext.push(q);
-        }
-        if curvature && p >= 2 {
-            // the C2 condition across the joint on the homogeneous rows
-            let h1 = b - self.before_end(0)?;
-            let h2 = b - self.before_end(1)?;
-            let (Some(&v1), Some(&v2)) = (knots.first(), knots.get(1)) else {
-                return Err(op_err());
-            };
-            let (g1, g2) = (v1 - b, v2 - b);
-            for (row, q) in self.rows.iter().zip(ext.iter_mut()) {
-                let mut back = row.iter().rev();
-                let (Some(&pn), Some(&pn1), Some(&pn2)) = (back.next(), back.next(), back.next())
-                else {
-                    return Err(op_err());
-                };
-                let Some(&q1) = q.first() else {
-                    return Err(op_err());
-                };
-                // Q2 = Q1 + g2 [(g1 / h1) ((Pn - Pn1) / h1 - (Pn1 - Pn2) / h2) + (Q1 - Pn) / g1]
-                let second = lin(1.0 / h1, sub(pn, pn1), -1.0 / h2, sub(pn1, pn2));
-                let step = lin(g1 / h1, second, 1.0 / g1, sub(q1, pn));
-                if let Some(q2) = q.get_mut(1) {
-                    *q2 = lin(1.0, q1, g2, step);
-                }
-                // its rounding: gamma_12 of its terms' magnitudes, and q1's and the rows'
-                // errors carried by the formula's coefficients
-                let m = [pn, pn1, pn2, q1]
-                    .iter()
-                    .flatten()
-                    .fold(0.0_f64, |m, c| m.max(c.abs()));
-                let gain = 1.0 + g2 * (2.0 * g1 / h1 * (1.0 / h1 + 1.0 / h2) + 2.0 / g1);
-                err = err.max(gain * (err + self.err) + gamma(12) * gain * m);
-            }
         }
         let mut out = self.joined(ext, &knots)?;
         out.err = self.err.max(err);

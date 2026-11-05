@@ -360,10 +360,10 @@ impl FilletCorner {
             .surface
             .as_ref()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
-        // the exact extension, tangent continuous (upstream's `SM_CT_G1`), #2730
+        // the exact extension, curvature continuous (for upstream's `SM_CT_G1`, owner ruling d2), #2730
         let new_surface = surface.extended_every_side(
             k,
-            crate::surface::extend::Continuity::Tangent,
+            crate::surface::extend::Continuity::Curvature,
             ext_dist,
         )?;
 

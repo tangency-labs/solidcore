@@ -19,26 +19,22 @@ use solidcore::{Result, SolidError};
 const OP: &str = "difftest::util::extension";
 
 /// The continuity a caller asking for `c` gets: Natural for `SM_CT_CINFINITY`, Curvature for
-/// `SM_CT_G1_G2`, Ruled for `SM_CT_G1R`, Tangent for `SM_CT_G1` and every other type (as
-/// upstream's `_ => NL_G1`).
+/// every other type (the extension is curvature continuous, owner ruling d2).
 #[must_use]
 pub fn continuity(c: ContinuityType) -> Continuity {
     match c {
         ContinuityType::CInfinity => Continuity::Natural,
-        ContinuityType::G1G2 => Continuity::Curvature,
-        ContinuityType::G1R => Continuity::Ruled,
-        _ => Continuity::Tangent,
+        _ => Continuity::Curvature,
     }
 }
 
 /// The NLib continuity flag (`NL_G1 = 2`, `NL_G2 = 3`, `NL_CMAX = 4`, `NL_G1R = 6`) as the
-/// exact extension's; `None` for another flag.
+/// exact extension's (Natural for `NL_CMAX`, Curvature for the others); `None` for another
+/// flag.
 #[must_use]
 pub fn continuity_of_flag(flag: i32) -> Option<Continuity> {
     match flag {
-        2 => Some(Continuity::Tangent),
-        6 => Some(Continuity::Ruled),
-        3 => Some(Continuity::Curvature),
+        2 | 3 | 6 => Some(Continuity::Curvature),
         4 => Some(Continuity::Natural),
         _ => None,
     }
@@ -152,8 +148,7 @@ pub fn nlib_curve(
     cont: NlibContinuity,
 ) -> Result<NurbsCurve> {
     let how = match cont {
-        NlibContinuity::G1 => Continuity::Tangent,
-        NlibContinuity::G2 => Continuity::Curvature,
+        NlibContinuity::G1 | NlibContinuity::G2 => Continuity::Curvature,
         NlibContinuity::Cmax => Continuity::Natural,
     };
     let dist = if relative {

@@ -4268,10 +4268,10 @@ fn turn_to_nurbs_in(
             if !matches!(new_surface.kind(), SurfaceKind::BSpline(_)) {
                 return Err(ner());
             }
-            // the exact extension, tangent continuous (upstream's `SM_CT_G1`), its refusal
+            // the exact extension, curvature continuous (for upstream's `SM_CT_G1`, owner ruling d2), its refusal
             // the edit's (#2730)
             let ext = new_surface
-                .extended_sides(k, &BoxSide::ALL, Continuity::Tangent, extend_distance)?
+                .extended_sides(k, &BoxSide::ALL, Continuity::Curvature, extend_distance)?
                 .surface;
             let face_ref = (env.key_of)(EntityRef::Face(f));
             p2::replace_surface(k, b, env, f, ext, face_ref, OldSurface::Delete, true)?;

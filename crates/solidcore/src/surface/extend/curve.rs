@@ -77,7 +77,6 @@ impl BSplineCurve {
             let grown = match source.extended(how, e)? {
                 Grown::Made(g) => g,
                 Grown::WeightNotPositive => return Ok(None),
-                Grown::OverBudget => return Ok(Some((None, f64::INFINITY))),
             };
             // a net that overflowed is no extension to measure: unproved, not refused
             if !grown.is_finite() {

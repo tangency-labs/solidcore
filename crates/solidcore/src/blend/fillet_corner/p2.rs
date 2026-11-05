@@ -432,11 +432,11 @@ impl FilletCorner {
             .surface
             .as_ref()
             .ok_or_else(|| null_deref("side face without surface"))?;
-        // the exact extension, tangent continuous (upstream's `SM_CT_G1`); its refusal the
+        // the exact extension, curvature continuous (for upstream's `SM_CT_G1`, owner ruling d2); its refusal the
         // corner's (#2730)
         let new_surface = side_surface.extended_every_side(
             k,
-            crate::surface::extend::Continuity::Tangent,
+            crate::surface::extend::Continuity::Curvature,
             10.0 * gap_dist,
         )?;
 

@@ -1616,7 +1616,7 @@ fn ext_surface_rebuild(
                 crate::topology::face::p1::insert_loop(source, face, lp)?;
             }
         } else {
-            // Extend the surface by the exact extension, tangent continuous (upstream's
+            // Extend the surface by the exact extension, curvature continuous (for upstream's
             // `SM_CT_G1`); its refusal is the operation's (#2730)
             let surface = source
                 .face(face)?
@@ -1629,7 +1629,7 @@ fn ext_surface_rebuild(
                 .extended_sides_with(
                     k,
                     &crate::surface::side::BoxSide::ALL,
-                    crate::surface::extend::Continuity::Tangent,
+                    crate::surface::extend::Continuity::Curvature,
                     ext,
                     crate::surface::extend::RoundTheAxis::WithinOpenTurn,
                 )?

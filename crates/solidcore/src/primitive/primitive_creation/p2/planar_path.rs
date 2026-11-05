@@ -81,11 +81,11 @@ fn evaluate_keep(
     Ok(())
 }
 
-/// `curve` continued `distance` past `end`, tangent continuous, by the exact extension
+/// `curve` continued `distance` past `end`, curvature continuous, by the exact extension
 /// ([`BSplineCurve::extended_by_distance`]); its refusal is the sweep's.
 fn extended_line(curve: &BSplineCurve, distance: f64, end: CurveEnd) -> Result<BSplineCurve> {
     Ok(curve
-        .extended_by_distance(end, Continuity::Tangent, distance)?
+        .extended_by_distance(end, Continuity::Curvature, distance)?
         .curve)
 }
 

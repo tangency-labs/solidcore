@@ -309,7 +309,7 @@ fn extend_ball_patch_as_itself(
         )
     } else {
         return Ok(Surface::from(net.copy())
-            .extended_sides(kernel, &BoxSide::ALL, Continuity::Ruled, dist)?
+            .extended_sides(kernel, &BoxSide::ALL, Continuity::Curvature, dist)?
             .surface);
     };
     let centre = patch.centre();
@@ -815,14 +815,14 @@ impl OffsetExecutive {
                     {
                         extend_ball_patch_as_itself(kernel, base, patch, dist)?
                     }
-                    // the exact extension, ruled (upstream's `SM_CT_G1R`), its refusal the
+                    // the exact extension, curvature continuous (for upstream's `SM_CT_G1R`, owner ruling d2), its refusal the
                     // offset's (#2730); as its exact NURBS form, the B-spline
                     // the offset's later steps take an extension to be (upstream's
                     // extension of every kind is its B-spline part extended)
                     _ => {
                         let e = base.extended_every_side(
                             kernel,
-                            crate::surface::extend::Continuity::Ruled,
+                            crate::surface::extend::Continuity::Curvature,
                             dist,
                         )?;
                         match crate::blend::fillet_section::station::as_b_spline(kernel, &e)? {
@@ -3949,7 +3949,7 @@ mod tests {
             .extended_sides(
                 &kernel,
                 &crate::surface::side::BoxSide::ALL,
-                crate::surface::extend::Continuity::Ruled,
+                crate::surface::extend::Continuity::Curvature,
                 0.125 * 5.0,
             )
             .unwrap()

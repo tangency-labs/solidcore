@@ -2887,12 +2887,12 @@ pub fn mate_lamina_edge_to_surface(
                 "negative surface extension distance",
             ));
         }
-        // the exact extension, ruled (upstream's `SM_CT_G1R`), its refusal the operation's
+        // the exact extension, curvature continuous (for upstream's `SM_CT_G1R`, owner ruling d2), its refusal the operation's
         // (#2730)
         surf.extended_sides(
             k,
             &crate::surface::side::BoxSide::ALL,
-            crate::surface::extend::Continuity::Ruled,
+            crate::surface::extend::Continuity::Curvature,
             ext_dist,
         )?
         .surface
