@@ -1,5 +1,5 @@
-//! Differential runner for primitive maps, pivot selection and path helpers.
-//! All native helper calls execute the included, renamed upstream source.
+//! Runner for primitive maps, pivot selection and path helpers, ported from upstream
+//! `PrimitiveCreation`; checked against its golden.
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,7 +11,6 @@ use solidcore::math::Vec3;
 use solidcore::nurbs::b_spline_curve::p1::{BSplineCurve, NurbCircleParam};
 use solidcore::primitive::primitive_creation::p1::{self as api, EntityMaps, PrimitiveCreation};
 use solidcore::topology::{Brep, BrepId, RegionId};
-use solidcore_ffi::units::primitive_primitive_creation_p1 as ffi;
 
 /// Primitive creation differential runner.
 pub struct Runner;
@@ -426,7 +425,12 @@ fn rust(i: &Inputs) -> solidcore::Result<Vec<f64>> {
                     record.push(f64::from(output.is_some()));
                     result
                 }
-                _ => unreachable!(),
+                _ => {
+                    return Err(solidcore::SolidError::invalid_input(
+                        "difftest::primitive_p1",
+                        "primitive shape",
+                    ))
+                }
             };
             let status = match result {
                 Ok(()) => 0,
@@ -554,7 +558,12 @@ fn rust(i: &Inputs) -> solidcore::Result<Vec<f64>> {
             }
         }
 
-        _ => unreachable!(),
+        _ => {
+            return Err(solidcore::SolidError::invalid_input(
+                "difftest::primitive_p1",
+                "operation",
+            ))
+        }
     }
     Ok(record)
 }
@@ -605,19 +614,8 @@ impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "primitive.primitive_creation_p1"
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match ffi::eval(i.op, &i.data) {
-            Ok(data) => output(&i, data),
-            Err(solidcore_ffi::FfiError::Status(-1010)) => Ok(Output::rejected(
-                "native fixture preflight rejected undefined construction",
-            )),
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        }
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        ffi::validate(i.op, &i.data).map_err(|e| HarnessError::new(e.to_string()))?;
         match rust(&i) {
             Ok(data) => output(&i, data),
             Err(e) => Ok(Output::unported(&e).unwrap_or_else(|| Output::err(e.to_string()))),

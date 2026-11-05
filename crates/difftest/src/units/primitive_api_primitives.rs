@@ -1,11 +1,10 @@
 //! Runner for unit `primitive.api_primitives`: the `SM_API` primitive constructors.
 //!
-//! C++: `solidcore_ffi::units::primitive_api_primitives` (upstream
-//! `source/SM_API/src/SmApiPrimitives.cpp`). Rust: `solidcore::primitive::api_primitives`.
+//! Ported from upstream `source/SM_API/src/SmApiPrimitives.cpp`; checked against its
+//! golden. Rust: `solidcore::primitive::api_primitives`.
 //!
-//! A case is one API call: `op`, its `args` in the API's order (see the ffi module; floats
-//! may be `"NaN"`, `"inf"`, `"-inf"`) and, for `swung`, the `xy` and `xz` arcs. Both sides
-//! produce the record documented in the ffi module: the status (`0` = `SM_SUCCESS`, else
+//! A case is one API call: `op`, its `args` in the API's order (floats may be `"NaN"`,
+//! `"inf"`, `"-inf"`) and, for `swung`, the `xy` and `xz` arcs. The record is the status (`0` = `SM_SUCCESS`, else
 //! the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce), then on success `has` and the surface or B-rep record, reported as the values
 //! `rec`.
@@ -14,10 +13,9 @@
 //! compare reachable vertices, sampled curves/surfaces, tolerances and UV trim counts.
 //! `blend_primitive` builds a box, calls `SmApiCreateBlendPrimitive` on the box's
 //! edge/face list indices, and compares the API status, the mutated B-rep's record and
-//! the blend face's own surface record (see the ffi module). A pyramid whose plane fit
-//! reaches UB-119 is rejected (see [`ub_119`]). `offset_profile` builds its `profile`
-//! curves (line segments, arcs, circles, B-spline lines and circle segments) on both sides
-//! and compares `SmApiCreateOffsetProfile`'s B-rep record; its generated cases run on their
+//! the blend face's own surface record. `offset_profile` builds its `profile`
+//! curves (line segments, arcs, circles, B-spline lines and circle segments) and
+//! compares `SmApiCreateOffsetProfile`'s B-rep record; its generated cases run on their
 //! own seed stream (`offset0000`, ...: [`MIN_GENERATED_OFFSET`]), so each `gen` case stays
 //! the one the baseline has.
 
@@ -42,11 +40,17 @@ use solidcore::surface::torus::Torus;
 use solidcore::topology::brep::p1;
 use solidcore::topology::{Brep, EdgeId, FaceId};
 use solidcore::SolidError;
-use solidcore_ffi::units::primitive_api_primitives::{self as ffi, Arc, Op, ProfileCurve};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most profile curves of one `OffsetProfile` call.
+const MAX_PROFILE_CURVES: usize = 16;
+
+/// Largest `lOffsetType` passed on (1 left, 2 right, 3 both; others are refused by
+/// `CreateOffsetsOfManyCurves` with `SM_ERR`).
+const MAX_OFFSET_TYPE: u64 = 4;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -123,30 +127,23 @@ enum OpName {
 }
 
 impl OpName {
-    const fn ffi(self) -> Op {
+    /// The number of `f64` arguments of the call (for `Swung`: the scale only).
+    const fn arity(self) -> usize {
         match self {
-            Self::PlaneSurface => Op::PlaneSurface,
-            Self::CylinderSurface => Op::CylinderSurface,
-            Self::ConeSurface => Op::ConeSurface,
-            Self::TorusSurface => Op::TorusSurface,
-            Self::PlaneBrep => Op::PlaneBrep,
-            Self::PlanarCircle => Op::PlanarCircle,
-            Self::Box => Op::Box,
-            Self::Sphere => Op::Sphere,
-            Self::Cylinder => Op::Cylinder,
-            Self::Cone => Op::Cone,
-            Self::Torus => Op::Torus,
-            Self::Pyramid => Op::Pyramid,
-            Self::CylindricalBox => Op::CylindricalBox,
-            Self::PartialSphere => Op::PartialSphere,
-            Self::SphereNoPole => Op::SphereNoPole,
-            Self::PartialCone => Op::PartialCone,
-            Self::ConeEllipticEnds => Op::ConeEllipticEnds,
-            Self::PartialCylinder => Op::PartialCylinder,
-            Self::PartialTorus => Op::PartialTorus,
-            Self::Swung => Op::Swung,
-            Self::BlendPrimitive => Op::BlendPrimitive,
-            Self::OffsetProfile => Op::OffsetProfile,
+            Self::CylinderSurface
+            | Self::ConeSurface
+            | Self::TorusSurface
+            | Self::Box
+            | Self::Cone
+            | Self::PartialSphere => 6,
+            Self::PlaneSurface | Self::PlaneBrep | Self::Cylinder | Self::Torus | Self::Pyramid => {
+                5
+            }
+            Self::PlanarCircle | Self::Sphere | Self::SphereNoPole | Self::OffsetProfile => 4,
+            Self::CylindricalBox | Self::PartialCone | Self::ConeEllipticEnds => 8,
+            Self::PartialCylinder | Self::PartialTorus => 7,
+            Self::Swung => 1,
+            Self::BlendPrimitive => 11,
         }
     }
 }
@@ -160,18 +157,7 @@ struct ArcIn {
     end_deg: f64,
 }
 
-impl ArcIn {
-    const fn ffi(self) -> Arc {
-        Arc {
-            center: self.center,
-            radius: self.radius,
-            start_deg: self.start_deg,
-            end_deg: self.end_deg,
-        }
-    }
-}
-
-/// A profile curve of `offset_profile` (see [`ProfileCurve`]).
+/// A profile curve of `offset_profile`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum CurveIn {
@@ -200,40 +186,6 @@ enum CurveIn {
 }
 
 impl CurveIn {
-    const fn ffi(self) -> ProfileCurve {
-        match self {
-            Self::Line { start, end } => ProfileCurve::Line { start, end },
-            Self::Arc {
-                center,
-                radius,
-                start_deg,
-                end_deg,
-            } => ProfileCurve::Arc(Arc {
-                center,
-                radius,
-                start_deg,
-                end_deg,
-            }),
-            Self::Circle { center, radius } => ProfileCurve::Circle { center, radius },
-            Self::BsplineLine { start, end } => ProfileCurve::BSplineLine { start, end },
-            Self::BsplineCircle {
-                origin,
-                x_axis,
-                y_axis,
-                radius,
-                start_deg,
-                end_deg,
-            } => ProfileCurve::BSplineCircle {
-                origin,
-                x_axis,
-                y_axis,
-                radius,
-                start_deg,
-                end_deg,
-            },
-        }
-    }
-
     /// The curve the shim builds (a failing constructor is a harness error, as the
     /// shim's `SC_ERR_ARG`).
     fn build(self, k: &Kernel) -> Result<SmCurve, HarnessError> {
@@ -305,58 +257,6 @@ impl Inputs {
     fn point(&self, i: usize) -> Result<Point3, HarnessError> {
         Ok(Vec3::new(self.arg(i)?, self.arg(i + 1)?, self.arg(i + 2)?))
     }
-}
-
-// ---- C++ -------------------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if i.op == OpName::Pyramid && ub_119(i)? {
-        return Ok(Output::rejected(
-            "UB-119: SmTrimmingTools::FindOuterLoops reads past its arrays for a zero-area \
-             loop of the pyramid's plane fit; not run",
-        ));
-    }
-    let args: Vec<f64> = i.args.iter().map(|f| f.0).collect();
-    if i.op == OpName::OffsetProfile {
-        let curves: Vec<ProfileCurve> = i.profile.iter().map(|c| c.ffi()).collect();
-        return match ffi::run_offset_profile(&curves, &args) {
-            Ok(rec) => Ok(Output::new().values("rec", rec)),
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        };
-    }
-    let xy: Vec<Arc> = i.xy.iter().map(|a| a.ffi()).collect();
-    let xz: Vec<Arc> = i.xz.iter().map(|a| a.ffi()).collect();
-    let arcs = (i.op == OpName::Swung).then_some((xy.as_slice(), xz.as_slice()));
-    match ffi::run(i.op.ffi(), &args, arcs) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
-/// A pyramid face whose plane fit hits `FindOuterLoops`' zero-area loop (a base far
-/// from the origin relative to its size): upstream reads past its arrays there
-/// (`plan/upstream-issues.md` UB-119), so the input is undefined in C++ (AGENTS.md
-/// section 4, step 5.6) and [`cpp`] rejects it. Decided from the inputs and the Rust
-/// side only: the port's `find_outer_loops` returns `InvalidInput` ("index out of
-/// range") exactly where upstream's count translation reads past `sOutLoops`.
-fn ub_119(i: &Inputs) -> Result<bool, HarnessError> {
-    let r = api::create_pyramid(&mut Kernel::default(), i.point(0)?, i.arg(3)?, i.arg(4)?);
-    Ok(matches!(
-        r,
-        Err(SolidError::InvalidInput {
-            operation: "topology::trimming_tools",
-            reason: "index out of range",
-        })
-    ))
-}
-
-/// The ffi's guard accepts the case.
-fn accepted(i: &Inputs) -> bool {
-    let args: Vec<f64> = i.args.iter().map(|f| f.0).collect();
-    let xy: Vec<Arc> = i.xy.iter().map(|a| a.ffi()).collect();
-    let xz: Vec<Arc> = i.xz.iter().map(|a| a.ffi()).collect();
-    let arcs = (i.op == OpName::Swung).then_some((xy.as_slice(), xz.as_slice()));
-    ffi::guard(i.op.ffi(), &args, arcs).is_ok()
 }
 
 // ---- Rust ------------------------------------------------------------------------------
@@ -659,7 +559,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut k = Kernel::default();
     let k = &mut k;
     let a = |n: usize| i.arg(n);
-    if i.op != OpName::Swung && i.args.len() != i.op.ffi().arity() {
+    if i.op != OpName::Swung && i.args.len() != i.op.arity() {
         return Err(HarnessError::new(format!(
             "{:?}: wrong argument count",
             i.op
@@ -752,7 +652,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
         OpName::BlendPrimitive => blend_out(i)?,
         OpName::OffsetProfile => {
-            if i.profile.len() > ffi::MAX_PROFILE_CURVES {
+            if i.profile.len() > MAX_PROFILE_CURVES {
                 return Err(HarnessError::new("offset profile: too many curves"));
             }
             let curves = i
@@ -769,7 +669,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 Ok(v == 1.0)
             };
             let kind = a(1)?;
-            if !(0.0..=ffi::MAX_OFFSET_TYPE as f64).contains(&kind) || kind.fract() != 0.0 {
+            if !(0.0..=MAX_OFFSET_TYPE as f64).contains(&kind) || kind.fract() != 0.0 {
                 return Err(HarnessError::new("offset profile: offset type"));
             }
             brep_out(api::create_offset_profile(
@@ -1288,15 +1188,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        // Redraw the (rare) inputs the ffi fences off (upstream crashes or hangs there).
-        let mut case = gen_case(rng);
-        for _ in 0..64 {
-            if accepted(&case) {
-                break;
-            }
-            case = gen_case(rng);
-        }
-        serde_json::to_value(case).ok()
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1319,10 +1211,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

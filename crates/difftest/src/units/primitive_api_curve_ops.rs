@@ -2,18 +2,16 @@
 //! (`SmApiCreateCurveInterpPoints`, `SmApiOffsetCurve`, `SmApiEvaluateContinuity`,
 //! `SmApiMakeCurvesCompatible`, `SmApiOrderCurves`).
 //!
-//! C++: `solidcore_ffi::units::primitive_api_curve_ops` (upstream
-//! `source/SM_API/src/SmApiCurves.cpp`). Rust: `solidcore::primitive::api_curve_ops`.
+//! Ported from upstream `source/SM_API/src/SmApiCurves.cpp`; checked against its golden.
+//! Rust: `solidcore::primitive::api_curve_ops`.
 //!
 //! A case is one API call (`op` plus its arguments; floats may be `"NaN"`, `"inf"`,
-//! `"-inf"`). Input curves are made by the `SM_API` curve constructors on each side
-//! (`primitive.api_curves`); a constructor failure records `-2` alone. Both sides
-//! produce the record documented in the ffi module: the status (`0` = `SM_SUCCESS`,
-//! else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error
+//! `"-inf"`). Input curves are made by the `SM_API` curve constructors
+//! (`primitive.api_curves`); a constructor failure records `-2` alone. The record is
+//! the status (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error
 //! upstream cannot produce), then the result, reported as the values `rec`. A
 //! continuity parameter given as `relative` is the curve's natural interval evaluated
-//! there (`SmExtent1d::Evaluate`), on each side from its own curve. A case whose Rust
-//! side reaches an unported unit is deferred.
+//! there (`SmExtent1d::Evaluate`). A case that reaches an unported unit is deferred.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -27,7 +25,6 @@ use solidcore::nurbs::crv_fit::p1::ParamMethod;
 use solidcore::primitive::api_curve_ops as api;
 use solidcore::primitive::api_curves;
 use solidcore::SolidError;
-use solidcore_ffi::units::primitive_api_curve_ops::{self as ffi, Call, InCurve};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -122,86 +119,6 @@ fn a3(p: &P3) -> [f64; 3] {
 
 fn v3(p: &P3) -> Vec3 {
     Vec3::from_array(a3(p))
-}
-
-fn in_curve(c: &Crv) -> InCurve {
-    match c {
-        Crv::Curve { points } => InCurve::Curve {
-            points: points.iter().map(a3).collect(),
-        },
-        Crv::Circle { center, radius } => InCurve::Circle {
-            center: a3(center),
-            radius: radius.0,
-        },
-        Crv::Arc {
-            center,
-            radius,
-            start_deg,
-            end_deg,
-        } => InCurve::Arc {
-            center: a3(center),
-            radius: radius.0,
-            start_deg: start_deg.0,
-            end_deg: end_deg.0,
-        },
-        Crv::Segment { start, end } => InCurve::Segment {
-            start: a3(start),
-            end: a3(end),
-        },
-        Crv::AnalyticCircle { center, radius } => InCurve::AnalyticCircle {
-            center: a3(center),
-            radius: radius.0,
-        },
-        Crv::Rectangle {
-            center,
-            length,
-            width,
-        } => InCurve::Rectangle {
-            center: a3(center),
-            length: length.0,
-            width: width.0,
-        },
-    }
-}
-
-fn to_call(i: &In) -> Call {
-    match i {
-        In::Interp {
-            points,
-            parameterization,
-        } => Call::Interp {
-            points: points.iter().map(a3).collect(),
-            parameterization: *parameterization,
-        },
-        In::Offset { curve, distance } => Call::Offset {
-            curve: in_curve(curve),
-            distance: distance.0,
-        },
-        In::Continuity {
-            curve,
-            parameter,
-            relative,
-        } => Call::Continuity {
-            curve: in_curve(curve),
-            parameter: parameter.0,
-            relative: *relative,
-        },
-        In::Compatible { curves } => Call::Compatible {
-            curves: curves.iter().map(in_curve).collect(),
-        },
-        In::Order { curves } => Call::Order {
-            curves: curves.iter().map(in_curve).collect(),
-        },
-    }
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn cpp(i: &In) -> Result<Output, HarnessError> {
-    match ffi::run(&to_call(i)) {
-        Ok(v) => Ok(Output::new().values("rec", v)),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -656,10 +573,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

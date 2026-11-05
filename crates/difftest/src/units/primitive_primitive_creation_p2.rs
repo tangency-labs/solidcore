@@ -1,10 +1,10 @@
-//! Primitive p2 differential comparisons: the public `SmPrimitiveCreation` entry
-//! points of the unit on a fresh B-rep with only its infinite region. Every record
-//! compares the status, the B-rep's editing flag, the context's doing-boolean flag,
+//! Runner for the public `SmPrimitiveCreation` entry points of primitive p2 on a fresh
+//! B-rep with only its infinite region, ported from upstream; checked against its
+//! golden. Every record holds the status, the B-rep's editing flag, the context's doing-boolean flag,
 //! the four entity-map counts and the start, side and end face counts, plus the
 //! skin's ownership flags, the taper's normal and whether the planar path returned
 //! a B-rep. Construction reaches unported topology and defers.
-#![allow(clippy::indexing_slicing)] // fixed fixture layout validated before indexing
+#![allow(clippy::indexing_slicing)] // the record layout is checked by `layout_ok` first
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,6 @@ use solidcore::primitive::primitive_creation::{
 };
 use solidcore::sweep::topology_sweep::access::SweepAccess;
 use solidcore::topology::{Brep, BrepId, Region, RegionId};
-use solidcore_ffi::units::primitive_primitive_creation_p2 as ffi;
 
 /// Differential runner.
 pub struct Runner;
@@ -34,7 +33,7 @@ struct Inputs {
     data: Vec<f64>,
 }
 
-/// The status code of an operation error, as the shim reports it.
+/// The status code of an operation error (its upstream `SmStatus`).
 fn error(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
@@ -107,9 +106,40 @@ fn unavailable<T>() -> Result<T> {
     ))
 }
 
+/// Whether `n` is a whole count in `0..=max`.
+fn count(n: f64, max: usize) -> bool {
+    n.fract() == 0.0 && (0.0..=max as f64).contains(&n)
+}
+
+/// Whether `d` has the record layout of op `op` (its lengths and counts), so that
+/// [`entry`] can index it.
+fn layout_ok(op: i32, d: &[f64]) -> bool {
+    match op {
+        1 => d.len() == 15,
+        2 => d.len() == 13,
+        3 | 5 | 6 => d.len() == 14,
+        4 => d.len() >= 5 && count(d[4], d.len() - 5) && d.len() >= 5 + d[4] as usize,
+        7 => d.len() == 12,
+        8 => d.len() >= 8,
+        9 => {
+            d.len() >= 6
+                && count(d[4], d.len())
+                && count(d[5], d.len())
+                && d.len() == 6 + 7 * (d[4] as usize + d[5] as usize)
+        }
+        _ => false,
+    }
+}
+
 /// Run one entry point on the fixture and build its record.
 fn entry(i: &Inputs) -> Result<Vec<f64>> {
     let d = &i.data;
+    if !layout_ok(i.op, d) {
+        return Err(SolidError::invalid_input(
+            "difftest::primitive_p2",
+            "record layout",
+        ));
+    }
     let b = BrepId::from_index(0);
     let mut starts = Vec::new();
     let mut sides = Vec::new();
@@ -459,22 +489,8 @@ impl UnitDiff for Runner {
             },
         )
     }
-    fn run_cpp(&self, case: &Case) -> std::result::Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match ffi::eval(i.op, &i.data) {
-            Ok(values) => Ok(Output::new().values("record", values)),
-            Err(solidcore_ffi::FfiError::InvalidArgument(_)) if i.expected_rejection => Ok(
-                Output::rejected("guarded native crash or hang (fixtures README)"),
-            ),
-            Err(solidcore_ffi::FfiError::Status(s)) if s == solidcore_ffi::SC_ERR_ARG => {
-                Ok(Output::rejected("native curve construction"))
-            }
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        }
-    }
     fn run_rust(&self, case: &Case) -> std::result::Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        ffi::validate(i.op, &i.data).map_err(|e| HarnessError::new(e.to_string()))?;
         match entry(&i) {
             Ok(values) => Ok(Output::new().values("record", values)),
             Err(e) => {
@@ -483,19 +499,12 @@ impl UnitDiff for Runner {
         }
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        // as curve.curve_p1: draw again when the native guard refuses the input
-        for _ in 0..64 {
-            let (op, data) = generated(rng);
-            if ffi::generator_refuses(op, &data) {
-                continue;
-            }
-            return serde_json::to_value(Inputs {
-                expected_rejection: false,
-                op,
-                data,
-            })
-            .ok();
-        }
-        None
+        let (op, data) = generated(rng);
+        serde_json::to_value(Inputs {
+            expected_rejection: false,
+            op,
+            data,
+        })
+        .ok()
     }
 }

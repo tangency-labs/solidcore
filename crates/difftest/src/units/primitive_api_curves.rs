@@ -1,14 +1,13 @@
 //! Runner for unit `primitive.api_curves`: the `SM_API` curve constructors, and
 //! `SmApiRemoveCurveKnots` on a curve one of them made.
 //!
-//! C++: `solidcore_ffi::units::primitive_api_curves` (upstream
-//! `source/SM_API/src/SmApiCurves.cpp`). Rust: `solidcore::primitive::api_curves`.
+//! Ported from upstream `source/SM_API/src/SmApiCurves.cpp`; checked against its golden. Rust: `solidcore::primitive::api_curves`.
 //!
 //! A case is one API call (`op` plus its arguments; floats may be `"NaN"`, `"inf"`,
-//! `"-inf"`). Both sides produce the record documented in the ffi module: the status
+//! `"-inf"`). The record is the status
 //! (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1`
 //! for a Rust error upstream cannot produce), then the created curve(s), reported as
-//! the values `rec`. A case whose Rust side reaches an unported unit is deferred.
+//! the values `rec`. A case that reaches an unported unit is deferred.
 //!
 //! A `remove_knots` case wraps one constructor call (not a rectangle or polygon): its
 //! record is the creation status, then on success the removal's status and the curve's
@@ -30,7 +29,6 @@ use solidcore::kernel::Kernel;
 use solidcore::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm};
 use solidcore::primitive::api_curves as api;
 use solidcore::SolidError;
-use solidcore_ffi::units::primitive_api_curves::{self as ffi, Call};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -168,110 +166,6 @@ fn v3(p: &P3) -> Vec3 {
 
 fn fs(v: &[F]) -> Vec<f64> {
     v.iter().map(|x| x.0).collect()
-}
-
-fn to_call(i: &In) -> Call {
-    match i {
-        In::RemoveKnots { curve } => Call::RemoveKnots(Box::new(to_call(curve))),
-        In::LineSegment { start, end } => Call::LineSegment {
-            start: a3(start),
-            end: a3(end),
-        },
-        In::Line { start, direction } => Call::Line {
-            start: a3(start),
-            direction: a3(direction),
-        },
-        In::Circle { center, radius } => Call::Circle {
-            center: a3(center),
-            radius: radius.0,
-        },
-        In::AnalyticCircle { center, radius } => Call::AnalyticCircle {
-            center: a3(center),
-            radius: radius.0,
-        },
-        In::Ellipse {
-            origin,
-            radius1,
-            radius2,
-        } => Call::Ellipse {
-            origin: a3(origin),
-            radius1: radius1.0,
-            radius2: radius2.0,
-        },
-        In::Arc {
-            center,
-            radius,
-            start_deg,
-            end_deg,
-        } => Call::Arc {
-            center: a3(center),
-            radius: radius.0,
-            start_deg: start_deg.0,
-            end_deg: end_deg.0,
-        },
-        In::Helix {
-            origin,
-            height,
-            radius_start,
-            radius_end,
-            num_turns,
-            right_handed,
-            tolerance,
-        } => Call::Helix {
-            origin: a3(origin),
-            height: height.0,
-            radius_start: radius_start.0,
-            radius_end: radius_end.0,
-            num_turns: num_turns.0,
-            right_handed: *right_handed,
-            tolerance: tolerance.0,
-        },
-        In::Rectangle {
-            center,
-            length,
-            width,
-        } => Call::Rectangle {
-            center: a3(center),
-            length: length.0,
-            width: width.0,
-        },
-        In::Polygon {
-            center,
-            sides,
-            radius,
-        } => Call::Polygon {
-            center: a3(center),
-            sides: *sides,
-            radius: radius.0,
-        },
-        In::Curve { points } => Call::Curve {
-            points: points.iter().map(a3).collect(),
-        },
-        In::Canonical {
-            points,
-            knots,
-            mults,
-            weights,
-            degree,
-            form,
-        } => Call::Canonical {
-            points: points.iter().map(a3).collect(),
-            knots: fs(knots),
-            mults: mults.clone(),
-            weights: weights.as_deref().map(fs),
-            degree: *degree,
-            form: *form,
-        },
-    }
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn cpp(i: &In) -> Result<Output, HarnessError> {
-    match ffi::run(&to_call(i)) {
-        Ok(v) => Ok(Output::new().values("rec", v)),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -942,10 +836,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

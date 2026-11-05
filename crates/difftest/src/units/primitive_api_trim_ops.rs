@@ -2,17 +2,15 @@
 //! (`SmApiTrimSurfaceWith3dCurves`, `SmApiTrimProjectParallel`, `SmApiCreatePlanarFaces`,
 //! `SmApiProjectAndTrim`).
 //!
-//! C++: `solidcore_ffi::units::primitive_api_trim_ops` (upstream
-//! `source/SM_API/src/SmApiTrimmedSurfaces.cpp`, `SmApiBrep.cpp`). Rust:
-//! `solidcore::primitive::api_trim_ops`.
+//! Ported from upstream `source/SM_API/src/SmApiTrimmedSurfaces.cpp`, `SmApiBrep.cpp`;
+//! checked against its golden. Rust: `solidcore::primitive::api_trim_ops`.
 //!
 //! A case is one API call (`op` plus its arguments; floats may be `"NaN"`, `"inf"`,
-//! `"-inf"`). Input surfaces, curves and boxes are made by the `SM_API` constructors on
-//! each side; a constructor failure records `-2` alone. Both sides produce the record
-//! documented in the ffi module: the status (`0` = `SM_SUCCESS`, else the `SmStatus`;
+//! `"-inf"`). Input surfaces, curves and boxes are made by the `SM_API` constructors; a
+//! constructor failure records `-2` alone. The record is the status (`0` = `SM_SUCCESS`, else the `SmStatus`;
 //! `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce),
 //! then the B-rep's counts and `support/primitive_record.h` record, reported as the
-//! values `rec`. A case whose Rust side reaches an unported unit is deferred.
+//! values `rec`. A case that reaches an unported unit is deferred.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -30,10 +28,6 @@ use solidcore::topology::brep::p1;
 use solidcore::topology::brep::p10::TrimType;
 use solidcore::topology::Brep;
 use solidcore::SolidError;
-use solidcore_ffi::FfiError;
-use solidcore_ffi::units::primitive_api_trim_ops::{
-    self as ffi, Call, InBox, InCurve, InObject, InSurface, Reproject,
-};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -174,143 +168,6 @@ fn a3(p: &P3) -> [f64; 3] {
 
 fn v3(p: &P3) -> Vec3 {
     Vec3::from_array(a3(p))
-}
-
-fn in_surface(s: &Srf) -> InSurface {
-    match s {
-        Srf::Net {
-            rows,
-            columns,
-            points,
-        } => InSurface::Net {
-            rows: *rows,
-            columns: *columns,
-            points: points.iter().map(a3).collect(),
-        },
-        Srf::Corners { corners } => InSurface::Corners {
-            corners: corners.each_ref().map(a3),
-        },
-    }
-}
-
-fn in_curve(c: &Crv) -> InCurve {
-    match c {
-        Crv::Curve { points } => InCurve::Curve {
-            points: points.iter().map(a3).collect(),
-        },
-        Crv::Circle { center, radius } => InCurve::Circle {
-            center: a3(center),
-            radius: radius.0,
-        },
-        Crv::Arc {
-            center,
-            radius,
-            start_deg,
-            end_deg,
-        } => InCurve::Arc {
-            center: a3(center),
-            radius: radius.0,
-            start_deg: start_deg.0,
-            end_deg: end_deg.0,
-        },
-        Crv::Segment { start, end } => InCurve::Segment {
-            start: a3(start),
-            end: a3(end),
-        },
-        Crv::AnalyticCircle { center, radius } => InCurve::AnalyticCircle {
-            center: a3(center),
-            radius: radius.0,
-        },
-        Crv::Rectangle {
-            center,
-            length,
-            width,
-        } => InCurve::Rectangle {
-            center: a3(center),
-            length: length.0,
-            width: width.0,
-        },
-    }
-}
-
-fn in_box(b: &Bx) -> InBox {
-    InBox {
-        origin: a3(&b.origin),
-        length: b.length.0,
-        width: b.width.0,
-        height: b.height.0,
-        fillet: b.fillet.map(|r| r.0),
-    }
-}
-
-const fn tt_code(t: Tt) -> u8 {
-    match t {
-        Tt::KeepPoint => 0,
-        Tt::DeletePoint => 1,
-        Tt::Split => 2,
-    }
-}
-
-fn to_call(i: &In) -> Call {
-    match i {
-        In::Trim3d {
-            surface,
-            loops,
-            curves,
-        } => Call::Trim3d {
-            surface: in_surface(surface),
-            loops: loops.clone(),
-            curves: curves.iter().map(in_curve).collect(),
-        },
-        In::ProjectParallel {
-            object,
-            curve,
-            direction,
-            reference,
-            trim_type,
-            again,
-        } => Call::ProjectParallel {
-            object: match object {
-                Obj::Surface(s) => InObject::Surface(in_surface(s)),
-                Obj::Box(b) => InObject::Box(in_box(b)),
-            },
-            curve: in_curve(curve),
-            direction: a3(direction),
-            reference: a3(reference),
-            trim_type: tt_code(*trim_type),
-            again: again.as_ref().map(|a| Reproject {
-                curve: in_curve(&a.curve),
-                direction: a3(&a.direction),
-                reference: a3(&a.reference),
-                trim_type: tt_code(a.trim_type),
-            }),
-        },
-        In::PlanarFaces { curves } => Call::PlanarFaces {
-            curves: curves.iter().map(in_curve).collect(),
-        },
-        In::ProjectAndTrim {
-            brep,
-            curve,
-            direction,
-            reference,
-        } => Call::ProjectAndTrim {
-            brep: in_box(brep),
-            curve: in_curve(curve),
-            direction: a3(direction),
-            reference: a3(reference),
-        },
-    }
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn cpp(i: &In) -> Result<Output, HarnessError> {
-    match ffi::run(&to_call(i)) {
-        Ok(v) => Ok(Output::new().values("rec", v)),
-        // an input the ffi guard refuses
-        Err(e @ FfiError::InvalidArgument(_)) => Ok(Output::rejected(format!("ffi guard: {e}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -470,11 +327,6 @@ macro_rules! input {
 }
 
 fn rust(i: &In) -> Result<Output, HarnessError> {
-    // an input the ffi guard refuses is refused on both sides (HANG-29: trimming a
-    // surface with a coordinate above 1e150 does not return upstream, nightly fuzz00254)
-    if let Err(e @ FfiError::InvalidArgument(_)) = ffi::validate(&to_call(i)) {
-        return Ok(Output::rejected(format!("ffi guard: {e}")));
-    }
     let mut k = Kernel::default();
     match i {
         In::Trim3d {
@@ -820,10 +672,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -853,21 +701,14 @@ mod tests {
         .unwrap()
     }
 
-    /// HANG-29: the C++ never returns for a trimmed surface coordinate of `1e300` (here
-    /// with a lifted point); both sides refuse it with the same message. The same net at
-    /// the bound still runs on both sides and agrees.
+    /// HANG-29: upstream never returns for a trimmed surface coordinate of `1e300` (here
+    /// with a lifted point). The port returns a record for it, as for the same net at
+    /// `1e150`.
     #[test]
-    fn huge_trimmed_surface_is_refused_on_both_sides() {
-        let i = trim3d(1e300);
-        let (c, r) = (cpp(&i).unwrap(), rust(&i).unwrap());
-        let msg = c.rejected.clone().unwrap();
-        assert!(msg.contains("HANG-29"), "{msg}");
-        assert_eq!(r.rejected, Some(msg));
-
-        let i = trim3d(1e150);
-        let (c, r) = (cpp(&i).unwrap(), rust(&i).unwrap());
-        assert!(c.rejected.is_none() && r.rejected.is_none());
-        let d = crate::compare(&c, &r, Runner.abs_floors());
-        assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
+    fn huge_trimmed_surface_returns() {
+        for y in [1e150, 1e300] {
+            let r = rust(&trim3d(y)).unwrap();
+            assert!(r.rejected.is_none(), "{y}: {r:?}");
+        }
     }
 }

@@ -1,8 +1,8 @@
-//! Primitive p3 differential comparisons: the native offset ruled-surface helper
-//! and real primitive entry points through the production arena adapter. Successful
-//! builds compare owning-list topology counts and sampled vertex/edge/face geometry;
+//! Runner for primitive p3: the offset ruled-surface helper and the primitive entry
+//! points through the production arena adapter, ported from upstream; checked against
+//! its golden. Successful builds record owning-list topology counts and sampled vertex/edge/face geometry;
 //! unavailable continuations remain deferred and early exits retain their status.
-#![allow(clippy::indexing_slicing)] // fixed fixture layout validated before indexing
+#![allow(clippy::indexing_slicing)] // the record layout is checked by `layout_ok` first
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,6 @@ use solidcore::sweep::topology_sweep::{
 use solidcore::topology::Brep;
 #[cfg(test)]
 use solidcore::topology::{BrepId, FaceId, Region};
-use solidcore_ffi::units::primitive_primitive_creation_p3 as ffi;
 
 /// Differential runner.
 pub struct Runner;
@@ -85,6 +84,20 @@ fn samples(curve: &BSplineCurve, out: &mut Vec<f64>) -> Result<()> {
         }
     }
     Ok(())
+}
+/// Whether `d` has the record layout of op `op` (its lengths and the swung profile
+/// count), so that [`ruled`] and [`entry`] can index it.
+fn layout_ok(op: i32, d: &[f64]) -> bool {
+    match op {
+        0 => d.len() == 41,
+        6 => {
+            d.len() >= 10
+                && d[2].fract() == 0.0
+                && (0.0..=((d.len() - 10) / 7) as f64).contains(&d[2])
+        }
+        1..=7 => d.len() >= 10,
+        _ => false,
+    }
 }
 fn ruled(data: &[f64]) -> Result<Vec<f64>> {
     let k = Kernel::default();
@@ -645,23 +658,18 @@ impl UnitDiff for Runner {
             },
         )
     }
-    fn run_cpp(&self, case: &Case) -> std::result::Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match ffi::eval(i.op, &i.data) {
-            Ok(values) => Ok(Output::new().values("record", values)),
-            Err(solidcore_ffi::FfiError::InvalidArgument(_)) if i.expected_rejection => {
-                Ok(Output::rejected("UB-78: zero skin cross-sections"))
-            }
-            Err(solidcore_ffi::FfiError::Status(s)) if s == solidcore_ffi::SC_ERR_ARG => Ok(
-                Output::rejected("native curve construction/sample preflight"),
-            ),
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        }
-    }
     fn run_rust(&self, case: &Case) -> std::result::Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        ffi::validate(i.op, &i.data).map_err(|e| HarnessError::new(e.to_string()))?;
-        let result = if i.op == 0 { ruled(&i.data) } else { entry(&i) };
+        let result = if !layout_ok(i.op, &i.data) {
+            Err(SolidError::invalid_input(
+                "difftest::primitive_p3",
+                "record layout",
+            ))
+        } else if i.op == 0 {
+            ruled(&i.data)
+        } else {
+            entry(&i)
+        };
         match result {
             Ok(values) => Ok(Output::new().values("record", values)),
             Err(e) => {
@@ -728,9 +736,8 @@ mod tests {
     use super::*;
     use solidcore::sweep::topology_sweep::{TopologySweep, TopologySweepOptions};
 
-    #[cfg(feature = "cpp")]
     #[test]
-    fn production_constructions_compare_nonempty_native_geometry() {
+    fn production_constructions_record_nonempty_geometry() {
         let context = crate::CaseContext {
             root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
             seeds: 0,
@@ -752,19 +759,12 @@ mod tests {
         ] {
             let case = cases.iter().find(|case| case.name == name).unwrap();
             let inputs: Inputs = case.parse().unwrap();
-            let native = ffi::eval(inputs.op, &inputs.data).unwrap();
             let rust = entry(&inputs).unwrap();
-            assert_eq!(&native[6..9], &counts, "{name}: native topology");
-            assert_eq!(native[0], 0.0, "{name}: native construction success");
+            assert_eq!(&rust[6..9], &counts, "{name}: topology");
+            assert_eq!(rust[0], 0.0, "{name}: construction success");
             // Includes actual vertex positions, curve intervals/points and face
             // domains/points, rather than an empty or status-only success.
-            assert!(native.len() > 100, "{name}: geometry was not exported");
-            if name == "linear_repeated_wire" {
-                // The public FFI starts with 256 slots; this construction must
-                // also exercise its exact-size output-buffer retry.
-                assert!(native.len() > 256);
-            }
-            assert_eq!(rust, native, "{name}: native geometry differs");
+            assert!(rust.len() > 100, "{name}: geometry was not recorded");
         }
     }
 

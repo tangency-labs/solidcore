@@ -3,17 +3,15 @@
 //! `SmApiCreateSurfaceFromOrderedPoints`, `SmApiCreateOffsetSurface`, `SmApiDropCurveToSrf`,
 //! `SmApiLiftUVCurveFromSrf`).
 //!
-//! C++: `solidcore_ffi::units::primitive_api_surface_ops` (upstream
-//! `source/SM_API/src/SmApiSurfaces.cpp`, `SmApiCurves.cpp`). Rust:
-//! `solidcore::primitive::api_surface_ops`.
+//! Ported from upstream `source/SM_API/src/SmApiSurfaces.cpp`, `SmApiCurves.cpp`; checked
+//! against its golden. Rust: `solidcore::primitive::api_surface_ops`.
 //!
 //! A case is one API call (`op` plus its arguments; floats may be `"NaN"`, `"inf"`,
-//! `"-inf"`). Input surfaces and curves are made by the `SM_API` constructors on each
-//! side; a constructor failure records `-2` alone. Both sides produce the record
-//! documented in the ffi module: the status (`0` = `SM_SUCCESS`, else the `SmStatus`;
+//! `"-inf"`). Input surfaces and curves are made by the `SM_API` constructors; a
+//! constructor failure records `-2` alone. The record is the status (`0` = `SM_SUCCESS`, else the `SmStatus`;
 //! `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce),
-//! then the result, reported as the values `rec`. A case whose Rust side reaches an
-//! unported unit is deferred.
+//! then the result, reported as the values `rec`. A case that reaches an unported unit
+//! is deferred.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -31,7 +29,6 @@ use solidcore::primitive::api_surface_ops as api;
 use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p1;
 use solidcore::SolidError;
-use solidcore_ffi::units::primitive_api_surface_ops::{self as ffi, Call, InCurve, InSurface};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -142,124 +139,6 @@ fn a3(p: &P3) -> [f64; 3] {
 
 fn v3(p: &P3) -> Vec3 {
     Vec3::from_array(a3(p))
-}
-
-fn in_surface(s: &Srf) -> InSurface {
-    match s {
-        Srf::Net {
-            rows,
-            columns,
-            points,
-        } => InSurface::Net {
-            rows: *rows,
-            columns: *columns,
-            points: points.iter().map(a3).collect(),
-        },
-        Srf::Corners { corners } => InSurface::Corners {
-            corners: corners.each_ref().map(a3),
-        },
-        Srf::SphereFace { center, radius } => InSurface::SphereFace {
-            center: a3(center),
-            radius: radius.0,
-        },
-        Srf::Torus {
-            center,
-            major,
-            minor,
-        } => InSurface::Torus {
-            center: a3(center),
-            major: major.0,
-            minor: minor.0,
-        },
-        Srf::Ordered {
-            rows,
-            columns,
-            points,
-        } => InSurface::Ordered {
-            rows: *rows,
-            columns: *columns,
-            points: points.iter().map(a3).collect(),
-        },
-    }
-}
-
-fn in_curve(c: &Crv) -> InCurve {
-    match c {
-        Crv::Curve { points } => InCurve::Curve {
-            points: points.iter().map(a3).collect(),
-        },
-        Crv::Circle { center, radius } => InCurve::Circle {
-            center: a3(center),
-            radius: radius.0,
-        },
-        Crv::Arc {
-            center,
-            radius,
-            start_deg,
-            end_deg,
-        } => InCurve::Arc {
-            center: a3(center),
-            radius: radius.0,
-            start_deg: start_deg.0,
-            end_deg: end_deg.0,
-        },
-        Crv::Segment { start, end } => InCurve::Segment {
-            start: a3(start),
-            end: a3(end),
-        },
-    }
-}
-
-fn to_call(i: &In) -> Call {
-    match i {
-        In::Net {
-            rows,
-            columns,
-            points,
-        } => Call::Net {
-            rows: *rows,
-            columns: *columns,
-            points: points.iter().map(a3).collect(),
-        },
-        In::Corners { corners } => Call::Corners {
-            corners: corners.each_ref().map(a3),
-        },
-        In::Ordered {
-            rows,
-            columns,
-            points,
-        } => Call::Ordered {
-            rows: *rows,
-            columns: *columns,
-            points: points.iter().map(a3).collect(),
-        },
-        In::Offset { surface, distance } => Call::Offset {
-            surface: in_surface(surface),
-            distance: distance.0,
-        },
-        In::Drop {
-            curve,
-            surface,
-            lift,
-        } => Call::Drop {
-            curve: in_curve(curve),
-            surface: in_surface(surface),
-            lift: *lift,
-        },
-        In::Lift { uv_curve, surface } => Call::Lift {
-            uv_curve: in_curve(uv_curve),
-            surface: in_surface(surface),
-        },
-    }
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn cpp(i: &In) -> Result<Output, HarnessError> {
-    match ffi::run(&to_call(i)) {
-        Ok(v) => Ok(Output::new().values("rec", v)),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -802,10 +681,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
