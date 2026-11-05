@@ -1487,3 +1487,47 @@ fn a_ball_patch_extends_its_own_net_on_its_sphere_up_to_its_caps() {
         assert!((out.radius() - r).abs() == 0.0 && out.centre() == c);
     }
 }
+
+/// A rounding-sized distance (the reach beside a face whose new surface passes through
+/// its old edges) is extended, not refused: the bisection used to ask an extension whose
+/// knot `4 + e` rounded onto the side's knot 4, a span of no length (`SM_ERR`). The
+/// shortest extension the knot carries meets it.
+#[test]
+fn a_cylinder_extends_by_a_rounding_sized_distance() {
+    use crate::surface::implicit::{lies_on, AnalyticSupport};
+    let kk = k();
+    let c = Surface::from(
+        crate::primitive::api_primitives::create_cylinder_surface(
+            &kk,
+            crate::math::Point3::new(0.0, 0.0, -1.0),
+            1.0,
+            4.0,
+        )
+        .unwrap(),
+    );
+    let on = AnalyticSupport::check(&kk, &c).unwrap().implicit();
+    for d in [3.5691962659704166e-16, f64::MIN_POSITIVE] {
+        let e = c
+            .extended_sides_keeping_parameters(&kk, &BoxSide::ALL, Continuity::Natural, d)
+            .unwrap();
+        let SurfaceKind::BSpline(grown) = e.surface.kind() else {
+            panic!("{d:e}: not a B-spline");
+        };
+        assert!(lies_on(grown, &on).unwrap(), "{d:e}");
+        // along the rulings: each side extended at least d, by no more than the shortest
+        // step its knot carries (a few ulps of the parameter, unit speed along v)
+        let mut extended = 0;
+        for s in e.sides {
+            let a = match s {
+                SideExtension::Extended(a) | SideExtension::UpToLimit(a) => a,
+                _ => continue,
+            };
+            extended += 1;
+            assert!(
+                a.enclosure.upper >= d && a.enclosure.lower <= 1e-14,
+                "{d:e} {a:?}"
+            );
+        }
+        assert_eq!(extended, 2, "{d:e} {:?}", e.sides);
+    }
+}

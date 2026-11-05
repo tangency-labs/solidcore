@@ -872,6 +872,19 @@ impl Local {
         Ok(self.end()? - self.start()?)
     }
 
+    /// The shortest extension [`Self::natural`] can carry past the end knot `b` (its last
+    /// span `[c, b]`): the step to the next double past `b`, so the new knot `b + e` is past
+    /// `b` (an extension whose knot rounds onto `b` would be a span of no length), and no
+    /// less than `(b - c) EPSILON`, so the de Casteljau parameter `1 + e / (b - c)` is past
+    /// 1 (any `x >= EPSILON (1 - u)` added to 1 rounds up to `1 + EPSILON`). A solver asks
+    /// nothing shorter: a rounding-sized target is met by this step.
+    pub(super) fn least_natural_step(&self) -> Result<f64> {
+        let b = self.end()?;
+        let c = self.before_end(0)?;
+        // (two neighbouring doubles: their difference is exact)
+        Ok((b.next_up() - b).max((b - c) * f64::EPSILON))
+    }
+
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
     fn before_end(&self, back: usize) -> Result<f64> {
         self.knots
@@ -1092,6 +1105,14 @@ impl Local {
         let b = self.end()?;
         let c = self.before_end(0)?;
         let p = self.p;
+        // a knot or a parameter that rounds back onto the side's is no extension: a span of
+        // no length (`least_natural_step` is the shortest that is one)
+        if !(b + e > b && 1.0 + e / (b - c) > 1.0) {
+            return Err(SolidError::invalid_input(
+                OP,
+                "the extension is shorter than the side's knot can carry",
+            ));
+        }
         // each row's origin: its end point (any point would do: it is exact by choice)
         let origins: Vec<[f64; 3]> = self
             .rows

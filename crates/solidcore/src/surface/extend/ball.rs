@@ -288,17 +288,18 @@ fn extend_side(
         })
     };
     let range = source.range()?;
+    let least = source.least_natural_step()?;
     let (e, capped) = match cap {
         Cap::Arc(arc) => {
             let target = distance.min(r * arc);
             (
-                reach(&|e| value(e, false), target, range)?,
+                reach(&|e| value(e, false), target, range, least)?,
                 target < distance,
             )
         }
         Cap::Round { length, turn } => {
             // within the length cap and the turn's (none where the turn never gets there)
-            let at_turn = match solve(&|e| value(e, true), turn, range)? {
+            let at_turn = match solve(&|e| value(e, true), turn, range, least)? {
                 Reach::At(e_turn) => Some((
                     e_turn,
                     value(e_turn, false)?.ok_or_else(|| SolidError::sm_err(OP))?,
@@ -309,7 +310,7 @@ fn extend_side(
             match at_turn {
                 Some((e_turn, l_turn)) if l_turn <= target => (e_turn, true),
                 _ => (
-                    reach(&|e| value(e, false), target, range)?,
+                    reach(&|e| value(e, false), target, range, least)?,
                     target < distance,
                 ),
             }
@@ -345,12 +346,22 @@ pub(super) enum Reach {
 
 /// The extension parameter where `f` (increasing from 0, `None` where a weight is not
 /// positive) reaches `target`: bracketed by doubling from `e0`, then bisected. A target past
-/// every positive ask is refused naming the longest value found.
-pub(super) fn solve(f: &dyn Fn(f64) -> Result<Option<f64>>, target: f64, e0: f64) -> Result<Reach> {
+/// every positive ask is refused naming the longest value found. No ask is below `least`,
+/// the shortest extension the side's knot can carry ([`Local::least_natural_step`]): a
+/// target shorter than its value is met by it (a rounding-sized reach, where the
+/// bisection would otherwise ask an extension whose knot rounds onto the side's).
+///
+/// [`Local::least_natural_step`]: super::Local::least_natural_step
+pub(super) fn solve(
+    f: &dyn Fn(f64) -> Result<Option<f64>>,
+    target: f64,
+    e0: f64,
+    least: f64,
+) -> Result<Reach> {
     let (mut lo, mut lo_v) = (0.0_f64, 0.0_f64);
     let mut hi = None;
     let mut bad = None;
-    let mut e = e0;
+    let mut e = e0.max(least);
     for _ in 0..BRACKET_TRIES {
         match f(e)? {
             Some(v) if v >= target => {
@@ -375,12 +386,14 @@ pub(super) fn solve(f: &dyn Fn(f64) -> Result<Option<f64>>, target: f64, e0: f64
         (None, Some(mut b)) => {
             // the longest positive ask below the first whose weights are not
             for _ in 0..BISECTIONS {
-                let m = 0.5 * (lo + b);
+                let m = (0.5 * (lo + b)).max(least);
                 if !(m > lo && m < b) {
                     break;
                 }
                 match f(m)? {
-                    Some(v) if v >= target => return Ok(Reach::At(bisect(f, target, lo, m)?)),
+                    Some(v) if v >= target => {
+                        return Ok(Reach::At(bisect(f, target, lo, m, least)?))
+                    }
                     Some(v) => {
                         lo = m;
                         lo_v = v;
@@ -395,24 +408,35 @@ pub(super) fn solve(f: &dyn Fn(f64) -> Result<Option<f64>>, target: f64, e0: f64
         }
         (None, None) => return Ok(Reach::Short(lo_v)),
     };
-    Ok(Reach::At(bisect(f, target, lo, hi)?))
+    Ok(Reach::At(bisect(f, target, lo, hi, least)?))
 }
 
-/// The parameter where `f` reaches `target`, or refused as not exact naming the longest
-/// value reached.
-pub(super) fn reach(f: &dyn Fn(f64) -> Result<Option<f64>>, target: f64, e0: f64) -> Result<f64> {
-    match solve(f, target, e0)? {
+/// The parameter where `f` reaches `target` (no ask below `least`, [`solve`]), or refused
+/// as not exact naming the longest value reached.
+pub(super) fn reach(
+    f: &dyn Fn(f64) -> Result<Option<f64>>,
+    target: f64,
+    e0: f64,
+    least: f64,
+) -> Result<f64> {
+    match solve(f, target, e0, least)? {
         Reach::At(e) => Ok(e),
         Reach::Short(v) => Err(refused(ExtendRefusal::NotExact, (v > 0.0).then_some(v))),
     }
 }
 
 /// Bisection of `[lo, hi]` (`f(lo) < target <= f(hi)`) until `f` is within `MEET` of the
-/// target.
-fn bisect(f: &dyn Fn(f64) -> Result<Option<f64>>, target: f64, lo: f64, hi: f64) -> Result<f64> {
+/// target, asking nothing below `least` (`least` itself when the target is below its value).
+fn bisect(
+    f: &dyn Fn(f64) -> Result<Option<f64>>,
+    target: f64,
+    lo: f64,
+    hi: f64,
+    least: f64,
+) -> Result<f64> {
     let (mut lo, mut hi) = (lo, hi);
     for _ in 0..BISECTIONS {
-        let m = 0.5 * (lo + hi);
+        let m = (0.5 * (lo + hi)).max(least);
         if !(m > lo && m < hi) {
             break;
         }
