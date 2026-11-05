@@ -1298,6 +1298,8 @@ fn two_squares() -> (PathBuf, Value, Slot) {
     (entry, e, input)
 }
 
+/// The traced stitch sews a copy of its operand along the shared edge and leaves the operand as
+/// it came in; the whole case replays to the rig's values.
 #[test]
 fn a_stitch_sews_a_copy_at_the_traced_tolerance() {
     let (entry, e, input) = two_squares();
@@ -1310,6 +1312,7 @@ fn a_stitch_sews_a_copy_at_the_traced_tolerance() {
     run_case(&entry, &e).unwrap();
 }
 
+/// A tolerance the operation refuses is its refusal; a call without one is bad replay data.
 #[test]
 fn a_stitch_refusal_is_the_operations_and_a_missing_tolerance_is_not() {
     let (_, _, input) = two_squares();
