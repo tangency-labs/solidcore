@@ -87,12 +87,18 @@ fn intersect(k: &Kernel) -> solidcore::Result<SurfaceIntersection> {
     with_quartic.global_surface_intersect(k, &d1, &without, &d2, [true, true], Some(tol), None)
 }
 
-/// The curve's ends and middle.
+/// Samples per curve, ends included.
+const SAMPLES: usize = 65;
+
+/// The curve at `SAMPLES` evenly spaced parameters, ends included.
 fn samples(k: &Kernel, curve: &Curve) -> Vec<Point3> {
     let interval = curve.natural_interval();
-    [interval.min(), interval.mid(), interval.max()]
-        .into_iter()
-        .map(|t| curve.evaluate_point(k, t).unwrap())
+    (0..SAMPLES)
+        .map(|i| {
+            let t = interval.min()
+                + (interval.max() - interval.min()) * i as f64 / (SAMPLES - 1) as f64;
+            curve.evaluate_point(k, t).unwrap()
+        })
         .collect()
 }
 
@@ -110,8 +116,8 @@ fn wr_80_quartic_contact_completes() {
     // both (each sheet's slope is at most about 2 here) has `y^4` below a few times the
     // tolerance; `(4e-6)^(1/4)`, about 0.045, bounds it with room to spare.
     let contact_band = 4e-6_f64.powf(0.25);
-    let points: Vec<Point3> = r.curves_3d.iter().flat_map(|c| samples(&k, c)).collect();
-    for p in &points {
+    let curves: Vec<Vec<Point3>> = r.curves_3d.iter().map(|c| samples(&k, c)).collect();
+    for p in curves.iter().flatten() {
         // on the sheet without the quartic term, which is the graph
         // z = 0.5 y^3 - 0.5 y + 0.2 x^2
         let on_sheet = 0.5 * p.y * p.y * p.y - 0.5 * p.y + 0.2 * p.x * p.x;
@@ -121,10 +127,30 @@ fn wr_80_quartic_contact_completes() {
             "{p:?} is off the contact parabola"
         );
     }
-    // the curves reach both ends of the parabola, x = -1 and x = 1, so no trace
-    // stopped short
-    let x_min = points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-    let x_max = points.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-    assert!(x_min < -1.0 + 1e-6, "no curve reaches x = -1 (min {x_min})");
-    assert!(x_max > 1.0 - 1e-6, "no curve reaches x = 1 (max {x_max})");
+    // The curves cover the whole parabola, x from -1 to 1, without a gap. A curve is
+    // connected, so its projection on x is an interval: the union of the curves'
+    // sampled x-extents must be one interval reaching both ends. Curves that meet share
+    // an end point, so two neighbours' extents overlap or touch.
+    let mut extents: Vec<(f64, f64)> = curves
+        .iter()
+        .map(|c| {
+            let lo = c.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+            let hi = c.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+            (lo, hi)
+        })
+        .collect();
+    extents.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (first_lo, mut reach) = extents[0];
+    assert!(
+        first_lo < -1.0 + 1e-6,
+        "no curve reaches x = -1 (min {first_lo})"
+    );
+    for &(lo, hi) in &extents[1..] {
+        assert!(
+            lo <= reach + 1e-6,
+            "the curves leave x in ({reach}, {lo}) uncovered: {extents:?}"
+        );
+        reach = reach.max(hi);
+    }
+    assert!(reach > 1.0 - 1e-6, "no curve reaches x = 1 (max {reach})");
 }

@@ -61,8 +61,9 @@
 //!   the curves are split at the singular points they pass through after the tangent
 //!   nodes are added (`super::singular_splits`); the SolidCraft fork's
 //!   tangency-labs/smlib@3c9d1d3. Off by default (upstream behaviour).
-//! - **Empty trace (WR-80).** A curve is traced back the other way only when
-//!   `TraceCurve` produced points. Upstream also reverses the empty curve of a trace
+//! - **Empty trace (WR-80).** A curve is traced back the other way
+//!   ([`SurfaceIntersector::trace_back`], part 4) only when `TraceCurve` produced
+//!   points. Upstream also reverses the empty curve of a trace
 //!   whose start already lies on a found curve, and `ReverseCurveDirection` fails the
 //!   whole intersection with `SM_ERR_NULL_POINTER` (the fork's
 //!   tangency-labs/smlib@0dbe681).
@@ -723,23 +724,13 @@ impl<'t, O: SolutionObject + Copy + PartialEq + 't> AdvSurfaceIntersector<'_, 't
                         && (sp.v_param_type(srf) == ExtentPointType::Inside
                             || is_zero_to_tol(sp.uv_deriv(srf).y, EFF_ZERO))
                 };
-                // only a trace that produced points is traced back (WR-80: a trace whose
-                // start already lies on a found curve adds none, and there is nothing to
-                // trace back from)
-                if !self.base.curve_points.is_empty()
-                    && !self.base.curve_is_closed
+                // trace the curve in the opposite direction (not an empty trace, WR-80)
+                if !self.base.curve_is_closed
                     && input_trace_direction == self.base.curve_trace_direction
                     && along(SrfIndex::First)
                     && along(SrfIndex::Second)
                 {
-                    // trace the curve in the opposite direction
-                    self.base.reverse_curve_direction()?;
-                    self.base.curve_trace_direction *= -1.0;
-                    self.base.trace_curve(k, start, &out.curves_3d)?;
-
-                    // restore the curve direction (upstream multiplies by 1.0)
-                    self.base.curve_trace_direction *= 1.0;
-                    self.base.reverse_curve_direction()?;
+                    self.base.trace_back(k, start, &out.curves_3d)?;
                 }
 
                 // opt-in fix (WR-76, #392): a traced curve that ends on a boundary
