@@ -49,7 +49,9 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use solidcore_ops::blend::{blend, Blend, Corners};
+use solidcore_ops::blend::{
+    blend, chamfer_sides_ordered, edge_faces_along_ordered, Blend, ChamferSecond, Corners,
+};
 use solidcore_ops::boolean::{boolean, union_all, BooleanOp};
 use solidcore_ops::sweep::{extrude, revolve, Curve, DraftCorner};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
@@ -74,6 +76,7 @@ const PORTED: &[&str] = &[
     "extrude",
     "revolve",
     "blend_dropping",
+    "chamfer_sides",
 ];
 
 /// The relative tolerance the rig grades volume and area with when a case states none.
@@ -403,6 +406,29 @@ fn call_with_copy(
                 p["cap"].as_bool().ok_or_else(|| bad("cap"))?,
             ))
         }
+        "chamfer_sides" => {
+            let distance = p["distance"].as_f64().ok_or_else(|| bad("distance"))?;
+            let direction = f64s::<3>(&p["first"]).ok_or_else(|| bad("first"))?;
+            let second = match (
+                p["second"]["distance"].as_f64(),
+                p["second"]["angle"].as_f64(),
+            ) {
+                (Some(d), None) => ChamferSecond::Distance(d),
+                (None, Some(a)) => ChamferSecond::Angle(a),
+                _ => return Err(bad("second")),
+            };
+            let mut s = copy_for_edit(&first()?)?;
+            let (edges, order) = faces(&mut s, &p["edges"])?;
+            let mut along = Vec::new();
+            for &edge in &edges {
+                let pair = edge_faces_along_ordered(&s.body, &order, edge, direction)
+                    .map_err(|e| Stop::Fail(format!("chamfer face query: {e}")))?;
+                let [(a, da), (b, db)] = pair;
+                along.push(if da >= db { a } else { b });
+            }
+            let r = chamfer_sides_ordered(&s.body, &order, &edges, &along, distance, second);
+            in_place(Slot { order: None, ..s }, r)
+        }
         "blend_dropping" => {
             if p.get("turn").is_some() {
                 return Err(Stop::Unsupported(
@@ -425,7 +451,30 @@ fn call_with_copy(
                 .ok_or_else(|| bad("sizes"))?;
             let mut s = copy_for_edit(&first()?)?;
             let (edges, _) = faces(&mut s, &p["edges"])?;
-            let r = blend(&s.body, kind, &edges, &sizes, &[], Corners::Filled).map(|_| ());
+            let one_size = sizes.len() == 1;
+            if !(one_size || sizes.len() == edges.len()) {
+                return Err(bad("sizes"));
+            }
+            // SolidCraft validates every supplied size before its picker retains the first
+            // point for each edge. A bad later size must not disappear with its duplicate.
+            if sizes.iter().any(|&size| {
+                !size.is_finite() || size <= 0.0 || size > solidcore_ops::blend::MAX_SIZE
+            }) {
+                return Ok(Err(solidcore_ops::Error::Argument.to_string()));
+            }
+            let mut unique = Vec::new();
+            let mut each = Vec::new();
+            for (i, edge) in edges.into_iter().enumerate() {
+                if !unique.contains(&edge) {
+                    unique.push(edge);
+                    each.push(
+                        *sizes
+                            .get(if one_size { 0 } else { i })
+                            .ok_or_else(|| bad("sizes"))?,
+                    );
+                }
+            }
+            let r = blend(&s.body, kind, &unique, &each, &[], Corners::Filled).map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
         other => {
@@ -451,7 +500,15 @@ fn measure(result: &[Slot]) -> Result<Measured, String> {
     };
     let mut volume = Some(0.0);
     for s in result {
-        let c = s.body.counts().map_err(|e| format!("counts: {e}"))?;
+        // Counted as the record writes the body, the rig's convention (`outcome.raw_counts`): a
+        // line where the body touches itself is one edge in the kernel's list and one per pair
+        // of faces in the record.
+        let (record, _) = s.body.to_record().map_err(|e| format!("record: {e}"))?;
+        let c = [
+            record.faces.len(),
+            record.edges.len(),
+            record.vertices.len(),
+        ];
         for (a, b) in m.counts.iter_mut().zip(c) {
             *a += b;
         }
@@ -634,6 +691,143 @@ fn run_case_with_records(
     }
 }
 
+#[test]
+fn chamfer_dispatch_preserves_order_direction_sizes_and_operand() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    for (direction, second, x, z) in [
+        (1.0, serde_json::json!({"distance": 3.0}), 15.0, 17.0),
+        (-1.0, serde_json::json!({"distance": 3.0}), 17.0, 15.0),
+        (
+            1.0,
+            serde_json::json!({"angle": std::f64::consts::FRAC_PI_6}),
+            15.0,
+            17.113_248_654_051_87, // 20 - 5 / sqrt(3), the 30-degree cut.
+        ),
+    ] {
+        let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
+        let (record, mut order) = body.to_record().unwrap();
+        let edge = record
+            .edges
+            .iter()
+            .position(|e| {
+                e.vertices.iter().all(|&i| {
+                    let p = record.vertices[i as usize].point;
+                    p[0] == 20.0 && p[2] == 20.0
+                })
+            })
+            .unwrap();
+        let id = order.edges[edge];
+        order.edges.rotate_left(3);
+        order.faces.rotate_left(2);
+        let pick = order.edges.iter().position(|&e| e == id).unwrap();
+        let input = Slot {
+            body: body.clone(),
+            order: Some(order),
+        };
+        let out = call(
+            &serde_json::json!({"op": "chamfer_sides", "params": {
+                "edges": {"picked": [{"index": pick}]}, "first": [0, 0, direction],
+                "distance": 5.0, "second": second
+            }}),
+            &mut [input],
+        )
+        .unwrap()
+        .unwrap();
+        assert!(out.order.is_none());
+        let (made, made_order) = out.body.to_record().unwrap();
+        let (_, mapped) = out.body.copy_with_order(&made_order).unwrap();
+        assert!(
+            made_order
+                .edges
+                .iter()
+                .zip(&mapped.edges)
+                .any(|(a, b)| a != b),
+            "the measurement-copy check must exercise renumbered entities"
+        );
+        for edge in 0..made.edges.len() {
+            let pair =
+                edge_faces_along_ordered(&out.body, &made_order, edge, [0.0, 0.0, 1.0]).unwrap();
+            for (face, lean) in pair {
+                assert!(made.edges[edge]
+                    .uses
+                    .iter()
+                    .any(|u| u.face as usize == face));
+                let normal = out
+                    .body
+                    .face_normal_at_edge(&made_order, edge, face)
+                    .unwrap();
+                assert!((lean - normal.value[2]).abs() < 1e-12);
+            }
+        }
+        for target in [[x, 0.0, 20.0], [20.0, 0.0, z]] {
+            assert!(
+                made.vertices.iter().any(|v| v
+                    .point
+                    .iter()
+                    .zip(target)
+                    .all(|(a, b)| (a - b).abs() < 1e-7)),
+                "missing {target:?}"
+            );
+        }
+        let removed = 0.5 * (20.0 - x) * (20.0 - z) * 20.0;
+        assert!((out.body.volume(1e-9).unwrap() - (8000.0 - removed)).abs() < 1e-6);
+        assert!((body.volume(1e-9).unwrap() - 8000.0).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn repeated_blend_picks_keep_first_size_and_source() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let record = solidcore_ops::make_box([0.0; 3], [20.0; 3])
+        .unwrap()
+        .to_record()
+        .unwrap()
+        .0;
+    let edge = record
+        .edges
+        .iter()
+        .position(|e| {
+            e.vertices.iter().all(|&i| {
+                let p = record.vertices[i as usize].point;
+                p[0] == 20.0 && p[2] == 20.0
+            })
+        })
+        .unwrap();
+    for sizes in [serde_json::json!([2.0, 7.0]), serde_json::json!([2.0])] {
+        check_discarded_edit(
+            record.clone(),
+            "blend_dropping",
+            &serde_json::json!({
+                "kind": "chamfer", "edges": {"picked": [{"index": edge}, {"index": edge}]},
+                "sizes": sizes
+            }),
+            &serde_json::json!({"body_count": 1, "volume_mm3": 7960.0}),
+            serde_json::json!({"body_count": 1, "volume_mm3": 8000.0}),
+        );
+    }
+}
+
+#[test]
+fn repeated_blend_picks_do_not_hide_invalid_later_sizes() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let record = solidcore_ops::make_box([0.0; 3], [20.0; 3])
+        .unwrap()
+        .to_record()
+        .unwrap()
+        .0;
+    for sizes in [
+        serde_json::json!([2.0, -7.0]),
+        serde_json::json!([2.0, 1_000_001.0]),
+    ] {
+        let mut records = serde_json::Map::new();
+        records.insert("input".to_owned(), serde_json::to_value(&record).unwrap());
+        let e = serde_json::json!({"bodies": {"input": {"trusted": true}},
+            "calls": [{"op": "blend_dropping", "inputs": ["input"], "error": "invalid size",
+                "params": {"kind": "chamfer", "edges": {"picked": [{"index": 0}, {"index": 0}]}, "sizes": sizes}}]});
+        assert!(run_case_with_records(&e, || records).unwrap().is_none());
+    }
+}
+
 fn handled_refusal_case() -> Value {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     serde_json::json!({
@@ -735,6 +929,19 @@ fn a_terminal_refusal_cannot_hide_later_invalid_markers() {
             matches!(run_case(Path::new("unused.json"), &e), Err(Stop::Fail(why)) if why.contains("continued"))
         );
     }
+}
+
+/// The final bodies are counted as their records write them, the convention of the rig's
+/// `raw_counts` (#2817). Here the hole is tangent to the front face, so the body touches itself
+/// along a line: the kernel keeps that line as one edge with four uses, the record writes it once
+/// per pair of faces (its Touching rule), 21 edges where the kernel's list has 20.
+#[test]
+fn a_body_touching_itself_along_a_line_is_counted_as_its_record() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join("ladder/02-booleans/018-hole-tangent-to-side-face.json");
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    assert_eq!(e["outcome"]["raw_counts"]["edges"], 21);
+    run_case(&entry, &e).unwrap();
 }
 
 fn check_discarded_edit(record: Record, op: &str, params: &Value, made: &Value, retained: Value) {
@@ -894,12 +1101,19 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
         body: Arc::new(solidcore_ops::make_box([0.0; 3], [1.0; 3]).unwrap()),
         order: None,
     };
-    for op in ["copy", "transform", "shell", "offset_faces", "thicken"] {
+    for op in [
+        "copy",
+        "transform",
+        "shell",
+        "offset_faces",
+        "thicken",
+        "chamfer_sides",
+    ] {
         let step = serde_json::json!({
             "op": op, "error": "expected edit refusal",
             "params": {"matrix": [
                 [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]
-            ]}
+            ], "distance": 1, "first": [0,0,1], "second": {"distance": 2}}
         });
         // Inject failure at the copy boundary: no edit has been attempted yet.
         let result = call_with_copy(&step, &mut [input.clone()], |_| {
@@ -943,6 +1157,9 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
         serde_json::json!({"op": "thicken", "params": {
             "thickness": 0.1, "symmetric": false
         }}),
+        serde_json::json!({"op": "chamfer_sides", "params": {
+            "distance": 1, "first": [0,0,1], "second": {"distance": 2}
+        }}),
     ] {
         step["error"] = serde_json::json!("expected refusal");
         match call(&step, &mut [input.clone()]) {
@@ -952,6 +1169,33 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
             Ok(Ok(_)) => panic!("invalid mapping was accepted"),
         }
     }
+}
+
+#[test]
+fn a_missing_adjacent_face_cannot_count_as_a_chamfer_refusal() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
+    let (_, mut order) = body.to_record().unwrap();
+    let pair = edge_faces_along_ordered(&body, &order, 0, [0.0, 0.0, 1.0]).unwrap();
+    order.faces.remove(pair[0].0);
+    let input = Slot {
+        body: body.clone(),
+        order: Some(order),
+    };
+    let step = serde_json::json!({
+        "op": "chamfer_sides", "error": "expected chamfer refusal",
+        "params": {
+            "edges": {"picked": [{"index": 0}]}, "first": [0, 0, 1],
+            "distance": 5.0, "second": {"distance": 3.0}
+        }
+    });
+    match call(&step, &mut [input]) {
+        Err(Stop::Fail(why)) => assert!(why.contains("chamfer face query"), "{why}"),
+        Err(other) => panic!("wrong face-query failure: {other:?}"),
+        Ok(Err(why)) => panic!("face-query error became a chamfer refusal: {why}"),
+        Ok(Ok(_)) => panic!("missing adjacent-face mapping was accepted"),
+    }
+    assert!((body.volume(1e-9).unwrap() - 8000.0).abs() < 1e-6);
 }
 
 #[test]
