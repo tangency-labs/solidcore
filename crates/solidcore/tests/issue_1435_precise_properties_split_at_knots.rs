@@ -113,22 +113,24 @@ fn torus_mass_properties_hold_their_accuracy() {
     assert_rel("torus Izz", m.inertia.z, izz);
 }
 
-/// Flag off (upstream v1.0.1, the default): the issue's repro misses the accuracy it
-/// asks for, as the C++ reference does: the cylinder's side face 5.2e-8 off 2πrh.
+/// Flag off (the default): the issue's repro missed the accuracy it asks for, 5.2e-8 off
+/// 2πrh, as the C++ reference does. Its steps across the surface's knots were accepted on
+/// the embedded estimate alone; with the fifth-order estimate too (#1556) it holds it.
 #[test]
-fn upstream_cylinder_side_face_area_misses_its_accuracy() {
+fn default_cylinder_side_face_area_holds_its_accuracy() {
     let mut k = Kernel::default();
     let mut b = create_cylinder(&mut k, Vec3::new(1.0, 2.0, -3.0), 5.0, 12.0).unwrap();
     let side = faces(&b, None).unwrap()[0];
     let a = face_area(&k, &mut b, side, ACCURACY).unwrap();
     let exact = 2.0 * PI * 5.0 * 12.0;
     let err = (a - exact).abs() / exact;
-    assert!(err > ACCURACY, "{a} vs {exact} ({err:e} relative)");
+    assert!(err <= ACCURACY, "{a} vs {exact} ({err:e} relative)");
 }
 
-/// Flag off: the issue's torus inertia, 1.7e-9 off V (R^2/2 + 5 r^2/8).
+/// Flag off: the issue's torus inertia was 1.7e-9 off V (R^2/2 + 5 r^2/8); with the
+/// fifth-order estimate (#1556) it holds 1e-9.
 #[test]
-fn upstream_torus_inertia_misses_1e_9() {
+fn default_torus_inertia_holds_1e_9() {
     let mut k = Kernel::default();
     let centre = Vec3::new(1.0, -1.0, 0.5);
     let (rr, r) = (10.0, 3.0);
@@ -143,5 +145,5 @@ fn upstream_torus_inertia_misses_1e_9() {
     let volume = 2.0 * PI * PI * rr * r * r;
     let ixx = volume * (rr * rr / 2.0 + 5.0 * r * r / 8.0);
     let err = (m.inertia.x - ixx).abs() / ixx;
-    assert!(err > REL, "{} vs {ixx} ({err:e} relative)", m.inertia.x);
+    assert!(err <= REL, "{} vs {ixx} ({err:e} relative)", m.inertia.x);
 }

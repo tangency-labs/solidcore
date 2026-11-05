@@ -252,7 +252,9 @@ fn rounded_with(keep: bool, feature: Feature, r: f64) -> Result<(f64, usize)> {
 /// (by -2.4e-7 at most, 1e-11 of it). Against the closed forms: the r 1.9 boss and hole are off
 /// by +2.0e-7 and -3.6e-7 (the fork's +4.4e-7 and -1.9e-7), and the r 8 kept cylinder boss and
 /// hole, cone boss and 19 degree lean stay 3.4e-5 to 4.8e-5 above theirs, the crease's fit, as
-/// the fork's do; the cone pit has none.
+/// the fork's do; the cone pit has none. The precise-property steps' fifth-order error
+/// estimate (#1556) moves the curved bodies' figures by 5.0e-13 at most, and the prisms'
+/// and the taken features' by a last bit.
 fn assert_as_the_fork(keep: bool, feature: Feature, r: f64, volume: f64, faces: usize) {
     let (v, n) = rounded_with(keep, feature, r).unwrap();
     // Bit for bit where the figures were taken. Elsewhere the platform's libm can move
@@ -272,7 +274,7 @@ fn assert_as_the_fork(keep: bool, feature: Feature, r: f64, volume: f64, faces: 
     assert_eq!(n, faces);
 }
 
-const TAKEN: f64 = 23450.619298757138;
+const TAKEN: f64 = 23450.619298757134;
 
 fn cylinder_boss(k: &mut Kernel, block: Brep) -> Result<Brep> {
     let c = create_cylinder(k, Point3::new(20.0, 4.0, 20.0), 2.0, 5.0)?;
@@ -306,13 +308,13 @@ fn cone_pit(k: &mut Kernel, block: Brep) -> Result<Brep> {
 
 #[test]
 fn cylinders_match_the_fork() {
-    assert_as_the_fork(true, cylinder_boss, 8.0, 23528.165527751564, 9);
-    assert_as_the_fork(true, cylinder_hole, 8.0, 23402.50183529772, 9);
+    assert_as_the_fork(true, cylinder_boss, 8.0, 23528.165527753492, 9);
+    assert_as_the_fork(true, cylinder_hole, 8.0, 23402.501835298488, 9);
     assert_as_the_fork(false, cylinder_boss, 8.0, TAKEN, 7);
     assert_as_the_fork(false, cylinder_hole, 8.0, TAKEN, 7);
     for keep in [true, false] {
-        assert_as_the_fork(keep, cylinder_boss, 1.9, 24031.843348063165, 9);
-        assert_as_the_fork(keep, cylinder_hole, 1.9, 23906.179641364106, 9);
+        assert_as_the_fork(keep, cylinder_boss, 1.9, 24031.84334806833, 9);
+        assert_as_the_fork(keep, cylinder_hole, 1.9, 23906.179641369188, 9);
     }
 }
 
@@ -320,7 +322,7 @@ fn cylinders_match_the_fork() {
 #[test]
 fn prisms_match_the_fork() {
     assert_as_the_fork(true, prism_boss, 8.0, 23549.896259768986, 12);
-    assert_as_the_fork(true, prism_pocket, 8.0, 23389.896259952176, 12);
+    assert_as_the_fork(true, prism_pocket, 8.0, 23389.896259952173, 12);
     assert_as_the_fork(false, prism_boss, 8.0, TAKEN, 7);
     assert_as_the_fork(false, prism_pocket, 8.0, TAKEN, 7);
 }
@@ -328,8 +330,8 @@ fn prisms_match_the_fork() {
 /// Walls that lean: kept as the fork keeps them, the boss's with no refusal.
 #[test]
 fn cones_match_the_fork() {
-    assert_as_the_fork(true, cone_boss, 8.0, 23501.985588867778, 11);
-    assert_as_the_fork(true, cone_pit, 8.0, 23427.540889397336, 9);
+    assert_as_the_fork(true, cone_boss, 8.0, 23501.985588856085, 11);
+    assert_as_the_fork(true, cone_pit, 8.0, 23427.54088939281, 9);
     assert_as_the_fork(false, cone_boss, 8.0, TAKEN, 7);
     assert_as_the_fork(false, cone_pit, 8.0, TAKEN, 7);
 }
@@ -351,7 +353,7 @@ fn a_boss_leaning_past_the_angular_tolerance_is_refused_as_the_fork() {
         let c = create_cone(k, Point3::new(20.0, 4.0, 20.0), 2.0, 1.0, 1.0)?;
         boolean_union(k, block, c)
     }
-    assert_as_the_fork(true, lean_19, 8.0, 23486.59179070625, 11);
+    assert_as_the_fork(true, lean_19, 8.0, 23486.59179069601, 11);
     assert_as_the_fork(false, lean_19, 8.0, TAKEN, 7);
     for steep in [lean_30 as Feature, lean_45] {
         assert!(rounded_with(true, steep, 8.0).is_err());
