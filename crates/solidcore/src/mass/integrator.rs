@@ -601,6 +601,49 @@ mod tests {
         }
     }
 
+    /// Tiny direct ODE intervals integrate in both directions and clip overshooting stages.
+    #[test]
+    fn tiny_ode_intervals_clip_without_distance_product_underflow() {
+        let solver = OdeIntegrator::new(32, EFF_ZERO_SQ).unwrap();
+        for (a, b, expected) in [(0.0, 1e-200, 1.0), (1e-200, 0.0, -1.0)] {
+            for initial_step in [1e-201, 2e-200] {
+                let mut initial = [7.0];
+                let mut calls = 0;
+                let counts = solver
+                    .integrate(
+                        &mut initial,
+                        a,
+                        b,
+                        OdeOptions {
+                            accuracy: 1e-8,
+                            initial_step,
+                            minimum_step: 0.0,
+                            scale: None,
+                        },
+                        |x, _, d| {
+                            calls += 1;
+                            if initial_step == 2e-200 {
+                                assert!(x >= 0.0 && x <= 1e-200, "stage outside interval: {x}");
+                            }
+                            d[0] = 1e200;
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                assert!(calls > 0);
+                assert!(
+                    (initial[0] - expected).abs() < 1e-12,
+                    "{} vs {expected}",
+                    initial[0]
+                );
+                if initial_step == 2e-200 {
+                    assert_eq!(counts.good, 1);
+                    assert_eq!(counts.reduced, 0);
+                }
+            }
+        }
+    }
+
     /// Direct ODE stepping must advance, or refuse without changing the initial state.
     #[test]
     fn ode_progress_and_refusal() {
