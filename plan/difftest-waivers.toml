@@ -27,25 +27,119 @@ case = "nurb_fillet_face5_same"
 reason = "ND-493 C++ clock-seeded rand() (srand(time(NULL)) in GetPointsInFace via IsInnerShell in the merge stitch): intermittent on main CI at c47d6d3b5 and 7ca6ce7a9; Rust deterministic; parked"
 
 [[waiver]]
-unit = "curve.curve_p3"
+unit = "blend.fillet_corner_p1"
 check = "ratchet"
-case = "circle_pc_extrema"
-reason = "#2639, WR-740 (confirmed): parked as cpp_defect, the C++ returns its 0.05 C.C limit as F prime at a circle centre where the true F prime is 0"
+reason = "old corner code deleted, #2400: the blend corner is the default; its corner cases on the deleted 1x1 and 2x2 classes are retired (no Rust class is left to compare) (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
 
 [[waiver]]
-unit = "heal.face_props"
+unit = "blend.fillet_corner_p2"
 check = "ratchet"
-case = "gen0010"
-reason = "#2639, WR-740 (confirmed): parked as cpp_defect, the C++ finds no closest point on a seam circle from about 1 off its axis, so it misses the V seam"
+reason = "old corner code deleted, #2400: the blend corner is the default; its corner cases on the deleted 1x1 and 2x2 classes and its AdjustTopology cases that reach the deleted big-radius conversion are retired; 2 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
 
 [[waiver]]
-unit = "blend.fillet_executive_p3"
+unit = "blend.fillet_corner_p3"
 check = "ratchet"
-case = "big-rad-filleted_box-r2.0-top-edges"
-reason = "#2639, WR-739 (confirmed): parked as cpp_defect, the C++ rounds the top loop r 2 over R1 vertical rounds into self-crossing spindle-torus corner faces; solidcore refuses it naming 1"
+reason = "old corner code deleted, #2400: the blend corner is the default; its cases on the deleted 1x1 and 2x2 classes, AdjustTangentCorner and TestAndConvertBigRadFillet (big_rad_*, and the AdjustTopology cases that reach it) are retired; 95 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
 
 [[waiver]]
 unit = "blend.fillet_executive_p3"
 check = "ratchet"
-case = "big-rad-filleted_box-r3.0-top-edges"
-reason = "#2639, WR-739 (confirmed): as r2.0, r 3"
+reason = "old corner code deleted, #2400: the blend corner is the default; 155 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "blend.fillet_geom_p4"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 23 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "intersect.api_intersectors"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 1 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "intersect.surface_intersector_p2"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 40 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "primitive.api_trim_ops"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 9 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "surface.torus"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 12 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "topology.api_files"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 2 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "topology.api_projection"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 5 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "topology.brep_cutting"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 19 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "topology.brep_local_operation"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 6 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "topology.brep_planar_section"
+check = "ratchet"
+reason = "old corner code deleted, #2400: the blend corner is the default; 12 passes are known mismatches (plan/findings/blend.fillet_corner_p3--blend-corner-default-diverges-from-cpp-v1-0-1-2026-11-04.md). Remove once #2400 has merged."
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "tiny_tolerance_sheet_exact_boundary"
+reason = "#2393, WR-749 (confirmed): parked as cpp_defect, the C++ shells a sheet of tolerance 1e-15 into a result of tolerance 1e-15, below SM_EFF_ZERO; solidcore refuses it by name (OffsetFailure::ToleranceUnresolved)"
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "tiny_tolerance_sheet_above_boundary"
+reason = "#2393, WR-749 (confirmed): as tiny_tolerance_sheet_exact_boundary"
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "fuzz00087"
+reason = "HANG-53 (#2737): the offset distance is below the input B-rep tolerance (0, -0, or tolerance 1e300 against 0.5), which the offset now refuses on both sides before building anything; the case was compared before and is rejected now"
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "empty_static_offset_negative_zero_not_success"
+reason = "HANG-53 (#2737): the offset distance is below the input B-rep tolerance (0, -0, or tolerance 1e300 against 0.5), which the offset now refuses on both sides before building anything; the case was compared before and is rejected now"
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "gen0075"
+reason = "HANG-53 (#2737): the offset distance is below the input B-rep tolerance (0, -0, or tolerance 1e300 against 0.5), which the offset now refuses on both sides before building anything; the case was compared before and is rejected now"
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "gen0178"
+reason = "HANG-53 (#2737): the offset distance is below the input B-rep tolerance (0, -0, or tolerance 1e300 against 0.5), which the offset now refuses on both sides before building anything; the case was compared before and is rejected now"
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "gen0186"
+reason = "HANG-53 (#2737): the offset distance is below the input B-rep tolerance (0, -0, or tolerance 1e300 against 0.5), which the offset now refuses on both sides before building anything; the case was compared before and is rejected now"
+
+[[waiver]]
+unit = "offset.offset_executive_p2"
+check = "ratchet"
+case = "gen0212"
+reason = "HANG-53 (#2737): the offset distance is below the input B-rep tolerance (0, -0, or tolerance 1e300 against 0.5), which the offset now refuses on both sides before building anything; the case was compared before and is rejected now"

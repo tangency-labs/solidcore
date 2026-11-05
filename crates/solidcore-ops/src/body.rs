@@ -11,17 +11,21 @@ use solidcore::kernel::Kernel;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::certified::Verdict;
 use solidcore::mass::integrator::properties::{brep_volume, no_unsure_region, PropertyAttributes};
+use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::primitive::api_primitives as primitives;
 use solidcore::topology::brep::mirror::transform_matrix;
-use solidcore::topology::brep::p3::brep_copy;
+use solidcore::topology::brep::p3::{brep_copy, brep_copy_mapped};
 use solidcore::topology::brep::{is_outward_solid, is_outward_touching_solids};
-use solidcore::{Brep, Vec3};
+use solidcore::topology::face::p2 as face_p2;
+use solidcore::topology::FaceId;
+use solidcore::{Brep, EntityRef, Vec3};
 
 use solidcore_convert::brep::{to_kernel, to_record, Order, Unsupported};
 use solidcore_record::brep::Brep as Record;
 
 use crate::error::status;
 use crate::session::{measure_body, read_body, run, with_body};
+use crate::split::copies_of;
 use crate::{Error, Result};
 
 /// A kernel body, with its own lock: the kernel's operations take `&mut Brep`, even to measure.
@@ -70,6 +74,51 @@ impl Body {
     /// Those of the kernel's copy; [`Error::Internal`] for a body a panic left unfinished.
     pub fn copy(&self) -> Result<Body> {
         read_body("SmApiBrepCopy", self, brep_copy).map(Body::new)
+    }
+
+    /// A deep copy with `order` mapped to the copy's own entity IDs. The ordering of each
+    /// vector is preserved, including an importer's order that differs from the body's lists.
+    /// No correspondence by numeric ID or list position is assumed.
+    ///
+    /// # Errors
+    /// Those of [`Self::copy`]; [`Error::Record`] when an entity in `order` has no copy.
+    pub fn copy_with_order(&self, order: &Order) -> Result<(Body, Order)> {
+        let (copy, order) = read_body("SmApiBrepCopy", self, |k, b| {
+            let (copy, map) = brep_copy_mapped(k, b)?;
+            let Some(faces) = copies_of(&map, &order.faces, EntityRef::Face, |e| match e {
+                EntityRef::Face(f) => Some(f),
+                _ => None,
+            }) else {
+                return Ok(Err(Error::Record(
+                    "copy record order names a face without a copy".to_owned(),
+                )));
+            };
+            let Some(edges) = copies_of(&map, &order.edges, EntityRef::Edge, |e| match e {
+                EntityRef::Edge(x) => Some(x),
+                _ => None,
+            }) else {
+                return Ok(Err(Error::Record(
+                    "copy record order names an edge without a copy".to_owned(),
+                )));
+            };
+            let Some(vertices) = copies_of(&map, &order.vertices, EntityRef::Vertex, |e| match e {
+                EntityRef::Vertex(v) => Some(v),
+                _ => None,
+            }) else {
+                return Ok(Err(Error::Record(
+                    "copy record order names a vertex without a copy".to_owned(),
+                )));
+            };
+            Ok(Ok((
+                copy,
+                Order {
+                    faces,
+                    edges,
+                    vertices,
+                },
+            )))
+        })??;
+        Ok((Body::new(copy), order))
     }
 
     /// Moves this body by the affine `matrix` (`SmBrep::Transform(matrix, TRUE)`): rows 0-2 the
@@ -274,6 +323,57 @@ pub(crate) fn finish(
         return Ok(Err(Error::NotSolid));
     }
     Ok(Ok(b))
+}
+
+/// Copies of each attribute `from` carries in `src`.
+fn attribute_copies(src: &Brep, from: EntityRef) -> Vec<solidcore::geom::attribute::Attribute> {
+    src.entity_attributes(from)
+        .into_iter()
+        .map(|(_, a)| a.make_copy())
+        .collect()
+}
+
+/// `to` (in `into`) takes a copy of each attribute of `from` (in `src`): a rebuilt entity
+/// stands for the one it replaces.
+///
+/// # Errors
+/// The kernel's, from adding an attribute.
+pub(crate) fn copy_attributes(
+    src: &Brep,
+    from: EntityRef,
+    into: &mut Brep,
+    to: EntityRef,
+) -> solidcore::Result<()> {
+    for a in attribute_copies(src, from) {
+        into.add_attribute(to, a)?;
+    }
+    Ok(())
+}
+
+/// [`copy_attributes`] within one body.
+///
+/// # Errors
+/// The kernel's, from adding an attribute.
+pub(crate) fn copy_attributes_within(
+    b: &mut Brep,
+    from: EntityRef,
+    to: EntityRef,
+) -> solidcore::Result<()> {
+    for a in attribute_copies(b, from) {
+        b.add_attribute(to, a)?;
+    }
+    Ok(())
+}
+
+/// The orientation of `f`'s upward faceuse.
+///
+/// # Errors
+/// The kernel's, for a face not in `b`.
+pub(crate) fn upward(b: &Brep, f: FaceId) -> solidcore::Result<Option<OrientType>> {
+    Ok(match face_p2::upward_faceuse(b, f)? {
+        Some(fu) => Some(b.faceuse(fu)?.orientation),
+        None => None,
+    })
 }
 
 fn point(p: [f64; 3]) -> Result<Vec3> {

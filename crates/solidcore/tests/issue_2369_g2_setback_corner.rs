@@ -1,10 +1,9 @@
 //! tangency-labs/solidcore#2369 (smlib#104, WR-616): three curvature-continuous (G2) rounds
 //! of radius 2 meeting at a corner where every edge is rounded, all convex or all concave,
-//! with every face there a plane, are the Setback's to fill with `fillet_blend_corner`.
+//! with every face there a plane, are the Setback's to fill.
 //! This matches the fork's `SmBlendCorner::ClassifySetBack` (tangency-labs/smlib `b5bb747`:
 //! rounds of one kind, all `SM_FSG_BLEND_CURVE`, are G2, so `SM_BCE_SETBACK` with fill order
-//! 2). Each corner builds a valid body. Without the flag the pinned `SmFilletConvexNxNCorner`
-//! builds it, as before.
+//! 2). Each corner builds a valid body.
 //!
 //! The bodies are SolidCraft's kernel-rig inputs (brett19/solidcraft `b47da26e8`,
 //! `perf-inputs/2369-g2-corners/*/before-fillet.smb`), each taken just before its fillet.
@@ -26,7 +25,8 @@
 //! is checked to 1e-9 relative. The others pin what the port builds (measured; flag on: the
 //! Setback's G2 fill, 16, 16 and 20 faces). SolidCraft's expected values for them (9361.3087
 //! within 0.29%, 9545.9794 within 0.28%, the pocket by its invariants only) are graded by
-//! SolidCraft, not here.
+//! SolidCraft, not here. Each volume is integrated on the rounds' certified nets, so its
+//! check is widened by the most they can move it (`volume`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 
 use solidcore::blend::blend_corner::BlendCornerEvent;
@@ -38,10 +38,11 @@ use solidcore::boolean::api_brep::boolean_difference;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::object::ObjectRef;
 use solidcore::kernel::{Kernel, KernelOptions, UpstreamFixes};
-use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+use solidcore::mass::integrator::properties::{brep_area, brep_volume, PropertyAttributes};
 use solidcore::math::Point3;
 use solidcore::primitive::api_primitives::create_box;
 use solidcore::query::api_queries::edge_closest_point;
+use solidcore::surface::procedural_blend::NetScope;
 use solidcore::topology::api_files::read_brep_from_file;
 use solidcore::topology::brep::p10::TopologyEnv;
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
@@ -70,11 +71,10 @@ fn key_of(e: EntityRef) -> ObjectRef {
     }
 }
 
-/// Every opt-in fix on, with `fillet_blend_corner` (WR-616) on or off.
-fn kernel(blend: bool) -> Kernel {
+/// Every opt-in fix on.
+fn kernel() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     k.fixes = UpstreamFixes::all();
-    k.fixes.fillet_blend_corner = blend;
     k
 }
 
@@ -94,13 +94,33 @@ fn read(k: &mut Kernel, file: &str) -> Brep {
     b
 }
 
-fn volume(k: &Kernel, b: &mut Brep) -> f64 {
+/// The tolerance the volume asks of the blends' definitions (`NetScope::within`, #2510): a
+/// definition whose certified net is within it of the definition (the G2 rounds here, about
+/// 2.3e-9) is integrated by its net, a B-spline evaluation where the definition solves a
+/// station per point.
+const NET_TOL: f64 = 1e-8;
+
+/// The body's volume (`SmApiBrepComputeVolume` at 1e-8) with every definition whose net is
+/// within [`NET_TOL`] integrated by its net, and the most that can move it from the
+/// definitions' volume: each such face lies within its certified bound of its definition,
+/// so the volume moves by at most the largest of those bounds times the body's area.
+fn volume(k: &Kernel, b: &mut Brep) -> (f64, f64) {
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
         store: &store,
         key_of: &|_| ObjectKey(0),
     };
-    brep_volume(k, b, 1e-8, &attrs).unwrap()
+    let bound = b
+        .faces()
+        .ids()
+        .filter_map(|f| face2::surface(b, f).unwrap())
+        .filter_map(|s| s.procedural_definition().map(|d| d.bound()))
+        .filter(|&d| d <= NET_TOL)
+        .fold(0.0, f64::max);
+    let _net = NetScope::within(k, NET_TOL);
+    let v = brep_volume(k, b, 1e-8, &attrs).unwrap();
+    let area = brep_area(k, b, 1e-6).unwrap();
+    (v, bound * area)
 }
 
 fn pick(k: &Kernel, b: &Brep, p: [f64; 3]) -> EdgeId {
@@ -133,18 +153,13 @@ type Made = (FilletCornerType, Option<BlendCornerEvent>);
 /// SolidCraft's `curvature` fillet (its `blend_edges`): the picked edges rounded at radius 2
 /// with the G2 section at the equal-area thumbweight, the corners created, then filleted
 /// and stitched.
-fn round(blend: bool, file: &str, picks: &[[f64; 3]]) -> (Kernel, Brep, Made) {
-    round_kept(blend, true, file, picks)
+fn round(file: &str, picks: &[[f64; 3]]) -> (Kernel, Brep, Made) {
+    round_kept(true, file, picks)
 }
 
 /// [`round`], with `definition` (`fillet_round_as_definition`, #2488) set.
-fn round_kept(
-    blend: bool,
-    definition: bool,
-    file: &str,
-    picks: &[[f64; 3]],
-) -> (Kernel, Brep, Made) {
-    let mut k = kernel(blend);
+fn round_kept(definition: bool, file: &str, picks: &[[f64; 3]]) -> (Kernel, Brep, Made) {
+    let mut k = kernel();
     k.fixes.fillet_round_as_definition = definition;
     let mut b = read(&mut k, file);
     let es: Vec<EdgeId> = picks.iter().map(|p| pick(&k, &b, *p)).collect();
@@ -187,15 +202,16 @@ const POCKET: [[f64; 3]; 3] = [[30.0, 10.0, 5.0], [15.0, 20.0, 5.0], [15.0, 10.0
 /// The outside-setback case's closed form (SolidCraft's expected.json).
 const OUTSIDE_SETBACK: f64 = 9526.705048390453;
 
-/// The body has volume `want` to 1e-9 relative, is valid and has `faces` faces.
+/// The body has volume `want` to 1e-9 relative (and the most its nets can move it, see
+/// [`volume`]), is valid and has `faces` faces.
 fn assert_built(k: &mut Kernel, b: &mut Brep, faces: usize, want: f64) {
     // the volume before the check, which may refine the body's tolerances
-    let v = volume(k, b);
+    let (v, moved) = volume(k, b);
     assert!(check_brep(k, b, CheckLevel::Level2).unwrap().is_valid());
     assert_eq!(b.faces().ids().count(), faces);
     assert!(
-        (v - want).abs() <= 1e-9 * v.abs().max(want.abs()),
-        "volume {v:.12}, want {want:.12}"
+        (v - want).abs() <= 1e-9 * v.abs().max(want.abs()) + moved,
+        "volume {v:.12}, want {want:.12} (the nets move it by at most {moved:e})"
     );
 }
 
@@ -203,14 +219,10 @@ fn assert_setback(made: Made) {
     assert_eq!(made.1, Some(BlendCornerEvent::Setback));
 }
 
-fn assert_pinned(made: Made) {
-    assert_eq!(made, (FilletCornerType::NByNConvex, None));
-}
-
 /// The residues bar rounded, less the cube [-1, 3]^2 x [7, 11] about its corner: the three
 /// G2 rounds outside the setback, exactly.
-fn outside_setback(blend: bool) -> (Kernel, Brep, Made) {
-    let (mut k, b, made) = round(blend, "issue_2369_g2_bar_corner_residues.smb", &RESIDUES);
+fn outside_setback() -> (Kernel, Brep, Made) {
+    let (mut k, b, made) = round("issue_2369_g2_bar_corner_residues.smb", &RESIDUES);
     let cube = create_box(
         &mut k,
         Point3::new(-0.5107059224719217, -0.9420745494701371, 7.0),
@@ -226,58 +238,30 @@ fn outside_setback(blend: bool) -> (Kernel, Brep, Made) {
 
 #[test]
 fn outside_setback_is_the_closed_form_with_the_setback() {
-    let (mut k, mut b, made) = outside_setback(true);
+    let (mut k, mut b, made) = outside_setback();
     assert_setback(made);
-    assert_built(&mut k, &mut b, 13, OUTSIDE_SETBACK);
-}
-
-#[test]
-fn outside_setback_is_the_closed_form_without_the_flag() {
-    let (mut k, mut b, made) = outside_setback(false);
-    assert_pinned(made);
     assert_built(&mut k, &mut b, 13, OUTSIDE_SETBACK);
 }
 
 #[test]
 fn bar_corner_is_the_g2_setback_fill() {
-    let (mut k, mut b, made) = round(true, "issue_2369_g2_bar_corner.smb", &BAR);
+    let (mut k, mut b, made) = round("issue_2369_g2_bar_corner.smb", &BAR);
     assert_setback(made);
     assert_built(&mut k, &mut b, 16, 9364.160085727);
 }
 
 #[test]
-fn bar_corner_without_the_flag_is_the_pinned_corner() {
-    let (mut k, mut b, made) = round(false, "issue_2369_g2_bar_corner.smb", &BAR);
-    assert_pinned(made);
-    assert_built(&mut k, &mut b, 11, 9362.339740228);
-}
-
-#[test]
 fn residues_bar_corner_is_the_g2_setback_fill() {
-    let (mut k, mut b, made) = round(true, "issue_2369_g2_bar_corner_residues.smb", &RESIDUES);
+    let (mut k, mut b, made) = round("issue_2369_g2_bar_corner_residues.smb", &RESIDUES);
     assert_setback(made);
     assert_built(&mut k, &mut b, 16, 9548.830815317);
 }
 
 #[test]
-fn residues_bar_corner_without_the_flag_is_the_pinned_corner() {
-    let (mut k, mut b, made) = round(false, "issue_2369_g2_bar_corner_residues.smb", &RESIDUES);
-    assert_pinned(made);
-    assert_built(&mut k, &mut b, 11, 9547.010488401);
-}
-
-#[test]
 fn pocket_corner_is_the_g2_setback_fill() {
-    let (mut k, mut b, made) = round(true, "issue_2369_g2_pocket_corner.smb", &POCKET);
+    let (mut k, mut b, made) = round("issue_2369_g2_pocket_corner.smb", &POCKET);
     assert_setback(made);
     assert_built(&mut k, &mut b, 20, 21044.360971410);
-}
-
-#[test]
-fn pocket_corner_without_the_flag_is_the_pinned_corner() {
-    let (mut k, mut b, made) = round(false, "issue_2369_g2_pocket_corner.smb", &POCKET);
-    assert_pinned(made);
-    assert_built(&mut k, &mut b, 15, 21046.181316782);
 }
 
 // ---- #2488: a Setback's fill patches keep the fill's definition ----
@@ -339,7 +323,7 @@ const CASES: [(&str, &[[f64; 3]]); 2] = [
 #[test]
 fn the_setback_fills_are_their_definitions() {
     for (file, picks) in CASES {
-        let (k, mut b, made) = round_kept(true, true, file, picks);
+        let (k, mut b, made) = round_kept(true, file, picks);
         assert_setback(made);
         let patches = corner_faces(&b, CornerKind::Setback);
         assert_eq!(patches.len(), 6, "{file}");
@@ -356,9 +340,9 @@ fn the_setback_fills_are_their_definitions() {
         // (the flag also makes the G2 rounds procedural blends, #2480, evaluated by their
         // definitions, and the fill reads the rounds' own evaluations; the corner's definition
         // itself changes no number: its build makes the fill again and requires it bit for bit)
-        let (k0, mut b0, _) = round_kept(true, false, file, picks);
+        let (k0, mut b0, _) = round_kept(false, file, picks);
         assert!(corner_faces(&b0, CornerKind::Setback).is_empty());
-        let (v, v0) = (volume(&k, &mut b), volume(&k0, &mut b0));
+        let (v, v0) = (volume(&k, &mut b).0, volume(&k0, &mut b0).0);
         eprintln!("{file}: volume {v:.17e}, without the definition {v0:.17e}");
         assert!((v - v0).abs() <= 1e-12 * v0, "{v} against {v0}");
         let (on, off) = (face_bits(&k, &b), face_bits(&k0, &b0));
@@ -392,7 +376,7 @@ fn the_setback_fills_are_their_definitions() {
 
 #[test]
 fn a_setback_fill_round_trips_through_its_record() {
-    let (k, b, _) = round_kept(true, true, "issue_2369_g2_bar_corner.smb", &BAR);
+    let (k, b, _) = round_kept(true, "issue_2369_g2_bar_corner.smb", &BAR);
     for s in corner_faces(&b, CornerKind::Setback) {
         let rec = corner_to_record(&k, &s).unwrap();
         let json = serde_json::to_string(&rec).unwrap();
@@ -405,7 +389,7 @@ fn a_setback_fill_round_trips_through_its_record() {
 
 #[test]
 fn a_moved_setback_fill_is_certified_again() {
-    let (k, b, _) = round_kept(true, true, "issue_2369_g2_bar_corner.smb", &BAR);
+    let (k, b, _) = round_kept(true, "issue_2369_g2_bar_corner.smb", &BAR);
     for s in corner_faces(&b, CornerKind::Setback) {
         let mut s = s.copy(&k).unwrap();
         let mut place = solidcore::geom::axis2_placement::Axis2Placement::default();
@@ -424,7 +408,7 @@ fn a_moved_setback_fill_is_certified_again() {
 
 #[test]
 fn a_setback_fill_off_its_rounds_is_refused() {
-    let (k, b, _) = round_kept(true, true, "issue_2369_g2_bar_corner.smb", &BAR);
+    let (k, b, _) = round_kept(true, "issue_2369_g2_bar_corner.smb", &BAR);
     let s = &corner_faces(&b, CornerKind::Setback)[0];
     let CornerRecord::Setback(rec) = corner_to_record(&k, s).unwrap() else {
         panic!("not a setback's record");

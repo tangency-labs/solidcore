@@ -1496,6 +1496,17 @@ pub fn api_brep_copy(
     brep: Option<&Brep>,
     source_key: &dyn Fn(EntityRef) -> ObjectRef,
 ) -> Result<Brep> {
+    api_brep_copy_mapped(k, env, brep, source_key, None)
+}
+
+/// [`api_brep_copy`], filling `reverse_map` (when given) with each source entity's copy.
+fn api_brep_copy_mapped(
+    k: &mut Kernel,
+    env: &mut NotifyEnv<'_>,
+    brep: Option<&Brep>,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    reverse_map: Option<&mut CopyBrepMap<EntityRef>>,
+) -> Result<Brep> {
     let Some(brep) = brep else {
         return Err(SolidError::Upstream {
             operation: OP,
@@ -1554,7 +1565,7 @@ pub fn api_brep_copy(
             )
         })
         .collect();
-    let copy = copy_brep(k, env, brep, source, None, None, true, false);
+    let copy = copy_brep(k, env, brep, source, None, reverse_map, true, false);
     for (key, handles) in lent {
         for h in handles {
             env.attributes.remove_attribute(key, h, false)?;
@@ -1600,12 +1611,33 @@ pub fn api_brep_copy(
 /// Those of [`api_brep_copy`] (the two namings are the B-rep's own and never share an
 /// attribute key).
 pub fn brep_copy(k: &mut Kernel, brep: &Brep) -> Result<Brep> {
+    brep_copy_into(k, brep, None)
+}
+
+/// [`brep_copy`] and the copy of each of `brep`'s entities: the copy's ids are its own
+/// (numbered as it is built, not `brep`'s), so a caller holding `brep`'s ids maps them through
+/// this, never by id or by place in a list.
+///
+/// # Errors
+///
+/// Those of [`brep_copy`].
+pub fn brep_copy_mapped(k: &mut Kernel, brep: &Brep) -> Result<(Brep, CopyBrepMap<EntityRef>)> {
+    let mut map = CopyBrepMap::default();
+    let copy = brep_copy_into(k, brep, Some(&mut map))?;
+    Ok((copy, map))
+}
+
+fn brep_copy_into(
+    k: &mut Kernel,
+    brep: &Brep,
+    reverse_map: Option<&mut CopyBrepMap<EntityRef>>,
+) -> Result<Brep> {
     use crate::topology::loopuse::notify_ref;
     let mut state = p2::ArenaNotifyState::default();
     let mut env = state.env(None);
     // both B-reps under their own naming: `api_brep_copy` names the source in a
     // private domain for the copy, so the source's attribute lists stay its own
-    let mut copy = api_brep_copy(k, &mut env, Some(brep), &notify_ref)?;
+    let mut copy = api_brep_copy_mapped(k, &mut env, Some(brep), &notify_ref, reverse_map)?;
     // (not upstream) `copy_brep` records every geometry owner under `env.key_of`,
     // which is the Notify scheme's own identity: the copy is named as a fresh body
     copy.set_naming(crate::topology::NamingScheme::Notify);
@@ -5232,7 +5264,7 @@ mod tests {
         let (mut ctx, _seen) = recording_context();
         let mut k = Kernel::default();
         let (mut b1, [a, _, _], [e0, _]) = test_support::wire_chain(true);
-        let mut b2 = b1.clone();
+        let mut b2 = b1.clone_standing_for_self().unwrap();
         let serial = notify_serial(&mut ctx, &mut b1).unwrap();
         // b2 claims b1's kernel identities, for itself and for its objects
         b2.set_key(topology_ref(serial, brep_entity()).key);
@@ -5268,8 +5300,8 @@ mod tests {
             squeeze_edge(&mut k, &mut b2, &mut env, e0, a),
             Err(RESERVED_KEY)
         );
-        // clones are other objects: no serial, no curve key
-        assert_eq!(b1.clone().notify_serial(), None);
+        // copies are other objects: no serial, no curve key
+        assert_eq!(b1.clone_standing_for_self().unwrap().notify_serial(), None);
         let curve = b1.edge(e0).unwrap().curve.clone().unwrap();
         assert_eq!(curve.notify_key(), None);
     }
@@ -5932,7 +5964,7 @@ mod tests {
         };
         let mut records = topo::NotifyRecords::new();
         let mut full = topo::NotifyRecords::new();
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self().unwrap();
         b.remove_vertex_record(vs[0]).unwrap();
         b.remove_vertex_record(vs[1]).unwrap();
         edit_once(&mut b, &key_of, &mut records, &mut full).unwrap();

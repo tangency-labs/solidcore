@@ -1,5 +1,5 @@
 //! The fork's smlib#130 (`v1.1.0-alpha.1`) fixes to the End at a smooth vertex (smlib#124,
-//! `fillet_blend_corner`, WR-697), on SolidCraft's own inputs: the bodies its rig handed the
+//! WR-697), on SolidCraft's own inputs: the bodies its rig handed the
 //! fillet (`data/issue_2364_solidcraft_*.smb`, the rig's blend-call dumps, perf-inputs
 //! 2364-ends).
 //!
@@ -46,12 +46,11 @@ const SLOT_BAR: &[u8] = include_bytes!("data/issue_2364_solidcraft_3369_slot_bar
 const PLATE: &[u8] = include_bytes!("data/issue_2364_solidcraft_5158_plate.smb");
 const NOTCHED: &[u8] = include_bytes!("data/issue_2364_solidcraft_1080_notched_block.smb");
 
-/// SolidCraft's rig set at the time (#2364's check): every fix but the six it leaves off.
+/// SolidCraft's rig set at the time (#2364's check): every fix but the five it leaves off.
 fn kernel() -> Kernel {
     let mut f = UpstreamFixes::all();
     f.cone_unbounded_parameterized_as_nurb = false;
     f.ellipse_open_arc_keeps_end_angle = false;
-    f.fillet_round_on_round_as_definition = false;
     f.fillet_overflow_crease_along_edge = false;
     f.fillet_refuse_rounds_breaking_through = false;
     f.shell_one_construction = false;

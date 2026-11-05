@@ -7,7 +7,11 @@ This folder holds the kernel's operation-level cases as data, one entry each, by
 The runner that replays the entries is `crates/solidcore-ops/tests/kernel_cases.rs` (see [Running](#running)). The operations are SolidCraft's compositions of kernel calls (picks, per-edge fillet sessions, setbacks, the overflow retry, the stitch, error mapping), and their one home is `solidcore-ops` (`docs/layers.md`). `crates/solidcore-record/tests/kernel_cases_corpus.rs` checks the corpus itself:
 - every record reads as the record and passes its structural validation;
 - every operation's operands are given records or earlier outputs;
-- the manifest counts every entry.
+- the manifest counts every entry;
+- no two nonempty traces contain exactly the same calls, operand import options and decoded
+  operand records. Descriptions, expected values and gzip filenames do not make a replay
+  distinct. Numbers are compared exactly, without a tolerance. Empty traces remain records
+  of unsupported application operations and are not kernel replay inputs.
 
 ## Where it comes from
 
@@ -36,7 +40,8 @@ Each case runs as the rig runs it, with the kernel's operations traced at the bo
 | Field | Meaning |
 |---|---|
 | `case`, `area`, `sources`, `what` | The case, as SolidCraft's rig names it. |
-| `calls` | The operations that made the result, in order: `op`, `inputs` (bodies `b<n>`), `params`, and `outputs` or `error`. Usually one operation on records; a chain where operations pass bodies on without a record between them. |
+| `calls` | The operations in execution order: `op`, `inputs` (bodies `b<n>`), `params`, and `outputs` or `error`. Keep discarded tool construction and handled attempts too, even when their outputs do not reach the final bodies. |
+| `continued` | Optional boolean on a call with `error`. `true` means the application handled this refusal: replay must observe a refusal, continue to any later calls, and grade the final result. A handled refusal can be the last call when the application keeps an earlier body. Omitted or `false` keeps the terminal-refusal behavior. A marker after a terminal refusal is invalid. |
 | `bodies` | The operand bodies given as records: `trusted` and `keeping_splines` say how SolidCraft read each record into the kernel. |
 | `params` | The operation's arguments as SolidCraft passed them. A pick by points is `{kind, points, tolerance, picked}`: each point's pick is `{index, at}`, the entity's index in the body's list of its kind and where it is (an edge's ends, a vertex's point), or `{miss}`. |
 | `result` | The bodies the case ends with: `made` by an operation, or an `operand` carried through unchanged. |
@@ -74,3 +79,8 @@ replays every entry through `solidcore-ops`' public operations, with the fixes i
 ## Updating
 
 Re-export SolidCraft's cases at the new pin and replace their entries in one pull request, keeping the cases added here. The SolidCraft and solidcore commits are in `manifest.json`.
+
+The five entries refreshed for #2722 carry `export_provenance` with their source,
+exporter patch and fix configuration; the manifest pins describe the remaining
+original exports. See [the duplicate audit](duplicate-audit.md) for reproduction
+steps and the evidence for each removed entry.

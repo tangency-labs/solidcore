@@ -792,8 +792,9 @@ pub(crate) fn check_geometry_nesting(
                                 }
                                 push(Geometry::Surface(&mixed.common));
                             }
-                            // Clone shares the fill instead of cloning its surfaces.
-                            CornerDefinition::Setback(_) => {}
+                            // Clone shares a Setback's fill instead of cloning its surfaces; a
+                            // Ball holds a sphere and B-spline boundary curves, nothing nested.
+                            CornerDefinition::Setback(_) | CornerDefinition::Ball(_) => {}
                         },
                         KeptDefinition::Sweep(_) => {}
                         KeptDefinition::Draft(draft) => push(Geometry::Surface(&draft.source)),
@@ -3930,6 +3931,7 @@ impl Surface {
         dist: f64,
         extension_continuity: ContinuityType,
     ) -> Result<Self> {
+        crate::profile::profile_scope!(k, "surface::create_extended_surface_dir");
         let made =
             self.create_extended_surface_dir_of_kind(k, ext_direction, dist, extension_continuity)?;
         Ok(self.carry_exact_round_on_extension(made, extension_continuity))
@@ -4096,11 +4098,8 @@ impl Surface {
             {
                 Ok(Self::from(ProceduralBlend::read_from_db(k, db, version)?))
             }
-            // the fork's SmBallPatch (f8e6709), read only with its flag: the pinned reader
-            // refuses the type
-            BALL_PATCH_TYPE if k.fixes.fillet_blend_corner => {
-                Ok(Self::from(BallPatch::read_from_db(db, version)?))
-            }
+            // the fork's SmBallPatch (f8e6709), which the pinned reader refuses
+            BALL_PATCH_TYPE => Ok(Self::from(BallPatch::read_from_db(db, version)?)),
             _ => Err(SolidError::sm_err(OP_READ)),
         }
     }
