@@ -159,6 +159,7 @@ pub struct WorkCounters {
     band_sections: Cell<u64>,
     band_face_solves: Cell<u64>,
     band_face_caches: Cell<u64>,
+    band_brep_caches: Cell<u64>,
     band_edge_solves: Cell<u64>,
 }
 
@@ -201,6 +202,14 @@ impl WorkCounters {
         self.band_face_caches.get()
     }
 
+    /// Not the fork's: the B-rep caches (the trees of the body's vertices, edges and faces
+    /// a point classification solves through, `make_brep_cache`) the `band_cuts` checks
+    /// made.
+    #[must_use]
+    pub fn band_brep_caches(&self) -> u64 {
+        self.band_brep_caches.get()
+    }
+
     /// Not the fork's (#2648): the intersections of an edge with a station's plane that the
     /// `band_cuts` checks ran.
     #[must_use]
@@ -215,6 +224,7 @@ impl WorkCounters {
         self.band_sections.set(0);
         self.band_face_solves.set(0);
         self.band_face_caches.set(0);
+        self.band_brep_caches.set(0);
         self.band_edge_solves.set(0);
     }
 
@@ -234,6 +244,12 @@ impl WorkCounters {
     pub(crate) fn add_band_face_cache(&self) {
         self.band_face_caches
             .set(self.band_face_caches.get().saturating_add(1));
+    }
+
+    /// Counts one B-rep cache made by a `band_cuts` check.
+    pub(crate) fn add_band_brep_cache(&self) {
+        self.band_brep_caches
+            .set(self.band_brep_caches.get().saturating_add(1));
     }
 
     /// Counts one edge–plane intersection of a `band_cuts` check.

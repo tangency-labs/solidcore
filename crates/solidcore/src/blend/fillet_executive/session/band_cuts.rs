@@ -567,7 +567,10 @@ fn keeps_material_behind(
         }
     }
     // no crossing: the section between its rails is wholly in the part or wholly outside it
-    let class = BrepQuery::of_brep(body).point_3d_classify(k, body, middle, zone, true)?;
+    let query = BrepQuery::of_brep(body);
+    query.cache(k, body)?;
+    k.work_counters.add_band_brep_cache();
+    let class = query.point_3d_classify(k, body, middle, zone, true)?;
     if class.point_class() != PointClassType::Region {
         return Ok(true);
     }
@@ -959,7 +962,10 @@ struct Meet {
 /// between two crossings of faces that lies within the tolerance of the boundary is too
 /// shallow to keep material).
 fn point_in_material(k: &Kernel, body: &mut Brep, point: Point3, zone: f64) -> Result<bool> {
-    let class = BrepQuery::of_brep(body).point_3d_classify(k, body, point, zone, true)?;
+    let query = BrepQuery::of_brep(body);
+    query.cache(k, body)?;
+    k.work_counters.add_band_brep_cache();
+    let class = query.point_3d_classify(k, body, point, zone, true)?;
     if class.point_class() != PointClassType::Region {
         return Ok(false);
     }
@@ -1312,7 +1318,7 @@ mod tests {
     /// The section keeps the cube behind it, judged against the faces and edges within its
     /// reach only (#2648): the top and the front (the section meets them at its rails), no
     /// edge (the four crossing the plane lie farther than the ball's radius from its centre),
-    /// and each face's cache made once over two judgements.
+    /// and each face's cache and the body's cache made once over two judgements.
     #[test]
     fn a_section_is_judged_against_the_geometry_within_its_reach() {
         let mut k = Kernel::default();
@@ -1343,6 +1349,7 @@ mod tests {
         assert_eq!(k.work_counters.band_edge_solves(), 0);
         assert_eq!(k.work_counters.band_face_solves(), 4);
         assert_eq!(k.work_counters.band_face_caches(), 2);
+        assert_eq!(k.work_counters.band_brep_caches(), 1);
     }
 
     /// A token fired before a judgement stops it at the band check's own poll, with the

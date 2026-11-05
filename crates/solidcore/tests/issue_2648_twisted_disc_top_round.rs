@@ -381,7 +381,8 @@ fn the_rebuilt_disc_is_the_corpus_entry_s() {
 
 /// The WR-696 bridge (`wr696_band_cuts.rs`): a round of 9 would take all of the bridge, refused
 /// naming 7.828427 as before. The check judges its sections against the geometry within
-/// their reach and makes each face's cache once: the counts of its work.
+/// their reach and makes each face's cache and the body's cache once: the counts of its
+/// work.
 #[test]
 fn the_band_check_tests_only_what_its_sections_reach() {
     use solidcore::blend::fillet_executive::session::FilletSession;
@@ -420,16 +421,19 @@ fn the_band_check_tests_only_what_its_sections_reach() {
     let w = &k.work_counters;
     let sections = w.band_sections();
     eprintln!(
-        "sections {sections}, face solves {}, face caches {}, edge solves {}; {faces} faces, {edges} edges",
+        "sections {sections}, face solves {}, face caches {}, brep caches {}, edge solves {}; {faces} faces, {edges} edges",
         w.band_face_solves(),
         w.band_face_caches(),
+        w.band_brep_caches(),
         w.band_edge_solves()
     );
     // before #2648 each of the 278 sections intersected all 10 faces, making each face's
-    // cache again (2780 of each), and each of the 32 stations all 24 edges (768)
+    // cache again (2780 of each), and each of the 32 stations all 24 edges (768); each
+    // section classified without a crossing made the body's cache again
     assert_eq!((sections, faces, edges), (278, 10, 24));
     assert_eq!(w.band_face_solves(), 510);
     assert_eq!(w.band_face_caches(), 4);
+    assert_eq!(w.band_brep_caches(), 1);
     assert_eq!(w.band_edge_solves(), 32);
 }
 
