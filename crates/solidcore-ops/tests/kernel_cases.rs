@@ -50,7 +50,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use solidcore_ops::blend::{blend, Blend, Corners};
-use solidcore_ops::boolean::{boolean, BooleanOp};
+use solidcore_ops::boolean::{boolean, union_all, BooleanOp};
 use solidcore_ops::sweep::{extrude, revolve, Curve, DraftCorner};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
 use solidcore_record::brep::Brep as Record;
@@ -70,6 +70,7 @@ const PORTED: &[&str] = &[
     "offset_faces",
     "thicken",
     "boolean",
+    "union_all",
     "extrude",
     "revolve",
     "blend_dropping",
@@ -338,6 +339,18 @@ fn call_with_copy(
             let sym = p["symmetric"].as_bool().ok_or_else(|| bad("symmetric"))?;
             let r = offset::thicken(&s.body, t, sym);
             in_place(Slot { order: None, ..s }, r)
+        }
+        "union_all" => {
+            let bodies = ins
+                .iter()
+                .map(|s| {
+                    let copied = copy_for_edit(s)?;
+                    Arc::try_unwrap(copied.body).map_err(|_| {
+                        Stop::Fail("copy before union_all: the copy is shared".to_owned())
+                    })
+                })
+                .collect::<Result<Vec<_>, Stop>>()?;
+            made(union_all(bodies))
         }
         "boolean" => {
             let operation = match p["op"].as_str() {
@@ -832,6 +845,47 @@ fn a_copied_edit_preserves_the_supplied_face_pick_order() {
         .fold(f64::NEG_INFINITY, f64::max);
     assert!((max_z - 12.0).abs() <= 12.0 * 1e-9, "top is at {max_z}");
     assert!((body.volume(1e-9).unwrap() - 6000.0).abs() <= 6000.0 * 1e-9);
+}
+
+#[test]
+fn union_all_replays_an_odd_operand_list_without_consuming_inputs() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let mut inputs: Vec<Slot> = (0..3)
+        .map(|x| Slot {
+            body: Arc::new(solidcore_ops::make_box([f64::from(x), 0.0, 0.0], [2.0; 3]).unwrap()),
+            order: None,
+        })
+        .collect();
+    let before: Vec<_> = inputs
+        .iter()
+        .map(|s| s.body.to_record().unwrap().0)
+        .collect();
+    let step = serde_json::json!({"op": "union_all", "params": {}});
+    let output = call(&step, &mut inputs).unwrap().unwrap();
+    assert!((output.body.volume(1e-9).unwrap() - 16.0).abs() <= 16.0e-9);
+    for (input, record) in inputs.iter().zip(before) {
+        assert_eq!(input.body.to_record().unwrap().0, record);
+        assert!((input.body.volume(1e-9).unwrap() - 8.0).abs() <= 8.0e-9);
+    }
+}
+
+#[test]
+fn union_all_preparation_failure_is_not_an_operation_refusal() {
+    let input = Slot {
+        body: Arc::new(solidcore_ops::make_box([0.0; 3], [1.0; 3]).unwrap()),
+        order: None,
+    };
+    let step = serde_json::json!({"op": "union_all", "params": {}, "error": "refused"});
+    let copies = std::cell::Cell::new(0);
+    let result = call_with_copy(&step, &mut [input.clone(), input], |slot| {
+        copies.set(copies.get() + 1);
+        if copies.get() == 2 {
+            Ok(Err("second operand copy failed".to_owned()))
+        } else {
+            slot.copied()
+        }
+    });
+    assert!(matches!(result, Err(Stop::Fail(why)) if why.contains("second operand copy failed")));
 }
 
 #[test]
