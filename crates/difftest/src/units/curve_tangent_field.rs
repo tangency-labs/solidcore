@@ -1,4 +1,5 @@
-//! Runner for unit `curve.tangent_field`. C++: `solidcore_ffi::units::curve_tangent_field`.
+//! Runner for unit `curve.tangent_field`. Ported from upstream
+//! `source/SMLib/src/SmTangentField.cpp`; checked against its golden.
 //! Rust: `solidcore::curve::tangent_field`.
 //!
 //! Every case runs one op of `SmTangentField` (type queries, `Evaluate`, `EvaluatePoint`,
@@ -64,7 +65,6 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 use solidcore::topology::geometry_write::write_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_tangent_field::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -251,6 +251,27 @@ const UNIT_SQUARE: [[f64; 3]; 4] = [
     [1.0, 1.0, 0.0],
 ];
 
+/// The runner's operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    /// Type queries and the natural interval.
+    State,
+    /// `Evaluate`.
+    Eval,
+    /// `EvaluatePoint`.
+    EvalPoint,
+    /// `operator==`.
+    Equal,
+    /// `Create`.
+    Create,
+    /// `ReadFromDB`.
+    ReadDb,
+    /// `WriteToDB` then `SmCurve::ReadFromDB`, and queries on the curve read back.
+    WriteRead,
+    /// `CalculateBoundingBox`, `DropPoint` or `ApproximateCurve` on the field.
+    Route,
+}
+
 fn op_of(s: &str) -> Result<Op, HarnessError> {
     Ok(match s {
         "state" => Op::State,
@@ -265,175 +286,12 @@ fn op_of(s: &str) -> Result<Op, HarnessError> {
     })
 }
 
-// ---- C++ side -------------------------------------------------------------------------
-
-fn push_curve(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match c {
-        CurveIn::Bspline(b) => {
-            let n = b.cpts.len().checked_sub(1).ok_or_else(|| harness("no points"))?;
-            let m = b.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
-            v.extend([0.0, b.dim as f64, n as f64, b.p as f64, m as f64]);
-            for p in &b.cpts {
-                v.extend_from_slice(p);
-            }
-            v.extend_from_slice(&b.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn push_surface(v: &mut Vec<f64>, s: &[[f64; 3]; 4]) {
-    for p in s {
-        v.extend_from_slice(p);
-    }
-}
-
-fn push_field(v: &mut Vec<f64>, f: &FieldIn) -> Result<(), HarnessError> {
-    push_curve(v, &f.curve)?;
-    v.push(f.dir as f64);
-    v.extend_from_slice(&f.start);
-    v.extend_from_slice(&f.end);
-    match f.domain {
-        Some(d) => {
-            v.push(1.0);
-            v.extend_from_slice(&d);
-        }
-        None => v.extend([0.0, 0.0, 0.0, 1.0, 1.0]),
-    }
-    Ok(())
-}
-
-fn push_create(v: &mut Vec<f64>, c: &CreateIn) -> Result<(), HarnessError> {
-    v.push(c.tol);
-    push_curve(v, &c.base3d)?;
-    push_curve(v, &c.base_uv)?;
-    for e in [&c.start, &c.end] {
-        push_curve(v, &e.curve)?;
-        v.push(e.param);
-        v.push(if e.opposite { 1.0 } else { 0.0 });
-    }
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let op = op_of(&i.op)?;
-    let mut v = Vec::new();
-    let srf = i.surface.unwrap_or(UNIT_SQUARE);
-    let field = || i.field.as_ref().ok_or_else(|| harness("missing field"));
-    match op {
-        Op::ReadDb => {
-            let r = i.read.as_ref().ok_or_else(|| harness("missing read"))?;
-            let d = r.data();
-            v.extend([r.file_type as f64, r.dim as f64, r.version as f64, d.len() as f64]);
-            v.extend(d.iter().map(|&b| f64::from(b)));
-        }
-        Op::Create => {
-            let c = i.create.as_ref().ok_or_else(|| harness("missing create"))?;
-            push_surface(&mut v, &srf);
-            push_create(&mut v, c)?;
-        }
-        Op::WriteRead => {
-            let w = i
-                .write_read
-                .as_ref()
-                .ok_or_else(|| harness("missing write_read"))?;
-            push_surface(&mut v, &srf);
-            if let Some(c) = &i.create {
-                v.push(1.0);
-                push_create(&mut v, c)?;
-            } else {
-                v.push(0.0);
-                push_field(&mut v, field()?)?;
-            }
-            v.extend([
-                w.file_type as f64,
-                w.version as f64,
-                if w.cache_breaks { 1.0 } else { 0.0 },
-                w.angle_tol,
-                w.params.len() as f64,
-            ]);
-            v.extend_from_slice(&w.params);
-        }
-        Op::Route => {
-            push_surface(&mut v, &srf);
-            push_field(&mut v, field()?)?;
-            match i.route.as_ref().ok_or_else(|| harness("missing route"))? {
-                RouteIn::Bbox { a, b } => v.extend([0.0, *a, *b]),
-                RouteIn::Drop {
-                    a,
-                    b,
-                    point,
-                    vec,
-                    tol,
-                    guess,
-                    solver_op,
-                } => {
-                    v.extend([1.0, *a, *b]);
-                    v.extend_from_slice(point);
-                    v.push(if vec.is_some() { 1.0 } else { 0.0 });
-                    v.extend_from_slice(&vec.unwrap_or([0.0; 3]));
-                    v.push(*tol);
-                    v.push(if guess.is_some() { 1.0 } else { 0.0 });
-                    v.push(guess.unwrap_or(*a));
-                    v.push(f64::from(*solver_op));
-                }
-                RouteIn::Approx {
-                    breaks,
-                    tol,
-                    match_param,
-                } => {
-                    v.extend([2.0, breaks.len() as f64]);
-                    v.extend_from_slice(breaks);
-                    v.extend([*tol, if *match_param { 1.0 } else { 0.0 }]);
-                }
-            }
-        }
-        Op::State | Op::Eval | Op::EvalPoint => {
-            push_surface(&mut v, &srf);
-            push_field(&mut v, field()?)?;
-            if op != Op::State {
-                v.push(i.t);
-            }
-            if op == Op::Eval {
-                v.push(i.n as f64);
-            }
-        }
-        Op::Equal => {
-            push_surface(&mut v, &srf);
-            push_field(&mut v, field()?)?;
-            v.push(i.flags as f64);
-            if i.flags & 1 == 0 {
-                push_surface(&mut v, &i.surface_b.unwrap_or(srf));
-            }
-            push_field(
-                &mut v,
-                i.field_b.as_ref().ok_or_else(|| harness("missing field_b"))?,
-            )?;
-        }
-    }
-    Ok((op, v))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1567,10 +1425,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

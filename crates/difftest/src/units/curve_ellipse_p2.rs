@@ -1,11 +1,11 @@
 //! Runner for unit `curve.ellipse_p2`: `SmEllipse` / `SmPolarConversion`, part 2.
 //!
-//! C++: `solidcore_ffi::units::curve_ellipse_p2` (upstream `source/SMLib/src/SmEllipse.cpp`
-//! on `SmEllipse` objects). Rust: `solidcore::curve::ellipse`.
+//! Ported from upstream `source/SMLib/src/SmEllipse.cpp`; checked against its golden. Rust:
+//! `solidcore::curve::ellipse`.
 //!
 //! A case is an ellipse construction (`ellipse`, optionally with a second ellipse
 //! whose NURB is passed as `pOptNurb`) and a program of operations (`ops`) run on it in
-//! order; both sides produce the record documented in the ffi module (statuses `0` =
+//! order; the Rust side produces a flat record (statuses `0` =
 //! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust
 //! error upstream cannot produce), reported as the values `rec`. A case whose Rust side
 //! reaches an unported unit is deferred as a whole.
@@ -27,7 +27,6 @@ use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
 use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_ellipse_p2::{self as ffi};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -170,130 +169,6 @@ struct Inputs {
     ellipse: EllipseJ,
     #[serde(default)]
     ops: Vec<OpJ>,
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn ffi_ellipse(e: &EllipseJ) -> ffi::EllipseIn {
-    ffi::EllipseIn {
-        center: e.c,
-        x_axis: e.x,
-        y_axis: e.y,
-        domain: e.domain,
-        radii: e.radii,
-        dim: e.dim,
-        inside_out: e.inside_out,
-        nurb_from: e.nurb_from.as_ref().map(|s| Box::new(ffi_ellipse(s))),
-    }
-}
-
-fn ffi_line(l: &LineJ) -> ffi::LineIn {
-    ffi::LineIn {
-        point: l.p,
-        vector: l.v,
-        domain: l.domain,
-        scale: l.scale,
-    }
-}
-
-fn ffi_op(op: &OpJ) -> ffi::Op {
-    use ffi::Op as F;
-    match op {
-        OpJ::State { types } => F::State {
-            types: types.clone(),
-        },
-        OpJ::EvalStep { t, nd } => F::EvalStep { t: *t, nd: *nd },
-        OpJ::EvalStepPoint { t } => F::EvalStepPoint { t: *t },
-        OpJ::StepInv {
-            p,
-            classify,
-            zone_tol,
-        } => F::StepInv {
-            p: *p,
-            classify: *classify,
-            zone_tol: *zone_tol,
-        },
-        OpJ::ToNurbs { t } => F::ToNurbs { t: *t },
-        OpJ::PolarToNurbs { t, zone_tol } => F::PolarToNurbs {
-            t: *t,
-            zone_tol: *zone_tol,
-        },
-        OpJ::AngleToNurb { args } => F::AngleToNurb { args: *args },
-        OpJ::IsDegenerate { tol } => F::IsDegenerate { tol: *tol },
-        OpJ::StartPlane { p, tol, snap } => F::StartPlane {
-            p: *p,
-            tol: *tol,
-            snap: *snap,
-        },
-        OpJ::Drop {
-            ivl,
-            sop,
-            p,
-            in_vec,
-            tol,
-            target,
-            req,
-        } => F::Drop {
-            ivl: *ivl,
-            op: *sop,
-            p: *p,
-            in_vec: *in_vec,
-            tol: *tol,
-            target: *target,
-            req: *req,
-        },
-        OpJ::IntersectEllipse {
-            ivl,
-            other,
-            other_ivl,
-            tol,
-        } => F::IntersectEllipse {
-            ivl: *ivl,
-            other: other.as_ref().map(ffi_ellipse),
-            other_ivl: *other_ivl,
-            tol: *tol,
-        },
-        OpJ::IntersectLine {
-            ivl,
-            line,
-            line_ivl,
-            tol,
-        } => F::IntersectLine {
-            ivl: *ivl,
-            line: ffi_line(line),
-            line_ivl: *line_ivl,
-            tol: *tol,
-        },
-        OpJ::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => F::Transform {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
-        },
-        OpJ::To3d => F::To3d,
-        OpJ::SetUp => F::SetUp,
-        OpJ::Eq { other } => F::Eq {
-            other: ffi_ellipse(other),
-        },
-        OpJ::SetStepInterval { domain } => F::SetStepInterval { domain: *domain },
-    }
-}
-
-fn ffi_program(i: &Inputs) -> (ffi::EllipseIn, Vec<ffi::Op>) {
-    (ffi_ellipse(&i.ellipse), i.ops.iter().map(ffi_op).collect())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (a, ops) = ffi_program(i);
-    match ffi::run(&a, &ops) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -962,14 +837,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let (a, ops) = ffi_program(&i);
-            if ffi::encode(&a, &ops).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -978,10 +846,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

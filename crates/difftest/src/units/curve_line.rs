@@ -1,11 +1,10 @@
 //! Runner for unit `curve.line`: `SmLine`.
 //!
-//! C++: `solidcore_ffi::units::curve_line` (upstream `source/SMLib/src/SmLine.cpp` on
-//! `SmLine` objects). Rust: `solidcore::curve::line`.
+//! Ported from upstream `source/SMLib/src/SmLine.cpp`; checked against its golden. Rust:
+//! `solidcore::curve::line`.
 //!
 //! A case is a line construction (`make`) and a program of operations (`ops`) run on
-//! that line in order; both sides produce the record documented in the ffi module
-//! (statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
+//! that line in order; the Rust side produces a flat record (statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
 //! `InvalidInput`, `-1` for a Rust error upstream cannot produce), reported as the
 //! values `rec`. A case whose Rust side reaches an unported unit is deferred as a
 //! whole.
@@ -13,6 +12,8 @@
 //! Deferred cases: `IntersectWithEllipse` reaching `SmCurve::GlobalPointSolve`
 //! (`curve.curve_p1`) and `AssertValid` below `SM_LEVEL_GIVEN`
 //! (`SmCurve::AssertValid`, `curve.curve_p4`).
+
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,7 +35,6 @@ use solidcore::nurbs::b_spline_curve_n_lib::{InValueType, TrimMode};
 use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_line::{self as ffi};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -337,244 +337,64 @@ struct Inputs {
     ops: Vec<OpIn>,
 }
 
-// ---- C++ side ---------------------------------------------------------------------
+// ---- the database record ---------------------------------------------------------
 
-fn ffi_bspline(c: &BSplineIn) -> ffi::BSplineData {
-    ffi::BSplineData {
-        dim: c.dim,
-        p: c.p,
-        cpts: c
-            .cpts
-            .iter()
-            .map(|q| {
-                [
-                    q[0].unwrap_or(0.0),
-                    q[1].unwrap_or(0.0),
-                    q[2].unwrap_or(0.0),
-                    q[3].unwrap_or(NOW),
-                ]
-            })
-            .collect(),
-        knots: c.knots.clone(),
+/// The stream bytes of `db` as `SmLine::WriteToDB` writes them (ASCII: one group per
+/// line, values as `{:.17e}`; binary: native-endian values). The fields are written as
+/// they are, so a record with inconsistent sizes reaches the reader as hostile input.
+fn line_db_bytes(db: &LineDbIn, binary: bool, version: u64) -> Vec<u8> {
+    let b = &db.base;
+    let per = 2 + usize::from(b.dim != 2) + usize::from(b.rat != 0);
+    let n_pts = usize::try_from(b.n.saturating_add(1)).unwrap_or(0);
+    if binary {
+        let mut o = Vec::new();
+        for x in db.point.iter().chain(db.vector.iter()).chain(db.domain.iter()) {
+            o.extend_from_slice(&x.to_ne_bytes());
+        }
+        o.extend_from_slice(&db.scale.to_ne_bytes());
+        o.extend_from_slice(&db.inside_out.to_ne_bytes());
+        o.extend_from_slice(&b.n.to_ne_bytes());
+        o.extend_from_slice(&b.p.to_ne_bytes());
+        o.extend_from_slice(&b.rat.to_ne_bytes());
+        o.extend_from_slice(&b.dim.to_ne_bytes());
+        if version > 32 {
+            o.extend_from_slice(&b.kt.to_ne_bytes());
+            o.extend_from_slice(&b.form.to_ne_bytes());
+        }
+        for x in &b.vals {
+            o.extend_from_slice(&x.to_ne_bytes());
+        }
+        o
+    } else {
+        let f = |x: &f64| format!("{x:.17e}");
+        let mut t = String::new();
+        let line = |t: &mut String, xs: &[f64]| {
+            let s: Vec<String> = xs.iter().map(f).collect();
+            t.push_str(&s.join(" "));
+            t.push('\n');
+        };
+        line(&mut t, &db.point);
+        line(&mut t, &db.vector);
+        line(&mut t, &db.domain);
+        line(&mut t, &[db.scale]);
+        let _ = writeln!(t, "{}", db.inside_out);
+        let _ = write!(t, "{}\n{}\n{}\n{}\n", b.n, b.p, b.rat, b.dim);
+        if version > 32 {
+            let _ = write!(t, "{}\n{}\n", b.kt, b.form);
+        }
+        let (pts, knots) = b.vals.split_at(n_pts.saturating_mul(per).min(b.vals.len()));
+        for c in pts.chunks(per) {
+            line(&mut t, c);
+        }
+        for k in knots {
+            line(&mut t, &[*k]);
+        }
+        t.into_bytes()
     }
-}
-
-fn ffi_db(d: &LineDbIn) -> ffi::LineDb {
-    ffi::LineDb {
-        point: d.point,
-        vector: d.vector,
-        domain: d.domain,
-        scale: d.scale,
-        inside_out: d.inside_out,
-        base: ffi::BaseDb {
-            n: d.base.n,
-            p: d.base.p,
-            rat: d.base.rat,
-            dim: d.base.dim,
-            kt: d.base.kt,
-            form: d.base.form,
-            vals: d.base.vals.clone(),
-        },
-    }
-}
-
-fn ffi_make(m: &MakeIn) -> ffi::Make {
-    match m {
-        MakeIn::Default => ffi::Make::Default,
-        MakeIn::Points { a, b, dim } => ffi::Make::Points {
-            a: *a,
-            b: *b,
-            dim: *dim,
-        },
-        MakeIn::Infinite {
-            p,
-            v,
-            dim,
-            inside_out,
-        } => ffi::Make::Infinite {
-            p: *p,
-            v: *v,
-            dim: *dim,
-            inside_out: *inside_out,
-        },
-        MakeIn::Bounded {
-            p,
-            v,
-            domain,
-            scale,
-            dim,
-            inside_out,
-            nurb,
-        } => ffi::Make::Bounded {
-            p: *p,
-            v: *v,
-            domain: *domain,
-            scale: *scale,
-            dim: *dim,
-            inside_out: *inside_out,
-            nurb: nurb.as_ref().map(ffi_bspline),
-        },
-        MakeIn::Segment { dim, a, b, interval } => ffi::Make::Segment {
-            dim: *dim,
-            a: *a,
-            b: *b,
-            interval: *interval,
-        },
-        MakeIn::Canonical { p, v } => ffi::Make::Canonical { p: *p, v: *v },
-        MakeIn::Read {
-            dim,
-            version,
-            binary,
-            db,
-        } => ffi::Make::Read {
-            dim: *dim,
-            version: *version,
-            binary: *binary,
-            db: ffi_db(db),
-        },
-    }
-}
-
-fn ffi_ivl(i: IvlIn) -> ffi::Ivl {
-    match i {
-        IvlIn::Named(IvlName::Nat) => ffi::Ivl::Natural,
-        IvlIn::Named(IvlName::Step) => ffi::Ivl::Step,
-        IvlIn::Explicit([a, b]) => ffi::Ivl::Explicit(a, b),
-    }
-}
-
-fn ffi_op(o: &OpIn) -> Result<ffi::Op, HarnessError> {
-    use ffi::Op as F;
-    Ok(match o {
-        OpIn::State => F::State,
-        OpIn::Evaluate { t, n } => F::Evaluate(*t, *n),
-        OpIn::EvaluateStep { t, n } => F::EvaluateStep(*t, *n),
-        OpIn::EvaluatePoint { t } => F::EvaluatePoint(*t),
-        OpIn::ToStep { t } => F::ToStep(*t),
-        OpIn::ToNurbs { t } => F::ToNurbs(*t),
-        OpIn::IsLine => F::IsLine,
-        OpIn::Queries => F::Queries,
-        OpIn::IsDegenerate { tol, ivl } => F::IsDegenerate(*tol, ivl.map(ffi_ivl)),
-        OpIn::DomainBoundary { dom, tol } => F::DomainBoundary(*dom, *tol),
-        OpIn::ApproxLength { ivl, turn } => F::ApproxLength(ffi_ivl(*ivl), *turn),
-        OpIn::Length { ivl } => F::Length(ffi_ivl(*ivl)),
-        OpIn::Ends => F::Ends,
-        OpIn::BBox { ivl, flags } => F::BBox(ffi_ivl(*ivl), *flags),
-        OpIn::TightBBox { ivl } => F::TightBBox(ffi_ivl(*ivl)),
-        OpIn::Tessellate { ivl, nseg, flags } => F::Tessellate(ffi_ivl(*ivl), *nseg, *flags),
-        OpIn::Drop {
-            ivl,
-            sop,
-            p,
-            tol,
-            target,
-        } => F::Drop {
-            ivl: ffi_ivl(*ivl),
-            op: *sop,
-            p: *p,
-            tol: *tol,
-            target: *target,
-        },
-        OpIn::Gps { ivl, sop, p, tol } => F::Gps {
-            ivl: ffi_ivl(*ivl),
-            op: *sop,
-            p: *p,
-            tol: *tol,
-        },
-        OpIn::StepInversion { p } => F::StepInversion(*p),
-        OpIn::IntersectLine {
-            ivl,
-            other,
-            other_ivl,
-            tol,
-        } => F::IntersectLine {
-            ivl: ffi_ivl(*ivl),
-            other: other.as_ref().map(|m| Box::new(ffi_make(m))),
-            other_ivl: ffi_ivl(*other_ivl),
-            tol: *tol,
-        },
-        OpIn::IntersectEllipse {
-            ivl,
-            frame,
-            domain,
-            radii,
-            tol,
-        } => F::IntersectEllipse {
-            ivl: ffi_ivl(*ivl),
-            frame: *frame,
-            domain: *domain,
-            radii: *radii,
-            tol: *tol,
-        },
-        OpIn::Join {
-            end_this,
-            other_line,
-            other_bspline,
-            end_other,
-            tol,
-        } => F::Join {
-            end_this: *end_this,
-            other: match (other_line, other_bspline) {
-                (Some(m), None) => Ok(Box::new(ffi_make(m))),
-                (None, Some(b)) => Err(ffi_bspline(b)),
-                _ => return Err(harness("join needs exactly one other curve")),
-            },
-            end_other: *end_other,
-            tol: *tol,
-        },
-        OpIn::Adjust { ivl } => F::Adjust(ffi_ivl(*ivl)),
-        OpIn::To2d => F::To2d,
-        OpIn::To3d => F::To3d,
-        OpIn::Offset { n, d } => F::Offset(*n, *d),
-        OpIn::Refresh => F::Refresh,
-        OpIn::Reverse { ivl } => F::Reverse(ffi_ivl(*ivl)),
-        OpIn::Transform { frame, scale } => F::Transform(*frame, *scale),
-        OpIn::Deform {
-            start,
-            end,
-            want_new,
-            start_tan,
-            start_type,
-            end_tan,
-            end_type,
-        } => F::Deform {
-            start: *start,
-            end: *end,
-            want_new: *want_new,
-            start_tan: (*start_tan, *start_type),
-            end_tan: (*end_tan, *end_type),
-        },
-        OpIn::Trim { ivl, mode } => F::Trim(ffi_ivl(*ivl), *mode),
-        OpIn::EditParam { ivl } => F::EditParam(ffi_ivl(*ivl)),
-        OpIn::Eq { other } => F::Eq(other.as_ref().map(|m| Box::new(ffi_make(m)))),
-        OpIn::Copy => F::Copy,
-        OpIn::Analytic { ivl } => F::Analytic(ffi_ivl(*ivl)),
-        OpIn::Assert { given, with_list } => F::Assert {
-            given: *given,
-            with_list: *with_list,
-        },
-        OpIn::KindOf { t } => F::KindOf(*t),
-        OpIn::Canonical => F::Canonical,
-        OpIn::SetScale { s } => F::SetScale(*s),
-        OpIn::SetDomain { a, b } => F::SetDomain(*a, *b),
-    })
-}
-
-fn ffi_program(i: &Inputs) -> Result<(ffi::Make, Vec<ffi::Op>), HarnessError> {
-    let ops = i.ops.iter().map(ffi_op).collect::<Result<Vec<_>, _>>()?;
-    Ok((ffi_make(&i.make), ops))
 }
 
 fn to_output(rec: Vec<f64>) -> Output {
     Output::new().values("rec", rec)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (m, ops) = ffi_program(i)?;
-    match ffi::run(&m, &ops) {
-        Ok(rec) => Ok(to_output(rec)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -683,20 +503,20 @@ fn put_chars(o: &mut Vec<f64>, s: &str) {
 }
 
 fn rust_bspline(c: &BSplineIn) -> Result<BSplineCurve, HarnessError> {
-    let d = ffi_bspline(c);
-    let pw: Vec<CPoint> = d
+    // a missing coordinate is 0, a missing weight `NOW` (a non-rational point)
+    let pw: Vec<CPoint> = c
         .cpts
         .iter()
         .map(|q| CPoint {
-            x: q[0],
-            y: q[1],
-            z: q[2],
-            w: q[3],
+            x: q[0].unwrap_or(0.0),
+            y: q[1].unwrap_or(0.0),
+            z: q[2].unwrap_or(0.0),
+            w: q[3].unwrap_or(NOW),
         })
         .collect();
     let n = pw.len().checked_sub(1).ok_or_else(|| harness("empty B-spline"))?;
-    let m = d.knots.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
-    BSplineCurve::from_data(u64::from(d.dim), n, m, d.p, &pw, &d.knots)
+    let m = c.knots.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+    BSplineCurve::from_data(u64::from(c.dim), n, m, c.p, &pw, &c.knots)
         .map_err(|e| harness(format!("B-spline: {e}")))
 }
 
@@ -751,8 +571,7 @@ fn rust_make(m: &MakeIn) -> Result<Result<Line, f64>, Fail> {
             binary,
             db,
         } => {
-            let bytes = ffi::line_db_bytes(&ffi_db(db), *binary, u64::from(*version))
-                .map_err(|e| harness(e.to_string()))?;
+            let bytes = line_db_bytes(db, *binary, u64::from(*version));
             let mut reader = DatabaseReader::new();
             reader.open_for_read(
                 bytes,
@@ -1158,10 +977,51 @@ fn put_boxes(o: &mut Vec<f64>, boxes: &BoundingBoxes) {
     }
 }
 
-fn op_code(op: &OpIn) -> Result<f64, HarnessError> {
-    let prog = ffi::encode(&ffi::Make::Default, &[ffi_op(op)?]).map_err(|e| harness(e.to_string()))?;
-    // `0` (default line), `1` (op count), then the op code
-    prog.get(2).copied().ok_or_else(|| harness("empty op"))
+/// The op's code in the record (`1` = `state` .. `40` = `set_domain`, as upstream's
+/// test program numbers them).
+fn op_code(op: &OpIn) -> f64 {
+    match op {
+        OpIn::State => 1.0,
+        OpIn::Evaluate { .. } => 2.0,
+        OpIn::EvaluateStep { .. } => 3.0,
+        OpIn::EvaluatePoint { .. } => 4.0,
+        OpIn::ToStep { .. } => 5.0,
+        OpIn::ToNurbs { .. } => 6.0,
+        OpIn::IsLine => 7.0,
+        OpIn::Queries => 8.0,
+        OpIn::IsDegenerate { .. } => 9.0,
+        OpIn::DomainBoundary { .. } => 10.0,
+        OpIn::ApproxLength { .. } => 11.0,
+        OpIn::Length { .. } => 12.0,
+        OpIn::Ends => 13.0,
+        OpIn::BBox { .. } => 14.0,
+        OpIn::TightBBox { .. } => 15.0,
+        OpIn::Tessellate { .. } => 16.0,
+        OpIn::Drop { .. } => 17.0,
+        OpIn::Gps { .. } => 18.0,
+        OpIn::StepInversion { .. } => 19.0,
+        OpIn::IntersectLine { .. } => 20.0,
+        OpIn::IntersectEllipse { .. } => 21.0,
+        OpIn::Join { .. } => 22.0,
+        OpIn::Adjust { .. } => 23.0,
+        OpIn::To2d => 24.0,
+        OpIn::To3d => 25.0,
+        OpIn::Offset { .. } => 26.0,
+        OpIn::Refresh => 27.0,
+        OpIn::Reverse { .. } => 28.0,
+        OpIn::Transform { .. } => 29.0,
+        OpIn::Deform { .. } => 30.0,
+        OpIn::Trim { .. } => 31.0,
+        OpIn::EditParam { .. } => 32.0,
+        OpIn::Eq { .. } => 33.0,
+        OpIn::Copy => 34.0,
+        OpIn::Analytic { .. } => 35.0,
+        OpIn::Assert { .. } => 36.0,
+        OpIn::KindOf { .. } => 37.0,
+        OpIn::Canonical => 38.0,
+        OpIn::SetScale { .. } => 39.0,
+        OpIn::SetDomain { .. } => 40.0,
+    }
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
@@ -1182,7 +1042,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
     };
     for op in &i.ops {
-        o.push(op_code(op)?);
+        o.push(op_code(op));
         match rust_op(op, &mut a, &mut o) {
             Ok(()) => {}
             Err(Fail::Deferred(d)) => return Ok(*d),
@@ -1636,14 +1496,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            if ffi_program(&i).is_ok_and(|(m, ops)| ffi::encode(&m, &ops).is_ok())
-            {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1652,10 +1505,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

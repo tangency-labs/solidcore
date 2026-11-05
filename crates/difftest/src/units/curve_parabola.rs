@@ -1,14 +1,13 @@
 //! Runner for unit `curve.parabola`: parabolas as analytic B-spline curves.
 //!
-//! C++: `solidcore_ffi::units::curve_parabola` (upstream `SmParabola`,
-//! `source/SMLib/inc/SmParabola.h`, `source/SMLib/src/SmParabola.cpp`).
-//! Rust: `solidcore::curve::parabola` (and its dispatch in `solidcore::curve::curve`).
+//! Ported from upstream `SmParabola` (`source/SMLib/inc/SmParabola.h`,
+//! `source/SMLib/src/SmParabola.cpp`); checked against its golden. Rust:
+//! `solidcore::curve::parabola` (and its dispatch in `solidcore::curve::curve`).
 //!
 //! Every case builds parabola `a` (and `b` for `eq`) from a construction `kind`
 //! (`new`: the constructor; `canonical`: `CreateCanonical` of the placement), centre,
 //! axes, STEP domain, focal distance and dimension, then runs one operation `op` with
-//! the numeric arguments `args` (layout per op in
-//! `solidcore_ffi::units::curve_parabola::Op`) and, for `read_db`, the stream `data`
+//! the numeric arguments `args` (layout per op in [`Op`]) and, for `read_db`, the stream `data`
 //! (`binary`: tokens `d<double>`, `l<long>`, `s<short>` written native-endian). The
 //! result `r` is the op status (`0` = success) and its values; a curve state is
 //! `type dim oob borrowed knot_type form O X Y F step_min step_max has_nurb [n p m
@@ -30,8 +29,6 @@ use solidcore::geom::global_solver::{SolutionRequested, SolverOperation};
 use solidcore::geom::vector3d::Vec3;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_parabola::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -46,6 +43,43 @@ const SM_ERR_INVALID_INPUT: f64 = 1007.0;
 
 /// `curve.parabola` runner.
 pub struct Runner;
+
+/// One operation on curve A (and B for [`Op::Eq`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    /// State of A.
+    State,
+    /// args `self_flag`: `A == A` or `A == B`.
+    Eq,
+    /// args `min max`: `AdjustSTEPInterval(SmExtent1d(min, max))`, state.
+    Adjust,
+    /// args `P(3) classify`: `STEPInversion`: parameter, location (`-1` unasked).
+    Invert,
+    /// `Copy`: state of the copy, `copy == A`.
+    Copy,
+    /// args `t n`: `EvaluateSTEP`: `n + 1` vectors on success.
+    EvalStep,
+    /// args `min max op P(3) tol has_target target requested`:
+    /// `GlobalPointSolveSTEP`: count, `(type param value)` per solution, state.
+    GpsStep,
+    /// args `type`: `IsBounded IsAnalytic IsArc STEPInterval(2) MaxAnalyticDomain(2)
+    /// IsKindOf(type) GetType`, type string characters, `-1`, class string characters.
+    Queries,
+    /// `MakeNurb`, state.
+    MakeNurb,
+    /// args `min max`: `ReverseParameterization`: new interval, state after
+    /// `GetOrCreateGwNurbPointer`.
+    Reverse,
+    /// args `O(3) X(3) Y(3) has_scale S(3)`: `Transform`, state (or `-2` and the
+    /// `SetCanonical` status of a bad frame).
+    Transform,
+    /// args `file_type dim version via_curve`, `data` = stream: `ReadFromDB`, state
+    /// after `GetOrCreateGwNurbPointer`.
+    ReadDb,
+    /// args `P(3)`: through `SmCurve*`: `STEPInversion` status and parameter,
+    /// `IsAnalytic`, `IsBounded`, `GetType`.
+    Virtuals,
+}
 
 /// Operation names used in `inputs.op`.
 const OPS: [(&str, Op); 13] = [
@@ -151,35 +185,7 @@ fn db_bytes(i: &Inputs) -> Result<Vec<u8>, HarnessError> {
     Ok(out)
 }
 
-fn ffi_curve(c: &CurveIn) -> Result<ffi::Curve, HarnessError> {
-    let kind = match c.kind.as_str() {
-        "new" => 0,
-        "canonical" => 1,
-        k => return Err(HarnessError::new(format!("unknown curve kind {k}"))),
-    };
-    Ok(ffi::Curve {
-        kind,
-        center: c.center,
-        x_axis: c.x,
-        y_axis: c.y,
-        domain: c.domain,
-        focal_dist: c.f,
-        dim: c.dim,
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&OPS, &i.op)?;
-    let a = ffi_curve(&i.a)?;
-    let b = ffi_curve(&i.b)?;
-    match ffi::op(op, &a, &b, &i.args, &db_bytes(i)?) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(FfiError::Status(s)) if s > 0 => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
-/// Build a curve as the shim does.
+/// Build a curve by its construction `kind`.
 fn build(c: &CurveIn) -> Result<Parabola, HarnessError> {
     let center = Vec3::from(c.center);
     let x = Vec3::from(c.x);
@@ -829,10 +835,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

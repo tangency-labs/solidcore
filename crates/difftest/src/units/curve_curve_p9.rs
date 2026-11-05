@@ -3,25 +3,23 @@
 //! `CalculateTightBoundingBox`, `CalculateTightPseudoBox`, `IsOnPlane` and
 //! `IsOnPositiveSideOfPlanes`.
 //!
-//! C++: `solidcore_ffi::units::curve_curve_p9` (upstream `source/SMLib/src/SmCurve.cpp`,
-//! called through `SmCurve*` on B-spline, Hermite, line and ellipse curves). Rust:
+//! Ported from upstream `source/SMLib/src/SmCurve.cpp`; checked against its golden. Rust:
 //! `solidcore::curve::curve::p9`.
 //!
 //! A case is one `op` with its curves (`{"bspline": {dim, oob, cpts, p, u}}` with control
 //! points as stored `[x, y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`, `{"circle": ..}`
-//! (a quadratic B-spline arc) or `{"line": {p, v, domain, scale, inside_out}}` or `{"ellipse": {c, x, y, domain, radii,
-//! inside_out}}` (domain in degrees), as in unit
-//! `curve.curve_p8`): `gcs` (`GlobalCurveSolve`: `c2: null` solves the first curve
-//! against itself; `sop` the `SmSolverOperationType`, `target` the optional target
-//! distance, `vecs` the option vectors, `requested` the `SmSolutionRequestedType`,
-//! optional `transform1` an `[origin, x, y]` placement `c1` is `Transform`ed by first),
-//! `self_intersect`, `tight_box`, `tight_pseudo_box` (`basis`), `on_plane` (`p`, `n`,
-//! `tol`, optional `ivl`) and `positive_side` (`planes`: point and normal pairs). Both
-//! sides produce the flat record documented in the ffi module; the runner reports its
-//! first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a
-//! Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest as the
-//! `out` values. Solution objects are `0` (this curve), `1` (the other curve), `2` (an
-//! analytic replacement made by a curve cache).
+//! (a quadratic B-spline arc) or `{"line": {p, v, domain, scale, inside_out}}` or
+//! `{"ellipse": {c, x, y, domain, radii, inside_out}}` (domain in degrees), as in unit
+//! `curve.curve_p8`): `gcs` (`GlobalCurveSolve`: `c2: null` solves the first curve against
+//! itself; `sop` the `SmSolverOperationType`, `target` the optional target distance, `vecs`
+//! the option vectors, `requested` the `SmSolutionRequestedType`, optional `transform1` an
+//! `[origin, x, y]` placement `c1` is `Transform`ed by first), `self_intersect`,
+//! `tight_box`, `tight_pseudo_box` (`basis`), `on_plane` (`p`, `n`, `tol`, optional `ivl`)
+//! and `positive_side` (`planes`: point and normal pairs). The Rust side produces a flat
+//! record; the runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else
+//! the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
+//! produce) and the rest as the `out` values. Solution objects are `0` (this curve), `1`
+//! (the other curve), `2` (an analytic replacement made by a curve cache).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,7 +40,6 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_curve_p9::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -80,7 +77,7 @@ struct HermiteIn {
 }
 
 /// A quadratic circular arc built by the Rust `CreateCircleSegment` (bit-identical to
-/// upstream, see unit `nurbs.b_spline_curve_p1`) and handed to both sides as inline data.
+/// upstream, see unit `nurbs.b_spline_curve_p1`), as inline data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CircleIn {
     center: [f64; 3],
@@ -89,6 +86,18 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
+}
+
+impl CircleIn {
+    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
+    /// arc that would end past 360 degrees starts one turn back.
+    fn turned_back(mut self) -> Self {
+        if self.a1 > 360.0 {
+            self.a0 -= 360.0;
+            self.a1 -= 360.0;
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,52 +168,6 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
 
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
-}
-
-fn push_line(v: &mut Vec<f64>, l: &LineIn) {
-    v.extend_from_slice(&l.p);
-    v.extend_from_slice(&l.v);
-    v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            push_line(v, l);
-        }
-        CurveIn::Ellipse(e) => {
-            v.extend([3.0, 3.0]);
-            v.extend_from_slice(&e.c);
-            v.extend_from_slice(&e.x);
-            v.extend_from_slice(&e.y);
-            v.extend([
-                e.domain[0],
-                e.domain[1],
-                e.radii[0],
-                e.radii[1],
-                b(e.inside_out),
-            ]);
-        }
-        CurveIn::Circle(_) => return Err(harness("unresolved circle")),
-    }
-    Ok(())
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -495,7 +458,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    })
+    }.turned_back())
 }
 
 fn gen_ellipse(rng: &mut Rng, full: bool) -> CurveIn {
@@ -553,7 +516,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
-            });
+            }.turned_back());
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -785,94 +748,6 @@ enum OpIn {
         /// `[point, normal]` per plane.
         planes: Vec<[[f64; 3]; 2]>,
     },
-}
-
-fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    let code = match op {
-        OpIn::Gcs {
-            c1,
-            ivl1,
-            c2,
-            ivl2,
-            sop,
-            tol,
-            target,
-            vecs,
-            requested,
-            transform1,
-        } => {
-            curve_block(&mut v, c1)?;
-            v.extend_from_slice(ivl1);
-            v.push(b(c2.is_none()));
-            if let Some(c2) = c2 {
-                curve_block(&mut v, c2)?;
-            }
-            v.extend_from_slice(ivl2);
-            v.extend([
-                f64::from(*sop),
-                *tol,
-                b(target.is_some()),
-                target.unwrap_or(0.0),
-            ]);
-            v.push(vecs.len() as f64);
-            for x in vecs {
-                v.extend_from_slice(x);
-            }
-            v.push(f64::from(*requested));
-            v.push(b(transform1.is_some()));
-            for x in transform1.iter().flatten() {
-                v.extend_from_slice(x);
-            }
-            Op::Gcs
-        }
-        OpIn::SelfIntersect { c, ivl, tol } => {
-            curve_block(&mut v, c)?;
-            v.extend_from_slice(ivl);
-            v.push(*tol);
-            Op::SelfIntersect
-        }
-        OpIn::TightBox { c, ivl } => {
-            curve_block(&mut v, c)?;
-            v.extend_from_slice(ivl);
-            Op::TightBox
-        }
-        OpIn::TightPseudoBox { c, ivl, basis } => {
-            curve_block(&mut v, c)?;
-            v.extend_from_slice(ivl);
-            for x in basis {
-                v.extend_from_slice(x);
-            }
-            Op::TightPseudoBox
-        }
-        OpIn::OnPlane { c, p, n, tol, ivl } => {
-            curve_block(&mut v, c)?;
-            v.extend_from_slice(p);
-            v.extend_from_slice(n);
-            v.push(*tol);
-            v.push(b(ivl.is_some()));
-            v.extend_from_slice(&ivl.unwrap_or([0.0, 0.0]));
-            Op::OnPlane
-        }
-        OpIn::PositiveSide { c, planes } => {
-            curve_block(&mut v, c)?;
-            v.push(planes.len() as f64);
-            for [pt, n] in planes {
-                v.extend_from_slice(pt);
-                v.extend_from_slice(n);
-            }
-            Op::PositiveSide
-        }
-    };
-    Ok((code, v))
-}
-
-fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
-    let (code, input) = cpp_input(op)?;
-    match ffi::eval(code, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 /// Object ids of the shim: the analytic replacements (`2`, `3`) are "another object".
@@ -1392,74 +1267,13 @@ fn gen_case(k: &Kernel, rng: &mut Rng) -> OpIn {
     }
 }
 
-/// Cases whose C++ result depends on an uninitialised Jacobian (UB-204, #94): the generator
-/// keeps them away from the C++ side, like an input the FFI guard rejects.
-///
-/// `SM_SO_3D_SIGNED_DIRECTED_MINIMIZE` (9) runs `SmCurve::LocalCurveIntersect` on the two projected
-/// curves. When a Newton step ends at a Hermite end whose tangent has zero length (`d2` at
-/// `t = 1`, `d1` at `t = 0`) while the other curve passes within 0.1 of that end (the
-/// `gap^2 < 0.01` test of `SmCCIntersectENFO::Evaluate`), upstream calls
-/// `SmCCTangentIntENFO::StaticEvaluate`, which fails before it writes the Jacobian, and the
-/// solver goes on with whatever the stack held. Rust's `Matrix::new` zeroes it instead, so the two
-/// sides cannot agree. In the default 30,093 cases this is 4 cases (`gen21507` and 3 pairs
-/// that touch exactly at that end and agree anyway); the other 38 with a zero end tangent are 0.5 or more apart.
-fn reads_uninitialised_jacobian(k: &Kernel, op: &OpIn) -> bool {
-    let OpIn::Gcs {
-        c1,
-        ivl1,
-        c2,
-        ivl2,
-        sop: 9,
-        ..
-    } = op
-    else {
-        return false;
-    };
-    let other_curve = c2.as_ref().unwrap_or(c1);
-    [(c1, ivl1, other_curve, ivl2), (other_curve, ivl2, c1, ivl1)]
-        .into_iter()
-        .any(|(c, ivl, other, other_ivl)| {
-            let CurveIn::Hermite(h) = c else { return false };
-            let end = if h.d2 == [0.0; 3] && ivl[1] >= 1.0 {
-                1.0
-            } else if h.d1 == [0.0; 3] && ivl[0] <= 0.0 {
-                0.0
-            } else {
-                return false;
-            };
-            let e = point_at(k, c, end);
-            (0..=64).any(|i| {
-                let q = point_at(
-                    k,
-                    other,
-                    other_ivl[0] + (other_ivl[1] - other_ivl[0]) * f64::from(i) / 64.0,
-                );
-                (e[0] - q[0]).powi(2) + (e[1] - q[1]).powi(2) + (e[2] - q[2]).powi(2) < 0.01
-            })
-        })
-}
-
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "curve.curve_p9"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        let k = &Kernel::default();
-        for _ in 0..64 {
-            let op = gen_case(k, rng);
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
-            if reads_uninitialised_jacobian(k, &op) {
-                continue;
-            }
-            return serde_json::to_value(op).ok();
-        }
-        None
+        serde_json::to_value(gen_case(&Kernel::default(), rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1470,16 +1284,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let op = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&op)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
         rust(&op)
     }
 }

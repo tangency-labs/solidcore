@@ -3,13 +3,13 @@
 //! without clamping, natural interval, knots, equality, type queries, evaluation,
 //! continuities, the UV iso line and reading from a database stream.
 //!
-//! C++: `solidcore_ffi::units::curve_iso_curve` (upstream
-//! `source/SMLib/src/SmIsoCurve.cpp`). Rust: `solidcore::curve::iso_curve`, through
-//! the [`Curve`] dispatch where the curve interface has the method.
+//! Ported from upstream `source/SMLib/src/SmIsoCurve.cpp`; checked against its golden.
+//! Rust: `solidcore::curve::iso_curve`, through the [`Curve`] dispatch where the curve
+//! interface has the method.
 //!
 //! A case is the curve (`srf`: an inline or `.sms` surface, `null` for a surface without
-//! NURB; `sp` the `SmSurfParamType`; `iso`; `from_left`; `clamp`) and an `op`. Both
-//! sides produce one flat record `out`: the status first for status-bearing ops
+//! NURB; `sp` the `SmSurfParamType`; `iso`; `from_left`; `clamp`) and an `op`. The Rust
+//! side produces one flat record `out`: the status first for status-bearing ops
 //! (`0` = `SM_SUCCESS`, `1001` `SM_ERR`, `1007` `SM_ERR_INVALID_INPUT`, `-1` on the
 //! Rust side for an error upstream cannot return), then the op's outputs on success.
 //!
@@ -43,9 +43,6 @@ use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_iso_curve::{
-    self as ffi, CurveBlock, CurveParams, Nurb, Op, Other, Params,
-};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -259,93 +256,6 @@ fn db_bytes(binary: bool, version: u64, db: &DbIn) -> Result<Vec<u8>, HarnessErr
         b = t.into_bytes();
     }
     Ok(b)
-}
-
-// ---- C++ side ---------------------------------------------------------------------
-
-fn nurb_of(s: &SrfIn) -> Result<Nurb, HarnessError> {
-    let i = resolve(s)?;
-    Ok(Nurb {
-        net: i.net,
-        p: i.p,
-        q: i.q,
-        u: i.u,
-        v: i.v,
-    })
-}
-
-fn params_of(p: &Params0) -> CurveParams {
-    CurveParams {
-        surf_param: p.sp,
-        iso: p.iso,
-        from_left: p.from_left,
-        clamp: p.clamp,
-    }
-}
-
-fn block_of(c: &CurveIn) -> Result<CurveBlock, HarnessError> {
-    Ok(CurveBlock {
-        srf: c.srf.as_ref().map(nurb_of).transpose()?,
-        params: params_of(&c.params),
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let dummy = CurveIn {
-        srf: None,
-        params: Params0 {
-            sp: 0,
-            iso: 0.0,
-            from_left: false,
-            clamp: false,
-        },
-    };
-    let a = block_of(i.curve.as_ref().unwrap_or(&dummy))?;
-    let (op, params) = match &i.op {
-        OpIn::State => (Op::State, Params::None),
-        OpIn::Knots { ivl } => (Op::Knots, Params::Knots(ivl.map(|[a, b]| (a, b)))),
-        OpIn::Evaluate {
-            t,
-            n,
-            from_left,
-            non_zero,
-        } => (
-            Op::Evaluate,
-            Params::Evaluate(*t, *n, *from_left, *non_zero),
-        ),
-        OpIn::EvaluatePoint { t } => (Op::EvaluatePoint, Params::Value(*t)),
-        OpIn::Continuities { tol } => (Op::Continuities, Params::Value(*tol)),
-        OpIn::Eq { other } => (
-            Op::Eq,
-            Params::Eq(match other {
-                OtherIn::Own(c) => Other::Own(block_of(c)?),
-                OtherIn::Itself => Other::Itself,
-                OtherIn::SameSurface(p) => Other::SameSurface(params_of(p)),
-            }),
-        ),
-        OpIn::IsKindOf { t } => (Op::IsKindOf, Params::Type(*t)),
-        OpIn::TypeStrings => (Op::TypeStrings, Params::None),
-        OpIn::UvIsoLine => (Op::UvIsoLine, Params::None),
-        OpIn::ReadDb {
-            binary,
-            version,
-            db,
-        } => {
-            // Enum values beyond the enums' range of values (`SmSurfParamType`,
-            // `SmBSplineSurfaceForm`: 0..=15) are undefined behaviour upstream.
-            if db.sp > 15 || db.form > 15 {
-                return Err(harness("enum value outside its range (undefined upstream)"));
-            }
-            (
-                Op::ReadDb,
-                Params::Db(db_bytes(*binary, *version, db)?, *binary, *version as i64),
-            )
-        }
-    };
-    match ffi::op(op, &a, &params) {
-        Ok(v) => Ok(Output::new().values("out", v)),
-        Err(e) => Err(harness(format!("ffi: {e}"))),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -849,10 +759,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -5,19 +5,17 @@
 //! builder, classifier and break helpers, and the type queries of the segment, region
 //! and offset map attribute classes).
 //!
-//! C++: `solidcore_ffi::units::curve_composite_curve_p1` (upstream
-//! `source/SMLib/src/SmCompositeCurve.cpp`; the file-static helpers through verbatim shim
-//! copies). Rust: `solidcore::curve::composite_curve::p1`.
+//! Ported from upstream `source/SMLib/src/SmCompositeCurve.cpp`; checked against its
+//! golden. Rust: `solidcore::curve::composite_curve::p1`.
 //!
 //! A case is one `op` with its curves (`{"bspline": {dim, oob, cpts, p, u}}` with control
-//! points as stored `[x, y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`, `{"circle":
-//! ..}` (a quadratic B-spline arc), `{"segment": {a, b}}` (`CreateLineSegment(3, a, b)`)
-//! or `{"line": {p, v, domain, scale, inside_out}}`; arcs and segments are built by the
-//! Rust B-spline constructors, bit-identical to upstream, and handed to both sides as
-//! inline B-spline data), composites (`{dim, curves, closed, senses?, gaps?}`) and
-//! parameters. Both sides produce the flat record documented in the ffi module; the
-//! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
-//! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
+//! points as stored `[x, y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`, `{"circle": ..}`
+//! (a quadratic B-spline arc), `{"segment": {a, b}}` (`CreateLineSegment(3, a, b)`) or
+//! `{"line": {p, v, domain, scale, inside_out}}`; arcs and segments are built by the Rust
+//! B-spline constructors, bit-identical to upstream, as inline B-spline data), composites
+//! (`{dim, curves, closed, senses?, gaps?}`) and parameters. The Rust side produces a flat
+//! record; the runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else
+//! the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce) and the rest as the `out` values.
 //!
 //! Deferred cases (unit `curve.curve_p5`): `ApproximateCurve`'s `AssertValid` of the
@@ -45,7 +43,6 @@ use solidcore::nurbs::b_spline_curve::{BSplineCurve, BoundingBoxRequest};
 use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_composite_curve_p1::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -98,6 +95,18 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
+}
+
+impl CircleIn {
+    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
+    /// arc that would end past 360 degrees starts one turn back.
+    fn turned_back(mut self) -> Self {
+        if self.a1 > 360.0 {
+            self.a0 -= 360.0;
+            self.a1 -= 360.0;
+        }
+        self
+    }
 }
 
 /// A line segment built by the Rust `CreateLineSegment(3, a, b)`.
@@ -280,221 +289,12 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            v.extend_from_slice(&l.p);
-            v.extend_from_slice(&l.v);
-            v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-        }
-        CurveIn::Circle(_) | CurveIn::Segment(_) => return Err(harness("unresolved curve")),
-    }
-    Ok(())
-}
-
-fn comp_block(v: &mut Vec<f64>, c: &CompIn) -> Result<(), HarnessError> {
-    v.extend([c.dim as f64, c.curves.len() as f64]);
-    for cu in &c.curves {
-        curve_block(v, cu)?;
-    }
-    v.push(b(c.closed));
-    // The shim reads one sense and one gap per curve: upstream ignores entries past
-    // the curve count and reads past a shorter array (undefined).
-    let n = c.curves.len();
-    match &c.senses {
-        Some(s) => {
-            let s = s.get(..n).ok_or_else(|| harness("fewer senses than curves"))?;
-            v.push(1.0);
-            v.extend(s.iter().map(|x| b(*x)));
-        }
-        None => v.push(0.0),
-    }
-    match &c.gaps {
-        Some(g) => {
-            let g = g.get(..n).ok_or_else(|| harness("fewer gaps than curves"))?;
-            v.push(1.0);
-            v.extend_from_slice(g);
-        }
-        None => v.push(0.0),
-    }
-    Ok(())
-}
-
-fn type_list(v: &mut Vec<f64>, t: &[i64]) {
-    v.push(t.len() as f64);
-    v.extend(t.iter().map(|x| *x as f64));
-}
-
-fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    let code = match op {
-        OpIn::Info { comp, types } => {
-            comp_block(&mut v, comp)?;
-            type_list(&mut v, types);
-            Op::Info
-        }
-        OpIn::Knots { comp } => {
-            comp_block(&mut v, comp)?;
-            Op::Knots
-        }
-        OpIn::BBox {
-            comp,
-            ivl,
-            pseudo,
-            polar,
-            expand,
-        } => {
-            comp_block(&mut v, comp)?;
-            v.extend([ivl[0], ivl[1], b(*pseudo), b(*polar), b(*expand)]);
-            Op::BBox
-        }
-        OpIn::Eq { a, b: bb } => {
-            comp_block(&mut v, a)?;
-            comp_block(&mut v, bb)?;
-            Op::Eq
-        }
-        OpIn::Copy { comp } => {
-            comp_block(&mut v, comp)?;
-            Op::Copy
-        }
-        OpIn::Transform {
-            comp,
-            origin,
-            x,
-            y,
-            scale,
-        } => {
-            comp_block(&mut v, comp)?;
-            v.extend_from_slice(origin);
-            v.extend_from_slice(x);
-            v.extend_from_slice(y);
-            v.push(b(scale.is_some()));
-            v.extend_from_slice(&scale.unwrap_or([1.0; 3]));
-            Op::Transform
-        }
-        OpIn::Approx { comp, tol } => {
-            comp_block(&mut v, comp)?;
-            v.push(*tol);
-            Op::Approx
-        }
-        OpIn::Orient {
-            curves,
-            senses,
-            normal,
-            bounds,
-        } => {
-            v.push(curves.len() as f64);
-            for c in curves {
-                curve_block(&mut v, c)?;
-            }
-            v.extend(senses.iter().map(|x| b(*x)));
-            v.extend_from_slice(normal);
-            v.push(b(*bounds));
-            Op::Orient
-        }
-        OpIn::Build { curves, same, line } => {
-            v.push(curves.len() as f64);
-            for c in curves {
-                curve_block(&mut v, c)?;
-            }
-            v.extend([*same, *line]);
-            Op::Build
-        }
-        OpIn::Corner {
-            vertex,
-            p1,
-            v1,
-            p2,
-            v2,
-            corner,
-            dist,
-            tol,
-        } => {
-            for p in [vertex, p1, v1, p2, v2] {
-                v.extend_from_slice(p);
-            }
-            v.extend([f64::from(*corner), *dist, *tol]);
-            Op::Corner
-        }
-        OpIn::Classify {
-            curve,
-            dist,
-            tol,
-            origs,
-            orig,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend([*dist, *tol, origs.len() as f64]);
-            for c in origs {
-                curve_block(&mut v, c)?;
-            }
-            v.push(b(orig.is_some()));
-            if let Some(o) = orig {
-                curve_block(&mut v, o)?;
-            }
-            Op::Classify
-        }
-        OpIn::Breaks { which, v: vals, x } => {
-            v.extend([f64::from(*which), vals.len() as f64]);
-            v.extend_from_slice(vals);
-            v.push(*x);
-            Op::Breaks
-        }
-        OpIn::Types {
-            id,
-            corner,
-            comp_index,
-            curve,
-            other,
-            err,
-            types,
-        } => {
-            v.extend([
-                *id as f64,
-                b(*corner),
-                *comp_index as f64,
-                *curve as f64,
-                *other as f64,
-                *err,
-            ]);
-            type_list(&mut v, types);
-            Op::Types
-        }
-    };
-    Ok((code, v))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
-    let (code, input) = cpp_input(op)?;
-    match ffi::eval(code, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -1096,7 +896,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    })
+    }.turned_back())
 }
 
 fn gen_curve(rng: &mut Rng, hermite: bool) -> CurveIn {
@@ -1555,17 +1355,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let op = gen_case(rng);
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
-            return serde_json::to_value(op).ok();
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1574,10 +1364,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1598,12 +1384,6 @@ mod tests {
         for _ in 0..2000 {
             let op = gen_case(&mut rng);
             let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
             let out = rust(&op);
             let e = stats.entry(name).or_default();
             e[0] += 1;

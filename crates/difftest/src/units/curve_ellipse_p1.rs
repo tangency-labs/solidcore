@@ -1,19 +1,20 @@
 //! Runner for unit `curve.ellipse_p1`: `SmEllipse` / `SmCircle` / `SmPolarConversion`,
 //! part 1.
 //!
-//! C++: `solidcore_ffi::units::curve_ellipse_p1` (upstream `source/SMLib/src/SmEllipse.cpp`
-//! and `SmCircle.cpp` on objects built by the upstream constructors, `CreateCanonical`
-//! or `ReadFromDB`). Rust: `solidcore::curve::ellipse`.
+//! Ported from upstream `source/SMLib/src/SmEllipse.cpp` and `SmCircle.cpp`; checked
+//! against its golden. Rust: `solidcore::curve::ellipse`.
 //!
-//! A case is a construction of curve A (`build`) and a program of operations (`ops`)
-//! run on it in order; both sides produce the record documented in the ffi module
-//! (statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`,
+//! A case is a construction of curve A (`build`: a constructor, `CreateCanonical` or
+//! `ReadFromDB` of a record written by [`record_bytes`]) and a program of operations
+//! (`ops`) run on it in order; the Rust side produces a flat record (statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`,
 //! `-1` for a Rust error upstream cannot produce), reported as the values `rec`. A case
 //! whose Rust side reaches an unported unit is deferred as a whole.
 //!
 //! Deferred cases: `CreateSimpleOffset` of a non-circular ellipse or of a circle with an
 //! out-of-plane normal (`SmCurve::IsArc` / the offset approximation), and point solves
 //! that reach unported solver pieces (see the report's `deferred_by_unit`).
+
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -37,7 +38,6 @@ use solidcore::nurbs::crv_basic::Curve as NurbCurve;
 use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_ellipse_p1::{self as ffi};
 
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -271,208 +271,109 @@ struct Inputs {
     ops: Vec<OpJ>,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
+// ---- the database record -------------------------------------------------------------
 
-fn ffi_ellipse(e: &EllipseJ) -> ffi::EllipseIn {
-    ffi::EllipseIn {
-        center: e.c,
-        x_axis: e.x,
-        y_axis: e.y,
-        domain: e.domain,
-        radii: e.radii,
-        dim: e.dim,
-        inside_out: e.inside_out,
-        nurb_from: e.nurb_from.as_ref().map(|s| Box::new(ffi_ellipse(s))),
-    }
-}
-
-fn ffi_circle(c: &CircleJ) -> ffi::CircleIn {
-    ffi::CircleIn {
-        center: c.c,
-        x_axis: c.x,
-        y_axis: c.y,
-        domain: c.domain,
-        radius: c.r,
-        dim: c.dim,
-        inside_out: c.inside_out,
-        nurb_from: c.nurb_from.as_ref().map(|s| Box::new(ffi_ellipse(s))),
-    }
-}
-
-fn ffi_record(r: &RecordJ) -> ffi::DbRecord {
-    ffi::DbRecord {
-        head: r.head,
-        inside_out: r.inside_out,
-        possible: r.possible,
-        knots: r.knots.clone(),
-        angles: r.angles.clone(),
-        exact: r.exact.clone(),
-        n: r.n,
-        p: r.p,
-        rat: r.rat,
-        dim: r.dim,
-        kt: r.kt,
-        form: r.form,
-        vals: r.vals.clone(),
-    }
-}
-
-fn ffi_build(b: &BuildJ) -> ffi::Build {
-    match b {
-        BuildJ::Ellipse(e) => ffi::Build::Ellipse(ffi_ellipse(e)),
-        BuildJ::Circle(c) => ffi::Build::Circle(ffi_circle(c)),
-        BuildJ::Circle3 {
-            points,
-            dim,
-            closed,
-        } => ffi::Build::Circle3 {
-            points: *points,
-            dim: *dim,
-            closed: *closed,
-        },
-        BuildJ::EllipseCanonical {
-            frame,
-            radii,
-            interval,
-            inside_out,
-        } => ffi::Build::EllipseCanonical {
-            frame: *frame,
-            radii: *radii,
-            interval: *interval,
-            inside_out: *inside_out,
-        },
-        BuildJ::CircleCanonical {
-            frame,
-            r,
-            interval,
-            inside_out,
-        } => ffi::Build::CircleCanonical {
-            frame: *frame,
-            radius: *r,
-            interval: *interval,
-            inside_out: *inside_out,
-        },
-        BuildJ::ReadDb {
-            circle,
-            dim,
-            binary,
-            version,
-            record,
-        } => ffi::Build::ReadDb {
-            circle: *circle,
-            dim: *dim,
-            binary: *binary,
-            version: *version,
-            record: ffi_record(record),
-        },
-    }
-}
-
-fn ffi_param(p: ParamJ) -> ffi::Param {
-    match p {
-        ParamJ::Raw(v) => ffi::Param::Raw(v),
-        ParamJ::Frac(v) => ffi::Param::Frac(v),
-    }
-}
-
-fn ffi_op(op: &OpJ) -> ffi::Op {
-    use ffi::Op as F;
-    match op {
-        OpJ::State { types } => F::State {
-            types: types.clone(),
-        },
-        OpJ::Copy => F::Copy,
-        OpJ::ToStep { t } => F::ToStep { t: ffi_param(*t) },
-        OpJ::ToPolar { t } => F::ToPolar { t: ffi_param(*t) },
-        OpJ::Adjust { domain } => F::Adjust { domain: *domain },
-        OpJ::Gps {
-            step,
-            ivl,
-            sop,
-            p,
-            tol,
-            target,
-            req,
-        } => F::Gps {
-            step: *step,
-            ivl: *ivl,
-            op: *sop,
-            p: *p,
-            tol: *tol,
-            target: *target,
-            req: *req,
-        },
-        OpJ::Join {
-            end,
-            other,
-            other_end,
-            gap,
-        } => F::Join {
-            end: *end,
-            other: match other {
-                OtherJ::Ellipse(e) => ffi::JoinOther::Ellipse(ffi_ellipse(e)),
-                OtherJ::Circle(c) => ffi::JoinOther::Circle(ffi_circle(c)),
-                OtherJ::BsplineOfA => ffi::JoinOther::BSplineOfA,
-            },
-            other_end: *other_end,
-            gap: *gap,
-        },
-        OpJ::Reverse { ivl } => F::Reverse { ivl: *ivl },
-        OpJ::Trim { ivl, mode } => F::Trim {
-            ivl: *ivl,
-            mode: *mode,
-        },
-        OpJ::Assert { given } => F::Assert { given: *given },
-        OpJ::IsCurrent => F::IsCurrent,
-        OpJ::PolarAssert => F::PolarAssert,
-        OpJ::Offset {
-            tol,
-            normal,
-            dist,
-            matched,
-        } => F::Offset {
-            tol: *tol,
-            normal: *normal,
-            dist: *dist,
-            matched: *matched,
-        },
-        OpJ::SetRadius { r } => F::SetRadius { r: *r },
-        OpJ::MakeNurb => F::MakeNurb,
-        OpJ::To2d => F::To2d,
-        OpJ::EditParam { domain, notify } => F::EditParam {
-            domain: *domain,
-            notify: *notify,
-        },
-        OpJ::Notify { post } => F::Notify { post: *post },
-        OpJ::IsArc => F::IsArc,
-        OpJ::IsNurbCircle { source, scale } => F::IsNurbCircle {
-            source: match source {
-                SourceJ::A => ffi::NurbSource::A,
-                SourceJ::BsplineOfA => ffi::NurbSource::BSplineOfA,
-                SourceJ::Raw {
-                    degree,
-                    cpts,
-                    knots,
-                } => ffi::NurbSource::Raw {
-                    degree: *degree,
-                    cpts: cpts.clone(),
-                    knots: knots.clone(),
-                },
-            },
-            scale: *scale,
-        },
-    }
-}
-
-fn ffi_program(i: &Inputs) -> (ffi::Build, Vec<ffi::Op>) {
-    (ffi_build(&i.build), i.ops.iter().map(ffi_op).collect())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (b, ops) = ffi_program(i);
-    match ffi::run(&b, &ops) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(e.to_string())),
+/// The stream bytes of `r` as `SmEllipse::WriteToDB` writes them (ASCII: one group per
+/// line with upstream's labels, values as `{:.17e}`, the polar arrays broken after the
+/// elements with index 5, 10, ...; binary: native-endian values). The fields are written
+/// as they are, so a record with inconsistent sizes reaches the reader as hostile input.
+fn record_bytes(binary: bool, version: u64, r: &RecordJ) -> Vec<u8> {
+    let per = 2 + usize::from(r.dim != 2) + usize::from(r.rat != 0);
+    let n_pts = usize::try_from(r.n.saturating_add(1)).unwrap_or(0);
+    let (pts, knots) = r.vals.split_at(n_pts.saturating_mul(per).min(r.vals.len()));
+    let (nk, na, ne) = (
+        r.knots.len() as u64,
+        r.angles.len() as u64,
+        r.exact.len() as u64,
+    );
+    if binary {
+        let mut b = Vec::new();
+        for x in &r.head {
+            b.extend_from_slice(&x.to_ne_bytes());
+        }
+        b.extend_from_slice(&r.inside_out.to_ne_bytes());
+        b.extend_from_slice(&r.possible.to_ne_bytes());
+        b.extend_from_slice(&nk.to_ne_bytes());
+        b.extend_from_slice(&na.to_ne_bytes());
+        b.extend_from_slice(&ne.to_ne_bytes());
+        b.extend_from_slice(&0i32.to_ne_bytes());
+        for x in r.knots.iter().chain(&r.angles) {
+            b.extend_from_slice(&x.to_ne_bytes());
+        }
+        for x in &r.exact {
+            b.extend_from_slice(&x.to_ne_bytes());
+        }
+        b.extend_from_slice(&r.n.to_ne_bytes());
+        b.extend_from_slice(&r.p.to_ne_bytes());
+        b.extend_from_slice(&r.rat.to_ne_bytes());
+        b.extend_from_slice(&r.dim.to_ne_bytes());
+        if version > 32 {
+            b.extend_from_slice(&r.kt.to_ne_bytes());
+            b.extend_from_slice(&r.form.to_ne_bytes());
+        }
+        for x in &r.vals {
+            b.extend_from_slice(&x.to_ne_bytes());
+        }
+        b
+    } else {
+        let f = |x: f64| format!("{x:.17e}");
+        let [ox, oy, oz, xx, xy, xz, yx, yy, yz, d0, d1, rx, ry] = r.head;
+        let mut t = String::new();
+        let _ = writeln!(t, "{} {} {} SmEllipse Axis Origin ", f(ox), f(oy), f(oz));
+        let _ = writeln!(t, "{} {} {} SmEllipse X Axis", f(xx), f(xy), f(xz));
+        let _ = writeln!(t, "{} {} {} SmEllipse Y Axis", f(yx), f(yy), f(yz));
+        let _ = writeln!(
+            t,
+            "{} {} SmEllipse angular arc domain in degrees ",
+            f(d0),
+            f(d1)
+        );
+        let _ = writeln!(t, "{} SmEllipse X_Axis radius ", f(rx));
+        let _ = writeln!(t, "{} SmEllipse Y_Axis radius ", f(ry));
+        let _ = writeln!(t, "{} SmEllipse InsideOut Flag ", r.inside_out);
+        t.push_str(" SmEllipse->PolarConverter \n");
+        let _ = writeln!(
+            t,
+            "{} SmPolarConversion PolarConversionPossible - TRUE=tables are initialized ",
+            r.possible
+        );
+        let _ = writeln!(t, "{nk} SmPolarConversion Number of Natural Knots ");
+        let _ = writeln!(t, "{na} SmPolarConversion Number of Angles ");
+        let _ = writeln!(t, "{ne} SmPolarConversion Number of ExactConversion Flags ");
+        t.push_str(
+            "0 SmPolarConversion TRUE = Has Curve for stored conversions, FALSE = back pointer \n",
+        );
+        let mut put_list = |items: Vec<String>| {
+            let n = items.len();
+            for (ii, s) in items.into_iter().enumerate() {
+                t.push_str(&s);
+                t.push(' ');
+                if ii > 0 && ii % 5 == 0 {
+                    t.push('\n');
+                }
+            }
+            if n > 0 && !n.is_multiple_of(5) {
+                t.push('\n');
+            }
+        };
+        put_list(r.knots.iter().map(|&x| f(x)).collect());
+        put_list(r.angles.iter().map(|&x| f(x)).collect());
+        put_list(r.exact.iter().map(ToString::to_string).collect());
+        t.push_str("Has No Copy of SmPolarConversion->CurveBeingConverted \n");
+        let _ = write!(t, "{}\n{}\n{}\n{}\n", r.n, r.p, r.rat, r.dim);
+        if version > 32 {
+            let _ = write!(t, "{}\n{}\n", r.kt, r.form);
+        }
+        for c in pts.chunks(per) {
+            let s: Vec<String> = c.iter().map(|&x| f(x)).collect();
+            t.push_str(&s.join(" "));
+            t.push('\n');
+        }
+        for &x in knots {
+            t.push_str(&f(x));
+            t.push('\n');
+        }
+        t.into_bytes()
     }
 }
 
@@ -760,8 +661,7 @@ fn build(k: &Kernel, bj: &BuildJ, o: &mut Vec<f64>) -> Result<Option<Ellipse>, F
             version,
             record,
         } => {
-            let bytes = ffi::db_bytes(*binary, *version, &ffi_record(record))
-                .map_err(|e| harness(format!("record: {e}")))?;
+            let bytes = record_bytes(*binary, *version, record);
             let mut db = DatabaseReader::new();
             db.open_for_read(
                 bytes,
@@ -1096,37 +996,6 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         put_state(&mut o, &a);
     }
     Ok(Output::new().values("rec", o))
-}
-
-/// Whether an `AssertValid` of the case reads the NURB parameter of a failed STEP
-/// conversion that wrote none (`dNurbT` is uninitialised upstream: undefined
-/// behaviour, see `plan/findings.md`, unit `curve.curve_p5`); such cases are not
-/// generated.
-fn reads_uninitialised(i: &Inputs) -> bool {
-    let k = Kernel::default();
-    let mut o = Vec::new();
-    let Ok(Some(mut a)) = build(&k, &i.build, &mut o) else {
-        return false;
-    };
-    if a.base().gw_nurb().is_none() {
-        return false;
-    }
-    for op in &i.ops {
-        if let OpJ::Assert { given } = op {
-            let mut list = AssertArray::new();
-            if let Err(SolidError::InvalidInput { reason, .. } | SolidError::PortInvariant { reason, .. }) =
-                a.assert_valid(&k, Some(&mut list), *given, KEY_A, KEY_POLAR)
-            {
-                if reason.contains("uninitialised") {
-                    return true;
-                }
-            }
-        }
-        if run_op(&k, &mut a, op, &mut o).is_err() {
-            return false;
-        }
-    }
-    false
 }
 
 // ---- generation -------------------------------------------------------------------
@@ -1963,20 +1832,12 @@ fn gen_nurb_circle(rng: &mut Rng) -> Inputs {
     }
 }
 
-/// The inline `IsNurbCurveCircle` cases: fixed, then generated (encodable only).
+/// The inline `IsNurbCurveCircle` cases: fixed, then generated.
 fn nurb_circle_cases(unit: &str) -> Vec<Case> {
     let mut all = nurb_circle_fixed();
     let mut rng = Rng::new(NURB_CIRCLE_SEED);
-    let mut made = 0;
-    let mut tries = 0;
-    while made < NURB_CIRCLE_GENERATED && tries < 8 * NURB_CIRCLE_GENERATED {
-        tries += 1;
-        let i = gen_nurb_circle(&mut rng);
-        let (b, ops) = ffi_program(&i);
-        if ffi::encode(&b, &ops).is_ok() {
-            all.push((format!("incgen{made:04}"), i));
-            made += 1;
-        }
+    for made in 0..NURB_CIRCLE_GENERATED {
+        all.push((format!("incgen{made:04}"), gen_nurb_circle(&mut rng)));
     }
     all.into_iter()
         .filter_map(|(name, i)| {
@@ -1997,11 +1858,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            let Some(i) = gen_case(rng) else {
-                continue;
-            };
-            let (b, ops) = ffi_program(&i);
-            if ffi::encode(&b, &ops).is_ok() && !reads_uninitialised(&i) {
+            if let Some(i) = gen_case(rng) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -2016,10 +1873,6 @@ impl UnitDiff for Runner {
         let mut v = default_cases(self, &ctx)?;
         v.extend(nurb_circle_cases(self.id()));
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

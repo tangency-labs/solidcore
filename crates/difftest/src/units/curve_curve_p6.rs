@@ -3,17 +3,16 @@
 //! dispatch, `CurveMaxDistanceBetween`, the simple and global coincidence checkers and
 //! `DeformToEndPointTargets`).
 //!
-//! C++: `solidcore_ffi::units::curve_curve_p6` (upstream `source/SMLib/src/SmCurve.cpp`,
-//! called through `SmCurve*` on B-spline, Hermite and line curves). Rust:
+//! Ported from upstream `source/SMLib/src/SmCurve.cpp`; checked against its golden. Rust:
 //! `solidcore::curve::curve::p6`.
 //!
 //! A case is one `op` with its curves (`{"bspline": {dim, oob, cpts, p, u}}` with control
 //! points as stored `[x, y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`, `{"circle": ..}`
-//! (a quadratic B-spline arc) or `{"line": {p, v, domain, scale, inside_out}}`, as in
-//! unit `curve.curve_p3`) and parameters. Both sides produce the flat record documented
-//! in the ffi module; the runner reports its first entry as the `status` int (`0` =
-//! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust
-//! error upstream cannot produce) and the rest as the `out` values.
+//! (a quadratic B-spline arc) or `{"line": {p, v, domain, scale, inside_out}}`, as in unit
+//! `curve.curve_p3`) and parameters. The Rust side produces a flat record; the runner
+//! reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`;
+//! `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the
+//! rest as the `out` values.
 //!
 //! Deferred cases (unit `curve.curve_p5`): the precise (`nsamp = 0`) gap refinement of
 //! `CurveMaxDistanceBetween` (`SmFindCCNormalENFO::Evaluate` behind `LocalCurveSolve`),
@@ -41,11 +40,13 @@ use solidcore::nurbs::b_spline_curve_n_lib::InValueType;
 use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_curve_p6::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Largest sample count of `CurveMaxDistanceBetween` a case runs.
+const MAX_SAMPLES: usize = 64;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -81,7 +82,7 @@ struct HermiteIn {
 }
 
 /// A quadratic circular arc built by the Rust `CreateCircleSegment` (bit-identical to
-/// upstream, see unit `nurbs.b_spline_curve_p1`) and handed to both sides as inline data.
+/// upstream, see unit `nurbs.b_spline_curve_p1`), as inline data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CircleIn {
     center: [f64; 3],
@@ -90,6 +91,18 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
+}
+
+impl CircleIn {
+    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
+    /// arc that would end past 360 degrees starts one turn back.
+    fn turned_back(mut self) -> Self {
+        if self.a1 > 360.0 {
+            self.a0 -= 360.0;
+            self.a1 -= 360.0;
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,198 +238,12 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn push_line(v: &mut Vec<f64>, l: &LineIn) {
-    v.extend_from_slice(&l.p);
-    v.extend_from_slice(&l.v);
-    v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            push_line(v, l);
-        }
-        CurveIn::Circle(_) => return Err(harness("unresolved circle")),
-    }
-    Ok(())
-}
-
-fn op_of(op: &OpIn) -> Op {
-    match op {
-        OpIn::BBox { .. } => Op::BBox,
-        OpIn::IsPlanar { .. } => Op::IsPlanar,
-        OpIn::DropPoint { .. } => Op::DropPoint,
-        OpIn::GpsStep { .. } => Op::GpsStep,
-        OpIn::MaxDist { .. } => Op::MaxDist,
-        OpIn::Simple { .. } => Op::Simple,
-        OpIn::Global { .. } => Op::Global,
-        OpIn::Deform { .. } => Op::Deform,
-    }
-}
-
-fn push_opt3(v: &mut Vec<f64>, x: Option<[f64; 3]>) {
-    v.push(b(x.is_some()));
-    v.extend_from_slice(&x.unwrap_or([0.0; 3]));
-}
-
-fn push_opt(v: &mut Vec<f64>, x: Option<f64>) {
-    v.extend([b(x.is_some()), x.unwrap_or(0.0)]);
-}
-
-fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    match op {
-        OpIn::BBox {
-            curve,
-            ivl,
-            normal,
-            pseudo,
-            polar,
-            expand,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend_from_slice(ivl);
-            v.extend([b(*normal), b(*pseudo), b(*polar), b(*expand)]);
-        }
-        OpIn::IsPlanar { curve, tol } => {
-            curve_block(&mut v, curve)?;
-            v.push(*tol);
-        }
-        OpIn::DropPoint {
-            curve,
-            ivl,
-            p,
-            vec,
-            tol,
-            guess,
-            sop,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend_from_slice(ivl);
-            v.extend_from_slice(p);
-            push_opt3(&mut v, *vec);
-            v.push(*tol);
-            push_opt(&mut v, *guess);
-            v.push(f64::from(*sop));
-        }
-        OpIn::GpsStep {
-            curve,
-            ivl,
-            sop,
-            p,
-            tol,
-            target,
-            req,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend_from_slice(ivl);
-            v.push(f64::from(*sop));
-            v.extend_from_slice(p);
-            v.push(*tol);
-            push_opt(&mut v, *target);
-            v.push(f64::from(*req));
-        }
-        OpIn::MaxDist {
-            c1,
-            ivl,
-            c2,
-            s,
-            e,
-            nsamp,
-            max,
-        } => {
-            curve_block(&mut v, c1)?;
-            v.extend_from_slice(ivl);
-            v.push(b(c2.is_none()));
-            if let Some(c2) = c2 {
-                curve_block(&mut v, c2)?;
-            }
-            v.extend([*s, *e, *nsamp as f64]);
-            v.extend([b(max.is_some()), max.unwrap_or(1.0)]);
-        }
-        OpIn::Simple {
-            c1,
-            ivl1,
-            c2,
-            ivl2,
-            tol,
-            pb1,
-            pb2,
-        } => {
-            curve_block(&mut v, c1)?;
-            v.extend_from_slice(ivl1);
-            curve_block(&mut v, c2)?;
-            v.extend_from_slice(ivl2);
-            v.extend([*tol, b(*pb1), b(*pb2)]);
-        }
-        OpIn::Global {
-            c1,
-            ivl1,
-            c2,
-            ivl2,
-            tol,
-            snap,
-        } => {
-            curve_block(&mut v, c1)?;
-            v.extend_from_slice(ivl1);
-            curve_block(&mut v, c2)?;
-            v.extend_from_slice(ivl2);
-            v.extend([*tol, b(*snap)]);
-        }
-        OpIn::Deform {
-            curve,
-            s,
-            e,
-            want,
-            st,
-            st_type,
-            et,
-            et_type,
-        } => {
-            curve_block(&mut v, curve)?;
-            push_opt3(&mut v, *s);
-            push_opt3(&mut v, *e);
-            v.push(b(*want));
-            push_opt3(&mut v, *st);
-            v.push(f64::from(*st_type));
-            push_opt3(&mut v, *et);
-            v.push(f64::from(*et_type));
-        }
-    }
-    Ok((op_of(op), v))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
-    let (code, input) = cpp_input(op)?;
-    match ffi::eval(code, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -734,9 +561,9 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             nsamp,
             max,
         } => {
-            // the FFI rejects more than `ffi::MAX_SAMPLES` samples; upstream (and the port)
-            // would loop that many times, so a larger count is not a case for Rust either
-            if *nsamp > ffi::MAX_SAMPLES as u64 {
+            // more than `MAX_SAMPLES` samples is not a case: upstream (and the port)
+            // would loop that many times
+            if *nsamp > MAX_SAMPLES as u64 {
                 return Err(HarnessError::new(format!("{nsamp} samples")));
             }
             let a = build(c1)?;
@@ -986,7 +813,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    })
+    }.turned_back())
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
@@ -1045,7 +872,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
-            });
+            }.turned_back());
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -1509,18 +1336,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        let k = &Kernel::default();
-        for _ in 0..64 {
-            let op = gen_case(k, rng);
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
-            return serde_json::to_value(op).ok();
-        }
-        None
+        serde_json::to_value(gen_case(&Kernel::default(), rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1529,10 +1345,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

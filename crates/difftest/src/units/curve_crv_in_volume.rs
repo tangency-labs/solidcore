@@ -1,18 +1,16 @@
 //! Runner for unit `curve.crv_in_volume`: `SmCrvInVolume`, a curve mapped through a
 //! volume.
 //!
-//! C++: `solidcore_ffi::units::curve_crv_in_volume` (upstream
-//! `source/SMLib/src/SmCrvInVolume.cpp` on objects built from a B-spline or Hermite base
-//! curve and an identity `SmTransform` volume; the break cache is loaded directly).
-//! Rust: `solidcore::curve::crv_in_volume` (through the [`Curve`] dispatch where the
-//! method is virtual upstream).
+//! Ported from upstream `source/SMLib/src/SmCrvInVolume.cpp`; checked against its golden,
+//! on objects built from a B-spline or Hermite base curve and an identity `SmTransform`
+//! volume (the break cache is loaded directly). Rust: `solidcore::curve::crv_in_volume`
+//! (through the [`Curve`] dispatch where the method is virtual upstream).
 //!
-//! A case is an optional object (`civ`: `curve` as in `curve.curve_p2`, `in_param`,
-//! `copy`, `owner`, optional `cache` `{need, breaks, conts}`) and an `op` with its
-//! parameters. Both sides produce the flat record documented in the ffi module; the
-//! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
-//! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
-//! produce) and the rest as `out`.
+//! A case is an optional object (`civ`: `curve` as in `curve.curve_p2`, `in_param`, `copy`,
+//! `owner`, optional `cache` `{need, breaks, conts}`) and an `op` with its parameters. The
+//! Rust side produces a flat record; the runner reports its first entry as the `status` int
+//! (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a
+//! Rust error upstream cannot produce) and the rest as `out`.
 //!
 //! The `clone` op runs the native copy constructor (`SmCrvInVolume(const
 //! SmCrvInVolume&)`, shim op `CopyCtor`, not the virtual `Copy`) against the port's
@@ -27,15 +25,14 @@
 //! 1e-9 value tolerance.
 //! `exact_volume_*` cases run `MakeExactBSplineIfPossible` on an object built from a
 //! B-spline, Hermite, line or circle base curve and a chain of transform, bend, unbend
-//! and twist maps (built in C++ and Rust from the same parameters), with the base curve
+//! and twist maps, with the base curve
 //! aligned with the head map's frame so the analytic branches of
 //! `MakeExactBSpline1stOutCurve` run; the record is the exact curve's type, NURB,
 //! natural interval and sampled points and tangents.
 //!
 //! Deferred cases: what reaches the unported parts: the curve classification of
 //! uncached breaks (`intersect.curve_class_*`) and the unported volume kinds. Every
-//! run has at least [`MIN_GENERATED`]
-//! generated cases; generated inputs the ffi wrapper rejects are redrawn.
+//! run has at least [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -62,7 +59,6 @@ use solidcore::surface::volume::{Volume, VolumeKind};
 use solidcore::topology::brep::validation::curve_assert_valid;
 use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_crv_in_volume::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -268,231 +264,12 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            let kind = if bs.raw_knots { 2.0 } else { 0.0 };
-            v.extend([kind, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-    }
-}
-
-fn civ_block(v: &mut Vec<f64>, c: &CivIn) {
-    curve_block(v, &c.curve);
-    v.extend([b(c.in_param), c.copy as f64, c.owner as f64]);
-    match &c.cache {
-        None => v.push(0.0),
-        Some(k) => {
-            v.extend([1.0, b(k.need), k.breaks.len() as f64]);
-            v.extend_from_slice(&k.breaks);
-            v.push(k.conts.len() as f64);
-            v.extend(k.conts.iter().map(|&c| c as f64));
-        }
-    }
-}
-
-fn cache_block(v: &mut Vec<f64>, cache: Option<&CacheIn>) {
-    match cache {
-        None => v.push(0.0),
-        Some(k) => {
-            v.extend([1.0, b(k.need), k.breaks.len() as f64]);
-            v.extend_from_slice(&k.breaks);
-            v.push(k.conts.len() as f64);
-            v.extend(k.conts.iter().map(|&c| c as f64));
-        }
-    }
-}
-
-fn exact_curve_block(v: &mut Vec<f64>, curve: &ExactCurveIn) {
-    match curve {
-        ExactCurveIn::Curve(c) => curve_block(v, c),
-        ExactCurveIn::Line { p1, p2 } => {
-            v.push(2.0);
-            v.extend_from_slice(p1);
-            v.extend_from_slice(p2);
-        }
-        ExactCurveIn::Circle {
-            c,
-            x,
-            y,
-            a0,
-            a1,
-            r,
-        } => {
-            v.push(3.0);
-            for p in [c, x, y] {
-                v.extend_from_slice(p);
-            }
-            v.extend([*a0, *a1, *r]);
-        }
-    }
-}
-
-fn vol_block(v: &mut Vec<f64>, vol: &[MapIn]) {
-    v.push(vol.len() as f64);
-    for m in vol {
-        v.push(f64::from(m.kind));
-        if m.kind == 1 {
-            for r in m.t.unwrap_or_default() {
-                v.extend_from_slice(&r);
-            }
-        }
-        if m.kind >= 5 {
-            if let Some(c) = &m.comp {
-                v.extend_from_slice(&c.p);
-                v.extend_from_slice(&c.axis);
-                v.extend_from_slice(&c.mid);
-                v.extend([c.a, c.b]);
-            }
-        }
-        match &m.orient {
-            None => v.push(0.0),
-            Some(o) => {
-                v.push(1.0);
-                for r in o {
-                    v.extend_from_slice(r);
-                }
-            }
-        }
-    }
-}
-
-fn op_of(op: &OpIn) -> Op {
-    match op {
-        OpIn::Info { .. } => Op::Info,
-        OpIn::Eval { .. } => Op::Eval,
-        OpIn::EvalPoint { .. } => Op::EvalPoint,
-        OpIn::Knots { .. } => Op::Knots,
-        OpIn::Mults { .. } => Op::Mults,
-        OpIn::Nnk => Op::Nnk,
-        OpIn::Conts { .. } => Op::Conts,
-        OpIn::Equal { .. } => Op::Equal,
-        OpIn::Copy => Op::Copy,
-        OpIn::Clone => Op::CopyCtor,
-        OpIn::EditParam { .. } => Op::EditParam,
-        OpIn::Reverse { .. } => Op::Reverse,
-        OpIn::Trim { .. } => Op::Trim,
-        OpIn::Transform { .. } => Op::Transform,
-        OpIn::ReadDb { .. } => Op::ReadDb,
-        OpIn::Exact { .. } => Op::Exact,
-        OpIn::AssertValid { .. } => Op::AssertValid,
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let op = op_of(&i.op);
-    let mut v = Vec::new();
-    if !op.is_static() {
-        let c = i
-            .civ
-            .as_ref()
-            .ok_or_else(|| harness("object op without civ"))?;
-        civ_block(&mut v, c);
-    }
-    match &i.op {
-        OpIn::Info { types } => {
-            v.push(types.len() as f64);
-            v.extend(types.iter().map(|&t| t as f64));
-        }
-        OpIn::Eval {
-            t,
-            n,
-            left,
-            nonzero,
-        } => v.extend([*t, *n as f64, b(*left), b(*nonzero)]),
-        OpIn::EvalPoint { t } => v.push(*t),
-        OpIn::Knots { ivl, want } => {
-            let [x, y] = ivl.unwrap_or([0.0, 0.0]);
-            v.extend([b(ivl.is_some()), x, y, b(*want)]);
-        }
-        OpIn::Mults { knots } => {
-            v.push(knots.len() as f64);
-            v.extend_from_slice(knots);
-        }
-        OpIn::Nnk | OpIn::Copy | OpIn::Clone => {}
-        OpIn::Conts { angle } => v.push(*angle),
-        OpIn::Equal { other } => match other {
-            None => v.push(1.0),
-            Some(o) => {
-                v.push(0.0);
-                civ_block(&mut v, o);
-            }
-        },
-        OpIn::EditParam { a, b: bb } | OpIn::Reverse { a, b: bb } => v.extend([*a, *bb]),
-        OpIn::Trim { a, b: bb, mode } => v.extend([*a, *bb, *mode as f64]),
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => {
-            v.extend_from_slice(origin);
-            v.extend_from_slice(x);
-            v.extend_from_slice(y);
-            v.push(b(scale.is_some()));
-            v.extend_from_slice(&scale.unwrap_or([1.0, 1.0, 1.0]));
-        }
-        OpIn::ReadDb { version, text } => {
-            v.push(*version as f64);
-            v.push(text.len() as f64);
-            v.extend(text.bytes().map(f64::from));
-        }
-        OpIn::Exact {
-            curve,
-            in_param,
-            volume,
-        } => {
-            exact_curve_block(&mut v, curve);
-            v.push(b(*in_param));
-            vol_block(&mut v, volume);
-        }
-        OpIn::AssertValid {
-            curve,
-            in_param,
-            copy,
-            owner,
-            cache,
-            volume,
-            level,
-            list,
-        } => {
-            exact_curve_block(&mut v, curve);
-            v.extend([b(*in_param), *copy as f64, *owner as f64]);
-            cache_block(&mut v, cache.as_ref());
-            vol_block(&mut v, volume);
-            v.extend([f64::from(*level), b(*list)]);
-        }
-    }
-    Ok((op, v))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -1399,23 +1176,13 @@ fn gen_assert_valid_case(rng: &mut Rng) -> OpIn {
     }
 }
 
-/// Generated `AssertValid` cases (native report comparison) the ffi wrapper
-/// accepts, from a fixed seed.
+/// Generated `AssertValid` cases (report records), from a fixed seed.
 fn assert_valid_cases() -> Result<Vec<Case>, HarnessError> {
     const WANT: usize = 300;
-    let mut cases = Vec::new();
     let mut rng = Rng::new(0x5eed_a55e);
-    for _ in 0..20_000 {
-        if cases.len() >= WANT {
-            break;
-        }
-        let op = gen_assert_valid_case(&mut rng);
-        let name = format!("assert_valid_{}", cases.len());
-        if let Some(c) = exact_case(name, op)? {
-            cases.push(c);
-        }
-    }
-    Ok(cases)
+    (0..WANT)
+        .map(|n| exact_case(format!("assert_valid_{n}"), gen_assert_valid_case(&mut rng)))
+        .collect()
 }
 
 fn add3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -1772,24 +1539,18 @@ fn gen_exact_volume_case(rng: &mut Rng) -> OpIn {
     }
 }
 
-fn exact_case(name: String, op: OpIn) -> Result<Option<Case>, HarnessError> {
+fn exact_case(name: String, op: OpIn) -> Result<Case, HarnessError> {
     let i = Inputs { civ: None, op };
-    let Ok((op, input)) = cpp_input(&i) else {
-        return Ok(None);
-    };
-    if ffi::validate(op, &input).is_err() {
-        return Ok(None);
-    }
-    Ok(Some(Case {
+    Ok(Case {
         unit: "curve.crv_in_volume".into(),
         name,
         source: CaseSource::Inline,
         inputs: serde_json::to_value(&i).map_err(|e| harness(e.to_string()))?,
-    }))
+    })
 }
 
-/// Generated `MakeExactBSplineIfPossible` cases on bend, unbend and twist volumes the
-/// ffi wrapper accepts, from a fixed seed, after hand-built ones.
+/// Generated `MakeExactBSplineIfPossible` cases on bend, unbend and twist volumes, from a
+/// fixed seed, after hand-built ones.
 fn exact_volume_cases() -> Result<Vec<Case>, HarnessError> {
     const WANT: usize = 400;
     let mut cases = Vec::new();
@@ -1841,22 +1602,13 @@ fn exact_volume_cases() -> Result<Vec<Case>, HarnessError> {
                 volume: vec![map.clone()],
             };
             let name = format!("exact_volume_hand_{n}_{}", u8::from(in_param));
-            let c = exact_case(name.clone(), op)?
-                .ok_or_else(|| harness(format!("{name}: rejected by the ffi wrapper")))?;
-            cases.push(c);
+            cases.push(exact_case(name, op)?);
         }
     }
-    let hand_count = cases.len();
     let mut rng = Rng::new(0x5eed_c1e4);
-    for _ in 0..20_000 {
-        if cases.len() >= hand_count + WANT {
-            break;
-        }
+    for n in 0..WANT {
         let op = gen_exact_volume_case(&mut rng);
-        let name = format!("exact_volume_{}", cases.len() - hand_count);
-        if let Some(c) = exact_case(name, op)? {
-            cases.push(c);
-        }
+        cases.push(exact_case(format!("exact_volume_{n}"), op)?);
     }
     Ok(cases)
 }
@@ -1867,16 +1619,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1888,10 +1631,6 @@ impl UnitDiff for Runner {
         cases.extend(exact_volume_cases()?);
         cases.extend(assert_valid_cases()?);
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

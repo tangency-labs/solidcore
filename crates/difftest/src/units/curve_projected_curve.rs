@@ -1,21 +1,19 @@
 //! Runner for unit `curve.projected_curve`: `SmProjectedCurve`, a parallel,
 //! perspective or rotation projection of a B-spline or Hermite base curve.
 //!
-//! C++: `solidcore_ffi::units::curve_projected_curve` (upstream
-//! `source/SMLib/src/SmProjectedCurve.cpp`, called through `SmCurve*` where the method
-//! is virtual). Rust: `solidcore::curve::projected_curve` (through
+//! Ported from upstream `source/SMLib/src/SmProjectedCurve.cpp`; checked against its
+//! golden. Rust: `solidcore::curve::projected_curve` (through
 //! `solidcore::curve::curve::Curve` for the same methods).
 //!
-//! A case is a projected curve `pc` (`curve`: `{"bspline": {dim, oob, cpts, p, u}}`
-//! with control points as stored `[x, y, z, w]`, or `{"hermite": {dim, p1, d1, p2,
-//! d2}}`; `ctor` 0 = constructor, 1 = `SetCanonical`; optional `point`, `vec`, `aux`;
-//! `ptype` the `SmProjectionType`; `owns` the ownership `SmBoolean`) and an `op`.
-//! `read_db` has no `pc`: its stream is written by the runner (both sides read the
-//! same bytes) from the projection data and a base curve, in ASCII or binary, for a
-//! database version. Both sides produce the flat record documented in the ffi
-//! module; the runner reports its first entry as the `status` int (`0` =
-//! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a
-//! Rust error upstream cannot produce) and the rest as the `out` values.
+//! A case is a projected curve `pc` (`curve`: `{"bspline": {dim, oob, cpts, p, u}}` with
+//! control points as stored `[x, y, z, w]`, or `{"hermite": {dim, p1, d1, p2, d2}}`; `ctor`
+//! 0 = constructor, 1 = `SetCanonical`; optional `point`, `vec`, `aux`; `ptype` the
+//! `SmProjectionType`; `owns` the ownership `SmBoolean`) and an `op`. `read_db` has no
+//! `pc`: its stream is written by the runner from the projection data and a base curve, in
+//! ASCII or binary, for a database version. The Rust side produces a flat record; the
+//! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
+//! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
+//! produce) and the rest as the `out` values.
 //!
 //! `Copy` reports whether the copy shares the base curve (upstream: the pointer is
 //! shared exactly when it is not owned; the port always copies it, so the Rust side
@@ -53,7 +51,6 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::topology::brep::validation::curve_assert_valid;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_projected_curve::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -332,120 +329,8 @@ fn db_bytes(d: &DbIn) -> Vec<u8> {
 
 // ---- C++ input --------------------------------------------------------------------
 
-fn push3(v: &mut Vec<f64>, p: [f64; 3]) {
-    v.extend_from_slice(&p);
-}
-
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            let kind = if bs.raw_knots { 2.0 } else { 0.0 };
-            v.extend([kind, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                push3(v, p);
-            }
-        }
-    }
-}
-
-fn pc_block(v: &mut Vec<f64>, pc: &PcIn) {
-    curve_block(v, &pc.curve);
-    v.push(f64::from(pc.ctor));
-    for x in [pc.point, pc.vec, pc.aux] {
-        v.push(b(x.is_some()));
-        push3(v, x.unwrap_or([0.0; 3]));
-    }
-    v.extend([f64::from(pc.ptype), f64::from(pc.owns)]);
-}
-
-fn op_of(op: &OpIn) -> Op {
-    match op {
-        OpIn::State => Op::State,
-        OpIn::MakeOrtho => Op::MakeOrtho,
-        OpIn::Eval { .. } => Op::Eval,
-        OpIn::EvalPoint { .. } => Op::EvalPoint,
-        OpIn::Knots { .. } => Op::Knots,
-        OpIn::Continuities { .. } => Op::Continuities,
-        OpIn::EditParam { .. } => Op::EditParam,
-        OpIn::Reverse { .. } => Op::Reverse,
-        OpIn::Trim { .. } => Op::Trim,
-        OpIn::Transform { .. } => Op::Transform,
-        OpIn::Copy => Op::Copy,
-        OpIn::CloneCtor => Op::CloneCtor,
-        OpIn::Equal { .. } => Op::Equal,
-        OpIn::Ends => Op::Ends,
-        OpIn::AssertValid { .. } => Op::AssertValid,
-        OpIn::ReadDb(_) => Op::ReadDb,
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let op = op_of(&i.op);
-    let mut v = Vec::new();
-    if let OpIn::ReadDb(d) = &i.op {
-        // `(SmProjectionType)lValue` beyond the enum's range of values (0..=3) is
-        // undefined behaviour upstream (the port reads it as `SM_PT_UNKNOWN`).
-        if d.ptype > 3 {
-            return Err(harness(
-                "projection type outside SmProjectionType (undefined upstream)",
-            ));
-        }
-        let bytes = db_bytes(d);
-        v.extend([d.version as f64, b(d.binary), bytes.len() as f64]);
-        v.extend(bytes.iter().map(|&x| f64::from(x)));
-        return Ok((op, v));
-    }
-    let pc =
-        i.pc.as_ref()
-            .ok_or_else(|| harness("curve op without pc"))?;
-    pc_block(&mut v, pc);
-    match &i.op {
-        OpIn::State | OpIn::MakeOrtho | OpIn::Copy | OpIn::Ends | OpIn::ReadDb(_) => {}
-        OpIn::CloneCtor => clone_ctor_ctor0(pc)?,
-        OpIn::Eval {
-            t,
-            n,
-            left,
-            nonzero,
-        } => v.extend([*t, *n as f64, b(*left), b(*nonzero)]),
-        OpIn::EvalPoint { t } => v.push(*t),
-        OpIn::Knots { ivl } => {
-            let [a, bb] = ivl.unwrap_or([0.0, 0.0]);
-            v.extend([b(ivl.is_some()), a, bb]);
-        }
-        OpIn::Continuities { angle } => v.push(*angle),
-        OpIn::EditParam { a, b: bb } | OpIn::Reverse { a, b: bb } => v.extend([*a, *bb]),
-        OpIn::Trim { a, b: bb, mode } => v.extend([*a, *bb, f64::from(*mode)]),
-        OpIn::Transform { o, x, y, scale } => {
-            push3(&mut v, *o);
-            push3(&mut v, *x);
-            push3(&mut v, *y);
-            v.push(b(scale.is_some()));
-            push3(&mut v, scale.unwrap_or([0.0; 3]));
-        }
-        OpIn::Equal { other } => {
-            v.push(b(other.is_none()));
-            if let Some(o) = other {
-                pc_block(&mut v, o);
-            }
-        }
-        OpIn::AssertValid { level, list } => v.extend([f64::from(*level), b(*list)]),
-    }
-    Ok((op, v))
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -454,23 +339,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    // inputs the copy constructor has no defined result for are rejected by the
-    // native side (the case is then neither compared nor run on Rust), as the FFI
-    // validation shows a shim must not see them
-    let undefined = (op == Op::CloneCtor)
-        .then(|| i.pc.as_ref().and_then(clone_ctor_undefined))
-        .flatten();
-    if let Some(reason) = undefined {
-        return Ok(Output::rejected(reason));
-    }
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -548,16 +416,6 @@ fn clone_ctor_ctor0(pc: &PcIn) -> Result<(), HarnessError> {
         ));
     }
     Ok(())
-}
-
-/// Why `pc` is outside `CloneCtor`'s defined domain, if it is: upstream's copy
-/// constructor copies an owned (`TRUE`, `UNSURE`) base curve with its `Copy`, which a
-/// Hermite curve has not (`SM_ERR`, leaving a null base curve and undefined use), so
-/// such inputs are rejected by the native side instead of compared. A borrowed
-/// Hermite base is fine (the pointer is shared).
-fn clone_ctor_undefined(pc: &PcIn) -> Option<&'static str> {
-    (pc.owns != 0 && matches!(&pc.curve, CurveIn::Hermite(_)))
-        .then_some("clone_ctor: an owned or unsure Hermite base curve has no Copy")
 }
 
 /// The projected curve of `pc` and the status of its construction.
@@ -1275,16 +1133,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1293,33 +1142,20 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         let mut v = default_cases(self, &main)?;
-        // AssertValid with native report comparison: their own seed stream (the other
+        // AssertValid report records: their own seed stream (the other
         // generated cases are unchanged); named `avNNNN`
         let av = CaseContext {
             seeds: ctx.seeds.max(ASSERT_VALID_CASES),
             ..ctx.clone()
         };
         for mut c in av.generated_cases("curve.projected_curve:assert_valid", |rng| {
-            for _ in 0..64 {
-                let i = gen_assert_valid(rng);
-                let Ok((op, input)) = cpp_input(&i) else {
-                    continue;
-                };
-                if ffi::validate(op, &input).is_ok() {
-                    return serde_json::to_value(i).ok();
-                }
-            }
-            None
+            serde_json::to_value(gen_assert_valid(rng)).ok()
         }) {
             c.name = c.name.replacen("gen", "av", 1);
             c.unit = self.id().to_string();
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

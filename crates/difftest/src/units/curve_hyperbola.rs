@@ -1,22 +1,22 @@
 //! Runner for unit `curve.hyperbola`: hyperbolic arcs (`SmHyperbola`).
 //!
-//! C++: `solidcore_ffi::units::curve_hyperbola` (upstream
-//! `source/SMLib/src/SmHyperbola.cpp`). Rust: `solidcore::curve::hyperbola`, reached
-//! through the [`Curve`] dispatch where upstream calls a virtual.
+//! Ported from upstream `source/SMLib/src/SmHyperbola.cpp`; checked against its golden.
+//! Rust: `solidcore::curve::hyperbola`, reached through the [`Curve`] dispatch where
+//! upstream calls a virtual.
 //!
-//! A case builds `this` with the constructor (which makes the NURB: `MakeNurb`) and
-//! runs one `op` on it (`state`, `eval_step`, `step_inv`, `adjust`, `reverse`,
-//! `transform`, `gps`, `eq`, `copy`), or reads a hyperbola from a database stream
-//! (`read_db`). Both sides produce the same flat record `r` (see
-//! `solidcore_ffi::units::curve_hyperbola`): the status (`0` = `SM_SUCCESS`, else the
-//! `SmStatus`; `-1` on the Rust side for an error upstream cannot produce), the op's
-//! outputs, and the state of the curve (placement, domain, axis lengths, the B-spline
-//! base's flags, control points as stored and knots).
+//! A case builds `this` with the constructor (which makes the NURB: `MakeNurb`) and runs
+//! one `op` on it (`state`, `eval_step`, `step_inv`, `adjust`, `reverse`, `transform`,
+//! `gps`, `eq`, `copy`), or reads a hyperbola from a database stream (`read_db`, of a
+//! record written by [`record_bytes`]). The Rust side produces a flat record `r`: the
+//! status (`0` = `SM_SUCCESS`, else the `SmStatus`; `-1` on the Rust side for an error
+//! upstream cannot produce), the op's outputs, and the state of the curve (placement,
+//! domain, axis lengths, the B-spline base's flags, control points as stored and knots).
 //!
 //! Deferred: `gps` (`SmCurve::GlobalPointSolve`, unit `curve.curve_p1`) and `step_inv`
 //! with classification of a parameter inside the domain (`SmCurve::EvaluateSTEPPoint`,
-//! unit `curve.curve_p5`). Every run has at least [`MIN_GENERATED`] generated cases;
-//! inputs the ffi wrapper rejects are redrawn.
+//! unit `curve.curve_p5`). Every run has at least [`MIN_GENERATED`] generated cases.
+
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,8 +29,6 @@ use solidcore::geom::global_solver::{SolutionRequested, SolverOperation};
 use solidcore::geom::vector3d::Vec3;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_hyperbola::{self as ffi, DbRecord, HyperbolaIn, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -150,93 +148,69 @@ fn req_all() -> i32 {
     1
 }
 
+/// The stream bytes of `r` as `SmHyperbola::WriteToDB` writes them (ASCII: one group per
+/// line with upstream's labels, values as `{:.17e}`; binary: native-endian doubles,
+/// `long` / `short` header fields). The fields are written as they are, so a record
+/// with inconsistent sizes reaches the reader as hostile input.
+fn record_bytes(binary: bool, version: u64, r: &RecordIn) -> Vec<u8> {
+    let per = 2 + usize::from(r.dim != 2) + usize::from(r.rat != 0);
+    let n_pts = usize::try_from(r.n.saturating_add(1)).unwrap_or(0);
+    let (pts, knots) = r.vals.split_at(n_pts.saturating_mul(per).min(r.vals.len()));
+    if binary {
+        let mut b = Vec::new();
+        for x in &r.head {
+            b.extend_from_slice(&x.to_ne_bytes());
+        }
+        b.extend_from_slice(&r.n.to_ne_bytes());
+        b.extend_from_slice(&r.p.to_ne_bytes());
+        b.extend_from_slice(&r.rat.to_ne_bytes());
+        b.extend_from_slice(&r.dim.to_ne_bytes());
+        if version > 32 {
+            b.extend_from_slice(&r.kt.to_ne_bytes());
+            b.extend_from_slice(&r.form.to_ne_bytes());
+        }
+        for x in &r.vals {
+            b.extend_from_slice(&x.to_ne_bytes());
+        }
+        b
+    } else {
+        let f = |x: f64| format!("{x:.17e}");
+        let [ox, oy, oz, xx, xy, xz, yx, yy, yz, d0, d1, a, b] = r.head;
+        let mut t = String::new();
+        let _ = writeln!(t, "{} {} {} SmHyperbola Axis Origin ", f(ox), f(oy), f(oz));
+        let _ = writeln!(t, "{} {} {} SmHyperbola X Axis", f(xx), f(xy), f(xz));
+        let _ = writeln!(t, "{} {} {} SmHyperbola Y Axis", f(yx), f(yy), f(yz));
+        let _ = writeln!(
+            t,
+            "{} {} SmHyperbola anular arc domain in degrees ",
+            f(d0),
+            f(d1)
+        );
+        let _ = writeln!(t, "{} SmHyperbola Length of semi axis           ", f(a));
+        let _ = writeln!(t, "{} SmHyperbola Length of semi imaginary axis ", f(b));
+        let _ = write!(t, "{}\n{}\n{}\n{}\n", r.n, r.p, r.rat, r.dim);
+        if version > 32 {
+            let _ = write!(t, "{}\n{}\n", r.kt, r.form);
+        }
+        for c in pts.chunks(per) {
+            let s: Vec<String> = c.iter().map(|&x| f(x)).collect();
+            t.push_str(&s.join(" "));
+            t.push('\n');
+        }
+        for &x in knots {
+            t.push_str(&f(x));
+            t.push('\n');
+        }
+        t.into_bytes()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     this: Option<HypIn>,
     #[serde(flatten)]
     op: OpIn,
-}
-
-fn hyp_ffi(h: &HypIn) -> HyperbolaIn {
-    HyperbolaIn {
-        center: h.center,
-        x_axis: h.x,
-        y_axis: h.y,
-        domain: h.domain,
-        semi_axis: h.a,
-        semi_image_axis: h.b,
-        dim: h.dim,
-    }
-}
-
-fn record_ffi(r: &RecordIn) -> DbRecord {
-    DbRecord {
-        head: r.head,
-        n: r.n,
-        p: r.p,
-        rat: r.rat,
-        dim: r.dim,
-        kt: r.kt,
-        form: r.form,
-        vals: r.vals.clone(),
-    }
-}
-
-fn op_ffi(op: &OpIn) -> Op {
-    match op {
-        OpIn::State { types } => Op::State {
-            types: types.clone(),
-        },
-        OpIn::EvalStep { t, nd } => Op::EvalStep { t: *t, nd: *nd },
-        OpIn::StepInv { p, classify } => Op::StepInv {
-            p: *p,
-            classify: *classify,
-        },
-        OpIn::Adjust { ivl } => Op::Adjust { ivl: *ivl },
-        OpIn::Reverse { ivl } => Op::Reverse { ivl: *ivl },
-        OpIn::Transform { o, x, y, scale } => Op::Transform {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-        },
-        OpIn::Gps {
-            ivl,
-            sop,
-            p,
-            tol,
-            target,
-            req,
-        } => Op::Gps {
-            ivl: *ivl,
-            op: *sop,
-            p: *p,
-            tol: *tol,
-            target: *target,
-            req: *req,
-        },
-        OpIn::Eq { other } => Op::Eq {
-            other: hyp_ffi(other),
-        },
-        OpIn::Copy => Op::Copy,
-        OpIn::ReadDb {
-            dim,
-            binary,
-            version,
-            record,
-        } => Op::ReadDb {
-            dim: *dim,
-            binary: *binary,
-            version: *version,
-            record: record_ffi(record),
-        },
-    }
-}
-
-fn run_ffi(i: &Inputs) -> Result<Vec<f64>, FfiError> {
-    let this = i.this.as_ref().map(hyp_ffi);
-    ffi::eval(this.as_ref(), &op_ffi(&i.op))
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -428,8 +402,7 @@ fn rust_record(k: &solidcore::kernel::Kernel, i: &Inputs) -> Result<Result<Vec<f
         record,
     } = &i.op
     {
-        let bytes = ffi::db_bytes(*binary, *version, &record_ffi(record))
-            .map_err(|e| harness(format!("record: {e}")))?;
+        let bytes = record_bytes(*binary, *version, record);
         let mut db = DatabaseReader::new();
         db.open_for_read(
             bytes,
@@ -740,17 +713,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let r = run_ffi(&i).map_err(|e| harness(format!("ffi: {e}")))?;
-        // The shim refuses some inputs in band with `SC_ERR_ARG` (-1002) as the first
-        // value (e.g. `gps` on a curve that would have no NURB): a guard rejection.
-        if r.first() == Some(&-1002.0) {
-            return Err(harness("shim rejected the input (SC_ERR_ARG)"));
-        }
-        Ok(Output::new().values("r", r))
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &solidcore::Kernel::default();
         let i: Inputs = case.parse()?;
@@ -761,30 +723,6 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        // redraw inputs the ffi wrapper rejects
-        for _ in 0..64 {
-            let i = gen_inputs(rng);
-            let this = i.this.as_ref().map(hyp_ffi);
-            let ok = match &i.op {
-                // upstream's GlobalPointSolve crashes on a curve without NURB
-                OpIn::Gps { ivl, .. } => i.this.as_ref().is_some_and(|h| {
-                    let mut hy = build(h);
-                    hy.adjust_step_interval(&Extent1d::from_min_max(ivl[0], ivl[1]), None)
-                        .is_err()
-                        || hy.base().gw_nurb().is_some()
-                }),
-                OpIn::ReadDb {
-                    binary,
-                    version,
-                    record,
-                    ..
-                } => ffi::db_bytes(*binary, *version, &record_ffi(record)).is_ok(),
-                _ => this.is_some(),
-            };
-            if ok {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_inputs(rng)).ok()
     }
 }

@@ -1,8 +1,8 @@
 //! Runner for unit `curve.conic`: rational parametric 2D conics.
 //!
-//! C++: `solidcore_ffi::units::curve_conic` (upstream `SmConic`,
-//! `source/SMLib/inc/SmConic.h`, `source/SMLib/src/SmConic.cpp`).
-//! Rust: `solidcore::curve::conic`.
+//! Ported from upstream `SmConic` (`source/SMLib/inc/SmConic.h`,
+//! `source/SMLib/src/SmConic.cpp`); checked against its golden. Rust:
+//! `solidcore::curve::conic`.
 //!
 //! Every case builds conic `a` (and `b` for `eq` / `intersect_conic`) from a type
 //! (`-1` = the empty constructor, `0..=4` = `SmConicType`), constants `a`, `b` and
@@ -23,8 +23,6 @@ use solidcore::geom::vector2d::Vec2;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_conic::{self as ffi, Built, Op, Operands};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -41,6 +39,24 @@ use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `curve.conic` runner.
 pub struct Runner;
+
+/// One `SmConic` operation on conic A (and B for [`Op::Eq`] and [`Op::IntersectConic`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    State,
+    Evaluate,
+    EvaluatePoint,
+    Implicit,
+    IntersectImplicit,
+    IntersectConic,
+    Invert,
+    Knots,
+    Continuities,
+    Eq,
+    IsKindOf,
+    TypeStrings,
+    ReadDb,
+}
 
 /// Operation names used in `inputs.op`, and whether the result starts with a
 /// status.
@@ -131,42 +147,7 @@ fn db_bytes(i: &Inputs) -> Result<Vec<u8>, HarnessError> {
     Ok(out)
 }
 
-fn ffi_built(c: &ConicIn) -> Built {
-    Built {
-        conic_type: c.conic_type,
-        a: c.a,
-        b: c.b,
-        transforms: c.transforms.clone(),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, has_status) = lookup(&i.op)?;
-    let x = Operands {
-        t: i.t,
-        n: i.n,
-        flags: i.flags,
-        w: i.w,
-        data: db_bytes(i)?,
-        file_type: i32::from(i.binary),
-    };
-    match ffi::op(op, &ffi_built(&i.a), &ffi_built(&i.b), &x) {
-        Ok(v) => {
-            if has_status {
-                if let Some(&s) = v.first() {
-                    if s != SM_SUCCESS {
-                        return Ok(Output::err(format!("status_{}", s as i64)));
-                    }
-                }
-            }
-            Ok(Output::new().values("r", v))
-        }
-        Err(FfiError::Status(s)) if s > 0 => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
-/// Build a conic as the shim does.
+/// Build a conic: `SmConic(type, a, b)` (or `SmConic()`), then its transforms.
 fn build(c: &ConicIn) -> Result<Conic, HarnessError> {
     if !(-1..=4).contains(&c.conic_type) {
         return Err(HarnessError::new("conic type"));
@@ -549,10 +530,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -3,18 +3,17 @@
 //! intersection dispatcher), the solver helpers `sm_FilterSolution` /
 //! `sm_GetProjDist` and the curve evaluator objects.
 //!
-//! C++: `solidcore_ffi::units::curve_curve_p4` (upstream `source/SMLib/src/SmCurve.cpp`,
-//! called through `SmCurve*` on B-spline, Hermite and line curves; the file-static
-//! helpers and local classes are verbatim copies in the shim). Rust:
+//! Ported from upstream `source/SMLib/src/SmCurve.cpp` (through `SmCurve*` on B-spline,
+//! Hermite and line curves); checked against its golden. Rust:
 //! `solidcore::curve::curve::p4`.
 //!
-//! A case is one `op` with its curves (`{"bspline": {dim, oob, cpts, p, u}}` with
-//! control points as stored `[x, y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`,
-//! `{"circle": ..}` (a quadratic B-spline arc) or `{"line": {p, v, domain, scale,
-//! inside_out}}`) and parameters. Both sides produce the flat record documented in the
-//! ffi module; the runner reports its first entry as the `status` int (`0` =
-//! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust
-//! error upstream cannot produce) and the rest as the `out` values.
+//! A case is one `op` with its curves (`{"bspline": {dim, oob, cpts, p, u}}` with control
+//! points as stored `[x, y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`, `{"circle": ..}`
+//! (a quadratic B-spline arc) or `{"line": {p, v, domain, scale, inside_out}}`) and
+//! parameters. The Rust side produces a flat record; the runner reports its first entry as
+//! the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
+//! `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest as the `out`
+//! values.
 //!
 //! Deferred cases: `HasPlaneCrossings` with planes (`SmSurface::GlobalCurveIntersect`,
 //! `surface.surface_p8`) and ellipse intersections that reach the general curve solvers
@@ -49,11 +48,13 @@ use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::surface::plane::Plane;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_curve_p4::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most polar box samples a case runs.
+const MAX_SAMPLES: usize = 401;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -99,6 +100,18 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
+}
+
+impl CircleIn {
+    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
+    /// arc that would end past 360 degrees starts one turn back.
+    fn turned_back(mut self) -> Self {
+        if self.a1 > 360.0 {
+            self.a0 -= 360.0;
+            self.a1 -= 360.0;
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,256 +287,12 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn push_line(v: &mut Vec<f64>, l: &LineIn) {
-    v.extend_from_slice(&l.p);
-    v.extend_from_slice(&l.v);
-    v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            push_line(v, l);
-        }
-        CurveIn::Circle(_) => return Err(harness("unresolved circle")),
-        CurveIn::Ellipse(e) => {
-            v.extend([3.0, 3.0]);
-            v.extend_from_slice(&e.c);
-            v.extend_from_slice(&e.x);
-            v.extend_from_slice(&e.y);
-            v.extend([e.domain[0], e.domain[1], e.radii[0], e.radii[1], b(e.inside_out)]);
-        }
-    }
-    Ok(())
-}
-
-fn operand_block(v: &mut Vec<f64>, o: &OperandIn) -> Result<(), HarnessError> {
-    match o {
-        OperandIn::Line(l) => {
-            v.push(0.0);
-            push_line(v, l);
-        }
-        OperandIn::Ellipse(e) => {
-            v.push(1.0);
-            v.extend_from_slice(&e.c);
-            v.extend_from_slice(&e.x);
-            v.extend_from_slice(&e.y);
-            v.extend([e.domain[0], e.domain[1], e.radii[0], e.radii[1], 3.0, b(e.inside_out)]);
-        }
-        OperandIn::Curve(c) => {
-            v.push(2.0);
-            curve_block(v, c)?;
-        }
-    }
-    Ok(())
-}
-
-fn op_of(op: &OpIn) -> Op {
-    match op {
-        OpIn::IsClosed { .. } => Op::IsClosed,
-        OpIn::IsDegenerate { .. } => Op::IsDegenerate,
-        OpIn::PolarBox { .. } => Op::PolarBox,
-        OpIn::Snap { .. } => Op::Snap,
-        OpIn::Assert { .. } => Op::Assert,
-        OpIn::FixChain { .. } => Op::FixChain,
-        OpIn::Filter { .. } => Op::Filter,
-        OpIn::ProjDist { .. } => Op::ProjDist,
-        OpIn::Property { .. } => Op::Property,
-        OpIn::CcTangent { .. } => Op::CcTangent,
-        OpIn::CpDistAt { .. } => Op::CpDistAt,
-        OpIn::DistExtrema { .. } => Op::DistExtrema,
-        OpIn::Analytic { .. } => Op::Analytic,
-        OpIn::Planes { .. } => Op::Planes,
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    match op {
-        OpIn::IsClosed {
-            curve,
-            base,
-            ivl,
-            tol,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend([b(*base), ivl[0], ivl[1], *tol]);
-        }
-        OpIn::IsDegenerate {
-            curve,
-            base,
-            tol,
-            ivl,
-        } => {
-            curve_block(&mut v, curve)?;
-            let [a, bb] = ivl.unwrap_or([0.0, 0.0]);
-            let (a, bb) = if ivl.is_some() {
-                (a, bb)
-            } else {
-                let r = range_of(curve);
-                (r.0, r.1)
-            };
-            v.extend([b(*base), *tol, b(ivl.is_some()), a, bb]);
-        }
-        OpIn::PolarBox { curve, ivl, count } => {
-            curve_block(&mut v, curve)?;
-            v.extend([ivl[0], ivl[1], *count as f64]);
-        }
-        OpIn::Snap { curve, t, tol } => {
-            curve_block(&mut v, curve)?;
-            v.extend([*t, *tol]);
-        }
-        OpIn::Assert {
-            curve,
-            owner,
-            given,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend([b(*owner), b(*given)]);
-        }
-        OpIn::FixChain { curves, tol, del } => {
-            v.push(curves.len() as f64);
-            for c in curves {
-                v.push(b(c.is_some()));
-                if let Some(c) = c {
-                    curve_block(&mut v, c)?;
-                }
-            }
-            v.extend([*tol, b(*del)]);
-        }
-        OpIn::Filter {
-            c1,
-            ivl1,
-            c2,
-            ivl2,
-            k1,
-            k2,
-            adj,
-            s,
-            value,
-        } => {
-            curve_block(&mut v, c1)?;
-            v.extend_from_slice(ivl1);
-            curve_block(&mut v, c2)?;
-            v.extend_from_slice(ivl2);
-            v.extend([k1[0], k1[1], k2[0], k2[1]].map(f64::from));
-            v.extend([*adj as f64, s[0], s[1], *value]);
-        }
-        OpIn::ProjDist {
-            curve,
-            t,
-            p,
-            n,
-            rev,
-            d,
-            sop,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.push(*t);
-            v.extend_from_slice(p);
-            v.extend_from_slice(n);
-            v.push(b(*rev));
-            v.extend_from_slice(d);
-            v.push(f64::from(*sop));
-        }
-        OpIn::Property {
-            curve,
-            prop,
-            val,
-            vecs,
-            sqtol,
-            t,
-            signal,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend([f64::from(*prop), b(val.is_some()), val.unwrap_or(0.0)]);
-            v.push(vecs.len() as f64);
-            for x in vecs {
-                v.extend_from_slice(x);
-            }
-            v.extend([*sqtol, *t, b(*signal)]);
-        }
-        OpIn::CcTangent { c1, c2, x, jac } => {
-            curve_block(&mut v, c1)?;
-            curve_block(&mut v, c2)?;
-            v.extend([x[0], x[1], b(*jac)]);
-        }
-        OpIn::CpDistAt {
-            curve,
-            p,
-            dsq,
-            sqtol,
-            x,
-            jac,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.extend_from_slice(p);
-            v.extend([*dsq, *sqtol]);
-            v.extend_from_slice(x);
-            v.push(b(*jac));
-        }
-        OpIn::DistExtrema {
-            c1,
-            c2,
-            dom,
-            tol,
-            t,
-        } => {
-            curve_block(&mut v, c1)?;
-            curve_block(&mut v, c2)?;
-            v.extend([dom[0], dom[1], *tol, *t]);
-        }
-        OpIn::Analytic { a, fa, b: ob, fb, tol } => {
-            operand_block(&mut v, a)?;
-            v.extend_from_slice(fa);
-            operand_block(&mut v, ob)?;
-            v.extend_from_slice(fb);
-            v.push(*tol);
-        }
-        OpIn::Planes { curve, planes } => {
-            curve_block(&mut v, curve)?;
-            v.push(planes.len() as f64);
-            for [p, n] in planes {
-                v.extend_from_slice(p);
-                v.extend_from_slice(n);
-            }
-        }
-    }
-    Ok((op_of(op), v))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
-    let (code, input) = cpp_input(op)?;
-    match ffi::eval(code, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -780,9 +549,9 @@ fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
             o.extend([0.0, b(r)]);
         }
         OpIn::PolarBox { curve, ivl, count } => {
-            // the FFI rejects more than `ffi::MAX_SAMPLES` samples; upstream (and the port)
-            // would loop that many times, so a larger count is not a case for Rust either
-            if *count > ffi::MAX_SAMPLES as u64 {
+            // more than `MAX_SAMPLES` samples is not a case: upstream (and the port)
+            // would loop that many times
+            if *count > MAX_SAMPLES as u64 {
                 return Err(HarnessError::new(format!("{count} samples")));
             }
             let c = build(curve)?;
@@ -1165,7 +934,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    })
+    }.turned_back())
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
@@ -1190,7 +959,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
-            });
+            }.turned_back());
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -1642,17 +1411,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let op = gen_case(rng);
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
-            return serde_json::to_value(op).ok();
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1661,10 +1420,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1705,11 +1460,6 @@ mod tests {
         let case = ellipse_distance_fixture();
         let op: OpIn = case.parse().unwrap();
         assert_eq!(serde_json::to_value(&op).unwrap(), case.inputs);
-        let (code, input) = cpp_input(&op).unwrap();
-        assert_eq!(code, Op::CpDistAt);
-        assert_eq!(input, vec![3.,3.,0.,0.,0.,1.,0.,0.,0.,1.,0.,0.,180.,2.,1.,0.,
-            0.25,-0.5,0.25,1.,0.,0.5,0.1,0.2,0.3,1.]);
-        ffi::validate(code, &input).unwrap();
         let OpIn::CpDistAt { curve, p, dsq, sqtol, x, jac } = &op else { panic!("wrong op") };
         assert!(*jac);
         let CurveIn::Ellipse(e) = curve else { panic!("not ellipse") };
@@ -1749,28 +1499,6 @@ mod tests {
             expected_f.into_iter().chain(expected_j).chain([0.])) {
             ellipse_distance_relative(a,b);
         }
-    }
-
-    #[cfg(feature = "cpp")]
-    #[test]
-    fn ellipse_distance_cpp_full_record_and_geometric_perturbation() {
-        let case = ellipse_distance_fixture();
-        let op: OpIn = case.parse().unwrap();
-        let native = cpp(&op).unwrap();
-        let actual = rust(&Kernel::default(),&op).unwrap();
-        for out in [&native,&actual] {
-            assert!(out.deferred.is_none());
-            assert_eq!(out.ints["status"], vec![0]);
-            assert_eq!(out.values["out"].len(),21);
-            assert!(out.values["out"].iter().all(|v| v.is_finite()));
-            assert_ne!(out.values["out"][4],0.);
-            assert_eq!(out.values["out"][20],0.);
-        }
-        assert!(crate::compare::compare(&native,&actual,&[]).pass());
-        let mut changed = native.clone();
-        changed.values.get_mut("out").unwrap()[4] *= 1.01;
-        assert!(!crate::compare::compare(&changed,&actual,&[]).pass());
-        eprintln!("ellipse_distance_native={native:?}; ellipse_distance_rust={actual:?}");
     }
 
     /// Generated cases cover every op with both successful and failing statuses.

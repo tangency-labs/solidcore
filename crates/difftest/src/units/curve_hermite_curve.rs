@@ -1,8 +1,8 @@
 //! Runner for unit `curve.hermite_curve`: cubic Hermite curves.
 //!
-//! C++: `solidcore_ffi::units::curve_hermite_curve` (upstream `SmHermiteCurve`,
-//! `source/SMLib/inc/SmHermiteCurve.h`, `source/SMLib/src/SmHermiteCurve.cpp`).
-//! Rust: `solidcore::curve::hermite_curve`.
+//! Ported from upstream `SmHermiteCurve` (`source/SMLib/inc/SmHermiteCurve.h`,
+//! `source/SMLib/src/SmHermiteCurve.cpp`); checked against its golden. Rust:
+//! `solidcore::curve::hermite_curve`.
 //!
 //! Every case builds curve `a` (and `b` for `eq`) by a construction `kind` from
 //! four vectors `v` (start point, start derivative, end point, end derivative) and
@@ -39,8 +39,6 @@ use solidcore::topology::brep::validation::curve_assert_valid;
 use solidcore::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 use solidcore::topology::geometry_write::write_curve;
 use solidcore::{Kernel, SolidError};
-use solidcore_ffi::units::curve_hermite_curve::{self as ffi, Built, Kind, Op, Operands};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -58,6 +56,38 @@ use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `curve.hermite_curve` runner.
 pub struct Runner;
+
+/// How a curve is made from its four vectors and a dimension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// The 3D constructor with the given dimension.
+    ThreeD,
+    /// The 2D constructor (`SmPoint2d`/`SmVector2d` from the `x`, `y` of each vector)
+    /// with the given dimension.
+    TwoD,
+    /// The 3D constructor with its default dimension.
+    ThreeDDefault,
+    /// The 2D constructor with its default dimension.
+    TwoDDefault,
+}
+
+/// One `SmHermiteCurve` operation on curve A (and B for [`Op::Eq`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    State,
+    Evaluate,
+    EvaluatePoint,
+    Bbox,
+    Chord,
+    Knots,
+    Continuities,
+    Eq,
+    IsKindOf,
+    TypeStrings,
+    ReadDb,
+    WriteRead,
+    AssertValid,
+}
 
 /// Construction names used in `inputs.a.kind` / `inputs.b.kind`.
 const KINDS: [(&str, Kind); 4] = [
@@ -175,34 +205,7 @@ fn db_bytes(i: &Inputs) -> Result<Vec<u8>, HarnessError> {
     Ok(out)
 }
 
-fn ffi_built(c: &CurveIn) -> Result<Built, HarnessError> {
-    Ok(Built {
-        kind: lookup(&KINDS, &c.kind)?,
-        v: c.v,
-        dim: c.dim,
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = op_of(&i.op)?;
-    let a = ffi_built(&i.a)?;
-    let b = ffi_built(&i.b)?;
-    let x = Operands {
-        t: i.t,
-        n: i.n,
-        flags: i.flags,
-        w: i.w,
-        data: db_bytes(i)?,
-        file_type: i32::from(i.binary),
-    };
-    match ffi::op(op, &a, &b, &x) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(FfiError::Status(s)) if s > 0 => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
-/// Build a curve as the shim does.
+/// Build a curve by its construction `kind`.
 fn build(c: &CurveIn) -> Result<HermiteCurve, HarnessError> {
     let kind = lookup(&KINDS, &c.kind)?;
     let [v0, v1, v2, v3] = c.v.map(Vec3::from);
@@ -695,9 +698,7 @@ fn gen_assert_valid(rng: &mut Rng) -> Inputs {
         b: CurveIn::default(),
         t: 0.0,
         n: *rng.choose(&[0i64, 1, 2, 4]).unwrap_or(&0),
-        // a report list only where test 1 stays inside the default label table (the
-        // ffi wrapper rejects the rest)
-        flags: i32::from(rng.chance(0.8) && ffi_built(&a).is_ok_and(|b| matches!(b.effective_dim(), 2 | 3))),
+        flags: i32::from(rng.chance(0.8)),
         a,
         w: [0.0; 6],
         data: String::new(),
@@ -746,10 +747,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

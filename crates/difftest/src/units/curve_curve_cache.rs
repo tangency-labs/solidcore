@@ -2,21 +2,19 @@
 //! curves (tessellation into Bezier spans, the decomposition tree, analytic
 //! conversion, type queries).
 //!
-//! C++: `solidcore_ffi::units::curve_curve_cache` (upstream
-//! `source/SMLib/src/SmCurveCache.cpp`). Rust: `solidcore::curve::curve_cache`.
+//! Ported from upstream `source/SMLib/src/SmCurveCache.cpp`; checked against its golden.
+//! Rust: `solidcore::curve::curve_cache`.
 //!
-//! A case is a `curve` (`{"bspline": {dim, cpts, p, u}}` with control points as stored
-//! `[x, y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`, or `{"circle": ...}`, a
-//! quadratic arc built by the Rust `CreateCircleSegment` and handed to both sides as
-//! B-spline data), the cache interval `a`, `b`, the constructor options and an `op`.
-//! Both sides produce the flat record documented in the ffi module; the runner reports
-//! its first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007`
-//! for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the
+//! A case is a `curve` (`{"bspline": {dim, cpts, p, u}}` with control points as stored `[x,
+//! y, z, w]`, `{"hermite": {dim, p1, d1, p2, d2}}`, or `{"circle": ...}`, a quadratic arc
+//! built by the Rust `CreateCircleSegment` as B-spline data), the cache interval `a`, `b`,
+//! the constructor options and an `op`. The Rust side produces a flat record; the runner
+//! reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`;
+//! `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the
 //! rest as the `out` values.
 //!
 //! Deferred cases: the analytic conversion of lines and arcs (`SmLine`, `SmCircle`,
-//! `SmCurve::IsArc`). Every run has at least [`MIN_GENERATED`] generated cases;
-//! generated inputs the ffi wrapper rejects are redrawn.
+//! `SmCurve::IsArc`). Every run has at least [`MIN_GENERATED`] generated cases.
 
 use std::collections::BTreeMap;
 
@@ -35,7 +33,6 @@ use solidcore::nurbs::b_spline_curve::{BSplineCurve, NurbCircleParam};
 use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_curve_cache::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -80,6 +77,7 @@ struct CircleIn {
     a0: f64,
     a1: f64,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -159,10 +157,6 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
     }))
 }
 
-fn push3(v: &mut Vec<f64>, p: [f64; 3]) {
-    v.extend(p);
-}
-
 fn b(x: bool) -> f64 {
     if x {
         1.0
@@ -171,62 +165,10 @@ fn b(x: bool) -> f64 {
     }
 }
 
-fn op_of(op: OpIn) -> Op {
-    match op {
-        OpIn::Tessellate => Op::Tessellate,
-        OpIn::Analytic => Op::Analytic,
-        OpIn::Type => Op::Type,
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    match resolve(&i.curve)? {
-        CurveIn::Bspline(c) => {
-            let n = c.cpts.len().checked_sub(1).ok_or_else(|| harness("no points"))?;
-            let m = c.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
-            v.extend([0.0, c.dim as f64, n as f64, c.p as f64, m as f64]);
-            for p in &c.cpts {
-                v.extend(p);
-            }
-            v.extend(&c.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                push3(&mut v, p);
-            }
-        }
-        CurveIn::Circle(_) => return Err(harness("unresolved circle")),
-    }
-    let o = &i.opts;
-    v.extend([
-        i.a,
-        i.b,
-        b(o.full),
-        o.chord,
-        o.angle,
-        o.offaxis,
-        o.minseg as f64,
-        b(o.aux),
-        o.max3d,
-        o.ratio,
-    ]);
-    Ok((op_of(i.op), v))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new().ints("status", vec![status as i64]).values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -626,16 +568,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -646,16 +579,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&i)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
         rust(&i)
     }
 }

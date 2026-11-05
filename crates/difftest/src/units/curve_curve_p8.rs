@@ -1,7 +1,6 @@
 //! Runner for unit `curve.curve_p8`: `SmCurve::GlobalCurveIntersect`.
 //!
-//! C++: `solidcore_ffi::units::curve_curve_p8` (upstream `source/SMLib/src/SmCurve.cpp`,
-//! called through `SmCurve*` on B-spline, Hermite and line curves). Rust:
+//! Ported from upstream `source/SMLib/src/SmCurve.cpp`; checked against its golden. Rust:
 //! `solidcore::curve::curve::p8`.
 //!
 //! A case is one `op` (`gci`) with its curves (`{"bspline": {dim, oob, cpts, p, u}}` with
@@ -9,13 +8,13 @@
 //! `{"circle": ..}` (a quadratic B-spline arc) or `{"line": {p, v, domain, scale,
 //! inside_out}}`, as in unit `curve.curve_p6`; `c2: null` intersects the first curve with
 //! itself), the two intervals, the tolerance and `skip` (`bSkipGlobalCoincidenceCheck`).
-//! Both sides produce the flat record documented in the ffi module; the runner reports
-//! its first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007`
-//! for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest
-//! as the `out` values. Solution objects are `0` (this curve), `1` (the other curve), `2`
-//! (an analytic replacement made by a curve cache).
+//! The Rust side produces a flat record; the runner reports its first entry as the `status`
+//! int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for
+//! a Rust error upstream cannot produce) and the rest as the `out` values. Solution objects
+//! are `0` (this curve), `1` (the other curve), `2` (an analytic replacement made by a
+//! curve cache).
 //!
-//! `{"o", "x", "y", "scale"?, "repeat"?}` transforms (`gci` `xf1`, `xf2`) are applied on both sides
+//! `{"o", "x", "y", "scale"?, "repeat"?}` transforms (`gci` `xf1`, `xf2`) are applied
 //! (`SmAxis2Placement::SetCanonical` + `SmCurve::Transform` / `Curve::transform`) before
 //! the op; a circle with `quintic` is `SM_CO_QUINTIC`.
 //!
@@ -40,7 +39,6 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_curve_p8::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -78,7 +76,7 @@ struct HermiteIn {
 }
 
 /// A quadratic circular arc built by the Rust `CreateCircleSegment` (bit-identical to
-/// upstream, see unit `nurbs.b_spline_curve_p1`) and handed to both sides as inline data.
+/// upstream, see unit `nurbs.b_spline_curve_p1`), as inline data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CircleIn {
     center: [f64; 3],
@@ -90,6 +88,18 @@ struct CircleIn {
     /// `SM_CO_QUINTIC` (degree 5) instead of `SM_CO_QUADRATIC`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     quintic: bool,
+}
+
+impl CircleIn {
+    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
+    /// arc that would end past 360 degrees starts one turn back.
+    fn turned_back(mut self) -> Self {
+        if self.a1 > 360.0 {
+            self.a0 -= 360.0;
+            self.a1 -= 360.0;
+        }
+        self
+    }
 }
 
 /// A transform applied to a curve before the op, `repeat` times
@@ -164,57 +174,6 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
     }))
 }
 
-fn b(x: bool) -> f64 {
-    f64::from(u8::from(x))
-}
-
-fn push_line(v: &mut Vec<f64>, l: &LineIn) {
-    v.extend_from_slice(&l.p);
-    v.extend_from_slice(&l.v);
-    v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            push_line(v, l);
-        }
-        CurveIn::Circle(_) => return Err(harness("unresolved circle")),
-    }
-    Ok(())
-}
-
-
-/// The transforms block `nt (O X Y has_s S)*nt` (see the ffi module docs).
-fn push_xf(v: &mut Vec<f64>, xf: &[XformIn]) {
-    v.push(xf.iter().map(|t| t.repeat).sum::<u64>() as f64);
-    for t in xf {
-        for _ in 0..t.repeat {
-            v.extend_from_slice(&t.o);
-            v.extend_from_slice(&t.x);
-            v.extend_from_slice(&t.y);
-            v.push(b(t.scale.is_some()));
-            v.extend_from_slice(&t.scale.unwrap_or([1.0; 3]));
-        }
-    }
-}
 
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
@@ -493,7 +452,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
         quintic: false,
-    })
+    }.turned_back())
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
@@ -519,7 +478,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 a0,
                 a1: a0 + 360.0,
                 quintic: false,
-            });
+            }.turned_back());
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -710,42 +669,6 @@ enum OpIn {
     },
 }
 
-fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    match op {
-        OpIn::Gci {
-            c1,
-            xf1,
-            ivl1,
-            c2,
-            xf2,
-            ivl2,
-            tol,
-            skip,
-        } => {
-            curve_block(&mut v, c1)?;
-            push_xf(&mut v, xf1);
-            v.extend_from_slice(ivl1);
-            v.push(b(c2.is_none()));
-            if let Some(c2) = c2 {
-                curve_block(&mut v, c2)?;
-                push_xf(&mut v, xf2);
-            }
-            v.extend_from_slice(ivl2);
-            v.extend([*tol, b(*skip)]);
-        }
-    }
-    Ok((Op::Gci, v))
-}
-
-fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
-    let (code, input) = cpp_input(op)?;
-    match ffi::eval(code, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
-
 /// Object ids of the shim: the analytic replacements (`2`, `3`) are "another object".
 fn shim_id(x: Option<Obj>) -> f64 {
     x.map_or(-1.0, |v| if v.0 >= 2 { 2.0 } else { v.0 as f64 })
@@ -930,18 +853,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        let k = &Kernel::default();
-        for _ in 0..64 {
-            let op = gen_case(k, rng);
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
-            return serde_json::to_value(op).ok();
-        }
-        None
+        serde_json::to_value(gen_case(&Kernel::default(), rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -952,16 +864,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let op = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&op)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
         rust(&op)
     }
 }

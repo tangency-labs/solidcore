@@ -2,22 +2,20 @@
 //! virtual interface over B-spline and Hermite curves, the base numerics), the
 //! file-static helpers of `SmCurve.cpp` and the box tests of its global solvers.
 //!
-//! C++: `solidcore_ffi::units::curve_curve_p2` (upstream `source/SMLib/src/SmCurve.cpp`,
-//! called through `SmCurve*` so the virtual dispatch is upstream's; the file-static
-//! helpers are verbatim copies in the shim). Rust: `solidcore::curve::curve::p2`.
+//! Ported from upstream `source/SMLib/src/SmCurve.cpp`; checked against its golden. Rust:
+//! `solidcore::curve::curve::p2`.
 //!
-//! A case is an optional `curve` (`{"bspline": {dim, oob, cpts, p, u}}` with control
-//! points as stored `[x, y, z, w]`, or `{"hermite": {dim, p1, d1, p2, d2}}`) and an
-//! `op` with its parameters. Both sides produce the flat record documented in the ffi
-//! module; the runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`,
-//! else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream
-//! cannot produce) and the rest as the `out` values.
+//! A case is an optional `curve` (`{"bspline": {dim, oob, cpts, p, u}}` with control points
+//! as stored `[x, y, z, w]`, or `{"hermite": {dim, p1, d1, p2, d2}}`) and an `op` with its
+//! parameters. The Rust side produces a flat record; the runner reports its first entry as
+//! the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
+//! `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest as the `out`
+//! values.
 //!
 //! Deferred cases: B-spline paths into unported units (`HasRepeatedEndControlPoints` ->
 //! `SmCurve::IsDegenerate`, `curve.curve_p4`; `CreateAnalyticCurve` of lines ->
 //! `SmLine`, `curve.line`; ...) and `ReadFromDB` of the analytic and generated curve
-//! types. Every run has at least [`MIN_GENERATED`] generated cases; generated inputs the
-//! ffi wrapper rejects are redrawn.
+//! types. Every run has at least [`MIN_GENERATED`] generated cases.
 
 use std::fmt::Write as _;
 
@@ -47,11 +45,13 @@ use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_curve_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most `ApproximateLength` samples a case runs.
+const MAX_SAMPLES: usize = 400;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -95,6 +95,7 @@ struct CircleIn {
     a0: f64,
     a1: f64,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -338,306 +339,14 @@ struct Inputs {
 
 // ---- C++ input --------------------------------------------------------------------
 
-fn push3(v: &mut Vec<f64>, p: [f64; 3]) {
-    v.extend_from_slice(&p);
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(b) => {
-            let n = b.cpts.len().saturating_sub(1);
-            let m = b.u.len().saturating_sub(1);
-            v.extend([0.0, b.dim as f64, f64::from(u8::from(b.oob))]);
-            v.extend([n as f64, b.p as f64, m as f64]);
-            for c in &b.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&b.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                push3(v, p);
-            }
-        }
-        CurveIn::Circle(_) => return Err(harness("unresolved circle")),
-    }
-    Ok(())
-}
-
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
-}
-
-fn push_tree(v: &mut Vec<f64>, t: &[NodeIn]) {
-    v.push(t.len() as f64);
-    for n in t {
-        v.extend([n.p as f64, n.c1 as f64, n.c2 as f64, n.aux as f64, b(n.data)]);
-        v.extend_from_slice(&n.bbox);
-    }
-}
-
-fn op_of(op: &OpIn) -> Result<Op, HarnessError> {
-    Ok(match op {
-        OpIn::Info => Op::Info,
-        OpIn::Eval { .. } => Op::Eval,
-        OpIn::EvalPoint { .. } => Op::EvalPoint,
-        OpIn::Ends => Op::Ends,
-        OpIn::Knots { .. } => Op::Knots,
-        OpIn::Continuities { .. } => Op::Continuities,
-        OpIn::ApproxLength { .. } => Op::ApproxLength,
-        OpIn::EvalStep { .. } => Op::EvalStep,
-        OpIn::EvalGeom { .. } => Op::EvalGeom,
-        OpIn::EvalContinuity { .. } => Op::EvalContinuity,
-        OpIn::StepOff { .. } => Op::StepOff,
-        OpIn::Split { .. } => Op::Split,
-        OpIn::ConvertT { .. } => Op::ConvertT,
-        OpIn::Repeated { .. } => Op::Repeated,
-        OpIn::Equal { .. } => Op::Equal,
-        OpIn::Copy => Op::Copy,
-        OpIn::Trim { .. } => Op::Trim,
-        OpIn::Transform { .. } => Op::Transform,
-        OpIn::EditParam { .. } => Op::EditParam,
-        OpIn::Reverse { .. } => Op::Reverse,
-        OpIn::Convert2d => Op::Convert2d,
-        OpIn::Analytic { .. } => Op::Analytic,
-        OpIn::StepInversion { .. } => Op::StepInversion,
-        OpIn::DropFast { .. } => Op::DropFast,
-        OpIn::IntersectLine => Op::IntersectLine,
-        OpIn::Snap { .. } => Op::Snap,
-        OpIn::LengthIfeo { .. } => Op::LengthIfeo,
-        OpIn::ReadDb { .. } => Op::ReadDb,
-        OpIn::Flush { .. } => Op::Flush,
-        OpIn::AddToCurve { .. } => Op::AddToCurve,
-        OpIn::Stack { .. } => Op::Stack,
-        OpIn::ParamDelta { .. } => Op::ParamDelta,
-        OpIn::UnitizeTan { .. } => Op::UnitizeTan,
-        OpIn::ProjAngle { .. } => Op::ProjAngle,
-        OpIn::TestParams { .. } => Op::TestParams,
-        OpIn::TestStep { .. } => Op::TestStep,
-        OpIn::Solver(s) => match s.kind.as_str() {
-            "property" => Op::PropertyGs,
-            "cc" => Op::CcGs,
-            "cp" => Op::CpGs,
-            _ => return Err(harness("solver kind")),
-        },
-    })
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let op = op_of(&i.op)?;
-    let mut v = Vec::new();
-    if !op.is_static() {
-        let c = i.curve.as_ref().ok_or_else(|| harness("curve op without curve"))?;
-        curve_block(&mut v, c)?;
-    }
-    match &i.op {
-        OpIn::Info
-        | OpIn::Ends
-        | OpIn::Copy
-        | OpIn::Convert2d
-        | OpIn::IntersectLine => {}
-        OpIn::Eval {
-            t,
-            n,
-            left,
-            nonzero,
-        } => v.extend([*t, *n as f64, b(*left), b(*nonzero)]),
-        OpIn::EvalPoint { t }
-        | OpIn::Split { t }
-        | OpIn::ConvertT { t }
-        | OpIn::LengthIfeo { t } => v.push(*t),
-        OpIn::Knots { ivl } => {
-            let [a, bb] = ivl.unwrap_or([0.0, 0.0]);
-            v.extend([b(ivl.is_some()), a, bb]);
-        }
-        OpIn::Continuities { angle } => v.push(*angle),
-        OpIn::ApproxLength {
-            a,
-            b: bb,
-            samples,
-            turn,
-        } => v.extend([*a, *bb, *samples as f64, b(*turn)]),
-        OpIn::EvalStep { t, n, left } | OpIn::EvalGeom { t, n, left } => {
-            v.extend([*t, *n as f64, b(*left)]);
-        }
-        OpIn::EvalContinuity {
-            t,
-            left,
-            other,
-            t2,
-            left2,
-            angle,
-        } => {
-            v.extend([*t, b(*left)]);
-            curve_block(&mut v, other)?;
-            v.extend([*t2, b(*left2), *angle]);
-        }
-        OpIn::StepOff {
-            a,
-            b: bb,
-            start,
-            same,
-            dist,
-            tol,
-        } => v.extend([*a, *bb, *start, b(*same), *dist, *tol]),
-        OpIn::Repeated { tol } => v.push(*tol),
-        OpIn::Equal { other } => match other {
-            None => v.push(1.0),
-            Some(o) => {
-                v.push(0.0);
-                curve_block(&mut v, o)?;
-            }
-        },
-        OpIn::Trim { a, b: bb }
-        | OpIn::EditParam { a, b: bb }
-        | OpIn::Reverse { a, b: bb }
-        | OpIn::Analytic { a, b: bb } => v.extend([*a, *bb]),
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => {
-            push3(&mut v, *origin);
-            push3(&mut v, *x);
-            push3(&mut v, *y);
-            v.push(b(scale.is_some()));
-            push3(&mut v, scale.unwrap_or([1.0, 1.0, 1.0]));
-        }
-        OpIn::StepInversion { p } | OpIn::DropFast { p } => push3(&mut v, *p),
-        OpIn::Snap {
-            a,
-            b: bb,
-            vec,
-            sol,
-            tol,
-        } => {
-            v.extend([*a, *bb, b(vec.is_some())]);
-            push3(&mut v, vec.unwrap_or([0.0; 3]));
-            v.extend([*sol, *tol]);
-        }
-        OpIn::ReadDb {
-            curve_type,
-            dim,
-            version,
-            text,
-        } => {
-            v.extend([*curve_type as f64, *dim as f64, *version as f64]);
-            v.push(text.len() as f64);
-            v.extend(text.bytes().map(f64::from));
-        }
-        OpIn::Flush {
-            tol,
-            analytics,
-            knots,
-            pts,
-        } => {
-            v.extend([*tol, b(*analytics), knots.len() as f64]);
-            v.extend_from_slice(knots);
-            v.push(pts.len() as f64);
-            for p in pts {
-                push3(&mut v, *p);
-            }
-        }
-        OpIn::AddToCurve {
-            last,
-            curr,
-            lt,
-            ct,
-            knots,
-            pts,
-        } => {
-            for p in last.iter().chain(curr.iter()) {
-                push3(&mut v, *p);
-            }
-            v.extend([*lt, *ct, knots.len() as f64]);
-            v.extend_from_slice(knots);
-            v.push(pts.len() as f64);
-            for p in pts {
-                push3(&mut v, *p);
-            }
-        }
-        OpIn::Stack { init, ops } => {
-            v.push(init.len() as f64);
-            v.extend_from_slice(init);
-            v.push(ops.len() as f64);
-            for o in ops {
-                match o {
-                    StackOp::Push { t, p, v: tv } => {
-                        v.extend([0.0, *t]);
-                        push3(&mut v, *p);
-                        push3(&mut v, *tv);
-                    }
-                    StackOp::Pop => v.push(1.0),
-                    StackOp::Look => v.push(2.0),
-                }
-            }
-        }
-        OpIn::ParamDelta { tan, delta } => {
-            push3(&mut v, *tan);
-            push3(&mut v, *delta);
-        }
-        OpIn::UnitizeTan { pvv, gap } => {
-            for p in pvv {
-                push3(&mut v, *p);
-            }
-            push3(&mut v, *gap);
-        }
-        OpIn::ProjAngle { p1, p2, c, n, side } => {
-            for p in [p1, p2, c, n, side] {
-                push3(&mut v, *p);
-            }
-        }
-        OpIn::TestParams { a, b: bb, deg, knots } => {
-            v.extend([*a, *bb, *deg as f64, knots.len() as f64]);
-            v.extend_from_slice(knots);
-        }
-        OpIn::TestStep {
-            cur_t,
-            step,
-            cur,
-            next,
-            chord,
-            angle,
-            dsq,
-        } => {
-            v.extend([*cur_t, *step]);
-            for p in cur.iter().chain(next.iter()) {
-                push3(&mut v, *p);
-            }
-            v.extend([*chord, *angle, *dsq]);
-        }
-        OpIn::Solver(s) => {
-            for t in &s.trees {
-                push_tree(&mut v, t);
-            }
-            v.extend([s.sop as f64, s.tol, s.best, 3.0]);
-            for o in &s.opt {
-                push3(&mut v, *o);
-            }
-            if s.kind == "property" {
-                v.extend([s.prop as f64, 1.0, s.value]);
-            }
-            v.push(s.which as f64);
-            v.extend(s.nodes.iter().map(|&n| n as f64));
-        }
-    }
-    Ok((op, v))
 }
 
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new().ints("status", vec![status as i64]).values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -955,9 +664,9 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             samples,
             turn,
         } => {
-            // the FFI rejects more than `ffi::MAX_SAMPLES` samples; upstream (and the port)
-            // would loop that many times, so a larger count is not a case for Rust either
-            if *samples > ffi::MAX_SAMPLES {
+            // more than `MAX_SAMPLES` samples is not a case: upstream (and the port)
+            // would loop that many times
+            if *samples > MAX_SAMPLES {
                 return Err(HarnessError::new(format!("{samples} samples")));
             }
             let (len, t) = tri!(
@@ -1874,16 +1583,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1892,10 +1592,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
