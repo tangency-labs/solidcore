@@ -118,12 +118,15 @@ fn measured(brep: &mut Brep) -> Soundness {
             owners.insert(EntityRef::Face(id), o);
         }
     }
+    // An edge use without a trim gets the identity the body names it by: the check
+    // makes the trims its evaluations need (as upstream's), and the body owns each by
+    // that identity (`SetUVTrimCurve`), after this map is built
     for (id, u) in brep.edgeuses().iter() {
-        if let Some(o) = u
-            .uv_trim_curve
-            .as_ref()
-            .and_then(solidcore::curve::curve::Curve::owner)
-        {
+        let o = match u.uv_trim_curve.as_ref() {
+            Some(trim) => trim.owner(),
+            None => Some(brep.owner_identity(EntityRef::Edgeuse(id))),
+        };
+        if let Some(o) = o {
             owners.insert(EntityRef::Edgeuse(id), o);
         }
     }
