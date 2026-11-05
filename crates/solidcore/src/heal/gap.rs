@@ -3228,8 +3228,10 @@ mod tests {
         assert_eq!(q, Vec3::ZERO);
     }
 
+    /// Checks finite append maxima, record order, ties and chained appends.
     #[test]
     fn wr90_default_append_matches_scanned_maximum() {
+        /// Builds an input through the ordinary insertion API, without appending.
         fn array(lengths: &[f64]) -> GapArray {
             let mut result = GapArray::new();
             for &length in lengths {
@@ -3240,6 +3242,7 @@ mod tests {
             }
             result
         }
+        /// Independently scans stored records rather than trusting their maximum cache.
         fn check(array: &GapArray, expected: &[f64]) {
             let lengths: Vec<_> = (0..array.len())
                 .map(|i| array.get(i).unwrap().length())
@@ -3279,14 +3282,17 @@ mod tests {
         check(&chain_target, &[1.0, 0.0, 1e-300, 1e300]);
     }
 
+    /// Checks preserved float bits and IEEE-comparison selection against an independent fold.
     #[test]
     fn wr90_append_matches_sequential_add_for_all_float_classes() {
+        /// Constructs a gap carrying the exact requested length.
         fn gap(length: f64) -> Gap {
             Gap::from(VertexEdgeGap {
                 gap_3d: length,
                 ..VertexEdgeGap::new()
             })
         }
+        /// Builds each source array without depending on append's cached-summary behavior.
         fn array(lengths: &[f64]) -> GapArray {
             let mut array = GapArray::new();
             for &length in lengths {
@@ -3331,6 +3337,7 @@ mod tests {
         }
     }
 
+    /// Checks that an empty destination takes the appended array's maximum.
     #[test]
     fn wr90_gap_array_append_to_empty_array() {
         let g = |l: f64| {
@@ -3352,6 +3359,7 @@ mod tests {
         assert_eq!(b.max_gap_length(), 4.0);
     }
 
+    /// Checks that smaller and equal appended maxima retain the earlier selected gap.
     #[test]
     fn wr90_gap_array_append_smaller_or_equal_retains_existing_max() {
         let g = |l: f64| {
@@ -3384,6 +3392,7 @@ mod tests {
         assert_eq!(a.max_gap_length(), 10.0);
     }
 
+    /// Checks that an empty source preserves both populated and empty destinations.
     #[test]
     fn wr90_gap_array_append_empty_array() {
         let g = |l: f64| {
