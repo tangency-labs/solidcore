@@ -1,7 +1,7 @@
 //! Runner for unit `geom.extent1d`: 1D intervals and N-dimensional interval boxes.
 //!
-//! C++: `solidcore_ffi::units::geom_extent1d` (upstream `source/SMLib/src/SmExtent1d.cpp`,
-//! `source/SMLib/src/SmExtentNd.cpp`). Rust: `solidcore::geom::extent1d`.
+//! Ported from upstream `source/SMLib/src/SmExtent1d.cpp` and `source/SMLib/src/SmExtentNd.cpp`;
+//! checked against its golden. Rust: `solidcore::geom::extent1d`.
 //!
 //! | op (`inputs.op`)        | Rust                                           | upstream |
 //! |-------------------------|------------------------------------------------|----------|
@@ -30,8 +30,6 @@ use solidcore::math::{
     UNDEF_DOUBLE,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_extent1d::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -204,100 +202,6 @@ fn split(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
         return Err(harness(format!("result too long: {flat:?}")));
     }
     Ok(out)
-}
-
-/// Flat input for the C++ op.
-fn flat_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut v = Vec::new();
-    let op = match i {
-        Inputs::Constructors { a, b } => {
-            v.extend([*a, *b]);
-            Op::Constructors
-        }
-        Inputs::Queries { e, t, tol } => {
-            v.extend(e);
-            v.extend([*t, *tol]);
-            Op::Queries
-        }
-        Inputs::Modify { e, which, x, y } => {
-            v.extend(e);
-            v.extend([f64::from(*which), *x, *y]);
-            Op::Modify
-        }
-        Inputs::Binary { e, f, tol } => {
-            v.extend(e);
-            v.extend(f);
-            v.push(*tol);
-            Op::Binary
-        }
-        Inputs::ApproximateUnbounded { e, center, half } => {
-            v.extend(e);
-            v.extend([*center, *half]);
-            Op::ApproximateUnbounded
-        }
-        Inputs::PeriodicValue {
-            e,
-            v: x,
-            period,
-            tol,
-        } => {
-            v.extend(e);
-            v.extend([*x, *period, *tol]);
-            Op::PeriodicValue
-        }
-        Inputs::IntersectPeriodic {
-            e,
-            f,
-            period,
-            dont_cross,
-        } => {
-            v.extend(e);
-            v.extend(f);
-            v.extend([*period, b(*dont_cross)]);
-            Op::IntersectPeriodic
-        }
-        Inputs::DisjointPeriodic { e, f, period, tol } => {
-            v.extend(e);
-            v.extend(f);
-            v.extend([*period, *tol]);
-            Op::AreDisjointPeriodic
-        }
-        Inputs::ClampVector {
-            exts,
-            values,
-            periodic,
-            prior_clamped,
-            prior_counts,
-        } => {
-            v.extend([
-                exts.len() as f64,
-                b(periodic.is_some()),
-                b(prior_counts.is_some()),
-                prior_clamped.len() as f64,
-                prior_counts.as_ref().map_or(0, Vec::len) as f64,
-            ]);
-            v.extend(exts.iter().flatten());
-            v.extend(values);
-            if let Some(p) = periodic {
-                v.extend(p.iter().map(|&x| b(x)));
-            }
-            v.extend(prior_clamped);
-            if let Some(c) = prior_counts {
-                v.extend(c.iter().map(|&x| x as f64));
-            }
-            Op::ClampVector
-        }
-    };
-    (op, v)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = flat_input(i);
-    match ffi::op(op, &input) {
-        Ok(flat) => split(i, &flat),
-        Err(e @ FfiError::Status(_)) => Err(harness(format!("shim failure: {e}"))),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-    }
 }
 
 fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
@@ -749,25 +653,15 @@ fn clamp_vector(rng: &mut Rng, scale: f64) -> Inputs {
     }
 }
 
-/// A generated case the C++ wrapper accepts (`PeriodicWrap` loop bounds).
+/// A generated case: every draw is kept, including values many periods out, which
+/// `Extent1d::periodic_wrap` wraps in one step.
 fn gen_inputs(rng: &mut Rng) -> Inputs {
-    for _ in 0..50 {
-        let i = gen_once(rng);
-        let (op, input) = flat_input(&i);
-        if ffi::accepts(op, &input) {
-            return i;
-        }
-    }
-    Inputs::Constructors { a: 1.0, b: 0.0 }
+    gen_once(rng)
 }
 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.extent1d"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
