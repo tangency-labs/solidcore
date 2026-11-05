@@ -42,6 +42,7 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -91,18 +92,6 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
-}
-
-impl CircleIn {
-    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
-    /// arc that would end past 360 degrees starts one turn back.
-    fn turned_back(mut self) -> Self {
-        if self.a1 > 360.0 {
-            self.a0 -= 360.0;
-            self.a1 -= 360.0;
-        }
-        self
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,7 +213,9 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic,
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
-    let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
+    let cur = arc
+        .gw_nurb()
+        .ok_or_else(|| harness("circle without NURB"))?;
     Ok(CurveIn::Bspline(BSplineIn {
         dim: 3,
         oob: false,
@@ -244,6 +235,157 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
+}
+
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 128,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 2.0;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+/// The domain a curve's parameters are bounded by, if the curve keeps the contract
+/// (analytic lines evaluate anywhere: only their parameters are bounded).
+fn domain(c: &CurveIn) -> Option<(f64, f64)> {
+    let max = LIMITS.max_coord;
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some((s.a, s.b))
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+        .then_some((0.0, 1.0)),
+        CurveIn::Line(l) => {
+            contract::line(&l.p, &l.v, l.domain, l.scale, max).map(|_| (-max / 8.0, max / 8.0))
+        }
+        CurveIn::Circle(_) => None,
+    }
+}
+
+/// Whether `t` is finite and at most [`MAX_REL_DIST`] domain lengths outside `(a, b)`.
+fn param((a, b): (f64, f64), t: f64) -> bool {
+    let far = MAX_REL_DIST * (b - a);
+    fin(t) && t >= a - far && t <= b + far
+}
+
+fn interval(d: (f64, f64), ivl: [f64; 2]) -> bool {
+    param(d, ivl[0]) && param(d, ivl[1]) && ivl[0] < ivl[1]
+}
+
+fn tol(v: f64) -> bool {
+    fin(v) && v > 0.0
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_curve_p6.rs`, `validate`): curves as [`domain`]
+/// takes them (arcs within the arc constructor's `[-360, 360]` degrees), parameters within
+/// [`MAX_REL_DIST`] domain lengths, increasing intervals, positive tolerances, the
+/// operations the point solves accept, a sample count other than one (a division by zero
+/// upstream), and the sample and tangent-type bounds.
+fn keeps_contract(op: &OpIn) -> bool {
+    match op {
+        OpIn::BBox { curve, ivl, .. } => domain(curve).is_some_and(|d| interval(d, *ivl)),
+        OpIn::IsPlanar { curve, tol: t } => domain(curve).is_some() && tol(*t),
+        OpIn::DropPoint {
+            curve,
+            ivl,
+            p,
+            vec,
+            tol: t,
+            guess,
+            sop,
+        } => domain(curve).is_some_and(|d| {
+            interval(d, *ivl)
+                && vec3(p)
+                && vec3(&vec.unwrap_or([0.0; 3]))
+                && tol(*t)
+                && param(d, guess.unwrap_or(0.0))
+                && (0..=7).contains(sop)
+        }),
+        OpIn::GpsStep {
+            curve,
+            ivl,
+            sop,
+            p,
+            tol: t,
+            target,
+            req,
+        } => domain(curve).is_some_and(|d| {
+            interval(d, *ivl)
+                && matches!(sop, 0 | 3..=5)
+                && vec3(p)
+                && tol(*t)
+                && fin(target.unwrap_or(0.0))
+                && (0..=1).contains(req)
+        }),
+        OpIn::MaxDist {
+            c1,
+            ivl,
+            c2,
+            s,
+            e,
+            nsamp,
+            max,
+        } => {
+            let (Some(d1), Some(d2)) = (domain(c1), c2.as_ref().map_or_else(|| domain(c1), domain))
+            else {
+                return false;
+            };
+            interval(d1, *ivl)
+                && param(d2, *s)
+                && param(d2, *e)
+                && *nsamp <= MAX_SAMPLES as u64
+                && *nsamp != 1
+                && tol(max.unwrap_or(1.0))
+        }
+        OpIn::Simple {
+            c1,
+            ivl1,
+            c2,
+            ivl2,
+            tol: t,
+            ..
+        }
+        | OpIn::Global {
+            c1,
+            ivl1,
+            c2,
+            ivl2,
+            tol: t,
+            ..
+        } => match (domain(c1), domain(c2)) {
+            (Some(d1), Some(d2)) => interval(d1, *ivl1) && interval(d2, *ivl2) && tol(*t),
+            _ => false,
+        },
+        OpIn::Deform {
+            curve,
+            s,
+            e,
+            st,
+            st_type,
+            et,
+            et_type,
+            ..
+        } => {
+            domain(curve).is_some()
+                && [s, e, st, et].iter().all(|v| vec3(&v.unwrap_or([0.0; 3])))
+                && *st_type <= 2
+                && *et_type <= 2
+        }
+    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -274,7 +416,10 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
                 .len()
                 .checked_sub(1)
                 .ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -387,11 +532,7 @@ fn put_sol<O: Copy>(o: &mut Vec<f64>, s: &Solution<O>, id: impl Fn(Option<O>) ->
         second(&s.start),
     ]);
     if s.solution_type == SolutionType::RangeOfValues {
-        o.extend([
-            s.end.solution_value,
-            s.end.parameters[0],
-            second(&s.end),
-        ]);
+        o.extend([s.end.solution_value, s.end.parameters[0], second(&s.end)]);
     }
 }
 
@@ -465,7 +606,10 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 pseudo: *pseudo,
                 polar: *polar,
             };
-            let bx = tri!(o, c.calculate_bounding_box(&Kernel::default(), &ivl_of(*ivl), req, *expand));
+            let bx = tri!(
+                o,
+                c.calculate_bounding_box(&Kernel::default(), &ivl_of(*ivl), req, *expand)
+            );
             o.push(0.0);
             if let Some(nb) = bx.normal {
                 o.extend((0..3).map(|i| nb.min_at(i)));
@@ -610,12 +754,20 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 polar: false,
             };
             let box1 = if *pb1 {
-                tri!(o, a.calculate_bounding_box(&Kernel::default(), &i1, req, true)).pseudo
+                tri!(
+                    o,
+                    a.calculate_bounding_box(&Kernel::default(), &i1, req, true)
+                )
+                .pseudo
             } else {
                 None
             };
             let box2 = if *pb2 {
-                tri!(o, bb.calculate_bounding_box(&Kernel::default(), &i2, req, true)).pseudo
+                tri!(
+                    o,
+                    bb.calculate_bounding_box(&Kernel::default(), &i2, req, true)
+                )
+                .pseudo
             } else {
                 None
             };
@@ -783,7 +935,11 @@ fn gen_hermite(rng: &mut Rng) -> HermiteIn {
         p1,
         d1,
         p2,
-        d2: if rng.chance(0.08) { [0.0; 3] } else { rp(rng, s) },
+        d2: if rng.chance(0.08) {
+            [0.0; 3]
+        } else {
+            rp(rng, s)
+        },
     };
     if h.dim == 2 {
         for v in [&mut h.p1, &mut h.d1, &mut h.p2, &mut h.d2] {
@@ -813,7 +969,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    }.turned_back())
+    })
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
@@ -872,7 +1028,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
-            }.turned_back());
+            });
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -1095,7 +1251,9 @@ fn gen_drop_point(k: &Kernel, rng: &mut Rng) -> OpIn {
     let ivl = gen_ivl(rng, &curve);
     let t = gen_t(rng, &curve);
     let base = point_at(k, &curve, t);
-    let off = *rng.choose(&[0.0, 1e-8, 1e-4, 0.01, 0.5, 3.0]).unwrap_or(&0.0);
+    let off = *rng
+        .choose(&[0.0, 1e-8, 1e-4, 0.01, 0.5, 3.0])
+        .unwrap_or(&0.0);
     let p = add(base, scale3(gen_dir(rng), off));
     let tol = gen_tol(rng);
     let sop = *rng.choose(&[3, 3, 3, 0, 0, 5, 5, 4, 6, 1]).unwrap_or(&3);
@@ -1148,7 +1306,10 @@ fn gen_gps_step(k: &Kernel, rng: &mut Rng) -> OpIn {
     let t = gen_t(rng, &curve);
     let p = add(
         point_at(k, &curve, t),
-        scale3(gen_dir(rng), *rng.choose(&[0.0, 1e-6, 0.3, 4.0]).unwrap_or(&0.0)),
+        scale3(
+            gen_dir(rng),
+            *rng.choose(&[0.0, 1e-6, 0.3, 4.0]).unwrap_or(&0.0),
+        ),
     );
     OpIn::GpsStep {
         curve,
@@ -1169,7 +1330,11 @@ fn gen_max_dist(k: &Kernel, rng: &mut Rng) -> OpIn {
     let c1 = gen_curve(rng);
     let ivl = gen_ivl(rng, &c1);
     let same = rng.chance(0.1);
-    let c2 = if same { None } else { Some(gen_partner(k, rng, &c1)) };
+    let c2 = if same {
+        None
+    } else {
+        Some(gen_partner(k, rng, &c1))
+    };
     let other = c2.as_ref().unwrap_or(&c1);
     let oi = if same && rng.chance(0.6) {
         ivl
@@ -1181,9 +1346,7 @@ fn gen_max_dist(k: &Kernel, rng: &mut Rng) -> OpIn {
     } else {
         (oi[0], oi[1])
     };
-    let nsamp = *rng
-        .choose(&[2u64, 3, 5, 6, 8, 10, 20, 0, 4])
-        .unwrap_or(&5);
+    let nsamp = *rng.choose(&[2u64, 3, 5, 6, 8, 10, 20, 0, 4]).unwrap_or(&5);
     OpIn::MaxDist {
         c1,
         ivl,
@@ -1336,7 +1499,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(&Kernel::default(), rng)).ok()
+        let k = &Kernel::default();
+        let op = (0..64).map(|_| gen_case(k, rng)).find(keeps_contract)?;
+        serde_json::to_value(op).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
