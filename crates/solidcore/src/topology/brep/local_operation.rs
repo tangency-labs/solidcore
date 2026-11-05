@@ -29,7 +29,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::error::{EntityRef, Result, SolidError};
+use crate::error::offset::OffsetFailure;
+use crate::error::{EntityRef, Failure, Result, SolidError};
 use crate::geom::attribute::ObjectKey;
 use crate::kernel::Kernel;
 use crate::math::Vec3;
@@ -70,7 +71,9 @@ fn null() -> SolidError {
 ///
 /// `SM_ERR` when the extended offset fails (its own status with
 /// `Kernel::fixes.local_operation_offset_status`); `InvalidInput` where upstream dereferences
-/// null (a surface list shorter than the face list, a face without surface); those of
+/// null (a surface list shorter than the face list, a face without surface);
+/// [`OffsetFailure::SeamOpened`] (not upstream) when a face that meets itself across an
+/// edge (a seam) is given a surface that is not closed, before anything changes; those of
 /// the callees ([`crate::offset::offset_executive::p2`], the surfaces' normals,
 /// reversal and analytic copy, the bounding box).
 pub fn local_operation(
@@ -109,6 +112,11 @@ pub fn local_operation(
                 .get_mut(index)
                 .and_then(Option::take)
                 .ok_or_else(null)?;
+            // (not upstream) a face that meets itself across an edge cannot take an open
+            // surface: refused before anything is changed
+            if meets_itself(b, face)? && !is_closed_surface(k, &new, b.tolerance())? {
+                return Err(Failure::new(OP, OffsetFailure::SeamOpened { face }).into_error());
+            }
             let domain = new.natural_uv_domain_if_built();
             // (`EvaluateNormal(uv, TRUE, TRUE, ..)`: from the left)
             let new_normal =
@@ -225,6 +233,46 @@ pub fn local_operation(
     // (not upstream: the port's cached topology fields, true again for the caller)
     b.refresh_cached_topology();
     moved
+}
+
+/// Whether `face` meets itself across one of its edges: more edge uses of the edge on
+/// the face than its two sides' (a seam of a closed surface, where the face continues
+/// round onto itself). A moved face's edges are found again by intersecting the new
+/// surfaces of the faces on their two sides; across such an edge both sides are the
+/// face itself, so an open surface (a plane) has no curve there: before this was refused,
+/// the edge closed onto one vertex grown to the gap (13 units on fc0016's cylinder face
+/// given its tangent plane), the shell stayed open, and the body kept was the wrong side
+/// (manifold, volume -877.6).
+fn meets_itself(b: &Brep, face: FaceId) -> Result<bool> {
+    use crate::topology::edgeuse::p1 as eu1;
+    for e in crate::topology::face::p4::edges(b, face, None, false, None)? {
+        let mut on_face = 0_usize;
+        for u in crate::topology::edge::edgeuses(b, e, None, None)? {
+            if eu1::face(b, u)? == Some(face) {
+                on_face = on_face.saturating_add(1);
+            }
+        }
+        // (each side of the face has its own edge use: two for an ordinary edge)
+        if on_face > 2 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `surface` is closed in either direction over its natural domain (a plane
+/// never is; `IsClosed` at `tolerance` for the others, as `SmEdge::IsSeam` asks it).
+fn is_closed_surface(k: &Kernel, surface: &Surface, tolerance: f64) -> Result<bool> {
+    let domain = surface.natural_uv_domain_with_nurb(k)?;
+    for direction in [SurfParamType::U, SurfParamType::V] {
+        if surface
+            .is_closed(k, &domain, direction, Some(tolerance), false)?
+            .0
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `given` is the plane `own` lies on, exactly: both are planes, and the plane
@@ -505,6 +553,43 @@ mod tests {
         // the box carries the body's tolerance
         let near = |a: f64, b: f64| (a - b).abs() < 1e-4;
         assert!(near(e.max_at(2), 3.0) && near(e.min_at(2), 0.0) && near(e.max_at(0), 2.0));
+    }
+
+    /// A cylinder's side meets itself across its seam: given its tangent plane (open), it
+    /// is refused before anything changes (fc0016 of the difftest unit kept the wrong side
+    /// of an open shell, volume -877.6).
+    #[test]
+    fn a_seamed_face_given_a_plane_is_refused_unchanged() {
+        let mut k = Kernel::default();
+        let mut b =
+            crate::primitive::api_primitives::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0)
+                .unwrap();
+        let side = bp1::faces(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                !matches!(
+                    face_ops::surface(&b, f).unwrap().unwrap().kind(),
+                    SurfaceKind::Plane(_)
+                )
+            })
+            .unwrap();
+        assert!(meets_itself(&b, side).unwrap());
+        let before = (b.faces().len(), b.edges().len(), b.vertices().len());
+        let tangent = Surface::from(Plane::from_normal(Vec3::new(1.0, 0.0, 1.0), Vec3::X));
+        let e = with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[side], vec![tangent], notes)
+        })
+        .unwrap_err();
+        assert_eq!(e.kind(), crate::error::ErrorKind::Unsupported, "{e}");
+        assert!(matches!(
+            e.failure().map(|f| &f.reason),
+            Some(crate::error::Reason::Offset(OffsetFailure::SeamOpened { face })) if *face == side
+        ));
+        assert_eq!(
+            (b.faces().len(), b.edges().len(), b.vertices().len()),
+            before
+        );
     }
 
     #[test]
