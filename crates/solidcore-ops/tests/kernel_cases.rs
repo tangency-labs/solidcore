@@ -408,10 +408,8 @@ fn call_with_copy(
             let (edges, order) = faces(&mut s, &p["edges"])?;
             let mut along = Vec::new();
             for &edge in &edges {
-                let pair = match edge_faces_along_ordered(&s.body, &order, edge, direction) {
-                    Ok(pair) => pair,
-                    Err(e) => return Ok(Err(e.to_string())),
-                };
+                let pair = edge_faces_along_ordered(&s.body, &order, edge, direction)
+                    .map_err(|e| Stop::Fail(format!("chamfer face query: {e}")))?;
                 let [(a, da), (b, db)] = pair;
                 along.push(if da >= db { a } else { b });
             }
@@ -1020,6 +1018,33 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
             Ok(Ok(_)) => panic!("invalid mapping was accepted"),
         }
     }
+}
+
+#[test]
+fn a_missing_adjacent_face_cannot_count_as_a_chamfer_refusal() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
+    let (_, mut order) = body.to_record().unwrap();
+    let pair = edge_faces_along_ordered(&body, &order, 0, [0.0, 0.0, 1.0]).unwrap();
+    order.faces.remove(pair[0].0);
+    let input = Slot {
+        body: body.clone(),
+        order: Some(order),
+    };
+    let step = serde_json::json!({
+        "op": "chamfer_sides", "error": "expected chamfer refusal",
+        "params": {
+            "edges": {"picked": [{"index": 0}]}, "first": [0, 0, 1],
+            "distance": 5.0, "second": {"distance": 3.0}
+        }
+    });
+    match call(&step, &mut [input]) {
+        Err(Stop::Fail(why)) => assert!(why.contains("chamfer face query"), "{why}"),
+        Err(other) => panic!("wrong face-query failure: {other:?}"),
+        Ok(Err(why)) => panic!("face-query error became a chamfer refusal: {why}"),
+        Ok(Ok(_)) => panic!("missing adjacent-face mapping was accepted"),
+    }
+    assert!((body.volume(1e-9).unwrap() - 8000.0).abs() < 1e-6);
 }
 
 #[test]
