@@ -45,6 +45,7 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -95,18 +96,6 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
-}
-
-impl CircleIn {
-    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
-    /// arc that would end past 360 degrees starts one turn back.
-    fn turned_back(mut self) -> Self {
-        if self.a1 > 360.0 {
-            self.a0 -= 360.0;
-            self.a1 -= 360.0;
-        }
-        self
-    }
 }
 
 /// A line segment built by the Rust `CreateLineSegment(3, a, b)`.
@@ -297,6 +286,269 @@ fn to_output(flat: &[f64]) -> Output {
         .values("out", rest)
 }
 
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 64,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// The most curves of a composite or curve list.
+const MAX_SEGMENTS: usize = 8;
+/// The largest type code or object id.
+const MAX_TYPE: u64 = 100_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockKind {
+    BSpline,
+    Hermite,
+    Line,
+}
+
+/// A curve that keeps the contract: its kind, dimension, Euclidean ends and distinct knots.
+struct Block {
+    kind: BlockKind,
+    dim: u64,
+    start: [f64; 3],
+    end: [f64; 3],
+    knots: Vec<f64>,
+}
+
+fn contract_block(c: &CurveIn) -> Option<Block> {
+    let max = LIMITS.max_coord;
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some(Block {
+                kind: BlockKind::BSpline,
+                dim: bs.dim,
+                start: s.start,
+                end: s.end,
+                knots: s.knots,
+            })
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+        .then_some(Block {
+            kind: BlockKind::Hermite,
+            dim: h.dim,
+            start: h.p1,
+            end: h.p2,
+            knots: Vec::new(),
+        }),
+        CurveIn::Line(l) => contract::line(&l.p, &l.v, l.domain, l.scale, max).map(|_| Block {
+            kind: BlockKind::Line,
+            dim: 3,
+            start: [f64::NAN; 3],
+            end: [f64::NAN; 3],
+            knots: Vec::new(),
+        }),
+        CurveIn::Circle(_) | CurveIn::Segment(_) => None,
+    }
+}
+
+fn contract_blocks(curves: &[CurveIn]) -> Option<Vec<Block>> {
+    if curves.len() > MAX_SEGMENTS {
+        return None;
+    }
+    curves.iter().map(contract_block).collect()
+}
+
+/// A composite's curves, if it keeps the contract: dimension 2 or 3, at most
+/// [`MAX_SEGMENTS`] curves, a sense and a gap per curve when given, finite gaps, and no gaps
+/// of a closed composite without curves.
+fn contract_composite(c: &CompIn) -> Option<Vec<Block>> {
+    let curves = contract_blocks(&c.curves)?;
+    let n = curves.len();
+    let senses = c.senses.as_ref().is_none_or(|s| s.len() >= n);
+    let gaps = c.gaps.as_ref().is_none_or(|g| {
+        !(c.closed && n == 0)
+            && g.get(..n)
+                .is_some_and(|g| g.iter().all(|&x| contract::finite(x, LIMITS.max_coord)))
+    });
+    ((2..=3).contains(&c.dim) && senses && gaps).then_some(curves)
+}
+
+fn positive(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord) && v > 0.0
+}
+
+fn type_list(t: &[i64]) -> bool {
+    t.len() <= 32
+        && t.iter()
+            .all(|&x| u64::try_from(x).is_ok_and(|x| x <= MAX_TYPE))
+}
+
+/// Whether `ApproximateCurve` can join the segments: at least one, only 3D B-spline and
+/// non-degenerate Hermite segments, each starting where the one before ends, and no knot
+/// span that vanishes in the join.
+fn joins(curves: &[Block]) -> bool {
+    if curves.is_empty() {
+        return false;
+    }
+    for c in curves {
+        let d = [
+            c.end[0] - c.start[0],
+            c.end[1] - c.start[1],
+            c.end[2] - c.start[2],
+        ];
+        if c.kind == BlockKind::Line
+            || c.dim != 3
+            || (c.kind == BlockKind::Hermite && contract::len_sq(d) < 1e-6)
+        {
+            return false;
+        }
+    }
+    for w in curves.windows(2) {
+        let [p, q] = w else { continue };
+        let size = p
+            .end
+            .iter()
+            .chain(&q.start)
+            .fold(1.0f64, |m, v| m.max(v.abs()));
+        let d = [
+            q.start[0] - p.end[0],
+            q.start[1] - p.end[1],
+            q.start[2] - p.end[2],
+        ];
+        if contract::len_sq(d).sqrt() > 1e-9 * size {
+            return false;
+        }
+    }
+    let mut last: Option<f64> = None;
+    for c in curves {
+        let hermite = [0.0, 1.0];
+        let knots: &[f64] = if c.kind == BlockKind::Hermite {
+            &hermite
+        } else {
+            &c.knots
+        };
+        let (Some(&u0), Some(rest)) = (knots.first(), knots.get(1..)) else {
+            continue;
+        };
+        let start = *last.get_or_insert(u0);
+        let offset = start - u0;
+        let mut prev = start;
+        for &u in rest {
+            let v = u + offset;
+            if v <= prev {
+                return false;
+            }
+            prev = v;
+        }
+        last = Some(prev);
+    }
+    true
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_composite_curve_p1.rs`, `validate`): curves and
+/// composites as [`contract_block`] and [`contract_composite`] take them (arcs within the arc constructor's
+/// `[-360, 360]` degrees), finite values within range, positive tolerances, increasing
+/// intervals, two non-parallel transform axes and scales in `[0.1, 10]`, and the per-op
+/// argument checks.
+fn keeps_contract(op: &OpIn) -> bool {
+    let max = LIMITS.max_coord;
+    let fin = |v: f64| contract::finite(v, max);
+    match op {
+        OpIn::Info { comp, types } => contract_composite(comp).is_some() && type_list(types),
+        OpIn::Knots { comp } => contract_composite(comp).is_some_and(|c| c.len() <= 1),
+        OpIn::BBox { comp, ivl, .. } => {
+            contract_composite(comp).is_some() && fin(ivl[0]) && fin(ivl[1]) && ivl[0] <= ivl[1]
+        }
+        OpIn::Eq { a, b } => contract_composite(a).is_some() && contract_composite(b).is_some(),
+        OpIn::Copy { comp } => {
+            contract_composite(comp).is_some_and(|c| c.iter().all(|b| b.kind != BlockKind::Hermite))
+        }
+        OpIn::Transform {
+            comp,
+            origin,
+            x,
+            y,
+            scale,
+        } => {
+            let s = scale.unwrap_or([1.0; 3]);
+            contract_composite(comp).is_some()
+                && contract::vec3(origin, max)
+                && contract::frame(x, y, max)
+                && contract::vec3(&s, max)
+                && s.iter().all(|c| (0.1..=10.0).contains(&c.abs()))
+        }
+        OpIn::Approx { comp, tol } => {
+            contract_composite(comp).is_some_and(|c| joins(&c))
+                && positive(*tol)
+                && (1e-6..=1.0).contains(tol)
+        }
+        OpIn::Orient {
+            curves,
+            senses,
+            normal,
+            ..
+        } => {
+            !curves.is_empty()
+                && contract_blocks(curves).is_some()
+                && senses.len() == curves.len()
+                && contract::nonzero3(normal, max)
+        }
+        OpIn::Build { curves, same, line } => {
+            contract_blocks(curves).is_some_and(|c| c.iter().all(|b| b.kind != BlockKind::Hermite))
+                && positive(*same)
+                && fin(*line)
+                && (*line == 0.0 || line > same)
+        }
+        OpIn::Corner {
+            vertex,
+            p1,
+            v1,
+            p2,
+            v2,
+            corner,
+            dist,
+            tol,
+        } => {
+            [vertex, p1, v1, p2, v2]
+                .iter()
+                .all(|v| contract::vec3(v, max))
+                && *corner <= 2
+                && fin(*dist)
+                && positive(*tol)
+        }
+        OpIn::Classify {
+            curve,
+            dist,
+            tol,
+            origs,
+            orig,
+        } => {
+            contract_block(curve).is_some()
+                && positive(*dist)
+                && positive(*tol)
+                && origs.len() <= 4
+                && origs.iter().all(|c| contract_block(c).is_some())
+                && orig.as_ref().is_none_or(|c| contract_block(c).is_some())
+        }
+        OpIn::Breaks { which, v, x } => {
+            *which <= 2 && v.len() <= 64 && v.iter().all(|&t| fin(t)) && fin(*x)
+        }
+        OpIn::Types {
+            id,
+            comp_index,
+            curve,
+            other,
+            err,
+            types,
+            ..
+        } => {
+            [id, comp_index, curve, other]
+                .iter()
+                .all(|&&k| k <= MAX_TYPE)
+                && fin(*err)
+                && type_list(types)
+        }
+    }
+}
+
 // ---- Rust side --------------------------------------------------------------------
 
 fn build_line(l: &LineIn) -> Line {
@@ -321,7 +573,10 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
                 .len()
                 .checked_sub(1)
                 .ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -572,7 +827,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             };
             match (xa.segment(0), xb.segment(0)) {
                 (Some(sa), Some(sb)) => {
-                    let e = tri!(o, CompositeCurveSegment::approx_eq(sa,&k,  sb));
+                    let e = tri!(o, CompositeCurveSegment::approx_eq(sa, &k, sb));
                     o.push(b(e));
                 }
                 _ => o.push(-1.0),
@@ -631,7 +886,8 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let mut bx = Extent2d::new();
             let r = tri!(
                 o,
-                CompositeCurve::compute_projected_loop_orientation(&k, 
+                CompositeCurve::compute_projected_loop_orientation(
+                    &k,
                     &cs,
                     senses,
                     v3(*normal),
@@ -713,10 +969,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let os = build_all(origs)?;
             let refs: Vec<&Curve> = os.iter().collect();
             let og = orig.as_ref().map(build).transpose()?;
-            let keep = tri!(
-                o,
-                curve_classify(&k, &t, *dist, *tol, &refs, og.as_ref())
-            );
+            let keep = tri!(o, curve_classify(&k, &t, *dist, *tol, &refs, og.as_ref()));
             o.extend([0.0, b(keep)]);
         }
         OpIn::Breaks { which, v, x } => {
@@ -738,7 +991,16 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             err,
             types,
         } => {
-            let a = OffsetMapAttribute::new(*id, *corner, false, *comp_index, *curve, *other, None, *err);
+            let a = OffsetMapAttribute::new(
+                *id,
+                *corner,
+                false,
+                *comp_index,
+                *curve,
+                *other,
+                None,
+                *err,
+            );
             o.extend([
                 0.0,
                 a.type_code() as f64,
@@ -836,10 +1098,20 @@ fn gen_bspline(rng: &mut Rng) -> BSplineIn {
 fn bspline_between(rng: &mut Rng, a: [f64; 3], bb: [f64; 3], bulge: f64) -> BSplineIn {
     let p = 1 + rng.below(3) as usize;
     let n = p + rng.below(3) as usize;
-    let a0 = if rng.chance(0.6) { 0.0 } else { rng.uniform(-2.0, 2.0) };
-    let len = if rng.chance(0.5) { 1.0 } else { rng.uniform(0.3, 4.0) };
+    let a0 = if rng.chance(0.6) {
+        0.0
+    } else {
+        rng.uniform(-2.0, 2.0)
+    };
+    let len = if rng.chance(0.5) {
+        1.0
+    } else {
+        rng.uniform(0.3, 4.0)
+    };
     let mut u = vec![a0; p + 1];
-    let mut ks: Vec<f64> = (0..n - p).map(|_| a0 + len * rng.uniform(0.1, 0.9)).collect();
+    let mut ks: Vec<f64> = (0..n - p)
+        .map(|_| a0 + len * rng.uniform(0.1, 0.9))
+        .collect();
     ks.sort_by(f64::total_cmp);
     u.extend(ks);
     u.extend(vec![a0 + len; p + 1]);
@@ -896,7 +1168,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    }.turned_back())
+    })
 }
 
 fn gen_curve(rng: &mut Rng, hermite: bool) -> CurveIn {
@@ -966,13 +1238,20 @@ fn gen_polygon(rng: &mut Rng, k: usize, closed: bool) -> (Vec<[f64; 3]>, [f64; 3
         _ => ([0.8, 0.6, 0.0], [0.0, 0.6, 0.8]),
     };
     let r = rng.uniform(0.5, 10.0);
-    let squash = if rng.chance(0.15) { 1e-9 } else { rng.uniform(0.3, 1.0) };
+    let squash = if rng.chance(0.15) {
+        1e-9
+    } else {
+        rng.uniform(0.3, 1.0)
+    };
     let mut pts: Vec<[f64; 3]> = (0..k)
         .map(|i| {
             let ang = std::f64::consts::TAU * (i as f64 + rng.uniform(-0.2, 0.2)) / k as f64;
             add(
                 o,
-                add(scale3(ex, r * ang.cos()), scale3(ey, squash * r * ang.sin())),
+                add(
+                    scale3(ex, r * ang.cos()),
+                    scale3(ey, squash * r * ang.sin()),
+                ),
             )
         })
         .collect();
@@ -1125,7 +1404,11 @@ fn gen_transform(rng: &mut Rng) -> OpIn {
             let s = rng.uniform(0.2, 3.0);
             Some([s; 3])
         }
-        2 => Some([rng.uniform(0.2, 3.0), rng.uniform(0.2, 3.0), rng.uniform(0.2, 3.0)]),
+        2 => Some([
+            rng.uniform(0.2, 3.0),
+            rng.uniform(0.2, 3.0),
+            rng.uniform(0.2, 3.0),
+        ]),
         _ => None,
     };
     OpIn::Transform {
@@ -1211,7 +1494,10 @@ fn gen_build(rng: &mut Rng) -> OpIn {
             let (Some(&a), Some(&bb)) = (w.first(), w.last()) else {
                 continue;
             };
-            let jit = *rng.choose(&[0.0, 0.0, 0.3, 2.0, 20.0, 500.0]).unwrap_or(&0.0) * same;
+            let jit = *rng
+                .choose(&[0.0, 0.0, 0.3, 2.0, 20.0, 500.0])
+                .unwrap_or(&0.0)
+                * same;
             let a = add(a, rp(rng, jit));
             let c = if rng.chance(0.3) {
                 CurveIn::Segment(SegmentIn { a, b: bb })
@@ -1355,7 +1641,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        let op = (0..64).map(|_| gen_case(rng)).find(keeps_contract)?;
+        serde_json::to_value(op).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1383,7 +1670,10 @@ mod tests {
         let mut stats: BTreeMap<String, [usize; 4]> = BTreeMap::new();
         for _ in 0..2000 {
             let op = gen_case(&mut rng);
-            let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
+            let name = serde_json::to_value(&op).unwrap()["op"]
+                .as_str()
+                .unwrap()
+                .to_string();
             let out = rust(&op);
             let e = stats.entry(name).or_default();
             e[0] += 1;
@@ -1395,7 +1685,10 @@ mod tests {
             }
         }
         for (k, v) in &stats {
-            eprintln!("{k}: total {} ok {} err {} deferred/harness {}", v[0], v[1], v[2], v[3]);
+            eprintln!(
+                "{k}: total {} ok {} err {} deferred/harness {}",
+                v[0], v[1], v[2], v[3]
+            );
         }
         assert_eq!(stats.len(), 13);
     }

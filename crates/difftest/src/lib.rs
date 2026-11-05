@@ -10,6 +10,10 @@
 
 pub mod baseline;
 pub mod case;
+/// Input contracts shared by several unit runners' generators.
+pub mod cases {
+    pub mod curve_contract;
+}
 pub mod compare;
 pub mod constructor;
 pub mod export_memo;
