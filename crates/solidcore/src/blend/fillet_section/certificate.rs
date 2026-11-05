@@ -2329,6 +2329,107 @@ mod tests {
     /// by order, and the Taylor form's remainder carries that). A span five times as long
     /// fails Krawczyk's test in one enclosure and is proved by the pieces, its bound again
     /// finite, below the target and above the closed form's.
+    /// A rational face's partials over a box are enclosed as tightly wherever the face
+    /// lies (#2690): the cylinder r 3 at the origin and the same cylinder moved 1000 away,
+    /// over the same box of their nets, have enclosures of the same widths, which hold the
+    /// partials' sampled values and shrink with the box. The quotient `P = A / w` taken in
+    /// intervals on the homogeneous coordinates as they stand widens with the point's
+    /// distance from the origin, `|P| |dw| / w`, however small the box.
+    #[test]
+    fn a_rational_face_s_box_enclosure_does_not_widen_with_its_distance() {
+        let k = Kernel::default();
+        let cylinder = |at: Vec3| {
+            let mut c = Cone::new_cylinder_bounded(
+                at, Vec3::X, Vec3::Y, 3.0, 0.0, 360.0, 10.0, false, false, false,
+            );
+            c.make_nurb(&k).unwrap();
+            nurbs(&k, &Surface::from(c))
+        };
+        let near = cylinder(Vec3::new(0.0, 0.0, -2.0));
+        let far = cylinder(Vec3::new(1000.0, 500.0, -2.0));
+        let lk = 3;
+        // a box inside one piece of the net, off its middle
+        let ku = span(&near.u, near.p, near.nu, 0.5 * (near.u[near.p] + near.u[near.p + 1]));
+        let kv = span(&near.v, near.q, near.nv, 0.5 * (near.v[near.q] + near.v[near.q + 1]));
+        let (u0, u1) = (near.u[ku], near.u[ku + 1]);
+        let (v0, v1) = (near.v[kv], near.v[kv + 1]);
+        let (um, vm) = (u0 + 0.37 * (u1 - u0), v0 + 0.61 * (v1 - v0));
+        let mut widths = Vec::new();
+        for delta in [1e-2, 1e-3] {
+            let (du, dv) = (delta * (u1 - u0), delta * (v1 - v0));
+            let (ua, ub, va, vb) = (um - du, um + du, vm - dv, vm + dv);
+            let en = nurbs_partials_over_piece(&near, ku, kv, ua, ub, va, vb, lk).unwrap();
+            let ef = nurbs_partials_over_piece(&far, ku, kv, ua, ub, va, vb, lk).unwrap();
+            for a in 0..=lk {
+                for b in 0..=(lk - a) {
+                    // the partial's range over the box, sampled on a grid
+                    let mut lo = [f64::INFINITY; 3];
+                    let mut hi = [f64::NEG_INFINITY; 3];
+                    for i in 0..=8 {
+                        for j in 0..=8 {
+                            let u = ua + (ub - ua) * f64::from(i) / 8.0;
+                            let v = va + (vb - va) * f64::from(j) / 8.0;
+                            let x = nurbs_partials::<f64>(&near, ku, kv, u, v, lk).at(a, b);
+                            for (c, xc) in [x.x, x.y, x.z].into_iter().enumerate() {
+                                lo[c] = lo[c].min(xc);
+                                hi[c] = hi[c].max(xc);
+                            }
+                        }
+                    }
+                    let (pn, pf) = (en.at(a, b), ef.at(a, b));
+                    let comps = [(pn.x, pf.x), (pn.y, pf.y), (pn.z, pf.z)];
+                    for (c, (n, f)) in comps.into_iter().enumerate() {
+                        let (wn, wf) = (n.hi - n.lo, f.hi - f.lo);
+                        // rounding: the far face's coordinates are 1000 times as large
+                        let floor = 1e-9 * (1.0 + hi[c].abs().max(lo[c].abs()));
+                        assert!(
+                            wf <= 2.0 * wn + floor,
+                            "P[{a}][{b}].{c} at {delta}: far {wf:e}, near {wn:e}"
+                        );
+                        assert!(n.lo <= lo[c] && hi[c] <= n.hi, "P[{a}][{b}].{c}");
+                        widths.push(wn);
+                    }
+                }
+            }
+        }
+        // a tenth of the box, at most a fifth of the width (first order, and rounding)
+        let (wide, narrow) = widths.split_at(widths.len() / 2);
+        for (w1, w2) in wide.iter().zip(narrow) {
+            assert!(*w2 <= 0.2 * w1 + 1e-12, "{w2:e} against {w1:e}");
+        }
+        // the same for a rational curve: the circle r 3, at the origin and 1000 away
+        let circle = |at: Vec3| {
+            let frame = Axis2Placement::new(at, Vec3::X, Vec3::Y);
+            let c = BSplineCurve::create_circle_segment(
+                3,
+                &frame,
+                3.0,
+                10.0,
+                80.0,
+                NurbCircleParam::Quadratic,
+            )
+            .unwrap();
+            NurbsCurve::of(&c).unwrap()
+        };
+        let (cn, cf) = (circle(Vec3::ZERO), circle(Vec3::new(1000.0, 500.0, 0.0)));
+        let piece = span(&cn.u, cn.p, cn.n, 0.5 * (cn.u[cn.p] + cn.u[cn.p + 1]));
+        let (s0, s1) = (cn.u[piece], cn.u[piece + 1]);
+        let sm = s0 + 0.37 * (s1 - s0);
+        for delta in [1e-2, 1e-3] {
+            let ds = delta * (s1 - s0);
+            let s = Ivl::new(sm - ds, sm + ds);
+            let dn = curve_derivs_over(&cn, s, lk, Some(piece)).unwrap();
+            let df = curve_derivs_over(&cf, s, lk, Some(piece)).unwrap();
+            for (d, (n, f)) in dn.iter().zip(&df).enumerate() {
+                for (c, (n, f)) in [(n.x, f.x), (n.y, f.y), (n.z, f.z)].into_iter().enumerate() {
+                    let (wn, wf) = (n.hi - n.lo, f.hi - f.lo);
+                    let floor = 1e-9 * (1.0 + f.lo.abs().max(f.hi.abs()));
+                    assert!(wf <= 2.0 * wn + floor, "D[{d}].{c} at {delta}: far {wf:e}, near {wn:e}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn cylinder_plane_span_bound_is_the_closed_form() {
         let k = Kernel::default();
