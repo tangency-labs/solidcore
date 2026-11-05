@@ -70,3 +70,6 @@ by five times the accuracy. The adaptive error control does not bound the result
 this face. Which base lands outside the accuracy at a given setting is arbitrary. This is a
 separate defect of the precise-property integration and is not caused by this change: the
 integration-base fix stands, and the error control is a follow-on item.
+
+Resolved by the follow-on (plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md):
+a stale integrand where the trim's du/dt is zero, and a step error estimate blind to g^(5).
