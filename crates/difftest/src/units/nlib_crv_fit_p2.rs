@@ -3,8 +3,8 @@
 //! with given knots, knot vectors for interpolation with derivatives, the
 //! interpolation matrix, and solves with a given LU-decomposed matrix).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_fit_p2` (upstream
-//! `source/SMLib/src/NL_CrvFit.cpp`). Rust: `solidcore::nurbs::crv_fit::p2`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvFit.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_fit::p2`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record
 //! (see the ffi module), split into keys: `status` (`0` ok, else the `NL_*_ERR`
@@ -38,8 +38,6 @@ use solidcore::nurbs::funcs_basic::CurveFunction;
 use solidcore::nurbs::knots::{KnotVector, Side};
 use solidcore::nurbs::math::{CPoint, MatrixType, RealMatrix};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_crv_fit_p2::{self as ffi, Matrix, Pts, Weighted};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -149,12 +147,6 @@ fn pt4(v: &[f64]) -> Result<[f64; 4], HarnessError> {
 
 fn pts4(v: &[Vec<f64>]) -> Result<Vec<[f64; 4]>, HarnessError> {
     v.iter().map(|p| pt4(p)).collect()
-}
-
-fn pts3(v: &[Vec<f64>]) -> Result<Vec<[f64; 3]>, HarnessError> {
-    v.iter()
-        .map(|p| pt4(p).map(|q| [q[0], q[1], q[2]]))
-        .collect()
 }
 
 fn ptp_ok(ptp: i32) -> Result<(), HarnessError> {
@@ -533,96 +525,6 @@ fn finish(out: Output, flat: &[f64], at: usize) -> Result<Output, HarnessError> 
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn matrix(m: &MatrixIn) -> Matrix<'_> {
-    Matrix {
-        n: m.n,
-        mtp: m.mtp,
-        bw: m.bw,
-        storage: &m.storage,
-    }
-}
-
-fn cpp_flat(i: &Inputs) -> Result<Result<Vec<f64>, FfiError>, HarnessError> {
-    Ok(match i {
-        Inputs::FuncInterp { f, u, p } => ffi::func_interp(f, *p, u),
-        Inputs::Interp { pts, p, par } => ffi::interp(&pts3(pts)?, *p, *par),
-        Inputs::LstSq { pts, n, p, par } => ffi::approx_lst_sq(&pts3(pts)?, *n, *p, *par),
-        Inputs::CrvMatrix {
-            ptp,
-            pts,
-            p,
-            matrix: m,
-        } => {
-            let a = pts4(pts)?;
-            ffi::crv_matrix(
-                &Pts { ptp: *ptp, pts: &a },
-                *p,
-                &matrix(need(m.as_ref(), "matrix")?),
-            )
-        }
-        Inputs::DerivMatrix {
-            ptp,
-            pts,
-            p,
-            knots,
-            t,
-            whr,
-            matrix: m,
-        } => {
-            let a = pts4(pts)?;
-            ffi::deriv_matrix(
-                &Pts { ptp: *ptp, pts: &a },
-                *p,
-                need(knots.as_ref(), "knots")?,
-                pt4(t)?,
-                *whr,
-                &matrix(need(m.as_ref(), "matrix")?),
-            )
-        }
-        Inputs::Weighted {
-            ptp,
-            pts,
-            wp,
-            d,
-            wd,
-            idx,
-            u,
-            knots,
-            n,
-            p,
-        } => {
-            let a = pts4(pts)?;
-            let dd = pts4(d)?;
-            ffi::weighted_lst_sq(
-                &Weighted {
-                    pts: Pts { ptp: *ptp, pts: &a },
-                    wp,
-                    derivs: &dd,
-                    wd,
-                    index: idx,
-                },
-                need(u.as_ref(), "u")?,
-                need(knots.as_ref(), "knots")?,
-                *n,
-                *p,
-            )
-        }
-        Inputs::KnotsDerivs { u, p } => ffi::knots_derivs(u, *p),
-        Inputs::HighEndKnots { u, p, k, l } => ffi::knots_high_end_derivs(u, *p, *k, *l),
-        Inputs::CalcMatrix { u, knots, p, itp } => {
-            ffi::calc_matrix(need(knots.as_ref(), "knots")?, *p, u, *itp)
-        }
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match cpp_flat(i)? {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -1215,10 +1117,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&resolve(&case.parse()?)?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

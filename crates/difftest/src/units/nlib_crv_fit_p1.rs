@@ -3,8 +3,8 @@
 //! parameters and knots, with end derivatives or first derivatives, least-squares
 //! approximation with given knots, and solves with a given LU-decomposed matrix).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_fit_p1` (upstream
-//! `source/SMLib/src/NL_CrvFit.cpp`). Rust: `solidcore::nurbs::crv_fit::p1`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvFit.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_fit::p1`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record
 //! (see the ffi module), split into keys: `status` (`0` ok, else the `NL_*_ERR`
@@ -34,8 +34,6 @@ use solidcore::nurbs::crv_fit::p1::{self as fit, DataDir, DerivEnd, ParamMethod}
 use solidcore::nurbs::knots::KnotVector;
 use solidcore::nurbs::math::{CPoint, MatrixType, RealMatrix};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_crv_fit_p1::{self as ffi, Matrix, Pts};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -497,156 +495,6 @@ fn finish(out: Output, flat: &[f64], at: usize) -> Result<Output, HarnessError> 
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn matrix(m: &MatrixIn) -> Matrix<'_> {
-    Matrix {
-        n: m.n,
-        mtp: m.mtp,
-        bw: m.bw,
-        storage: &m.storage,
-    }
-}
-
-fn cpp_flat(i: &Inputs) -> Result<Result<Vec<f64>, FfiError>, HarnessError> {
-    Ok(match i {
-        Inputs::ParamValues { ptp, pts, par } => {
-            let p = pts4(pts)?;
-            ffi::param_values(&Pts { ptp: *ptp, pts: &p }, *par)
-        }
-        Inputs::InterpKnots { u, p } => ffi::interp_knot_vector(u, *p),
-        Inputs::EndDerivsKnots { u, p } => ffi::knot_vector_end_derivs(u, *p),
-        Inputs::DerivKnots { u, p, whr } => ffi::knot_vector_deriv(u, *p, *whr),
-        Inputs::ApproxKnotVector { u, n, p } => ffi::knot_vector_approx(u, *n, *p),
-        Inputs::Interp {
-            ptp,
-            pts,
-            u,
-            knots,
-            p,
-        } => {
-            let a = pts4(pts)?;
-            ffi::interp_given_params(
-                &Pts { ptp: *ptp, pts: &a },
-                need(u.as_ref(), "u")?,
-                need(knots.as_ref(), "knots")?,
-                *p,
-            )
-        }
-        Inputs::Derivs {
-            ptp,
-            pts,
-            u,
-            knots,
-            p,
-            ds,
-            de,
-        } => {
-            let a = pts4(pts)?;
-            ffi::knots_and_derivs(
-                &Pts { ptp: *ptp, pts: &a },
-                need(u.as_ref(), "u")?,
-                need(knots.as_ref(), "knots")?,
-                *p,
-                pt4(ds)?,
-                pt4(de)?,
-            )
-        }
-        Inputs::Deriv {
-            ptp,
-            pts,
-            u,
-            knots,
-            p,
-            t,
-            whr,
-        } => {
-            let a = pts4(pts)?;
-            ffi::knots_and_deriv(
-                &Pts { ptp: *ptp, pts: &a },
-                need(u.as_ref(), "u")?,
-                need(knots.as_ref(), "knots")?,
-                *p,
-                pt4(t)?,
-                *whr,
-            )
-        }
-        Inputs::FirstDerivs {
-            ptp,
-            pts,
-            d,
-            u,
-            knots,
-            p,
-        } => {
-            let a = pts4(pts)?;
-            let dd = pts4(d)?;
-            ffi::first_deriv_and_knots(
-                &Pts { ptp: *ptp, pts: &a },
-                &Pts {
-                    ptp: *ptp,
-                    pts: &dd,
-                },
-                need(u.as_ref(), "u")?,
-                need(knots.as_ref(), "knots")?,
-                *p,
-            )
-        }
-        Inputs::Approx {
-            ptp,
-            pts,
-            u,
-            knots,
-            n,
-            p,
-        } => {
-            let a = pts4(pts)?;
-            ffi::approx_knots(
-                &Pts { ptp: *ptp, pts: &a },
-                need(u.as_ref(), "u")?,
-                need(knots.as_ref(), "knots")?,
-                *n,
-                *p,
-            )
-        }
-        Inputs::SrfData {
-            ptp,
-            grid,
-            k,
-            dir,
-            matrix: m,
-        } => {
-            let g: Vec<Vec<[f64; 4]>> = grid.iter().map(|r| pts4(r)).collect::<Result<_, _>>()?;
-            ffi::cpts_from_srf_data(*ptp, &g, *k, *dir, &matrix(m))
-        }
-        Inputs::DerivsMatrix {
-            ptp,
-            pts,
-            p,
-            knots,
-            ds,
-            de,
-            matrix: m,
-        } => {
-            let a = pts4(pts)?;
-            ffi::derivs_matrix(
-                &Pts { ptp: *ptp, pts: &a },
-                *p,
-                knots,
-                pt4(ds)?,
-                pt4(de)?,
-                &matrix(m),
-            )
-        }
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match cpp_flat(i)? {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -1299,10 +1147,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&resolve(&case.parse()?)?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

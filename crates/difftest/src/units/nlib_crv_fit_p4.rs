@@ -2,8 +2,8 @@
 //! `N_FitCalcKnotsEndDerivs`), `SmBSplineCurve::CreateApproximatingCurve` and
 //! `SmApiCreateCurveApproxPoints`.
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_fit_p4` (shim
-//! `harness/cpp/shim/nlib_crv_fit_p4.cpp`, which documents the layouts).
+//! Ported from the upstream routines above (the block layouts are those of the former
+//! shim `harness/cpp/shim/nlib_crv_fit_p4.cpp`); checked against its golden.
 //! Rust: [`solidcore::nurbs::crv_fit::p4::approx_end_derivs`],
 //! [`solidcore::nurbs::b_spline_curve::BSplineCurve::create_approximating_curve`],
 //! [`solidcore::primitive::api_curves::create_curve_approx_points`].
@@ -30,7 +30,6 @@ use solidcore::nurbs::crv_fit::p1::ParamMethod;
 use solidcore::nurbs::crv_fit::p4::approx_end_derivs;
 use solidcore::primitive::api_curves::create_curve_approx_points;
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_crv_fit_p4 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -55,14 +54,6 @@ fn herr(e: impl std::fmt::Display) -> HarnessError {
 
 fn output(flat: Vec<f64>) -> Output {
     Output::new().values("out", flat)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::eval(i.op, &i.block) {
-        Ok(v) => Ok(output(v)),
-        Err(solidcore_ffi::FfiError::InvalidArgument(r)) => Ok(Output::rejected(r)),
-        Err(e) => Err(herr(e)),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -372,10 +363,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

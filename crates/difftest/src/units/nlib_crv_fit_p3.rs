@@ -2,8 +2,8 @@
 //! end derivatives, the cubic spline, first derivatives at every point, end tangents
 //! with suggested knots, closed data with end conditions, higher end derivatives).
 //!
-//! C++: `solidcore_ffi::units::nlib_crv_fit_p3` (upstream
-//! `source/SMLib/src/NL_CrvFit.cpp`). Rust: `solidcore::nurbs::crv_fit::p3`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_CrvFit.cpp`; checked against its golden. Rust: `solidcore::nurbs::crv_fit::p3`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record
 //! (see the ffi module), split into keys: `status` (`0` ok, else the `NL_*_ERR`
@@ -36,8 +36,6 @@ use solidcore::nurbs::crv_fit::p1::{param_values, ParamMethod};
 use solidcore::nurbs::crv_fit::p3::{self as fit, EndTangents, ParamSource, VectorKind};
 use solidcore::nurbs::math::CPoint;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_crv_fit_p3::{self as ffi, ExistingCurve, Tangents};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -46,6 +44,9 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
+
+/// Largest control point count of an existing curve the runner sizes a placeholder for.
+const MAX_COUNT: usize = 4096;
 
 /// `nlib.crv_fit_p3` runner.
 pub struct Runner;
@@ -185,80 +186,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 
 // ---- C++ side ---------------------------------------------------------------------
 
-fn cpp_flat(i: &Inputs) -> Result<Vec<f64>, FfiError> {
-    match i {
-        Inputs::EndDerivs {
-            pts,
-            p,
-            ds,
-            de,
-            par,
-            cur,
-        } => {
-            let c = cur.as_ref().map(|c| ExistingCurve {
-                n: c.n,
-                p: c.p,
-                knots: &c.knots,
-            });
-            ffi::end_derivs(pts, *p, *ds, *de, *par, c.as_ref())
-        }
-        Inputs::CubicSpline { pts, ds, de, par } => ffi::cubic_spline(pts, *ds, *de, *par),
-        Inputs::FirstDerivs {
-            pts,
-            d,
-            p,
-            vec,
-            par,
-        } => ffi::first_derivs(pts, d, *p, *vec, *par),
-        Inputs::KnotsAndTangents {
-            pts,
-            u,
-            tan,
-            ts,
-            te,
-            der,
-            knots,
-            per,
-            p,
-        } => ffi::knots_and_tangents(&Tangents {
-            pts,
-            u: u.as_deref(),
-            tan: *tan,
-            ts: *ts,
-            te: *te,
-            der: *der,
-            knots: knots.as_deref(),
-            per: *per,
-            p: *p,
-        }),
-        Inputs::ClosedConditions { pts, p, d, k, par } => {
-            ffi::closed_conditions(pts, *p, d.as_deref(), *k, *par)
-        }
-        Inputs::HighDerivs {
-            pts,
-            p,
-            ds,
-            de,
-            par,
-        }
-        | Inputs::HighDerivsParams {
-            pts,
-            p,
-            ds,
-            de,
-            par,
-        } => ffi::high_derivs(pts, *p, ds, de, *par),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match cpp_flat(i) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
-
 // ---- Rust side --------------------------------------------------------------------
 
 /// `0` for `Ok`, the `NL_*_ERR` number for an NLib error, `-1` otherwise.
@@ -328,8 +255,8 @@ fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
                 ParamSource::Method(par_method(*par)?)
             };
             let mut slot = match cur {
-                // The C++ wrapper rejects such a curve; do not size a placeholder.
-                Some(c) if c.n > ffi::MAX_COUNT => {
+                // A placeholder is sized only up to the runner's count limit.
+                Some(c) if c.n > MAX_COUNT => {
                     return Err(harness("existing curve: sizes"));
                 }
                 Some(c) => Some(
@@ -783,10 +710,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
