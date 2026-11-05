@@ -23,11 +23,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use solidcore::curve::curve::p2::{
-    add_to_curve, euclidian_step_off, evaluate_continuity, evaluate_geometric, evaluate_step,
-    find_test_params, flush_crv, pop_stack, proj_signed_angle, push_point,
-    snap_sol_to_specified_endpoint, stack_look, test_step, unitize_tangent,
-    convert_to_parameter_delta, CcGlobalSolver, CpGlobalSolver, Curve, CurveKind,
-    CurvePropertyGs, CurvePropertyType, LengthIntegrand,
+    add_to_curve, convert_to_parameter_delta, euclidian_step_off, evaluate_continuity,
+    evaluate_geometric, evaluate_step, find_test_params, flush_crv, pop_stack, proj_signed_angle,
+    push_point, snap_sol_to_specified_endpoint, stack_look, test_step, unitize_tangent,
+    CcGlobalSolver, CpGlobalSolver, Curve, CurveKind, CurvePropertyGs, CurvePropertyType,
+    LengthIntegrand,
 };
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::curve::line::Line;
@@ -47,6 +47,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -96,7 +97,6 @@ struct CircleIn {
     a1: f64,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum CurveIn {
@@ -120,7 +120,9 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic,
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
-    let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
+    let cur = arc
+        .gw_nurb()
+        .ok_or_else(|| harness("circle without NURB"))?;
     Ok(CurveIn::Bspline(BSplineIn {
         dim: 3,
         oob: false,
@@ -346,7 +348,327 @@ fn b(x: bool) -> f64 {
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
-    Output::new().ints("status", vec![status as i64]).values("out", rest)
+    Output::new()
+        .ints("status", vec![status as i64])
+        .values("out", rest)
+}
+
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 512,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 4.0;
+/// The longest knot, point or parameter stack array.
+const MAX_ARRAY: usize = 1024;
+/// The longest database record.
+const MAX_DB_BYTES: usize = 1 << 16;
+/// The most nodes of a solver tree.
+const MAX_NODES: usize = 16;
+/// The solver operations the cases use.
+const SOLVER_OPS: [i64; 6] = [0, 2, 3, 4, 5, 22];
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+/// A curve that keeps the contract: whether it is a B-spline, and its domain.
+#[derive(Debug, Clone, Copy)]
+struct Domain {
+    bspline: bool,
+    a: f64,
+    b: f64,
+}
+
+fn domain(c: &CurveIn) -> Option<Domain> {
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some(Domain {
+                bspline: true,
+                a: s.a,
+                b: s.b,
+            })
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], LIMITS.max_coord))
+        .then_some(Domain {
+            bspline: false,
+            a: 0.0,
+            b: 1.0,
+        }),
+        CurveIn::Circle(_) => None,
+    }
+}
+
+/// Whether `t` is finite and at most [`MAX_REL_DIST`] domain lengths outside the curve's.
+fn param(c: Domain, t: f64) -> bool {
+    let far = MAX_REL_DIST * (c.b - c.a);
+    fin(t) && t >= c.a - far && t <= c.b + far
+}
+
+fn angle(a: f64) -> bool {
+    fin(a) && (0.0..=90.0).contains(&a)
+}
+
+/// Whether the op on curve `c` keeps the contract.
+fn curve_op(op: &OpIn, c: Domain) -> bool {
+    match op {
+        OpIn::Info | OpIn::Ends | OpIn::Copy | OpIn::Convert2d | OpIn::IntersectLine => true,
+        OpIn::StepInversion { p } | OpIn::DropFast { p } => vec3(p),
+        OpIn::Eval { t, n, .. } | OpIn::EvalStep { t, n, .. } | OpIn::EvalGeom { t, n, .. } => {
+            param(c, *t) && *n <= 3
+        }
+        OpIn::EvalPoint { t } | OpIn::Split { t } | OpIn::ConvertT { t } => param(c, *t),
+        OpIn::LengthIfeo { t } => c.bspline && param(c, *t),
+        OpIn::Knots { ivl } => {
+            let [a, b] = ivl.unwrap_or([0.0, 0.0]);
+            param(c, a) && param(c, b)
+        }
+        OpIn::Continuities { angle: a } => angle(*a),
+        OpIn::ApproxLength { a, b, samples, .. } => {
+            param(c, *a) && param(c, *b) && *samples <= MAX_SAMPLES
+        }
+        OpIn::EvalContinuity {
+            t,
+            other,
+            t2,
+            angle: a,
+            ..
+        } => param(c, *t) && domain(other).is_some_and(|o| param(o, *t2)) && angle(*a),
+        OpIn::StepOff {
+            a,
+            b,
+            start,
+            dist,
+            tol,
+            ..
+        } => {
+            param(c, *a)
+                && param(c, *b)
+                && param(c, *start)
+                && fin(*dist)
+                && fin(*tol)
+                && *tol > 0.0
+        }
+        OpIn::Repeated { tol } => fin(*tol) && *tol >= 0.0,
+        OpIn::Equal { other } => other.as_ref().is_none_or(|o| domain(o).is_some()),
+        OpIn::Trim { a, b } | OpIn::Reverse { a, b } | OpIn::Analytic { a, b } => {
+            param(c, *a) && param(c, *b)
+        }
+        OpIn::EditParam { a, b } => {
+            param(c, *a) && param(c, *b) && (b - a).abs() >= 1e-6 * (c.b - c.a)
+        }
+        OpIn::Transform {
+            origin,
+            x,
+            y,
+            scale,
+        } => [origin, x, y, &scale.unwrap_or([1.0; 3])]
+            .iter()
+            .all(|v| vec3(v)),
+        OpIn::Snap {
+            a,
+            b,
+            vec,
+            sol,
+            tol,
+        } => {
+            param(c, *a)
+                && param(c, *b)
+                && vec3(&vec.unwrap_or([0.0; 3]))
+                && param(c, *sol)
+                && fin(*tol)
+        }
+        _ => false,
+    }
+}
+
+/// The `(aux, data)` of each node of a solver tree that keeps the contract: at most
+/// [`MAX_NODES`] nodes, links within the tree, children after their parent (or a leaf),
+/// an aux code up to 8 and a finite box that is not inverted.
+fn tree(t: &[NodeIn]) -> Option<Vec<(i64, bool)>> {
+    let nn = t.len() as i64;
+    if t.is_empty() || t.len() > MAX_NODES {
+        return None;
+    }
+    t.iter()
+        .enumerate()
+        .map(|(k, n)| {
+            let link = |v: i64| (-1..nn).contains(&v);
+            let leaf = n.c1 == -1 && n.c2 == -1;
+            let inner = n.c1 > k as i64 && n.c2 > k as i64;
+            let [x0, y0, z0, x1, y1, z1] = n.bbox;
+            (link(n.p)
+                && link(n.c1)
+                && link(n.c2)
+                && (leaf || inner)
+                && (0..=8).contains(&n.aux)
+                && n.bbox.iter().all(|&v| fin(v))
+                && x0 <= x1
+                && y0 <= y1
+                && z0 <= z1)
+                .then_some((n.aux, n.data))
+        })
+        .collect()
+}
+
+fn is_curve_aux(aux: i64) -> bool {
+    aux == 1 || aux == 2
+}
+
+/// Whether a solver case keeps the contract: one tree for the property solver and two for
+/// the others, an operation the cases use, a best answer in `[0, 1e40]`, a property code up
+/// to 28, `FindBestSubdivisionNode` only for the property solver, a node of each tree, and
+/// no test that reads a span's data where a box is expected.
+fn solver(s: &SolverIn) -> bool {
+    let property = s.kind == "property";
+    if !(property || s.kind == "cc" || s.kind == "cp") {
+        return false;
+    }
+    let ntrees = if property { 1 } else { 2 };
+    let Some(trees) = s.trees.iter().map(|t| tree(t)).collect::<Option<Vec<_>>>() else {
+        return false;
+    };
+    let head = trees.len() == ntrees
+        && SOLVER_OPS.contains(&s.sop)
+        && fin(s.tol)
+        && s.best.is_finite()
+        && (0.0..=1e40).contains(&s.best)
+        && s.opt.iter().all(vec3)
+        && (!property || ((0..=28).contains(&s.prop) && fin(s.value)))
+        && (s.which == 0 || (s.which == 1 && property))
+        && s.nodes.len() == ntrees;
+    let Some(nodes) = trees
+        .iter()
+        .zip(&s.nodes)
+        .map(|(t, &i)| t.get(i).copied())
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    if !head {
+        return false;
+    }
+    if s.which != 0 {
+        return true;
+    }
+    if property {
+        let (aux, data) = nodes.first().copied().unwrap_or((0, false));
+        let box_props = [16, 17, 18, 19, 20, 21, 22, 23];
+        // a span node's data is read only by the box properties, and not by the plane test
+        !data || (!is_curve_aux(aux) || box_props.contains(&s.prop)) && !(aux == 1 && s.prop == 16)
+    } else if s.kind == "cc" {
+        let span = nodes.iter().all(|&(aux, data)| data && is_curve_aux(aux));
+        !((s.sop == 5 || s.sop == 22) && span)
+    } else {
+        let (aux, data) = nodes.get(1).copied().unwrap_or((0, false));
+        !(s.sop == 5 && data && is_curve_aux(aux))
+    }
+}
+
+fn knots_and_points(knots: &[f64], pts: &[[f64; 3]]) -> bool {
+    knots.len() <= MAX_ARRAY
+        && knots.iter().all(|&k| fin(k))
+        && pts.len() <= MAX_ARRAY
+        && pts.iter().all(vec3)
+}
+
+/// Whether a static op (one without a curve) keeps the contract.
+fn static_op(op: &OpIn) -> Option<bool> {
+    Some(match op {
+        OpIn::ReadDb {
+            curve_type,
+            dim,
+            version,
+            text,
+        } => {
+            (0..=1 << 20).contains(curve_type)
+                && (2..=3).contains(dim)
+                && *version <= 64
+                && text.len() <= MAX_DB_BYTES
+        }
+        OpIn::Flush {
+            tol, knots, pts, ..
+        } => {
+            let nk = knots.len();
+            fin(*tol)
+                && knots_and_points(knots, pts)
+                && (nk == 0 || pts.len() == 3 * (nk - 1) + 1)
+                && nk != 1
+        }
+        OpIn::AddToCurve {
+            last,
+            curr,
+            lt,
+            ct,
+            knots,
+            pts,
+        } => {
+            last.iter().chain(curr).all(vec3)
+                && fin(*lt)
+                && fin(*ct)
+                && knots_and_points(knots, pts)
+                && (knots.is_empty() || !pts.is_empty())
+        }
+        OpIn::Stack { init, ops } => {
+            init.len() <= MAX_ARRAY
+                && init.iter().all(|&v| fin(v))
+                && ops.len() <= 64
+                && ops.iter().all(|o| match o {
+                    StackOp::Push { t, p, v } => fin(*t) && vec3(p) && vec3(v),
+                    StackOp::Pop | StackOp::Look => true,
+                })
+        }
+        OpIn::ParamDelta { tan, delta } => vec3(tan) && vec3(delta),
+        OpIn::UnitizeTan { pvv, gap } => pvv.iter().all(vec3) && vec3(gap),
+        OpIn::ProjAngle { p1, p2, c, n, side } => [p1, p2, c, n, side].iter().all(|v| vec3(v)),
+        OpIn::TestParams { a, b, deg, knots } => {
+            fin(*a)
+                && fin(*b)
+                && *deg <= 32
+                && knots.len() <= MAX_ARRAY
+                && knots.iter().all(|&k| fin(k))
+        }
+        OpIn::TestStep {
+            cur_t,
+            step,
+            cur,
+            next,
+            chord,
+            angle: a,
+            dsq,
+        } => {
+            [cur_t, step, chord, a, dsq].iter().all(|&&v| fin(v))
+                && cur.iter().chain(next).all(vec3)
+        }
+        OpIn::Solver(s) => solver(s),
+        _ => return None,
+    })
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_curve_p2.rs`, `validate`): a curve for every curve
+/// op as [`domain`] takes it (arcs within the arc constructor's `[-360, 360]` degrees),
+/// parameters within [`MAX_REL_DIST`] domain lengths, derivative orders up to 3, angles in
+/// `[0, 90]`, the tolerance signs, a non-degenerate `EditParam`, `LengthIfeo` of a B-spline,
+/// finite values within range, and the static ops' array, record and solver bounds.
+fn keeps_contract(i: &Inputs) -> bool {
+    if let Some(ok) = static_op(&i.op) {
+        return ok;
+    }
+    i.curve
+        .as_ref()
+        .and_then(domain)
+        .is_some_and(|c| curve_op(&i.op, c))
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -358,8 +680,15 @@ fn v3(p: [f64; 3]) -> Vec3 {
 fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
     match &resolve(c)? {
         CurveIn::Bspline(b) => {
-            let n = b.cpts.len().checked_sub(1).ok_or_else(|| harness("no points"))?;
-            let m = b.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let n = b
+                .cpts
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| harness("no points"))?;
+            let m =
+                b.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, b.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&b.cpts) {
@@ -422,8 +751,12 @@ fn state(o: &mut Vec<f64>, c: &Curve) -> Result<(), HarnessError> {
         }
         CurveKind::Hermite(h) => {
             o.extend([1.0, h.dim() as f64]);
-            let a = h.evaluate(0.0, 1, false).map_err(|e| harness(e.to_string()))?;
-            let e = h.evaluate(1.0, 1, false).map_err(|e| harness(e.to_string()))?;
+            let a = h
+                .evaluate(0.0, 1, false)
+                .map_err(|e| harness(e.to_string()))?;
+            let e = h
+                .evaluate(1.0, 1, false)
+                .map_err(|e| harness(e.to_string()))?;
             for v in a.iter().take(2).chain(e.iter().take(2)) {
                 pv(o, *v);
             }
@@ -537,7 +870,11 @@ fn build_tree(nodes: &[NodeIn]) -> Result<Tree<Obj>, HarnessError> {
 }
 
 fn rust_solver(k: &Kernel, s: &SolverIn) -> Result<Output, HarnessError> {
-    let trees: Vec<Tree<Obj>> = s.trees.iter().map(|t| build_tree(t)).collect::<Result<_, _>>()?;
+    let trees: Vec<Tree<Obj>> = s
+        .trees
+        .iter()
+        .map(|t| build_tree(t))
+        .collect::<Result<_, _>>()?;
     let sop = SolverOperation::from_code(s.sop as i32).ok_or_else(|| harness("solver op"))?;
     let opt: Vec<Vec3> = s.opt.iter().map(|&o| v3(o)).collect();
     let ivl = Extent1d::from_min_max(0.0, 1.0);
@@ -549,7 +886,8 @@ fn rust_solver(k: &Kernel, s: &SolverIn) -> Result<Output, HarnessError> {
     let t0 = trees.first().ok_or_else(|| harness("tree"))?;
     let r = match s.kind.as_str() {
         "property" => {
-            let prop = CurvePropertyType::from_code(s.prop as i32).ok_or_else(|| harness("prop"))?;
+            let prop =
+                CurvePropertyType::from_code(s.prop as i32).ok_or_else(|| harness("prop"))?;
             let mut g = CurvePropertyGs::new(k, t0, ivl, prop, Some(s.value), opt);
             g.base.operation = sop;
             g.base.tolerance_3d = s.tol;
@@ -557,7 +895,8 @@ fn rust_solver(k: &Kernel, s: &SolverIn) -> Result<Output, HarnessError> {
             if s.which == 0 {
                 g.may_contain_answers(&branch).map(|f| vec![b(f)])
             } else {
-                g.best_subdivision_node(&branch).map(|(i, sw)| vec![i as f64, b(sw)])
+                g.best_subdivision_node(&branch)
+                    .map(|(i, sw)| vec![i as f64, b(sw)])
             }
         }
         "cc" | "cp" => {
@@ -616,7 +955,12 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             let rat = tri!(o, c.is_rational());
             o.extend([0.0, c.type_code() as f64, c.dim() as f64]);
             o.extend([deg as f64, nnk as f64, ncp as f64, ivl.min(), ivl.max()]);
-            o.extend([b(c.is_analytic()), b(c.is_bounded()), b(rat), b(c.owner().is_none())]);
+            o.extend([
+                b(c.is_analytic()),
+                b(c.is_bounded()),
+                b(rat),
+                b(c.owner().is_none()),
+            ]);
             for kind in [14001, 12060, 14033, 14034, 14010, 14022, 16016, 12000, 1] {
                 o.push(b(c.is_kind_of(kind)));
             }
@@ -639,7 +983,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             pv(&mut o, p);
         }
         OpIn::Ends => {
-            let e = tri!(o, c_ref()?.ends(&k, ));
+            let e = tri!(o, c_ref()?.ends(&k,));
             o.push(0.0);
             pv(&mut o, e.start);
             pv(&mut o, e.end);
@@ -720,7 +1064,8 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         } => {
             let s = tri!(
                 o,
-                euclidian_step_off(&k, 
+                euclidian_step_off(
+                    &k,
                     c_ref()?,
                     &Extent1d::from_min_max(*a, *bb),
                     *start,
@@ -729,7 +1074,11 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                     *tol
                 )
             );
-            o.extend([if s.converged { 0.0 } else { 1001.0 }, b(s.clamped), s.end_param]);
+            o.extend([
+                if s.converged { 0.0 } else { 1001.0 },
+                b(s.clamped),
+                s.end_param,
+            ]);
         }
         OpIn::Split { t } => {
             let mut c = c_ref()?.clone();
@@ -794,7 +1143,9 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
         OpIn::EditParam { a, b: bb } => {
             let mut c = c_ref()?.clone();
-            let st = match c.edit_parameterization(&Kernel::default(), &Extent1d::from_min_max(*a, *bb)) {
+            let st = match c
+                .edit_parameterization(&Kernel::default(), &Extent1d::from_min_max(*a, *bb))
+            {
                 Ok(()) => 0.0,
                 Err(e) => match deferred_or_status(e) {
                     Err(d) => return Ok(*d),
@@ -830,7 +1181,8 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         OpIn::Analytic { a, b: bb } => {
             let r = tri!(
                 o,
-                c_ref()?.create_analytic_curve(&Kernel::default(), &Extent1d::from_min_max(*a, *bb))
+                c_ref()?
+                    .create_analytic_curve(&Kernel::default(), &Extent1d::from_min_max(*a, *bb))
             );
             o.extend([0.0, b(r.is_some())]);
         }
@@ -842,7 +1194,8 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             let c = c_ref()?;
             tri!(
                 o,
-                c.drop_point_fast(&k, 
+                c.drop_point_fast(
+                    &k,
                     &c.natural_interval(),
                     SolverOperation::Minimize,
                     v3(*p),
@@ -872,7 +1225,8 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         } => {
             let (s, good) = tri!(
                 o,
-                snap_sol_to_specified_endpoint(&k, 
+                snap_sol_to_specified_endpoint(
+                    &k,
                     c_ref()?,
                     &Extent1d::from_min_max(*a, *bb),
                     vec.map(v3),
@@ -1010,7 +1364,9 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             );
             o.extend([0.0, a]);
         }
-        OpIn::TestParams { a, b: bb, knots, .. } => {
+        OpIn::TestParams {
+            a, b: bb, knots, ..
+        } => {
             let p = find_test_params(*a, *bb, knots);
             o.extend([0.0, p.len() as f64]);
             o.extend_from_slice(&p);
@@ -1051,11 +1407,21 @@ fn gen_bspline(rng: &mut Rng) -> BSplineIn {
     let n = p + rng.below(6) as usize;
     let rational = rng.chance(0.25);
     let two_d = rng.chance(0.2);
-    let a = if rng.chance(0.5) { 0.0 } else { rng.uniform(-5.0, 5.0) };
-    let len = if rng.chance(0.5) { 1.0 } else { rng.uniform(0.1, 10.0) };
+    let a = if rng.chance(0.5) {
+        0.0
+    } else {
+        rng.uniform(-5.0, 5.0)
+    };
+    let len = if rng.chance(0.5) {
+        1.0
+    } else {
+        rng.uniform(0.1, 10.0)
+    };
     let mut u = vec![a; p + 1];
     let inner = n - p;
-    let mut ks: Vec<f64> = (0..inner).map(|_| a + len * rng.uniform(0.05, 0.95)).collect();
+    let mut ks: Vec<f64> = (0..inner)
+        .map(|_| a + len * rng.uniform(0.05, 0.95))
+        .collect();
     ks.sort_by(f64::total_cmp);
     if inner >= 2 && rng.chance(0.3) {
         // a repeated interior knot (multiplicity 2 <= p when p >= 2)
@@ -1223,8 +1589,21 @@ fn bspline_text(b: &BSplineIn) -> String {
 fn gen_tree(rng: &mut Rng, curvey: bool) -> Vec<NodeIn> {
     let mut nodes = vec![];
     let lo = rp(rng, 10.0);
-    let size = [rng.uniform(0.0, 8.0), rng.uniform(0.0, 8.0), rng.uniform(0.0, 8.0)];
-    let bbox = |lo: [f64; 3], s: [f64; 3]| [lo[0], lo[1], lo[2], lo[0] + s[0], lo[1] + s[1], lo[2] + s[2]];
+    let size = [
+        rng.uniform(0.0, 8.0),
+        rng.uniform(0.0, 8.0),
+        rng.uniform(0.0, 8.0),
+    ];
+    let bbox = |lo: [f64; 3], s: [f64; 3]| {
+        [
+            lo[0],
+            lo[1],
+            lo[2],
+            lo[0] + s[0],
+            lo[1] + s[1],
+            lo[2] + s[2],
+        ]
+    };
     let aux = |rng: &mut Rng| -> i64 {
         if curvey && rng.chance(0.6) {
             1 + rng.below(2) as i64
@@ -1267,10 +1646,15 @@ fn gen_tree(rng: &mut Rng, curvey: bool) -> Vec<NodeIn> {
 }
 
 fn gen_solver(rng: &mut Rng) -> SolverIn {
-    let kind = *rng.choose(&["property", "property", "property", "cc", "cp"]).unwrap_or(&"property");
+    let kind = *rng
+        .choose(&["property", "property", "property", "cc", "cp"])
+        .unwrap_or(&"property");
     let ntrees = if kind == "property" { 1 } else { 2 };
     let trees: Vec<Vec<NodeIn>> = (0..ntrees).map(|_| gen_tree(rng, true)).collect();
-    let nodes = trees.iter().map(|t| rng.below(t.len() as u64) as usize).collect();
+    let nodes = trees
+        .iter()
+        .map(|t| rng.below(t.len() as u64) as usize)
+        .collect();
     let mut opt = [rp(rng, 10.0), rp(rng, 1.0), rp(rng, 1.0)];
     if rng.chance(0.5) {
         // unit plane normal / reference vector
@@ -1355,7 +1739,8 @@ fn gen_case(rng: &mut Rng) -> Inputs {
                 b,
                 start: gen_t(rng, &c).clamp(a, b),
                 same: rng.chance(0.5),
-                dist: *rng.choose(&[0.0, 0.1, 1.0, 5.0, 50.0]).unwrap_or(&1.0) * rng.uniform(0.5, 1.5),
+                dist: *rng.choose(&[0.0, 0.1, 1.0, 5.0, 50.0]).unwrap_or(&1.0)
+                    * rng.uniform(0.5, 1.5),
                 tol: *rng.choose(&[1e-6, 1e-9, 1e-3]).unwrap_or(&1e-6),
             }
         }
@@ -1385,7 +1770,11 @@ fn gen_case(rng: &mut Rng) -> Inputs {
                     let s = rng.uniform(0.2, 3.0);
                     [s, s, s]
                 } else {
-                    [rng.uniform(0.2, 3.0), rng.uniform(0.2, 3.0), rng.uniform(0.2, 3.0)]
+                    [
+                        rng.uniform(0.2, 3.0),
+                        rng.uniform(0.2, 3.0),
+                        rng.uniform(0.2, 3.0),
+                    ]
                 }
             }),
         },
@@ -1471,7 +1860,10 @@ fn gen_static(rng: &mut Rng) -> Inputs {
                         Vec3::new(-r * s * th.sin(), r * s * th.cos(), 0.0),
                     ]
                 } else {
-                    match curve.as_ref().and_then(|cv| cv.evaluate(&Kernel::default(), t, 1, true, false).ok()) {
+                    match curve
+                        .as_ref()
+                        .and_then(|cv| cv.evaluate(&Kernel::default(), t, 1, true, false).ok())
+                    {
                         Some(v) => [
                             v.first().copied().unwrap_or(Vec3::ZERO),
                             v.get(1).copied().unwrap_or(Vec3::ZERO),
@@ -1509,7 +1901,11 @@ fn gen_static(rng: &mut Rng) -> Inputs {
             }
             let start = pts.last().copied().unwrap_or_else(|| rp(rng, 3.0));
             let lt = if rng.chance(0.85) { t } else { t + 0.5 };
-            let p0 = if rng.chance(0.85) { start } else { rp(rng, 3.0) };
+            let p0 = if rng.chance(0.85) {
+                start
+            } else {
+                rp(rng, 3.0)
+            };
             OpIn::AddToCurve {
                 last: [p0, rp(rng, 2.0)],
                 curr: [rp(rng, 3.0), rp(rng, 2.0)],
@@ -1535,20 +1931,32 @@ fn gen_static(rng: &mut Rng) -> Inputs {
             OpIn::Stack { init, ops }
         }
         5 => OpIn::ParamDelta {
-            tan: if rng.chance(0.1) { [0.0; 3] } else { rp(rng, 3.0) },
+            tan: if rng.chance(0.1) {
+                [0.0; 3]
+            } else {
+                rp(rng, 3.0)
+            },
             delta: rp(rng, 3.0),
         },
         6 => {
             let z = rng.chance(0.5);
             OpIn::UnitizeTan {
-                pvv: [rp(rng, 3.0), if z { [0.0; 3] } else { rp(rng, 3.0) }, rp(rng, 3.0)],
+                pvv: [
+                    rp(rng, 3.0),
+                    if z { [0.0; 3] } else { rp(rng, 3.0) },
+                    rp(rng, 3.0),
+                ],
                 gap: rp(rng, 3.0),
             }
         }
         7 => OpIn::ProjAngle {
             p1: rp(rng, 3.0),
             p2: rp(rng, 3.0),
-            c: if rng.chance(0.1) { [0.0; 3] } else { rp(rng, 1.0) },
+            c: if rng.chance(0.1) {
+                [0.0; 3]
+            } else {
+                rp(rng, 1.0)
+            },
             n: rp(rng, 1.0),
             side: rp(rng, 1.0),
         },
@@ -1583,7 +1991,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        let i = (0..64).map(|_| gen_case(rng)).find(keeps_contract)?;
+        serde_json::to_value(i).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
