@@ -32,12 +32,13 @@ use std::collections::BTreeSet;
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::attribute::ObjectKey;
 use crate::kernel::Kernel;
+use crate::math::Vec3;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::knots::Side;
 use crate::offset::offset_executive::p1::{OffsetExecutive, OffsetOperation};
 use crate::offset::offset_executive::p2::OffsetNotifications;
 use crate::query::brep::{calculate_bounding_box, BoundingBoxOptions};
-use crate::surface::surface::Surface;
+use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2;
 use crate::topology::brep::p5;
@@ -89,8 +90,18 @@ pub fn local_operation(
     let mut new_list = Vec::with_capacity(all_faces.len());
     // (WR-534) where each given surface went in the new list
     let mut placed: Vec<Option<usize>> = vec![None; given.len()];
+    // (not upstream) the faces whose surfaces move: a face given its own plane again keeps
+    // a copy of its own surface, as the faces not given one do, and so keeps its edges
+    let mut moved = Vec::new();
     for &face in &all_faces {
-        let surface = if let Some(index) = faces.iter().position(|&f| f == face) {
+        let index = faces.iter().position(|&f| f == face);
+        let own = face_ops::surface(b, face)?.ok_or_else(null)?;
+        let stays = match index.and_then(|i| given.get(i)).and_then(Option::as_ref) {
+            Some(new) => is_own_plane(own, new),
+            None => true,
+        };
+        let surface = if let (Some(index), false) = (index, stays) {
+            moved.push(face);
             if let Some(slot) = placed.get_mut(index) {
                 *slot = Some(new_list.len());
             }
@@ -102,7 +113,7 @@ pub fn local_operation(
             // (`EvaluateNormal(uv, TRUE, TRUE, ..)`: from the left)
             let new_normal =
                 new.evaluate_normal(k, domain.evaluate(0.5, 0.5), Side::Left, Side::Left)?;
-            let old = face_ops::surface(b, face)?.ok_or_else(null)?;
+            let old = own;
             let old_normal = old.evaluate_normal(
                 k,
                 b.face(face)?.uv_domain.evaluate(0.5, 0.5),
@@ -116,9 +127,7 @@ pub fn local_operation(
             new
         } else {
             // copy the face's current surface, when possible as an analytic one
-            face_ops::surface(b, face)?
-                .ok_or_else(null)?
-                .copy_and_add_analytics(k)?
+            own.copy_and_add_analytics(k)?
         };
         new_list.push(surface);
     }
@@ -154,16 +163,12 @@ pub fn local_operation(
     );
     // (the geometry creator's constructor tolerance, half a degree under WR-666's opt-in)
     executive.use_creator_tangency_tol(k);
-    executive.set_local_surfaces(&all_faces, new_list);
-    // A face's surface is extended to meet the moved surfaces, which the box is to hold
-    // (WR-534), not to meet an offset: by upstream's five half-radii of the sphere bounding
-    // it (more than its diameter, the farthest any point in it lies from a face in it).
-    // Still upstream's multiple, not a reach derived from the moved surfaces: a derived
-    // reach is zero (or rounding) beside faces where nothing moves, and the local operation
-    // has no offset to add past it, so those meetings touch their surfaces' sides and the
-    // results open (plan/findings/surface.exact-extension--difftest-cases-moved-2026-11-05.md,
-    // "The local operation's derived reach")
-    executive.set_extension_bound(Some(2.5 * radius));
+    // A face's surface is extended as far as its neighbours' new surfaces meet it, and as
+    // far again as they moved beside it (not upstream, whose margin is five half-radii of
+    // the sphere bounding the box: `local_extension_reach`). The edges whose faces and
+    // vertices' faces all keep their surfaces are kept as they are, not intersected again
+    // (`OffsetExecutive::keeps_edge`).
+    executive.set_local_surfaces(&all_faces, new_list, &moved);
     // the shell faces get copied without being offset: none
     executive.set_shell_faces(&[]);
     // extend/intersect to fill new convex edge gaps rather than adding a fillet
@@ -220,6 +225,133 @@ pub fn local_operation(
     // (not upstream: the port's cached topology fields, true again for the caller)
     b.refresh_cached_topology();
     moved
+}
+
+/// Whether `given` is the plane `own` lies on, exactly: both are planes, and the plane
+/// `own` spans (its origin and its two axes) holds the given plane's origin, and its two
+/// axes span the same plane: each determinant is computed without rounding (error-free
+/// products and sums, [`exact`]). Not a tolerance: a plane off by a rounding is another
+/// plane, and its face moves. (The given plane's extent is not compared: a face's surface
+/// is extended as its neighbours need, whatever its extent.)
+fn is_own_plane(own: &Surface, given: &Surface) -> bool {
+    let (SurfaceKind::Plane(own), SurfaceKind::Plane(given)) = (own.kind(), given.kind()) else {
+        return false;
+    };
+    let (a, b, o) = (
+        own.position().x_axis(),
+        own.position().y_axis(),
+        own.position().origin(),
+    );
+    let (x, y, g) = (
+        given.position().x_axis(),
+        given.position().y_axis(),
+        given.position().origin(),
+    );
+    let spans = |u: Vec3, v: Vec3| exact::cross(u, v).iter().any(|c| !exact::is_zero(c));
+    // own's axes and the given ones each span a plane, the given axes lie in own's, and
+    // the given origin lies on own's plane
+    spans(a, b)
+        && spans(x, y)
+        && exact::is_zero(&exact::det3(a, b, x))
+        && exact::is_zero(&exact::det3(a, b, y))
+        && exact::is_zero(&exact::sub(&exact::det3(a, b, g), &exact::det3(a, b, o)))
+}
+
+/// Error-free arithmetic on doubles: a value is an expansion, a sum of doubles whose
+/// components do not overlap (Shewchuk's grow-expansion), so sums and products of doubles
+/// are held without rounding and a value's sign is read off exactly (an expansion is zero
+/// exactly when every component is). Overflow and underflow are out of range (the inputs
+/// are coordinates and unit vectors).
+mod exact {
+    use crate::math::Vec3;
+
+    /// `a + b` as `(s, e)`: `s = fl(a + b)` and its rounding error (Knuth's TwoSum).
+    fn two_sum(a: f64, b: f64) -> (f64, f64) {
+        let s = a + b;
+        let bb = s - a;
+        (s, (a - (s - bb)) + (b - bb))
+    }
+
+    /// `e + b` as an expansion (Grow-Expansion).
+    fn grow(e: &[f64], b: f64) -> Vec<f64> {
+        let mut q = b;
+        let mut out = Vec::new();
+        for &c in e {
+            let (s, err) = two_sum(q, c);
+            out.push(err);
+            q = s;
+        }
+        out.push(q);
+        out
+    }
+
+    /// `e + f` as an expansion.
+    fn add(e: &[f64], f: &[f64]) -> Vec<f64> {
+        f.iter().fold(e.to_vec(), |acc, &c| grow(&acc, c))
+    }
+
+    /// `e - f` as an expansion.
+    pub(super) fn sub(e: &[f64], f: &[f64]) -> Vec<f64> {
+        f.iter().fold(e.to_vec(), |acc, &c| grow(&acc, -c))
+    }
+
+    /// `a b` as an expansion: the product and its rounding error, `fma(a, b, -p)`.
+    fn product(a: f64, b: f64) -> Vec<f64> {
+        let p = a * b;
+        vec![a.mul_add(b, -p), p]
+    }
+
+    /// `e b` as an expansion: each component's product, summed.
+    fn scale(e: &[f64], b: f64) -> Vec<f64> {
+        e.iter()
+            .fold(Vec::new(), |acc, &c| add(&acc, &product(c, b)))
+    }
+
+    /// `u × v`, each component an expansion.
+    pub(super) fn cross(u: Vec3, v: Vec3) -> [Vec<f64>; 3] {
+        [
+            sub(&product(u.y, v.z), &product(u.z, v.y)),
+            sub(&product(u.z, v.x), &product(u.x, v.z)),
+            sub(&product(u.x, v.y), &product(u.y, v.x)),
+        ]
+    }
+
+    /// `det(a, b, c) = (a × b) · c` as an expansion.
+    pub(super) fn det3(a: Vec3, b: Vec3, c: Vec3) -> Vec<f64> {
+        let [x, y, z] = cross(a, b);
+        add(&add(&scale(&x, c.x), &scale(&y, c.y)), &scale(&z, c.z))
+    }
+
+    /// Whether the expansion is zero exactly.
+    pub(super) fn is_zero(e: &[f64]) -> bool {
+        e.iter().all(|&c| c == 0.0)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_rounded_sum_is_not_zero_but_its_exact_one_is() {
+            // 0.1 + 0.2 - 0.3 rounds to 5.6e-17; exactly it is that too (the doubles are
+            // not the decimals), while 1e16 + 1 - 1e16 is 1, not the 0 or 2 of rounding
+            assert!(!is_zero(&sub(&add(&[0.1], &[0.2]), &[0.3])));
+            assert_eq!(sub(&add(&[1e16], &[1.0]), &[1e16]).iter().sum::<f64>(), 1.0);
+            assert!(is_zero(&sub(&product(3.0, 0.1), &product(0.1, 3.0))));
+        }
+
+        #[test]
+        fn a_determinant_is_zero_exactly_only_for_dependent_vectors() {
+            let a = Vec3::new(0.1, 0.7, 0.3);
+            let b = Vec3::new(0.9, 0.2, 0.4);
+            assert!(is_zero(&det3(a, b, a)));
+            assert!(!is_zero(&det3(
+                a,
+                b,
+                Vec3::new(0.1, 0.7, 0.3 + 1e-16 * 0.3)
+            )));
+        }
+    }
 }
 
 /// `RemoveFaces(GetFaces)` of `b`, then `pNewBrep->CopyFaces(GetFaces, b)`.
