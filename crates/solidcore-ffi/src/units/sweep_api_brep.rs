@@ -62,7 +62,7 @@
 //! B-spline kind (not `Hermite`) where upstream takes `SmBSplineCurve*`; no `Null`
 //! curve in the lists of `PlanarPath`, which upstream dereferences unchecked; at most 16
 //! positive-radius planar circles; a cap selector in `-16..=16` and at most `2^20`
-//! repetitions (shim bounds). Five kernel defects (`plan/upstream-issues.md`) are
+//! repetitions (shim bounds). Six kernel defects (`plan/upstream-issues/`) are
 //! fenced off (each only where the kernel is reached: a list holding a `Null` or
 //! `Hermite` curve fails in `SmApiCopyCurvesForConsumingSweep` before it):
 //! - `Draft` with no curves (unlike `Taper`, the API does not reject it) crashes in
@@ -76,7 +76,14 @@
 //!   unchecked;
 //! - `CurveSweep` whose profile holds no B-spline curve (only `Null` / `Hermite`
 //!   entries, which `CreateCurveSweep` skips) crashes on `sNurbs[0]` unless the options
-//!   move the profile center to the path.
+//!   move the profile center to the path;
+//! - `Rotational` / `RotationalReps` (UB-271): a partial sweep (angle below
+//!   `359.99999`, at least one repetition, not the capped multi-repetition `SM_ERR`) of a
+//!   profile curve of extent below [`TINY_ROTATIONAL_EXTENT`] whose end point lies within
+//!   [`ROTATIONAL_AXIS_ZONE`] of the axis or sweeps an arc below
+//!   [`MIN_ROTATIONAL_VERTEX_ARC`] reads a trimming curve the face creator deleted
+//!   (`SmTopologySweep::SweepEdgeHigh`); the same profile away from the axis builds a body
+//!   and stays accepted.
 //!
 //! One hang is fenced off as well (HANG-5): the curve sweeps (`CurveSweep`,
 //! `FromFaces`, `FromEdges`, `FromBoxFace` and the attributed ops) polygonize the path
@@ -588,6 +595,99 @@ fn check_taper_curves(curves: &[CurveSpec]) -> Result<(), FfiError> {
     Ok(())
 }
 
+/// Largest extent of a profile curve the partial rotational sweep guard treats as
+/// sub-tolerance (`SM_ZONE_TOL_3D`, the B-rep tolerance of a new `SmBrep`).
+pub const TINY_ROTATIONAL_EXTENT: f64 = 1.0e-5;
+/// Farthest from the rotation axis an end point of a sub-tolerance profile curve may
+/// lie (UB-271: upstream crashes up to about 5e-6, and up to a vertex arc of the
+/// B-rep tolerance beyond that).
+pub const ROTATIONAL_AXIS_ZONE: f64 = 2.0e-5;
+/// Shortest arc (end point distance from the axis times the angle in radians) a
+/// sub-tolerance profile curve's end point may sweep (UB-271: upstream crashes below
+/// the B-rep tolerance, 1e-5).
+pub const MIN_ROTATIONAL_VERTEX_ARC: f64 = 2.0e-5;
+
+/// The end points of a curve as the API builds it (`None` for `Null` and `Hermite`,
+/// which fail before the kernel): the circles start at `center + (radius, 0, 0)`, an
+/// arc at its angles in the same canonical frame, an API curve at its first and last
+/// control point.
+fn end_points(c: &CurveSpec) -> Option<[[f64; 3]; 2]> {
+    match c {
+        CurveSpec::Null | CurveSpec::Hermite { .. } => None,
+        CurveSpec::ApiCurve { points } => Some([*points.first()?, *points.last()?]),
+        CurveSpec::ApiArc {
+            center,
+            radius,
+            start_deg,
+            end_deg,
+        } => {
+            let at = |deg: f64| {
+                let (s, c) = deg.to_radians().sin_cos();
+                [center[0] + radius * c, center[1] + radius * s, center[2]]
+            };
+            Some([at(*start_deg), at(*end_deg)])
+        }
+        CurveSpec::ApiCircle { center, radius } | CurveSpec::AnalyticCircle { center, radius } => {
+            let start = [center[0] + radius, center[1], center[2]];
+            Some([start, start])
+        }
+        CurveSpec::LineSegment { start, end } => Some([*start, *end]),
+    }
+}
+
+/// Distance of `p` from the line through `base` along `axis` (from `base` itself for a
+/// zero axis, which upstream's sweep does not reject either).
+fn axis_distance(p: &[f64; 3], base: &[f64; 3], axis: &[f64; 3]) -> f64 {
+    let d = [p[0] - base[0], p[1] - base[1], p[2] - base[2]];
+    let len2 = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2];
+    if len2 > 0.0 {
+        let t = (d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2]) / len2;
+        let r = [d[0] - t * axis[0], d[1] - t * axis[1], d[2] - t * axis[2]];
+        (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt()
+    } else {
+        (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+    }
+}
+
+/// Rejects the partial rotational sweeps upstream crashes on (UB-271): a profile curve
+/// of extent below [`TINY_ROTATIONAL_EXTENT`] with an end point within
+/// [`ROTATIONAL_AXIS_ZONE`] of the axis or sweeping an arc below
+/// [`MIN_ROTATIONAL_VERTEX_ARC`], where the sweep runs (curves copied, at least one
+/// repetition, not the capped multi-repetition `SM_ERR`, no full-turn dispatch).
+fn check_rotational_curves(
+    curves: &[CurveSpec],
+    base: &[f64; 3],
+    axis: &[f64; 3],
+    angle_deg: f64,
+    reps: u64,
+    cap: bool,
+) -> Result<(), FfiError> {
+    let runs = copies_ok(curves)
+        && !curves.is_empty()
+        && reps >= 1
+        && !(cap && reps != 1)
+        && angle_deg < 359.99999;
+    if !runs {
+        return Ok(());
+    }
+    let turn = angle_deg.to_radians().abs();
+    for c in curves {
+        let tiny = extent(c).is_some_and(|e| e < TINY_ROTATIONAL_EXTENT);
+        let Some(ends) = end_points(c).filter(|_| tiny) else {
+            continue;
+        };
+        for p in &ends {
+            let d = axis_distance(p, base, axis);
+            if d < ROTATIONAL_AXIS_ZONE || d * turn < MIN_ROTATIONAL_VERTEX_ARC {
+                return Err(bad(
+                    "rotational sweep: sub-tolerance profile curve at the axis or with a sub-tolerance vertex arc (UB-271, upstream crash)",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn caps_of(caps: i32) -> Result<f64, FfiError> {
     if (-16..=16).contains(&caps) {
         Ok(f64::from(caps))
@@ -663,6 +763,11 @@ fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
             finite(base, "axis base")?;
             finite(axis, "axis")?;
             finite(&[*angle_deg], "angle")?;
+            let count = match call {
+                Call::RotationalReps { reps, .. } => *reps,
+                _ => 1,
+            };
+            check_rotational_curves(curves, base, axis, *angle_deg, count, *cap)?;
             o.push(if reps { 11.0 } else { 2.0 });
             push_curves(&mut o, curves, false, true, false)?;
             o.extend_from_slice(base);
@@ -765,6 +870,16 @@ fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
     Ok(o)
 }
 
+/// Checks `call` as [`run`] does before calling the C++ (the module docs list what is
+/// refused), without running it: the runner refuses the same input on the Rust side.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for input upstream does not handle.
+pub fn validate(call: &Call) -> Result<(), FfiError> {
+    encode(call).map(drop)
+}
+
 /// Runs `call` through the C++ API; returns the flat record documented above.
 ///
 /// # Errors
@@ -820,6 +935,53 @@ pub fn observe_linear(call: &Call) -> Result<Vec<f64>, FfiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// UB-271: a sub-tolerance circle at the axis is refused where the partial sweep runs;
+    /// the same circle away from the axis, the capped multi-repetition `SM_ERR`, the
+    /// full turn and a zero repetition count are not.
+    #[test]
+    fn tiny_rotational_profile_at_the_axis_is_refused() {
+        let circle = |center: [f64; 3]| CurveSpec::ApiCircle {
+            center,
+            radius: 1.5660074781977976e-6,
+        };
+        let call = |center: [f64; 3], angle_deg: f64, reps: u64, cap: bool| Call::RotationalReps {
+            curves: vec![circle(center)],
+            base: [0.0; 3],
+            axis: [1.0, 0.0, 0.0],
+            angle_deg,
+            reps,
+            cap,
+        };
+        let at_axis = [0.0, 3.028751046365186e-6, 0.0];
+        let refused = |c: &Call| validate(c).unwrap_err().to_string().contains("UB-271");
+        assert!(refused(&call(at_axis, 90.0, 3, false)));
+        assert!(refused(&call(at_axis, 90.0, 1, true)));
+        assert!(refused(&call([0.0, 1.0, 0.0], 1e-4, 1, false)));
+        assert!(refused(&Call::Rotational {
+            curves: vec![circle(at_axis)],
+            base: [10.0, 0.0, 0.0],
+            axis: [1.0, 0.0, 0.0],
+            angle_deg: -90.0,
+            cap: false,
+        }));
+        assert!(validate(&call([0.0, 1.0, 0.0], 90.0, 3, false)).is_ok());
+        assert!(validate(&call(at_axis, 90.0, 3, true)).is_ok());
+        assert!(validate(&call(at_axis, 360.0, 1, false)).is_ok());
+        assert!(validate(&call(at_axis, 90.0, 0, false)).is_ok());
+        let big = Call::RotationalReps {
+            curves: vec![CurveSpec::ApiCircle {
+                center: at_axis,
+                radius: 2.0e-5,
+            }],
+            base: [0.0; 3],
+            axis: [1.0, 0.0, 0.0],
+            angle_deg: 90.0,
+            reps: 3,
+            cap: false,
+        };
+        assert!(validate(&big).is_ok());
+    }
 
     /// HANG-5 (nightly fuzz00293): a curved curve-sweep path above the extent bound is
     /// refused before the kernel; a line path of any size and a path at the bound are

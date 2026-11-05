@@ -15,7 +15,9 @@
 //! Deviations: typed qualified ids and owned curves replace raw pointers. Dependency
 //! services are statically dispatched through `SweepAccess`; their defaults defer
 //! only the unavailable call. Partial output records remain visible after errors.
-//! Repetitions are capped at 4096 to bound input-controlled work. Back-face
+//! Repetitions are capped at 4096 to bound input-controlled work: the 4097th fails
+//! with `InvalidInput` inside the loop, after the 4096 before it ran as upstream's
+//! (so a rotational sweep past 360 degrees fails with upstream's `SM_ERR` first). Back-face
 //! collection must mark its starting face or return an error, avoiding an infinite
 //! retry on a failed traversal. Owned wire B-reps are released on every return;
 //! a successful consuming union clears the wire handle before the next repetition.
@@ -796,7 +798,9 @@ impl TopologySweep {
     /// `DoSweep` / `DoAdvSweep`. Temporary B-reps and both boolean flags are restored
     /// on every return. A wire sub-sweep always has explicit target arrays, so
     /// whole-B-rep recursion can nest only once (independent of input size).
-    /// At most 4096 repetitions may be executed per call.
+    /// At most [`MAX_SWEEP_REPETITIONS`] repetitions are executed per call: the next one
+    /// fails with `InvalidInput`, after upstream's own per-repetition checks have had
+    /// their turn on the ones before it.
     pub fn do_sweep(
         &mut self,
         a: &mut impl SweepAccess,
@@ -806,7 +810,6 @@ impl TopologySweep {
         targets: &mut SweepTargets,
     ) -> Result<()> {
         let original = required(original)?;
-        check_sweep_repetitions(self.repetitions)?;
         let mut destination = match destination {
             Some(r) => r,
             None => (original, a.infinite_region(original)?),
@@ -845,6 +848,12 @@ impl TopologySweep {
             let whole = targets.is_whole_brep();
             let mut wire = WireSweep::Absent;
             for repetition in 0..self.repetitions {
+                // not upstream: the work bound (see the module docs). Checked here, not
+                // before the loop, so that every failure upstream reaches inside the first
+                // 4096 repetitions (a rotational `IsSweepClosed` past 360 degrees, which
+                // `SmApiCreateRotationalSweepWithRepetitions` reports as `SM_ERR`) comes
+                // first, as upstream's does.
+                check_sweep_repetitions(repetition + 1)?;
                 check_cancelled(a, destination_brep)?;
                 if repetition > 0 {
                     targets.update(self)?;
@@ -1715,26 +1724,44 @@ mod tests {
         assert!(result.is_err());
         assert!(!access.kernel.context.doing_boolean());
     }
+    /// The work bound: the repetitions up to [`MAX_SWEEP_REPETITIONS`] run (nothing to sweep
+    /// here), the next one fails with `InvalidInput` without a B-rep allocated per
+    /// repetition, and the shared context is restored. The bound is checked inside the
+    /// loop so that upstream's own per-repetition failures come first (a rotational
+    /// sweep past 360 degrees, `IsSweepClosed`).
     #[test]
-    fn extreme_repetitions_fail_before_allocating_or_mutating_context() {
-        let mut access = Access::new();
-        let mut sweep = TopologySweep {
-            repetitions: u64::MAX,
-            ..TopologySweep::default()
-        };
-        let result = sweep.do_sweep(
-            &mut access,
-            &geometry(),
-            Some(BrepId::from_index(0)),
-            None,
-            &mut SweepTargets {
-                vertices_same: Some(Vec::new()),
-                ..SweepTargets::default()
-            },
-        );
-        assert!(matches!(result, Err(SolidError::InvalidInput { .. })));
-        assert_eq!(access.breps.len(), 1);
-        assert_eq!(access.mutable_calls, 0);
+    fn extreme_repetitions_fail_at_the_work_bound_without_allocating() {
+        for (repetitions, ok) in [
+            (MAX_SWEEP_REPETITIONS, true),
+            (MAX_SWEEP_REPETITIONS + 1, false),
+            (u64::MAX, false),
+        ] {
+            let mut access = Access::new();
+            let mut sweep = TopologySweep {
+                repetitions,
+                ..TopologySweep::default()
+            };
+            let result = sweep.do_sweep(
+                &mut access,
+                &geometry(),
+                Some(BrepId::from_index(0)),
+                None,
+                &mut SweepTargets {
+                    vertices_same: Some(Vec::new()),
+                    ..SweepTargets::default()
+                },
+            );
+            if ok {
+                assert!(result.is_ok(), "{repetitions}: {result:?}");
+            } else {
+                assert!(
+                    matches!(result, Err(SolidError::InvalidInput { .. })),
+                    "{repetitions}: {result:?}"
+                );
+            }
+            assert_eq!(access.breps.len(), 1);
+            assert!(!access.kernel.context.doing_boolean());
+        }
     }
     #[test]
     fn ignored_collect_error_cannot_retry_an_unmarked_face_forever() {

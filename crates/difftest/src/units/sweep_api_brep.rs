@@ -604,21 +604,13 @@ fn success(s: &Swept) -> Output {
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    // an input the FFI refuses is a harness error on both sides: the curve sweeps'
-    // path polygonization does not return upstream for a huge curved path (HANG-5 /
-    // HANG-43, nightly fuzz00293), so the Rust port does not run it either
-    if let Inputs::CurveSweep { sweep, .. }
-    | Inputs::FromFaces { sweep, .. }
-    | Inputs::FromEdges { sweep, .. }
-    | Inputs::FromBoxFace { sweep, .. } = i
-    {
-        ffi::check_path_extent(&spec(&sweep.path)).map_err(|e| harness(e.to_string()))?;
-    }
-    // nor more repetitions than the FFI runs (nightly fuzz00132: 2^31 linear repetitions
-    // ran past the fuzz timeout on the Rust side alone)
-    if let Inputs::LinearReps { reps, .. } | Inputs::RotationalReps { reps, .. } = i {
-        ffi::check_repetitions(*reps).map_err(|e| harness(e.to_string()))?;
-    }
+    // An input the FFI refuses is a harness error on both sides (PR #502's convention):
+    // the fuzz mutations reach the guarded upstream crash and hang regimes (UB-271: a
+    // sub-tolerance rotational profile at the axis, nightly fuzz00043; HANG-5 / HANG-43: a
+    // huge curved curve-sweep path, fuzz00293; more repetitions than the FFI runs,
+    // fuzz00132) with the C++ side refused, and the Rust side must not report a result,
+    // or work for tens of seconds, where the C++ has none.
+    ffi::validate(&call_of(i)).map_err(|e| harness(e.to_string()))?;
     let mut k = Kernel::default();
     let v = |p: &P3| Vec3::new(p[0], p[1], p[2]);
     // A successful call is compared by its status, presence and counts; a path that
@@ -1633,7 +1625,15 @@ mod tests {
                 .as_str()
                 .expect("op")
                 .to_string();
-            let out = rust(&i).expect("harness");
+            // an input the FFI refuses is refused on the Rust side too (`ffi::validate`)
+            let out = match rust(&i) {
+                Ok(out) => out,
+                Err(e) => {
+                    assert!(e.0.starts_with("invalid argument: "), "{e}");
+                    *tally.entry((op, "refused".to_string())).or_default() += 1;
+                    continue;
+                }
+            };
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.symbol)
             } else {
@@ -1690,6 +1690,72 @@ mod tests {
             compared * 2 >= MIN_GENERATED,
             "only {compared} compared cases"
         );
+    }
+
+    /// Nightly fuzz case `sweep.api_brep/fuzz00043` (`gen0158` with `/cap = false`): the
+    /// C++ crashes in `SmTopologySweep::SweepEdgeHigh` (UB-271) on a sub-tolerance circle
+    /// at the axis, so the FFI refuses it and the Rust side is refused the same way. The
+    /// capped three-repetition original fails upstream before the sweep and stays
+    /// compared, as does the same circle 1 away from the axis (`SM_ERR` on both sides: no
+    /// planar face from a sub-tolerance profile) and a 5e-6 circle there, which builds a
+    /// body.
+    #[test]
+    fn tiny_rotational_profile_at_axis_is_refused_on_both_sides() {
+        let nightly: Inputs = serde_json::from_str(r#"{"angle_deg": 90.0, "axis": [1.0, 0.0, 0.0], "base": [0.0, 0.0, 0.0], "cap": false, "curves": [{"center": [0.0, 3.028751046365186e-06, 0.0], "kind": "circle", "radius": 1.5660074781977976e-06}], "op": "rotational_reps", "reps": 3}"#).unwrap();
+        let cpp_err = cpp(&nightly).unwrap_err().to_string();
+        let rust_err = rust(&nightly).unwrap_err().to_string();
+        assert!(cpp_err.contains("UB-271"), "{cpp_err}");
+        assert_eq!(cpp_err, rust_err);
+        let mut capped = nightly.clone();
+        let mut away = nightly.clone();
+        let mut body = nightly.clone();
+        if let Inputs::RotationalReps { cap, .. } = &mut capped {
+            *cap = true;
+        }
+        if let Inputs::RotationalReps { curves, .. } = &mut away {
+            if let Some(CrvIn::Circle { center, .. }) = curves.first_mut() {
+                center[1] = 1.0;
+            }
+        }
+        if let Inputs::RotationalReps { curves, .. } = &mut body {
+            if let Some(CrvIn::Circle { center, radius }) = curves.first_mut() {
+                center[1] = 1.0;
+                *radius = 5.0e-6;
+            }
+        }
+        for (i, status) in [(&capped, 1001.0), (&away, 1001.0), (&body, 0.0)] {
+            let c = cpp(i).unwrap();
+            let r = rust(i).unwrap();
+            assert_eq!(c.values["status"], vec![status]);
+            assert!(crate::compare::compare(&c, &r, &[]).pass());
+        }
+        assert_eq!(cpp(&body).unwrap().values["counts"], vec![3.0, 7.0, 4.0]);
+    }
+
+    /// Nightly fuzz case `fuzz00058` (`review_rot_reps_big` with `/cap = false`): 5000
+    /// repetitions of 10 degrees fail upstream at the 37th (`IsSweepClosed` past 360
+    /// degrees, `SM_ERR`), after the port's work bound would have refused them.
+    #[test]
+    fn repetitions_past_a_full_turn_fail_as_upstream() {
+        let i: Inputs = serde_json::from_str(r#"{"angle_deg": 10, "axis": [1, 0, 0], "base": [0, -5, 0], "cap": false, "curves": [{"end": [1, 0, 0], "kind": "line", "start": [0, 0, 0]}, {"end": [1, 1, 0], "kind": "line", "start": [1, 0, 0]}, {"end": [0, 1, 0], "kind": "line", "start": [1, 1, 0]}, {"end": [0, 0, 0], "kind": "line", "start": [0, 1, 0]}], "op": "rotational_reps", "reps": 5000}"#).unwrap();
+        let c = cpp(&i).unwrap();
+        let r = rust(&i).unwrap();
+        assert_eq!(c.values["status"], vec![1001.0]);
+        assert!(crate::compare::compare(&c, &r, &[]).pass());
+    }
+
+    /// Nightly fuzz case `fuzz00258` (`review_cs_nobspline_null_herm_01101_scaled` with a
+    /// scale-curve end at `-2^63`): the scale samples find no solution on the reference and
+    /// upstream reads its stale solution slot (parameter 0), building a body; the port
+    /// keeps the same slot instead of failing with `SM_ERR_NULL_POINTER`.
+    #[test]
+    fn scale_reference_without_a_solution_keeps_the_stale_slot() {
+        let i: Inputs = serde_json::from_str(r#"{"op": "curve_sweep", "profile": [{"kind": "null"}, {"kind": "hermite", "p1": [0, 0, 0], "p2": [1, 1, 0], "v1": [1, 0, 0], "v2": [1, 0, 0]}], "sweep": {"options": [false, true, true, false, true], "path": {"kind": "curve", "points": [[0, 0, 0], [0, 0, 3], [0, 0, 7], [0, 0, 10]]}, "scale_curve": {"end": [2, 0, -9223372036854775808], "kind": "line", "start": [1, 0, 0]}, "scale_reference": {"kind": "curve", "points": [[0, 0, 0], [0, 0, 3], [0, 0, 7], [0, 0, 10]]}}}"#).unwrap();
+        let c = cpp(&i).unwrap();
+        let r = rust(&i).unwrap();
+        assert_eq!(c.values["status"], vec![0.0]);
+        assert_eq!(r.values["status"], vec![0.0]);
+        assert!(crate::compare::compare(&c, &r, &[]).pass());
     }
 
     #[test]
