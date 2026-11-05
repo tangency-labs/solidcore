@@ -71,6 +71,7 @@ const PORTED: &[&str] = &[
     "make_sphere",
     "shell",
     "offset_faces",
+    "draft",
     "thicken",
     "boolean",
     "extrude",
@@ -337,6 +338,47 @@ fn call_with_copy(
             let d = p["distance"].as_f64().ok_or_else(|| bad("distance"))?;
             let r = offset::offset_faces(&s.body, &order, &picked, d);
             in_place(Slot { order: None, ..s }, r)
+        }
+        "draft" => {
+            if ins.len() != 1 {
+                return Err(bad("one input"));
+            }
+            let mut s = copy_for_edit(&first()?)?;
+            let angle = p["angle"].as_f64().ok_or_else(|| bad("angle"))?;
+            let origin = f64s::<3>(&p["neutral_origin"]).ok_or_else(|| bad("neutral_origin"))?;
+            let normal = f64s::<3>(&p["neutral_normal"]).ok_or_else(|| bad("neutral_normal"))?;
+            let pull = f64s::<3>(&p["pull"]).ok_or_else(|| bad("pull"))?;
+            let selection = &p["faces"];
+            if selection["kind"].as_str() != Some("face") {
+                return Err(bad("faces.kind"));
+            }
+            let picks = selection["picked"]
+                .as_array()
+                .ok_or_else(|| bad("faces.picked"))?;
+            for pick in picks {
+                if pick["index"]
+                    .as_u64()
+                    .and_then(|i| usize::try_from(i).ok())
+                    .is_none()
+                {
+                    return Err(bad("faces.index"));
+                }
+            }
+            if s.order.is_none() {
+                let (_, order) = s
+                    .body
+                    .to_record()
+                    .map_err(|e| Stop::Fail(format!("order before draft: {e}")))?;
+                s.order = Some(order);
+            }
+            let (picked, order) = faces(&mut s, selection)?;
+            for &face in &picked {
+                if order.faces.get(face).is_none() {
+                    return Err(bad("face outside record order"));
+                }
+            }
+            let result = offset::draft(&s.body, &order, &picked, origin, normal, pull, angle);
+            in_place(Slot { order: None, ..s }, result)
         }
         "thicken" => {
             let s = copy_for_edit(&first()?)?;
@@ -1162,6 +1204,7 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
         "thicken",
         "chamfer_sides",
         "stitch",
+        "draft",
     ] {
         let step = serde_json::json!({
             "op": op, "error": "expected edit refusal",
@@ -1215,6 +1258,7 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
             "distance": 1, "first": [0,0,1], "second": {"distance": 2}
         }}),
         serde_json::json!({"op": "stitch", "params": {"tolerance": 1e-5}}),
+        serde_json::json!({"op": "draft", "params": {}}),
     ] {
         step["error"] = serde_json::json!("expected refusal");
         match call(&step, &mut [input.clone()]) {
@@ -1327,6 +1371,131 @@ fn a_stitch_refusal_is_the_operations_and_a_missing_tolerance_is_not() {
     assert!(matches!(
         call(&step(serde_json::json!({})), &mut [input]),
         Err(Stop::Fail(why)) if why.contains("tolerance")
+    ));
+}
+
+/// The captured two-face draft, with its operand's original record order.
+fn draft_case() -> (PathBuf, Value, Value, Slot) {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join("booleans/cov-draft-two-adjacent-faces-meet-at-a-corner.json");
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    let recs = records(&entry, &e);
+    let record: Record = serde_json::from_value(recs["b2"].clone()).unwrap();
+    let (body, order) = Body::from_record(&record, true).unwrap();
+    let step = e["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["op"] == "draft")
+        .unwrap()
+        .clone();
+    (
+        entry,
+        e,
+        step,
+        Slot {
+            body: Arc::new(body),
+            order: Some(order),
+        },
+    )
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Independent closed-form oracle, not ops geometry.
+fn draft_replay_preserves_faces_order_parameters_and_operand() {
+    let (entry, _, step, input) = draft_case();
+    let before = serde_json::to_value(input.body.to_record().unwrap().0).unwrap();
+    for (rotate, neutral_z, sign) in [
+        (false, 0.0, 1.0),
+        (true, 0.0, 1.0),
+        (true, 10.0, 1.0),
+        (false, 0.0, -1.0),
+    ] {
+        let angle = sign * std::f64::consts::PI / 18.0;
+        let tangent = angle.tan();
+        let volume = 24000.0 - 70.0 * tangent * (200.0 - 20.0 * neutral_z)
+            + tangent * tangent * (8000.0 / 3.0 - 400.0 * neutral_z + 20.0 * neutral_z * neutral_z);
+        let mut input = input.clone();
+        let mut step = step.clone();
+        step["params"]["angle"] = serde_json::json!(angle);
+        step["params"]["neutral_origin"] = serde_json::json!([0.0, 0.0, neutral_z]);
+        if rotate {
+            let order = input.order.as_mut().unwrap();
+            let front = order.faces[3];
+            let right = order.faces[4];
+            order.faces.rotate_left(2);
+            let picks: Vec<_> = [front, right].iter().map(|id| {
+                serde_json::json!({"index": order.faces.iter().position(|face| face == id).unwrap()})
+            }).collect();
+            step["params"]["faces"]["picked"] = serde_json::json!(picks);
+        }
+        let out = call(&step, &mut [input.clone()]).unwrap().unwrap();
+        assert_eq!(out.body.counts().unwrap(), [6, 12, 8]);
+        let got = out.body.volume(VOLUME_ACCURACY).unwrap();
+        assert!((got - volume).abs() <= volume * 1e-9, "{got} vs {volume}");
+        let record = out.body.to_record().unwrap().0;
+        let top: Vec<_> = record
+            .vertices
+            .iter()
+            .filter(|v| (v.point[2] - 20.0).abs() < 1e-9)
+            .collect();
+        assert_eq!(top.len(), 4);
+        let min_y = top.iter().map(|v| v.point[1]).fold(f64::INFINITY, f64::min);
+        let max_x = top
+            .iter()
+            .map(|v| v.point[0])
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (min_y - (20.0 - neutral_z) * tangent).abs() < 1e-8,
+            "front at {min_y}"
+        );
+        assert!(
+            (max_x - (40.0 - (20.0 - neutral_z) * tangent)).abs() < 1e-8,
+            "right at {max_x}"
+        );
+        assert_eq!(
+            serde_json::to_value(input.body.to_record().unwrap().0).unwrap(),
+            before
+        );
+    }
+    let graded = grade(&entry, &BTreeMap::new(), Duration::from_secs(180));
+    assert_eq!(graded.kind, Kind::Pass, "{}", graded.note);
+}
+
+#[test]
+fn draft_replay_keeps_malformed_picks_and_parameters_out_of_refusals() {
+    let (entry, e, step, input) = draft_case();
+    for key in ["angle", "neutral_origin", "neutral_normal", "pull", "faces"] {
+        let mut bad = step.clone();
+        bad["params"].as_object_mut().unwrap().remove(key);
+        assert!(
+            matches!(call(&bad, &mut [input.clone()]), Err(Stop::Fail(_))),
+            "missing {key}"
+        );
+    }
+    for pick in [
+        serde_json::json!({"kind": "face", "picked": [{"index": 6}]}),
+        serde_json::json!({"kind": "face", "picked": [{"index": -1}]}),
+        serde_json::json!({"kind": "face"}),
+        serde_json::json!({"kind": "edge", "picked": [{"index": 0}]}),
+    ] {
+        let mut bad = step.clone();
+        bad["params"]["faces"] = pick;
+        assert!(matches!(
+            call(&bad, &mut [input.clone()]),
+            Err(Stop::Fail(_))
+        ));
+    }
+    let mut refused = step.clone();
+    refused["params"]["angle"] = serde_json::json!(0.0);
+    assert!(matches!(call(&refused, &mut [input]), Ok(Err(_))));
+    let mut bad = e.clone();
+    let last = bad["calls"].as_array_mut().unwrap().last_mut().unwrap();
+    last["params"]["faces"]["picked"][0]["index"] = serde_json::json!(6);
+    last["error"] = serde_json::json!("expected operation refusal");
+    assert!(matches!(
+        run_case_with_records(&bad, || records(&entry, &e)),
+        Err(Stop::Fail(_))
     ));
 }
 
