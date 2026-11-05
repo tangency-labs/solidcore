@@ -663,9 +663,18 @@ pub fn report_units(dir: &Path) -> Result<Vec<String>, HarnessError> {
 /// Value-share violation of `res`, if any. Only meaningful for a unit that does not
 /// already fail. A unit whose every case was `skipped(platform)` (e.g. a libstdc++-only
 /// reference on libc++) compared nothing and has no share to check, like a unit-level
-/// `skipped(platform)`.
+/// `skipped(platform)`. A nonempty selection consisting only of unparked C++-defect
+/// cases is a `--run-parked` diagnostic selection, whose outcomes do not establish
+/// ordinary passing-case coverage. Default parked cases and mixed selections still
+/// require the ordinary value share.
 pub fn value_share(res: &UnitResult) -> Option<Violation> {
-    if !res.cases.is_empty() && res.skipped_platform() == res.cases.len() {
+    let diagnostic_selection = !res.cases.is_empty()
+        && res
+            .cases
+            .iter()
+            .all(|case| case.cpp_defect.is_some() && !case.is_parked());
+    if diagnostic_selection || (!res.cases.is_empty() && res.skipped_platform() == res.cases.len())
+    {
         return None;
     }
     let passed = res.passed();
@@ -1269,6 +1278,52 @@ mod tests {
         assert_eq!(ratchet(&b, &r).len(), 1);
         r.seeds = 4;
         assert_eq!(ratchet(&b, &r).len(), 2);
+    }
+
+    #[test]
+    fn parked_diagnostic_selection_has_no_ordinary_value_share() {
+        let broken = unit(vec![case("still-broken", "cpp_defect", 1)]);
+        assert_eq!((broken.passed(), broken.cpp_defects()), (0, 1));
+        assert!(value_share(&broken).is_none());
+
+        // run_unit retains the listing marker when a diagnostic case now agrees,
+        // or is rejected/deferred. Its outcome is not the selection's mode.
+        let marked = |name, outcome| {
+            let mut c = case(name, outcome, 0);
+            c.cpp_defect = Some("UB-1".into());
+            c.known_mismatch = Some("diagnostic listing".into());
+            c
+        };
+        let fixed = unit(vec![marked("fixed", "pass")]);
+        assert_eq!((fixed.passed(), fixed.cpp_defects()), (1, 0));
+        assert!(value_share(&fixed).is_none());
+        let mixed = unit(vec![
+            case("still-broken", "cpp_defect", 1),
+            marked("fixed", "pass"),
+            marked("guarded", "rejected"),
+            marked("missing", "deferred"),
+            marked("other-platform", "skipped(platform)"),
+        ]);
+        assert_eq!((mixed.passed(), mixed.cpp_defects()), (1, 1));
+        assert!(value_share(&mixed).is_none());
+    }
+
+    #[test]
+    fn diagnostic_markers_do_not_waive_ordinary_or_default_parked_coverage() {
+        assert!(value_share(&unit(vec![case("not-run", "parked", 0)])).is_some());
+        assert!(value_share(&unit(vec![
+            case("diagnostic", "cpp_defect", 1),
+            case("ordinary-empty", "pass", 0),
+        ]))
+        .is_some());
+        for (with, without, violates) in [(3, 1, false), (2, 1, true)] {
+            let mut cases: Vec<_> = (0..with)
+                .map(|i| case(&format!("value-{i}"), "pass", 1))
+                .collect();
+            cases.extend((0..without).map(|i| case(&format!("empty-{i}"), "pass", 0)));
+            cases.push(case("diagnostic", "cpp_defect", 100));
+            assert_eq!(value_share(&unit(cases)).is_some(), violates);
+        }
     }
 
     #[test]
