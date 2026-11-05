@@ -53,6 +53,7 @@ use solidcore::topology::{edge, Brep};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -105,18 +106,6 @@ struct ArcIn {
     radius: f64,
     a0: f64,
     a1: f64,
-}
-
-impl ArcIn {
-    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
-    /// arc that would end past 360 degrees starts one turn back.
-    fn turned_back(mut self) -> Self {
-        if self.a1 > 360.0 {
-            self.a0 -= 360.0;
-            self.a1 -= 360.0;
-        }
-        self
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +302,245 @@ fn to_output(flat: &[f64]) -> Output {
         .values("out", rest)
 }
 
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 512,
+    max_degree: 9,
+    max_coord: 1e11,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 4.0;
+/// The most curves of a `Cleanup` or `RemoveDup` list.
+const MAX_CURVES: usize = 16;
+/// The most `Normal` solver calls.
+const MAX_CALLS: usize = 16;
+/// The largest edge cache tolerance.
+const MAX_EDGE_TOL: f64 = 1e6;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+/// A conic frame and domain upstream builds: two non-zero, non-parallel axes and an
+/// increasing domain within 720 degrees spanning `[1e-4, 360]` degrees.
+fn conic_frame(c: &[f64; 3], x: &[f64; 3], y: &[f64; 3], [d0, d1]: [f64; 2]) -> bool {
+    let max = LIMITS.max_coord;
+    let cross = [
+        x[1] * y[2] - x[2] * y[1],
+        x[2] * y[0] - x[0] * y[2],
+        x[0] * y[1] - x[1] * y[0],
+    ];
+    vec3(c)
+        && contract::nonzero3(x, max)
+        && contract::nonzero3(y, max)
+        && contract::len_sq(cross) >= 1e-12
+        && fin(d0)
+        && fin(d1)
+        && d0.abs() <= 720.0
+        && d1.abs() <= 720.0
+        && (1e-4..=360.0).contains(&(d1 - d0))
+}
+
+fn radius(r: f64) -> bool {
+    fin(r) && (1e-6..=1e6).contains(&r)
+}
+
+/// A curve that keeps the contract: whether it is a B-spline, its dimension and the domain
+/// its parameters are bounded by (analytic curves evaluate anywhere: only their parameters
+/// are bounded).
+#[derive(Debug, Clone, Copy)]
+struct Domain {
+    bspline: bool,
+    dim: u64,
+    a: f64,
+    b: f64,
+}
+
+fn domain(c: &CurveIn) -> Option<Domain> {
+    let max = LIMITS.max_coord;
+    let analytic = |ok: bool, a: f64, b: f64| {
+        ok.then_some(Domain {
+            bspline: false,
+            dim: 3,
+            a,
+            b,
+        })
+    };
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some(Domain {
+                bspline: true,
+                dim: bs.dim,
+                a: s.a,
+                b: s.b,
+            })
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+        .then_some(Domain {
+            bspline: false,
+            dim: h.dim,
+            a: 0.0,
+            b: 1.0,
+        }),
+        CurveIn::Line(l) => analytic(
+            contract::line(&l.p, &l.v, l.domain, l.scale, max).is_some(),
+            -max / 8.0,
+            max / 8.0,
+        ),
+        CurveIn::Ellipse(e) => analytic(
+            conic_frame(&e.c, &e.x, &e.y, e.domain) && e.radii.iter().all(|&r| radius(r)),
+            -1e3,
+            1e3,
+        ),
+        CurveIn::Circle(e) => analytic(
+            conic_frame(&e.c, &e.x, &e.y, e.domain) && radius(e.radius),
+            -1e3,
+            1e3,
+        ),
+        CurveIn::Arc(_) => None,
+    }
+}
+
+/// Whether `t` is finite and at most [`MAX_REL_DIST`] domain lengths outside the curve's.
+fn param(c: Domain, t: f64) -> bool {
+    let far = MAX_REL_DIST * (c.b - c.a);
+    fin(t) && t >= c.a - far && t <= c.b + far
+}
+
+fn interval(c: Domain, ivl: [f64; 2]) -> bool {
+    param(c, ivl[0]) && param(c, ivl[1]) && ivl[0] <= ivl[1]
+}
+
+fn tol(v: f64) -> bool {
+    fin(v) && v >= 0.0
+}
+
+/// The option vectors property `prop` needs.
+fn property_vectors(prop: i32) -> usize {
+    match prop {
+        0 | 4 | 5 | 6 | 16 | 23 | 25 => 1,
+        17..=19 => 3,
+        20..=22 | 24 | 26..=28 => 2,
+        _ => 0,
+    }
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_curve_p5.rs`, `validate`): curves as [`domain`]
+/// takes them (arcs within the arc constructor's `[-360, 360]` degrees, conics as
+/// [`conic_frame`] with radii in `[1e-6, 1e6]`), parameters within [`MAX_REL_DIST`] domain
+/// lengths, non-decreasing intervals, non-negative tolerances and a positive length
+/// accuracy, B-splines only for `Cleanup`, a 3D curve and a bounded tolerance for the edge
+/// cache, the option vectors and value a property or solve needs, and the list, sample,
+/// kind and call bounds.
+fn keeps_contract(op: &OpIn) -> bool {
+    match op {
+        OpIn::Cleanup { curves, tol: t } => {
+            curves.len() <= MAX_CURVES
+                && curves.iter().all(|c| domain(c).is_some_and(|d| d.bspline))
+                && tol(*t)
+        }
+        OpIn::RemoveDup { curves } => {
+            curves.len() <= MAX_CURVES && curves.iter().flatten().all(|c| domain(c).is_some())
+        }
+        OpIn::StepPoint { curve, t } => domain(curve).is_some_and(|d| param(d, *t)),
+        OpIn::Seam {
+            c1,
+            ivl1,
+            c2,
+            ivl2,
+            sol_type,
+            s,
+            ..
+        } => match (domain(c1), domain(c2)) {
+            (Some(d1), Some(d2)) => {
+                interval(d1, *ivl1)
+                    && interval(d2, *ivl2)
+                    && (0..=5).contains(sol_type)
+                    && param(d1, s[0])
+                    && param(d2, s[1])
+            }
+            _ => false,
+        },
+        OpIn::Cache {
+            curve, cache_type, ..
+        } => domain(curve).is_some() && (0..=3).contains(cache_type),
+        OpIn::CpGuess { curve, ivl, abc, t } => {
+            domain(curve).is_some_and(|d| interval(d, *ivl) && vec3(abc) && param(d, *t))
+        }
+        OpIn::IsArc { curve, n, tol: t } | OpIn::IsLine { curve, n, tol: t } => {
+            domain(curve).is_some() && *n <= MAX_SAMPLES as u64 && tol(*t)
+        }
+        OpIn::IsLinear { curve, tol: t, .. } => domain(curve).is_some() && tol(*t),
+        OpIn::Domain {
+            curve,
+            domain: d,
+            tol: t,
+        } => domain(curve).is_some() && d.iter().all(|&v| fin(v)) && fin(*t),
+        OpIn::Periodic { curve, ivl } => domain(curve).is_some_and(|d| interval(d, *ivl)),
+        OpIn::Length { curve, ivl, acc } => {
+            domain(curve).is_some_and(|d| interval(d, *ivl) && fin(*acc) && *acc > 0.0)
+        }
+        OpIn::Lpa {
+            curve,
+            ivl,
+            prop,
+            guess,
+            val,
+            vecs,
+        } => domain(curve).is_some_and(|d| {
+            let nv = vecs.len();
+            interval(d, *ivl)
+                && (0..=28).contains(prop)
+                && param(d, *guess)
+                && fin(val.unwrap_or(0.0))
+                && nv <= 3
+                && vecs.iter().all(vec3)
+                && !((nv > 0 || matches!(prop, 17..=21)) && nv < property_vectors(*prop))
+                && !(matches!(prop, 22 | 23) && nv > 0 && val.is_none())
+        }),
+        OpIn::Cci { c1, c2, x, .. } | OpIn::CcTan { c1, c2, x, .. } => {
+            match (domain(c1), domain(c2)) {
+                (Some(d1), Some(d2)) => param(d1, x[0]) && param(d2, x[1]),
+                _ => false,
+            }
+        }
+        OpIn::Normal {
+            c1,
+            c2,
+            sqtol,
+            sqdist,
+            sop,
+            vecs,
+            calls,
+        } => match (domain(c1), domain(c2)) {
+            (Some(d1), Some(d2)) => {
+                let nv = vecs.len();
+                fin(*sqtol)
+                    && fin(*sqdist)
+                    && (0..=24).contains(sop)
+                    && nv <= 3
+                    && vecs.iter().all(vec3)
+                    && !((matches!(sop, 11..=13) && nv == 1) || (*sop == 23 && nv < 2))
+                    && calls.len() <= MAX_CALLS
+                    && calls.iter().all(|c| param(d1, c.x[0]) && param(d2, c.x[1]))
+            }
+            _ => false,
+        },
+        OpIn::EdgeCache { curve, tol: t } => {
+            domain(curve).is_some_and(|d| d.dim == 3) && fin(*t) && (0.0..=MAX_EDGE_TOL).contains(t)
+        }
+    }
+}
+
 // ---- Rust side --------------------------------------------------------------------
 
 fn v3(p: [f64; 3]) -> Vec3 {
@@ -376,7 +604,10 @@ fn build(k: &Kernel, c: &CurveIn) -> Result<Curve, HarnessError> {
                 .len()
                 .checked_sub(1)
                 .ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -553,7 +784,8 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             sol.start.parameters[1] = s[1];
             let r = tri!(
                 o,
-                is_point_solution_across_closed_seam_boundary(&k, 
+                is_point_solution_across_closed_seam_boundary(
+                    &k,
                     &sol,
                     &a,
                     &ivl_of(*ivl1),
@@ -570,8 +802,8 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             with_old,
         } => {
             let c = build(&k, curve)?;
-            let ct = ObjectCacheType::from_code(*cache_type)
-                .ok_or_else(|| harness("cache type"))?;
+            let ct =
+                ObjectCacheType::from_code(*cache_type).ok_or_else(|| harness("cache type"))?;
             let mut store: CacheStore<CurveCache<()>> = CacheStore::new();
             let mut old_cache = None;
             let mut old = None;
@@ -616,7 +848,10 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
         }
         OpIn::CpGuess { curve, ivl, abc, t } => {
             let c = build(&k, curve)?;
-            let r = tri!(o, find_additional_cp_guess(&k, &c, &ivl_of(*ivl), v3(*abc), *t));
+            let r = tri!(
+                o,
+                find_additional_cp_guess(&k, &c, &ivl_of(*ivl), v3(*abc), *t)
+            );
             o.extend([0.0, b(r.is_some()), r.unwrap_or(0.0)]);
         }
         OpIn::IsArc { curve, n, tol } => {
@@ -824,7 +1059,13 @@ fn gen_bspline(rng: &mut Rng) -> BSplineIn {
 
 /// A non-rational B-spline whose control points lie on the segment `p`..`q`
 /// (degree `deg`, evenly spaced: a constant speed line; else a line of varying speed).
-fn gen_linear_bspline(rng: &mut Rng, p: [f64; 3], q: [f64; 3], deg: usize, even: bool) -> BSplineIn {
+fn gen_linear_bspline(
+    rng: &mut Rng,
+    p: [f64; 3],
+    q: [f64; 3],
+    deg: usize,
+    even: bool,
+) -> BSplineIn {
     let n = deg + rng.below(3) as usize;
     let mut fr: Vec<f64> = (0..=n).map(|i| i as f64 / n as f64).collect();
     if !even {
@@ -876,7 +1117,11 @@ fn gen_hermite(rng: &mut Rng) -> HermiteIn {
         p1,
         d1,
         p2,
-        d2: if rng.chance(0.08) { [0.0; 3] } else { rp(rng, s) },
+        d2: if rng.chance(0.08) {
+            [0.0; 3]
+        } else {
+            rp(rng, s)
+        },
     };
     if h.dim == 2 {
         for v in [&mut h.p1, &mut h.d1, &mut h.p2, &mut h.d2] {
@@ -910,7 +1155,7 @@ fn gen_arc(rng: &mut Rng, full: bool) -> CurveIn {
         } else {
             a0 + rng.uniform(20.0, 359.0)
         },
-    }.turned_back());
+    });
     resolve(&c).unwrap_or(c)
 }
 
@@ -964,17 +1209,17 @@ fn gen_curve(rng: &mut Rng) -> CurveIn {
         0..=1 => {
             let full = rng.chance(0.3);
             gen_arc(rng, full)
-        },
+        }
         2..=4 => CurveIn::Line(gen_line(rng)),
         5..=12 => CurveIn::Bspline(gen_bspline(rng)),
         13..=14 => {
             let full = rng.chance(0.3);
             gen_ellipse(rng, full)
-        },
+        }
         15..=16 => {
             let full = rng.chance(0.3);
             gen_circle(rng, full)
-        },
+        }
         _ => CurveIn::Hermite(gen_hermite(rng)),
     }
 }
@@ -1194,7 +1439,11 @@ fn gen_domain_case(rng: &mut Rng) -> OpIn {
         }
         1 => {
             let d = [q[0] - p[0], q[1] - p[1], 0.0];
-            let bend = if rng.chance(0.5) { 0.0 } else { rng.uniform(-1.0, 1.0) };
+            let bend = if rng.chance(0.5) {
+                0.0
+            } else {
+                rng.uniform(-1.0, 1.0)
+            };
             CurveIn::Hermite(HermiteIn {
                 dim: 2,
                 p1: p,
@@ -1212,11 +1461,7 @@ fn gen_domain_case(rng: &mut Rng) -> OpIn {
         }),
         _ => gen_curve(rng),
     };
-    OpIn::Domain {
-        curve,
-        domain,
-        tol,
-    }
+    OpIn::Domain { curve, domain, tol }
 }
 
 /// Properties with the option vectors and value they need.
@@ -1463,17 +1708,17 @@ fn gen_case(rng: &mut Rng) -> OpIn {
         10..=12 => {
             let curve = match rng.below(4) {
                 0 => {
-            let full = rng.chance(0.3);
-            gen_arc(rng, full)
-        },
+                    let full = rng.chance(0.3);
+                    gen_arc(rng, full)
+                }
                 1 => {
-            let full = rng.chance(0.3);
-            gen_circle(rng, full)
-        },
+                    let full = rng.chance(0.3);
+                    gen_circle(rng, full)
+                }
                 2 => {
-            let full = rng.chance(0.3);
-            gen_ellipse(rng, full)
-        },
+                    let full = rng.chance(0.3);
+                    gen_ellipse(rng, full)
+                }
                 _ => gen_curve(rng),
             };
             OpIn::IsArc {
@@ -1584,7 +1829,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        let op = (0..64).map(|_| gen_case(rng)).find(keeps_contract)?;
+        serde_json::to_value(op).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
