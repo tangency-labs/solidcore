@@ -1269,23 +1269,14 @@ impl GapArray {
         self.gaps.push(gap);
     }
 
-    /// Appends every gap, retaining the earliest longest gap (WR-90).
+    /// Appends every gap exactly as sequential calls to [`Self::add`] (WR-90).
     ///
-    /// Both arrays maintain their maximum through `add`, `append`, and `reset`;
-    /// their records cannot be mutated through `get`. The cached maxima therefore
-    /// suffice for a constant-time comparison before copying the records.
+    /// Finite lengths retain the earliest maximum; nonfinite lengths follow the
+    /// existing `add` comparison semantics, including a leading NaN staying selected.
     pub fn append(&mut self, other: &Self) {
-        let old_len = self.gaps.len();
-        if let (Some(other_idx), Some(other_max)) = (other.max_gap_3d, other.max_gap()) {
-            let longer = match self.max_gap() {
-                None => true,
-                Some(cur_max) => other_max.length() > cur_max.length(),
-            };
-            if longer {
-                self.max_gap_3d = Some(old_len + other_idx);
-            }
+        for gap in other.gaps.iter().copied() {
+            self.add(gap);
         }
-        self.gaps.extend(other.gaps.iter().copied());
     }
 }
 
@@ -3327,7 +3318,10 @@ mod tests {
             );
             assert_eq!(actual.len(), lengths.len());
             for (index, length) in lengths.iter().enumerate() {
-                assert_eq!(actual.get(index).unwrap().length().to_bits(), length.to_bits());
+                assert_eq!(
+                    actual.get(index).unwrap().length().to_bits(),
+                    length.to_bits()
+                );
             }
             assert_eq!(actual.max_gap_index(), expected.map(|(index, _)| index));
             assert_eq!(
