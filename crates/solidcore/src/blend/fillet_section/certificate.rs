@@ -1269,8 +1269,16 @@ pub fn gn_enclose_over(
         g.map(|x| x.at(0, 0))
     };
     // Krawczyk's operator about the line: the residual E from the guesses' spread
-    let mut w: [f64; 4] =
-        core::array::from_fn(|c| 0.5 * (bx(c) - ax(c)).abs() + 2.0e-9 * (1.0 + f_at(&xm, c).abs()));
+    // (about the line the guesses lie on it; about the middle, as the fork's box, twice
+    // their spread, which they lie inside)
+    let mut w: [f64; 4] = core::array::from_fn(|c| {
+        let spread = 0.5 * (bx(c) - ax(c)).abs() + 1.0e-9 * (1.0 + f_at(&xm, c).abs());
+        if tube {
+            spread
+        } else {
+            2.0 * spread
+        }
+    });
     let mut proved: Option<[[Aff; 4]; 4]> = None;
     let mut it = 0;
     while it < 8 && proved.is_none() {
@@ -2401,38 +2409,42 @@ pub fn gn_certify_span(
         // the span's bound over its pieces, and each piece's own
         let terms: Vec<&PieceTerms> = pieces.iter().filter_map(|p| p.terms.as_ref()).collect();
         let bound = span_bound(&terms, h, &bar, l_jets, rows_vary, arc);
-        if !bound.is_finite() {
-            return Ok(bound_out);
-        }
-        bound_out = cmin(bound_out, round_up(bound * (1.0 + 1.0e-12)));
-        if bound_out <= target {
-            break;
-        }
-        // the bound no finer cut goes under: over the target, no cut certifies the span
-        // (the jets' least terms only where the bound takes the jets' sum, not with
-        // varying rows, whose own least terms are not ported: the fork's f916a8d)
-        let k4 = h * h * h * h / 384.0;
-        let mut lower = 0.0_f64;
-        for t in &terms {
-            for (m4lf, &uvl) in t.m4_lo.iter().zip(&t.uv4_lo) {
-                let mut sum = 0.0_f64;
-                for &m in m4lf.iter().take(l_jets + 1) {
-                    sum += k4 * m;
-                }
-                lower = cmax(lower, cmax(if rows_vary { 0.0 } else { sum }, k4 * uvl));
+        // a bound that is not proved (varying rows whose remainder is not yet below their
+        // least weight) is no stop: every piece is cut, as the fork's next level
+        let finite = bound.is_finite();
+        let mut halved = false;
+        if finite {
+            bound_out = cmin(bound_out, round_up(bound * (1.0 + 1.0e-12)));
+            if bound_out <= target {
+                break;
             }
-        }
-        if round_down(lower * (1.0 - 1.0e-12)) > target {
-            break;
-        }
-        // once proved, finer pieces only where the last cut halved the bound; a cut of some
-        // of them that did not is followed by one of all of them, as the fork's next level
-        let halved = bound <= 0.5 * last;
-        if !halved && !partial {
-            break;
-        }
-        if halved {
-            last = bound;
+            // the bound no finer cut goes under: over the target, no cut certifies the
+            // span (the jets' least terms only where the bound takes the jets' sum, not
+            // with varying rows, whose own least terms are not ported: the fork's f916a8d)
+            let k4 = h * h * h * h / 384.0;
+            let mut lower = 0.0_f64;
+            for t in &terms {
+                for (m4lf, &uvl) in t.m4_lo.iter().zip(&t.uv4_lo) {
+                    let mut sum = 0.0_f64;
+                    for &m in m4lf.iter().take(l_jets + 1) {
+                        sum += k4 * m;
+                    }
+                    lower = cmax(lower, cmax(if rows_vary { 0.0 } else { sum }, k4 * uvl));
+                }
+            }
+            if round_down(lower * (1.0 - 1.0e-12)) > target {
+                break;
+            }
+            // once proved, finer pieces only where the last cut halved the bound; a cut of
+            // some of them that did not is followed by one of all of them, as the fork's
+            // next level
+            halved = bound <= 0.5 * last;
+            if !halved && !partial {
+                break;
+            }
+            if halved {
+                last = bound;
+            }
         }
         // cut the pieces whose own terms keep the bound over the target (all of them where
         // none does on its own, or the last cut of some did not halve the bound), each at a
@@ -2445,7 +2457,7 @@ pub fn gn_certify_span(
                 })
             })
             .collect();
-        let any = halved && alone.iter().any(|&x| x > target);
+        let any = finite && halved && alone.iter().any(|&x| x > target);
         partial = any && alone.iter().any(|&x| x <= target);
         // a piece at the deepest cut stays as it is; with none left to cut, no finer cut
         // certifies the span

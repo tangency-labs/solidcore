@@ -330,8 +330,12 @@ mod tests {
                 }
             }
         }
-        let va = VSer { a: [a, b, a.mul(&b, full)] };
-        let vb = VSer { a: [b, a.scale(0.5, full), a] };
+        let va = VSer {
+            a: [a, b, a.mul(&b, full)],
+        };
+        let vb = VSer {
+            a: [b, a.scale(0.5, full), a],
+        };
         let ops = |tr: Trunc| {
             let p = a.mul(&b, tr);
             let q = a.inv_sqrt(tr).unwrap();
