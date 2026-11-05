@@ -70,10 +70,12 @@ FILE.smb --out DIR` draws it through `solidcore-tess` with its large-tolerance e
 everything (`--highlight` and `--see-through` take face indices) and writes a JSON report of
 every face and edge with its tolerance and label pixel. A pull request that changes a case's
 result attaches its pictures before and after the change, drawn the same way from the same view,
-whenever the case can be drawn. Then find how the problem is solved in the literature: search
-for the papers, read the ones that apply, and design from them. Say in the issue what you read
-and how the design follows it. A fix nobody has seen the problem of, or built without that
-research, is not ready for review.
+whenever the case can be drawn, and a VectorCraft schematic where the problem is a mechanism a
+picture of the body cannot show (a tolerance against a gap, an enclosure that does not shrink,
+the order of a solve). Then find how the problem is solved in the literature: search for the
+papers, read the ones that apply, and design from them. Say in the issue what you read and how
+the design follows it. A fix nobody has seen the problem of, or built without that research, is
+not ready for review.
 
 **Licence.** Read only `upstream/source/SMLib`, `upstream/source/SM_API`,
 `upstream/tests/SM_API_test`, `upstream/tests/prog_test`, `upstream/TestFiles/pt_TestFiles`,
