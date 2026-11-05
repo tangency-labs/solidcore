@@ -1,0 +1,1697 @@
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "third_derivative_outputs"
+why = "Confirmed WR-160 mixed-normal coefficients and WR-161 Duvv/Dvvv base terms. All ten observed mismatches map to corrected Duvv or Dvvv slots; equal-order upper-half requests avoid the unequal-order slot alias. See plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution.md and the WR-160/161 addenda. No other case is covered."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "api_offset_m12_state_evals"
+why = "Confirmed api_offset_m12_state_evals within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0000"
+why = "Confirmed gen0000 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0010"
+why = "Confirmed gen0010 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0032"
+why = "Confirmed gen0032 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0033"
+why = "Confirmed gen0033 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0046"
+why = "Confirmed gen0046 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0068"
+why = "Confirmed gen0068 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0080"
+why = "Confirmed gen0080 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0088"
+why = "Confirmed gen0088 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0104"
+why = "Confirmed gen0104 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0106"
+why = "Confirmed gen0106 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0110"
+why = "Confirmed gen0110 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0114"
+why = "Confirmed gen0114 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0117"
+why = "Confirmed gen0117 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0134"
+why = "Confirmed gen0134 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0136"
+why = "Confirmed gen0136 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0143"
+why = "Confirmed gen0143 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0162"
+why = "Confirmed gen0162 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0171"
+why = "Confirmed gen0171 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0188"
+why = "Confirmed gen0188 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0196"
+why = "Confirmed gen0196 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0199"
+why = "Confirmed gen0199 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0203"
+why = "Confirmed gen0203 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0231"
+why = "Confirmed gen0231 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0236"
+why = "Confirmed gen0236 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0241"
+why = "Confirmed gen0241 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0266"
+why = "Confirmed gen0266 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0287"
+why = "Confirmed gen0287 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0302"
+why = "Confirmed gen0302 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0322"
+why = "Confirmed gen0322 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0330"
+why = "Confirmed gen0330 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0366"
+why = "Confirmed gen0366 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0370"
+why = "Confirmed gen0370 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0379"
+why = "Confirmed gen0379 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0400"
+why = "Confirmed gen0400 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0420"
+why = "Confirmed gen0420 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0430"
+why = "Confirmed gen0430 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0435"
+why = "Confirmed gen0435 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0439"
+why = "Confirmed gen0439 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0447"
+why = "Confirmed gen0447 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0453"
+why = "Confirmed gen0453 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0458"
+why = "Confirmed gen0458 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0466"
+why = "Confirmed gen0466 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0470"
+why = "Confirmed gen0470 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0475"
+why = "Confirmed gen0475 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0481"
+why = "Confirmed gen0481 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0483"
+why = "Confirmed gen0483 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0506"
+why = "Confirmed gen0506 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0510"
+why = "Confirmed gen0510 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0520"
+why = "Confirmed gen0520 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0532"
+why = "Confirmed gen0532 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0544"
+why = "Confirmed gen0544 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0572"
+why = "Confirmed gen0572 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0587"
+why = "Confirmed gen0587 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0590"
+why = "Confirmed gen0590 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0600"
+why = "Confirmed gen0600 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0638"
+why = "Confirmed gen0638 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0659"
+why = "Confirmed gen0659 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0660"
+why = "Confirmed gen0660 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0672"
+why = "Confirmed gen0672 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0686"
+why = "Confirmed gen0686 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0688"
+why = "Confirmed gen0688 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0690"
+why = "Confirmed gen0690 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0693"
+why = "Confirmed gen0693 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0700"
+why = "Confirmed gen0700 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0704"
+why = "Confirmed gen0704 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0716"
+why = "Confirmed gen0716 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0741"
+why = "Confirmed gen0741 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0742"
+why = "Confirmed gen0742 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0745"
+why = "Confirmed gen0745 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0756"
+why = "Confirmed gen0756 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0779"
+why = "Confirmed gen0779 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0794"
+why = "Confirmed gen0794 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0799"
+why = "Confirmed gen0799 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0803"
+why = "Confirmed gen0803 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0811"
+why = "Confirmed gen0811 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0824"
+why = "Confirmed gen0824 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0835"
+why = "Confirmed gen0835 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0841"
+why = "Confirmed gen0841 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0877"
+why = "Confirmed gen0877 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0880"
+why = "Confirmed gen0880 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0886"
+why = "Confirmed gen0886 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0909"
+why = "Confirmed gen0909 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0917"
+why = "Confirmed gen0917 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0949"
+why = "Confirmed gen0949 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0951"
+why = "Confirmed gen0951 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0957"
+why = "Confirmed gen0957 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0959"
+why = "Confirmed gen0959 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0965"
+why = "Confirmed gen0965 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0974"
+why = "Confirmed gen0974 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0975"
+why = "Confirmed gen0975 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0976"
+why = "Confirmed gen0976 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0985"
+why = "Confirmed gen0985 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0994"
+why = "Confirmed gen0994 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1005"
+why = "Confirmed gen1005 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1019"
+why = "Confirmed gen1019 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1026"
+why = "Confirmed gen1026 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1029"
+why = "Confirmed gen1029 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1047"
+why = "Confirmed gen1047 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1052"
+why = "Confirmed gen1052 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1060"
+why = "Confirmed gen1060 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1078"
+why = "Confirmed gen1078 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1079"
+why = "Confirmed gen1079 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1080"
+why = "Confirmed gen1080 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1083"
+why = "Confirmed gen1083 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1084"
+why = "Confirmed gen1084 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1096"
+why = "Confirmed gen1096 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1107"
+why = "Confirmed gen1107 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1110"
+why = "Confirmed gen1110 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1120"
+why = "Confirmed gen1120 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1129"
+why = "Confirmed gen1129 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1139"
+why = "Confirmed gen1139 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1169"
+why = "Confirmed gen1169 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1187"
+why = "Confirmed gen1187 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1188"
+why = "Confirmed gen1188 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1190"
+why = "Confirmed gen1190 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1224"
+why = "Confirmed gen1224 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1240"
+why = "Confirmed gen1240 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1247"
+why = "Confirmed gen1247 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1260"
+why = "Confirmed gen1260 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1275"
+why = "Confirmed gen1275 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1290"
+why = "Confirmed gen1290 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1299"
+why = "Confirmed gen1299 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1310"
+why = "Confirmed gen1310 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1312"
+why = "Confirmed gen1312 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1315"
+why = "Confirmed gen1315 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1320"
+why = "Confirmed gen1320 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1323"
+why = "Confirmed gen1323 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1328"
+why = "Confirmed gen1328 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1332"
+why = "Confirmed gen1332 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1367"
+why = "Confirmed gen1367 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1372"
+why = "Confirmed gen1372 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1376"
+why = "Confirmed gen1376 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1393"
+why = "Confirmed gen1393 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1409"
+why = "Confirmed gen1409 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1416"
+why = "Confirmed gen1416 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1423"
+why = "Confirmed gen1423 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1425"
+why = "Confirmed gen1425 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1428"
+why = "Confirmed gen1428 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1435"
+why = "Confirmed gen1435 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1437"
+why = "Confirmed gen1437 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1469"
+why = "Confirmed gen1469 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1472"
+why = "Confirmed gen1472 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1479"
+why = "Confirmed gen1479 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1490"
+why = "Confirmed gen1490 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1501"
+why = "Confirmed gen1501 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1505"
+why = "Confirmed gen1505 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1513"
+why = "Confirmed gen1513 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1523"
+why = "Confirmed gen1523 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1532"
+why = "Confirmed gen1532 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1535"
+why = "Confirmed gen1535 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1540"
+why = "Confirmed gen1540 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1549"
+why = "Confirmed gen1549 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1580"
+why = "Confirmed gen1580 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1591"
+why = "Confirmed gen1591 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1593"
+why = "Confirmed gen1593 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1619"
+why = "Confirmed gen1619 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1633"
+why = "Confirmed gen1633 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1676"
+why = "Confirmed gen1676 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1691"
+why = "Confirmed gen1691 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1698"
+why = "Confirmed gen1698 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1699"
+why = "Confirmed gen1699 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1720"
+why = "Confirmed gen1720 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1722"
+why = "Confirmed gen1722 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1736"
+why = "Confirmed gen1736 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1737"
+why = "Confirmed gen1737 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1743"
+why = "Confirmed gen1743 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1746"
+why = "Confirmed gen1746 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1748"
+why = "Confirmed gen1748 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1756"
+why = "Confirmed gen1756 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1757"
+why = "Confirmed gen1757 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1782"
+why = "Confirmed gen1782 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1798"
+why = "Confirmed gen1798 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1804"
+why = "Confirmed gen1804 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1815"
+why = "Confirmed gen1815 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1831"
+why = "Confirmed gen1831 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1832"
+why = "Confirmed gen1832 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1836"
+why = "Confirmed gen1836 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1843"
+why = "Confirmed gen1843 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1846"
+why = "Confirmed gen1846 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1851"
+why = "Confirmed gen1851 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1868"
+why = "Confirmed gen1868 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1871"
+why = "Confirmed gen1871 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1874"
+why = "Confirmed gen1874 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1903"
+why = "Confirmed gen1903 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1904"
+why = "Confirmed gen1904 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1905"
+why = "Confirmed gen1905 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1907"
+why = "Confirmed gen1907 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1946"
+why = "Confirmed gen1946 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1956"
+why = "Confirmed gen1956 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1961"
+why = "Confirmed gen1961 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1965"
+why = "Confirmed gen1965 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1977"
+why = "Confirmed gen1977 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1979"
+why = "Confirmed gen1979 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1987"
+why = "Confirmed gen1987 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1998"
+why = "Confirmed gen1998 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2007"
+why = "Confirmed gen2007 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2046"
+why = "Confirmed gen2046 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2053"
+why = "Confirmed gen2053 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2058"
+why = "Confirmed gen2058 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2066"
+why = "Confirmed gen2066 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2068"
+why = "Confirmed gen2068 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2083"
+why = "Confirmed gen2083 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2101"
+why = "Confirmed gen2101 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2133"
+why = "Confirmed gen2133 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2174"
+why = "Confirmed gen2174 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2176"
+why = "Confirmed gen2176 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2179"
+why = "Confirmed gen2179 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2188"
+why = "Confirmed gen2188 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2190"
+why = "Confirmed gen2190 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2192"
+why = "Confirmed gen2192 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2200"
+why = "Confirmed gen2200 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2225"
+why = "Confirmed gen2225 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2229"
+why = "Confirmed gen2229 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2231"
+why = "Confirmed gen2231 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2232"
+why = "Confirmed gen2232 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2241"
+why = "Confirmed gen2241 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2242"
+why = "Confirmed gen2242 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2243"
+why = "Confirmed gen2243 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2248"
+why = "Confirmed gen2248 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2251"
+why = "Confirmed gen2251 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2270"
+why = "Confirmed gen2270 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2309"
+why = "Confirmed gen2309 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2311"
+why = "Confirmed gen2311 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2324"
+why = "Confirmed gen2324 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2402"
+why = "Confirmed gen2402 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2410"
+why = "Confirmed gen2410 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2414"
+why = "Confirmed gen2414 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2420"
+why = "Confirmed gen2420 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2423"
+why = "Confirmed gen2423 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2425"
+why = "Confirmed gen2425 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2436"
+why = "Confirmed gen2436 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2448"
+why = "Confirmed gen2448 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2456"
+why = "Confirmed gen2456 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2461"
+why = "Confirmed gen2461 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2506"
+why = "Confirmed gen2506 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2507"
+why = "Confirmed gen2507 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2517"
+why = "Confirmed gen2517 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2518"
+why = "Confirmed gen2518 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2531"
+why = "Confirmed gen2531 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2559"
+why = "Confirmed gen2559 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2568"
+why = "Confirmed gen2568 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2586"
+why = "Confirmed gen2586 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2601"
+why = "Confirmed gen2601 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2629"
+why = "Confirmed gen2629 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2630"
+why = "Confirmed gen2630 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2650"
+why = "Confirmed gen2650 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2680"
+why = "Confirmed gen2680 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2687"
+why = "Confirmed gen2687 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2688"
+why = "Confirmed gen2688 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2689"
+why = "Confirmed gen2689 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2699"
+why = "Confirmed gen2699 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2726"
+why = "Confirmed gen2726 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2731"
+why = "Confirmed gen2731 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2732"
+why = "Confirmed gen2732 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2735"
+why = "Confirmed gen2735 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2738"
+why = "Confirmed gen2738 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2740"
+why = "Confirmed gen2740 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2755"
+why = "Confirmed gen2755 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2761"
+why = "Confirmed gen2761 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2762"
+why = "Confirmed gen2762 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2766"
+why = "Confirmed gen2766 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2785"
+why = "Confirmed gen2785 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2794"
+why = "Confirmed gen2794 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2809"
+why = "Confirmed gen2809 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2822"
+why = "Confirmed gen2822 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2823"
+why = "Confirmed gen2823 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2828"
+why = "Confirmed gen2828 within conditional local-jet scope; see plan/upstream-issues/WR-160--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-160"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2836"
+why = "Confirmed gen2836 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2839"
+why = "Confirmed gen2839 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2847"
+why = "Confirmed gen2847 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2848"
+why = "Confirmed gen2848 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2864"
+why = "Confirmed gen2864 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2869"
+why = "Confirmed gen2869 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2870"
+why = "Confirmed gen2870 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2882"
+why = "Confirmed gen2882 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2913"
+why = "Confirmed gen2913 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2925"
+why = "Confirmed gen2925 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2938"
+why = "Confirmed gen2938 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2958"
+why = "Confirmed gen2958 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2960"
+why = "Confirmed gen2960 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2985"
+why = "Confirmed gen2985 within conditional local-jet scope; see plan/upstream-issues/WR-161--addendum-2026-11-04-confirmed-case-attribution.md and plan/findings/surface.offset_surface--default-third-derivatives-diagnostic-attribution--addendum-2026-11-04-per-case-four-term-attribution.md."
+cpp_defect = "WR-161"
