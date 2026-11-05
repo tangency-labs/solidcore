@@ -116,7 +116,32 @@ pub fn bspline(cpts: &[[f64; 4]], p: usize, u: &[f64], lim: &Limits) -> Option<B
             return None;
         }
     }
-    if !u.iter().all(|&k| finite(k, lim.max_coord)) || u.windows(2).any(|w| w.first() > w.last()) {
+    if !u.iter().all(|&k| finite(k, lim.max_coord)) {
+        return None;
+    }
+    let (a, b) = clamped(u, p)?;
+    let mut knots: Vec<f64> = Vec::new();
+    for &k in u {
+        if knots.last() != Some(&k) {
+            knots.push(k);
+        }
+    }
+    Some(BSpline {
+        a,
+        b,
+        knots,
+        start: euclid(*cpts.first()?),
+        end: euclid(*cpts.last()?),
+    })
+}
+
+/// The parameter range `(a, b)` of knots `u` of degree `p`, if they are non-decreasing and
+/// clamped (`p + 1` equal knots at each end and no more), span at least `1e-6` relative, and
+/// have no interior knot of multiplicity above `p`.
+#[must_use]
+pub fn clamped(u: &[f64], p: usize) -> Option<(f64, f64)> {
+    let m = u.len().checked_sub(1)?;
+    if u.windows(2).any(|w| w.first() > w.last()) || m < 2 * p + 1 {
         return None;
     }
     let (&a, &b) = (u.first()?, u.last()?);
@@ -139,19 +164,7 @@ pub fn bspline(cpts: &[[f64; 4]], p: usize, u: &[f64], lim: &Limits) -> Option<B
             return None;
         }
     }
-    let mut knots: Vec<f64> = Vec::new();
-    for &k in u {
-        if knots.last() != Some(&k) {
-            knots.push(k);
-        }
-    }
-    Some(BSpline {
-        a,
-        b,
-        knots,
-        start: euclid(*cpts.first()?),
-        end: euclid(*cpts.last()?),
-    })
+    Some((a, b))
 }
 
 /// The domain `[min, max]` of a line through `p` along `v` over `domain` with `scale`, if it
