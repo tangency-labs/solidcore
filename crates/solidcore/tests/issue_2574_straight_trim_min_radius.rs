@@ -126,9 +126,16 @@ fn straight_line(curve: &BSplineCurve) -> (f64, f64, f64, f64) {
 }
 
 /// A second straight 2D trim, from @bherbruck's independent check of this fix on #2637:
-/// the same shape with unevenly spaced x, where rounding leaves `|C' x C''|` above
-/// `EFF_ZERO` at some parameters, so the objective answers a finite radius there rather
+/// the same shape with unevenly spaced x, where rounding leaves the curvature above
+/// `scaled_zero` at some parameters, so the objective answers a finite radius there rather
 /// than `BIG_DOUBLE`. It is straight in closed form just the same.
+///
+/// What decides that is the curvature `|C' x C''| / |C'|^3`, not `|C' x C''|` on its own.
+/// Measured over 200000 parameters: the largest `|C' x C''|` here is
+/// 5.955980685199898e-10, far above `scaled_zero`, and yet the curvature there is
+/// 1.8819561586151005e-15, so the objective answers `BIG_DOUBLE` at that parameter. What
+/// keeps a finite radius is that the largest curvature, 7.767470398004769e-12, clears
+/// `scaled_zero` by a factor of about 8, for a radius of 1.2874204197248955e11.
 fn rounded_straight_trim() -> BSplineCurve {
     const BH_XS: [f64; 13] = [
         5.6e-15, 0.05, 0.3, 0.32, 0.9, 1.4, 1.45, 2.2, 2.9, 3.0, 3.8, 4.5, 4.7047,
@@ -281,14 +288,16 @@ fn the_trim_is_a_straight_line_without_curvature() {
 /// objective is the radius of curvature, unbounded along a straight piece, so there is no
 /// small radius to find and the check stays clean.
 ///
-/// The criterion is the check's own, not "no solution at all", because whether the search
-/// returns anything depends on rounding rather than on the geometry: `|C' x C''|` is not
-/// always below `EFF_ZERO` on a straight trim, and where it is not the objective answers a
-/// real, huge radius instead of `BIG_DOUBLE` — which the no-solution rule keeps, correctly,
-/// since it is a value the search evaluated (@bherbruck on #2637). Measured here: on the
-/// issue's trim both searches return nothing, and on [`rounded_straight_trim`] the
-/// objective does produce finite radii (5.259e-12 for `|C' x C''|` at t = 0.0067974, a
-/// radius of 1.877e14) while the search still returns nothing, and its check is clean.
+/// The criterion is the check's own, not "no solution at all", because whether the
+/// objective answers a finite radius depends on rounding rather than on the geometry: the
+/// curvature `|C' x C''| / |C'|^3` is not always below `scaled_zero` on a straight trim,
+/// and where it is not the objective answers a real, huge radius instead of `BIG_DOUBLE`
+/// — which the no-solution rule keeps, correctly, since it is a value the search
+/// evaluated (@bherbruck on #2637). Measured at this head: on the issue's trim the search
+/// returns nothing, and on [`rounded_straight_trim`] the largest curvature is
+/// 7.767470398004769e-12, above `scaled_zero`, so the objective does produce finite radii
+/// there — the smallest of them 1.2874204197248955e11 — while the search still returns
+/// nothing, and its check is clean.
 /// Either way what matters is that no reported radius is small enough to matter: the
 /// issue's trim is held against the check's own tolerance, the second against its own
 /// smallest true radius, because a check that passes reports no tolerance to read.
