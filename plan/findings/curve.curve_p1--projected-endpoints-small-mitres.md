@@ -63,5 +63,9 @@ the elbow volume check retains the existing `1e-4` relative oracle.
   point. This is the reason the existing endpoint selection must produce a candidate.
   <https://see.stanford.edu/materials/lsocoee364a/transcripts/ConvexOptimizationI-Lecture05.html>
 
-Native comparison results and final validation are recorded in the pull request.
-This record does not claim C++ parity from Rust-only tests.
+The standalone pinned C++ reproduction confirms that both analytic and B-spline
+lines return success with zero projected extrema for an exterior query point.
+[WR-753](../upstream-issues/WR-753--projected-curve-endpoints-discarded.md)
+records the exact inputs, expected endpoints, native outputs and build identity.
+Full difftest results and final validation are recorded in the pull request;
+Rust-only tests are not counted as evidence of C++ parity.
