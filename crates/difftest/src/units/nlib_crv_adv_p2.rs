@@ -561,8 +561,7 @@ fn status(e: &SolidError) -> f64 {
         SolidError::Nlib { code, .. } => f64::from(code.code()),
         SolidError::NotConverged { operation, .. }
             if operation.starts_with("nurbs::bezier")
-                || operation.ends_with("extend_by_param_dist_at_depth")
-                || operation.ends_with("extend_by_dist_at_depth") =>
+                || operation.ends_with("extend_by_param_dist_at_depth") =>
         {
             1000.0
         }
@@ -671,7 +670,10 @@ fn rust_body(i: &Inputs, c: &InlineCrv, cur: &Curve, o: &mut Vec<f64>) -> Result
             end,
             cont,
             ..
-        } => push_crv(o, &cur.extend_by_dist(*dist, kind(*relative), end.end(), cont.cont())?),
+        } => push_crv(
+            o,
+            &crate::util::extension::nlib_curve(cur, *dist, *relative, end.end(), cont.cont())?,
+        ),
         Inputs::ExtendParam { par, end, cont, .. } => {
             let q = cur.extend_by_param_dist(par.get(c).map_err(bad_knot)?, end.end(), cont.cont())?;
             push_crv(o, &q);

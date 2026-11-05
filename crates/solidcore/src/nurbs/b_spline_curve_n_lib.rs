@@ -15,7 +15,6 @@
 //! | [`BSplineCurve::approximate_rational_curve`]           | `SmBSplineCurve::ApproximateRationalCurve`     |
 //! | [`BSplineCurve::create_helix_segment`], [`HelixSpec`]  | `SmBSplineCurve::CreateHelixSegment`           |
 //! | [`BSplineCurve::create_extended_curve`]                | `SmBSplineCurve::CreateExtendedCurve` (parameter) |
-//! | [`BSplineCurve::create_extended_curve_by_distance`]    | `SmBSplineCurve::CreateExtendedCurve` (distance) |
 //! | [`BSplineCurve::create_interpolating_curve`]           | `SmBSplineCurve::CreateInterpolatingCurve`     |
 //! | [`BSplineCurve::create_interpolating_curve_with_params`] | `SmBSplineCurve::CreateInterpolatingCurve` (fork `cpOptParams`) |
 //! | [`BSplineCurve::create_approximating_curve`]           | `SmBSplineCurve::CreateApproximatingCurve` (unit `nlib.crv_fit_p4`) |
@@ -140,7 +139,7 @@ use crate::kernel::Kernel;
 use crate::math::{min2, EFF_ZERO};
 use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm};
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
-use crate::nurbs::crv_adv::p1::{Continuity, CurveEnd, BARE_FLAG_REASON};
+use crate::nurbs::crv_adv::p1::{Continuity, BARE_FLAG_REASON};
 use crate::nurbs::crv_adv::p2::{ConstrainedEnds, UnboundedEval};
 use crate::nurbs::crv_approx::{
     approx_circ_arc_with_crv_data, approx_nurbs_with_non_rat_crv, calc_num_cpts_to_approx_arc,
@@ -173,8 +172,6 @@ const OP_ARC: &str = "nurbs::b_spline_curve_n_lib::BSplineCurve::approximate_arc
 const OP_RAT: &str = "nurbs::b_spline_curve_n_lib::BSplineCurve::approximate_rational_curve";
 const OP_HELIX: &str = "nurbs::b_spline_curve_n_lib::BSplineCurve::create_helix_segment";
 const OP_EXT: &str = "nurbs::b_spline_curve_n_lib::BSplineCurve::create_extended_curve";
-const OP_EXT_DIST: &str =
-    "nurbs::b_spline_curve_n_lib::BSplineCurve::create_extended_curve_by_distance";
 const OP_INTERP_CRV: &str = "nurbs::b_spline_curve_n_lib::BSplineCurve::create_interpolating_curve";
 const OP_APPROX_CRV: &str = "nurbs::b_spline_curve_n_lib::BSplineCurve::create_approximating_curve";
 const OP_DAMPEN: &str = "nurbs::b_spline_curve_n_lib::BSplineCurve::dampen_knot_spacing";
@@ -703,31 +700,6 @@ impl BSplineCurve {
 
         // build output: new SMBSplineCurve object from ecur
         Ok(state.ext.map(|ecur| Self::from_gw_nurb(self.dim, &ecur)))
-    }
-
-    /// The curve extended at `end` by about the arc length `distance` with continuity
-    /// `continuity` (as [`BSplineCurve::create_extended_curve`])
-    /// (`CreateExtendedCurve`, distance overload, through `N_CrvExtendByDist`).
-    ///
-    /// # Errors
-    ///
-    /// `SM_ERR` without a NURB, for another continuity, or when the extension fails.
-    pub fn create_extended_curve_by_distance(
-        &self,
-        distance: f64,
-        end: CurveEnd,
-        continuity: ContinuityType,
-    ) -> Result<Option<Self>> {
-        let cur = nurb_of(self, OP_EXT_DIST)?;
-        let dist = distance;
-        let gflg = extension_continuity(continuity, OP_EXT_DIST)?;
-
-        let ecur = cur
-            .extend_by_dist(dist, ToleranceKind::Absolute, end, gflg)
-            .map_err(SolidError::nl_ser(OP_EXT_DIST))?;
-
-        // build output: new SMBSplineCurve object from ecur
-        Ok(Some(Self::from_gw_nurb(self.dim, &ecur)))
     }
 
     /// A curve of dimension `dim` (2 or 3) and degree `degree` interpolating `points`

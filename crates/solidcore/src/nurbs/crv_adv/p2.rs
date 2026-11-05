@@ -9,7 +9,6 @@
 //!
 //! | Rust                                         | Upstream                            |
 //! |----------------------------------------------|-------------------------------------|
-//! | [`Curve::extend_by_dist`]                    | `N_CrvExtendByDist`                 |
 //! | [`Curve::extend_by_param_dist`]              | `N_CrvExtendByParamDist`            |
 //! | [`Curve::offset_max_2nd_deriv`]              | `N_CrvOffsetGetMax2ndDeriv`         |
 //! | [`Curve::eval_unbounded_pts_and_derivs`], [`UnboundedEval`] | `N_CrvEvalUnboundedPtsAndDerivs` |
@@ -191,22 +190,6 @@ pub struct UnboundedEval {
 }
 
 impl Curve {
-    /// Extends the curve at `end` by about the arc length `dist`
-    /// (`N_CrvExtendByDist`): [`Curve::extend_by_dist_at_depth`] at depth 0.
-    ///
-    /// # Errors
-    ///
-    /// The errors of [`Curve::extend_by_dist_at_depth`].
-    pub fn extend_by_dist(
-        &self,
-        dist: f64,
-        kind: ToleranceKind,
-        end: CurveEnd,
-        cont: Continuity,
-    ) -> Result<Curve> {
-        self.extend_by_dist_at_depth(dist, kind, end, cont, 0)
-    }
-
     /// Extends the curve at `end` to the parameter `par`
     /// (`N_CrvExtendByParamDist`): [`Curve::extend_by_param_dist_at_depth`] at depth 0.
     ///

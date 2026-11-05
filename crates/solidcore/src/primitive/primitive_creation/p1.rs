@@ -20,8 +20,11 @@
 //! Ignored statuses retain the previous output and propagate only Unported; with
 //! `Kernel::fixes.planar_path_profile_placement_statuses`, `position_profile_curves`
 //! returns the first failed box, normal, evaluation or placement status instead (WR-632, #483).
-//! `primitive_path_curve_statuses` controls the kernel-aware pivot/extension variants;
-//! the original signatures retain pinned behavior. The `SetCanonical` of
+//! `primitive_path_curve_statuses` controls the kernel-aware pivot/extension variants'
+//! evaluations; the original signatures retain pinned behavior there. A path is extended
+//! by the exact extension (`BSplineCurve::extended_by_distance`, Tangent, for upstream's
+//! `N_CrvExtendByDist` with `SM_CT_G1`), whose refusal always propagates: no path is kept
+//! unextended in place of its extension (#2730). The `SetCanonical` of
 //! an identity profile-normal frame is elided (it always succeeds upstream).
 //! `planar_path_profile_in_path_frame` performs placement in the whole path's own
 //! XY frame (WR-660); XY and straight paths keep upstream arithmetic.
@@ -42,12 +45,12 @@ use crate::curve::curve::p3::compute_crvs_normal;
 use crate::error::{checked_or_ignored, ignore_status, ignored, EntityRef, Result};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent3d::Extent3d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3};
 use crate::nurbs::b_spline_curve::p1::BSplineCurve;
 use crate::nurbs::b_spline_curve::p2::BoundingBoxRequest;
 use crate::nurbs::crv_adv::p1::CurveEnd;
+use crate::surface::extend::Continuity;
 use crate::topology::RegionId;
 
 /// Four topology associations of a primitive or topology sweep.
@@ -165,13 +168,13 @@ fn evaluate_keep(
     Ok(())
 }
 
-fn extend(curve: &mut BSplineCurve, distance: f64, end: CurveEnd, checked: bool) -> Result<()> {
-    if let Some(Some(next)) = checked_or_ignored(
-        curve.create_extended_curve_by_distance(distance, end, ContinuityType::G1),
-        checked,
-    )? {
-        *curve = next;
-    }
+/// The path continued `distance` past `end`, tangent continuous, by the exact extension
+/// ([`BSplineCurve::extended_by_distance`]); its refusal is the path's (no curve is kept
+/// unextended where it was asked to run on).
+fn extend(curve: &mut BSplineCurve, distance: f64, end: CurveEnd) -> Result<()> {
+    *curve = curve
+        .extended_by_distance(end, Continuity::Tangent, distance)?
+        .curve;
     Ok(())
 }
 
@@ -239,10 +242,10 @@ pub(super) fn extend_path_curves_impl(
                 .unwrap_or(Vec3::UNDEF)
                 .is_parallel_to(after.get(1).copied().unwrap_or(Vec3::UNDEF), 2.0)
             {
-                extend(&mut path, distance, CurveEnd::Start, checked)?;
+                extend(&mut path, distance, CurveEnd::Start)?;
             }
         } else if closed && !periodic {
-            extend(&mut path, distance, CurveEnd::Start, checked)?;
+            extend(&mut path, distance, CurveEnd::Start)?;
         }
         if let Some(next) = paths.get(index + 1) {
             evaluate_keep(
@@ -265,10 +268,10 @@ pub(super) fn extend_path_curves_impl(
                 .unwrap_or(Vec3::UNDEF)
                 .is_parallel_to(after.get(1).copied().unwrap_or(Vec3::UNDEF), 2.0)
             {
-                extend(&mut path, distance, CurveEnd::End, checked)?;
+                extend(&mut path, distance, CurveEnd::End)?;
             }
         } else if closed && !periodic {
-            extend(&mut path, distance, CurveEnd::End, checked)?;
+            extend(&mut path, distance, CurveEnd::End)?;
         }
         output.push(path);
     }
@@ -484,7 +487,9 @@ mod tests {
         let mut k = Kernel::default();
         assert!(!k.fixes.primitive_path_curve_statuses);
         assert_eq!(find_pivot_point(&empty, &line, 1e-9).unwrap(), Vec3::ZERO);
-        assert!(extend_path_curves(&[empty.clone(), line.clone()], false, false, 1.0).is_ok());
+        // with the flag off the evaluations' failures are ignored, but a curve with no net is
+        // not kept unextended in place of its extension: the extension's refusal is the path's
+        assert!(extend_path_curves(&[empty.clone(), line.clone()], false, false, 1.0).is_err());
         k.fixes.primitive_path_curve_statuses = true;
         let error = empty
             .evaluate_point(empty.natural_interval().min())

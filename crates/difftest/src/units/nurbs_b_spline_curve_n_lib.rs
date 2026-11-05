@@ -954,8 +954,10 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
                 2 => CurveEnd::End,
                 _ => return Err(harness("bad end flag").into()),
             };
-            let r = c.create_extended_curve_by_distance(*d, end, continuity_of(*cont)?)?;
-            push_new(o, r.as_ref());
+            // `N_CrvExtendByDist` has no counterpart: the exact extension (#2730)
+            let how = crate::util::extension::continuity(continuity_of(*cont)?);
+            let r = c.extended_by_distance(end, how, *d)?.curve;
+            push_new(o, Some(&r));
         }
         OpIn::Dampen { factor, mult } => c.dampen_knot_spacing(*factor, *mult)?,
         OpIn::DegRed { tol, max } => c.degree_reduction(*tol, *max)?,

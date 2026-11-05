@@ -10,7 +10,8 @@
 //! number, `1000` for upstream's bare error flag; `-1` on the Rust side for any other
 //! error, which never matches), then on success the results: the surface
 //! (`dims = [n, m, p, q, r, s]`, `net` x y z w row-major, `u`, `v`) for
-//! `extend_by_dist`, `skin_spine` (followed by every profile after the call,
+//! `extend_by_dist` (the exact extension, `Surface::extended_by_distance`: N_SrfExtendByDist
+//! has no counterpart since #2730), `skin_spine` (followed by every profile after the call,
 //! `c<i>dims = [n, p, m]`, `c<i>net`, `c<i>u`, since upstream modifies them in place)
 //! and `vector_field`; `max = [Muu, Muv, Mvv]` for `max_deriv`. `unbounded` runs a
 //! sequence of evaluations sharing the extension (`esur` / `gflg` upstream): per
@@ -31,7 +32,6 @@ use solidcore::nurbs::crv_adv::p1::{CurveEnd, BARE_FLAG_REASON};
 use solidcore::nurbs::crv_basic::{Boundary, Curve};
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_adv::p1 as adv;
-use solidcore::nurbs::srf_adv::p2::SrfContinuity;
 use solidcore::nurbs::srf_adv::p3::ExtendContinuity;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
@@ -429,11 +429,6 @@ fn status<T>(r: &SolidResult<T>) -> f64 {
         Ok(_) => 0.0,
         Err(SolidError::Nlib { code, .. }) => f64::from(code.code()),
         Err(SolidError::InvalidInput { reason, .. } | SolidError::PortInvariant { reason, .. }) if *reason == BARE_FLAG_REASON => BARE_FLAG,
-        Err(SolidError::NotConverged { operation, .. })
-            if operation.ends_with("srf_adv::p2::extend_by_dist_at_depth") =>
-        {
-            BARE_FLAG
-        }
         Err(_) => -1.0,
     }
 }
@@ -451,8 +446,15 @@ fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         } => {
             let s = build(&resolve(sur)?)?;
             let end = CurveEnd::from_flag(*end).ok_or_else(|| harness("bad end flag"))?;
-            let cont = SrfContinuity::from_flag(*cont).ok_or_else(|| harness("bad cont flag"))?;
-            let r = adv::extend_by_dist(&s, *dist, direction(*dir)?, end, cont);
+            // `N_SrfExtendByDist` has no counterpart: the exact extension (#2730)
+            let r = crate::util::extension::net(
+                &solidcore::kernel::Kernel::default(),
+                &s,
+                *dist,
+                direction(*dir)?,
+                end,
+                *cont,
+            );
             o.push(status(&r));
             if let Ok(q) = r {
                 dump(&mut o, &q);

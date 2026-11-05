@@ -3,23 +3,17 @@
 //! the unit surface normal (`N_SrfEvalPtNormalDeriv`).
 //!
 //! C++: `solidcore_ffi::units::nlib_srf_adv_p2` (upstream
-//! `source/SMLib/src/NL_SrfAdv.cpp`). Rust: `solidcore::nurbs::srf_adv::p2`.
+//! `source/SMLib/src/NL_SrfAdv.cpp`). Rust: `solidcore::nurbs::srf_adv::p2`; `ST_surxsdr`
+//! has no counterpart there (#2730), so an `extend` case runs the exact extension
+//! (`Surface::extended_by_distance`) with the same distance and continuity.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok, else the `NL_*_ERR`
-//! number; `1000` for upstream's bare error flag past the recursion limit, the Rust
-//! `NotConverged` of the extension; `-1` on the Rust side for any other non-NLib
-//! error, which never matches), then on success the results: the extended
+//! number; `-1` on the Rust side for any other error, which never matches), then on success the results: the extended
 //! surface for `extend` (`dims = [n, m, p, q, r, s]`, the control points `net`, x y z
 //! w row-major, the knots `u`, `v`), and `nd` (`N_u, N_v, N_uu, N_uv, N_vv`, xyz each)
 //! for `normal_deriv`. Upstream's in-place mode (`inplace`, the way every upstream
 //! caller uses `N_SrfExtendByDist`) is compared against the same Rust call.
-//!
-//! Past its recursion limit upstream returns a bare error flag with a stale
-//! `NL_ERROR` number (left by an earlier recovered error or cleared by a callee; see
-//! `plan/findings.md`). When the Rust side reports the recursion limit, a failing C++
-//! side is therefore reported as the bare flag (`1000`) instead of that number; a
-//! C++ success still fails the case.
 //!
 //! A surface input is inline (`net` rows of `[x, y, z, w]`, degrees, knots) or an
 //! upstream `.sms` file (`{"sms": {"$upstream_file": "Surface.sms"}}`). Inputs must be
@@ -34,7 +28,7 @@ use serde_json::Value;
 use solidcore::nurbs::crv_adv::p1::CurveEnd;
 use solidcore::nurbs::knots::Side;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
-use solidcore::nurbs::srf_adv::p2::{self as adv, SrfContinuity};
+use solidcore::nurbs::srf_adv::p2 as adv;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
 use solidcore_ffi::units::nlib_srf_adv_p2::{self as ffi, Op};
@@ -263,28 +257,10 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
     Ok((op, o))
 }
 
-/// Status of the upstream bare error flag (no `NL_ERROR` number of its own).
-const BARE_FLAG: f64 = 1000.0;
-
 fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
     let (op, input) = cpp_input(i)?;
     match ffi::eval(op, &input) {
-        Ok(mut flat) => {
-            // Past the recursion limit `ST_surxsdr` returns a bare error flag and
-            // `NL_ERROR` still holds whatever an earlier, recovered error (or a
-            // callee's `N_ErrClear`) left there: that number is not a result of the
-            // routine. When the port reports the recursion limit, an upstream failure
-            // is compared as the bare flag.
-            if matches!(i, Inputs::Extend { .. })
-                && flat.first().is_some_and(|&st| st != 0.0)
-                && rust_flat(i)?.first() == Some(&BARE_FLAG)
-            {
-                if let Some(st) = flat.first_mut() {
-                    *st = BARE_FLAG;
-                }
-            }
-            to_output(i, &flat)
-        }
+        Ok(flat) => to_output(i, &flat),
         Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
         Err(e) => Err(harness(format!("shim failure: {e}"))),
     }
@@ -292,17 +268,11 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
 
 // ---- Rust side --------------------------------------------------------------------
 
-/// `0` for `Ok`, the `NL_*_ERR` number for an NLib error, `1000` for the recursion
-/// limit of the extension (upstream's bare error flag), `-1` otherwise.
+/// `0` for `Ok`, the `NL_*_ERR` number for an NLib error, `-1` otherwise.
 fn status<T>(r: &SolidResult<T>) -> f64 {
     match r {
         Ok(_) => 0.0,
         Err(SolidError::Nlib { code, .. }) => f64::from(code.code()),
-        Err(SolidError::NotConverged { operation, .. })
-            if operation.ends_with("srf_adv::p2::extend_by_dist_at_depth") =>
-        {
-            BARE_FLAG
-        }
         Err(_) => -1.0,
     }
 }
@@ -342,9 +312,9 @@ fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         } => {
             let dir = Direction::from_flag(*dir).ok_or_else(|| harness("bad direction flag"))?;
             let end = CurveEnd::from_flag(*end).ok_or_else(|| harness("bad end flag"))?;
-            let cont =
-                SrfContinuity::from_flag(*cont).ok_or_else(|| harness("bad continuity flag"))?;
-            let r = adv::extend_by_dist_at_depth(&s, *dist, dir, end, cont, *depth);
+            // `ST_surxsdr` has no counterpart: the exact extension (#2730), at any depth
+            let _ = depth;
+            let r = crate::util::extension::net(&solidcore::kernel::Kernel::default(), &s, *dist, dir, end, *cont);
             o.push(status(&r));
             if let Ok(q) = r {
                 dump(&mut o, &q);

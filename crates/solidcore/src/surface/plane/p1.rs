@@ -38,7 +38,6 @@
 //! | [`Plane::is_kind_of`], [`Plane::TYPE`], [`Plane::type_string`], [`Plane::class_string`] | `IsKindOf`, `GetType`, `GetTypeString`, `GetClassString` (`SM_COMMON`) |
 //! | [`Plane::base`], [`Plane::base_with_nurb`], [`Plane::natural_uv_domain`] | the `SmBSplineSurface` part, `GetOrCreateGwNurbPointer`, `GetNaturalUVDomain` (inherited) |
 //! | [`Plane::max_analytic_domain`], [`Plane::is_parallel_to_vector`], [`Plane::is_parallel_to_vector_opt_in`], [`Plane::is_parallel_to_vector_with_kernel`], [`Plane::reverse`], [`Plane::swap_uv`] | `SmBSplineSurface::GetMaxAnalyticDomain`, `IsParallelToVector`, `Reverse`, `SwapUV` (inherited, re-dispatched) |
-//! | [`Plane::create_extended_surface`], [`Plane::create_extended_surface_dir`] | `SmBSplineSurface::CreateExtendedSurface` (both overloads; inherited, re-dispatched to the `IsSingularity` / `IsClosed` overrides) |
 //!
 //! Deviations:
 //! - **`SwapUV` keeps the plane's definition (WR-701, opt-in).** With
@@ -546,46 +545,6 @@ impl Plane {
     #[must_use]
     pub const fn is_singularity_with_poles(&self) -> (bool, SurfParamType) {
         (false, SurfParamType::Neither)
-    }
-
-    /// `SmBSplineSurface::CreateExtendedSurface(dDist, ..)` (inherited): the plane's
-    /// NURB extended by `dist` across each side, through the `SmPlane` overrides of
-    /// `IsSingularity` and `IsClosed` (none, never closed).
-    ///
-    /// # Errors
-    ///
-    /// Those of [`Plane::create_extended_surface_dir`].
-    pub fn create_extended_surface(
-        &self,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<BSplineSurface> {
-        // pass the call along
-        self.create_extended_surface_dir(SurfParamType::Both, dist, extension_continuity)
-    }
-
-    /// `SmBSplineSurface::CreateExtendedSurface(eExtDirection, dDist, ..)` (inherited):
-    /// [`BSplineSurface::create_extended_surface_dir`] of the plane's NURB, with the
-    /// virtual `IsSingularity` and `IsClosed` dispatched to the `SmPlane` overrides
-    /// ([`Plane::is_singularity`], [`Plane::is_closed`]) as upstream.
-    ///
-    /// # Errors
-    ///
-    /// `SM_ERR` when no NURB can be made (upstream copies a `NULL` NURB) and the
-    /// errors of the extension.
-    pub fn create_extended_surface_dir(
-        &self,
-        ext_direction: SurfParamType,
-        dist: f64,
-        extension_continuity: ContinuityType,
-    ) -> Result<BSplineSurface> {
-        self.base_for_query().create_extended_surface_dispatched(
-            ext_direction,
-            dist,
-            extension_continuity,
-            &|_| Ok(self.is_singularity()),
-            &|_, _| Ok(self.is_closed().0),
-        )
     }
 
     /// `SmBSplineSurface::GetMaxAnalyticDomain` (inherited): planar, so the natural
@@ -2766,22 +2725,36 @@ mod tests {
     }
 
     #[test]
-    fn extension_uses_plane_overrides() {
-        // the B-spline IsSingularity / IsClosed are unported; the plane's are not
-        let p = Plane::new(
+    fn a_plane_extended_is_the_same_plane_widened() {
+        use crate::kernel::Kernel;
+        use crate::surface::extend::Continuity;
+        use crate::surface::side::BoxSide;
+        use crate::surface::surface::{Surface, SurfaceKind};
+        let k = Kernel::default();
+        let p = Surface::from(Plane::new(
             Point3::ZERO,
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(0.0, 1.0, 0.0),
             Vec2::new(1.0, 1.0),
             &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
-        );
-        let e = p.create_extended_surface(0.5, ContinuityType::G1).unwrap();
-        let d = e.natural_uv_domain();
-        assert!(d.max().x - d.min().x > 1.0);
-        let e = p
-            .create_extended_surface_dir(SurfParamType::UMax, 0.5, ContinuityType::G1)
-            .unwrap();
-        assert!(e.gw_nurb().is_some());
+        ));
+        for how in [
+            Continuity::Natural,
+            Continuity::Tangent,
+            Continuity::Curvature,
+        ] {
+            let e = p.extended_sides(&k, &BoxSide::ALL, how, 0.5).unwrap();
+            // the same analytic, exactly: a plane, its box 0.5 wider on every side
+            assert!(matches!(e.surface.kind(), SurfaceKind::Plane(_)), "{how:?}");
+            let d = e.surface.natural_uv_domain_with_nurb(&k).unwrap();
+            for (corner, want) in [
+                (d.min(), Point3::new(-0.5, -0.5, 0.0)),
+                (d.max(), Point3::new(1.5, 1.5, 0.0)),
+            ] {
+                let q = e.surface.evaluate_point(&k, corner).unwrap();
+                assert!((q - want).length() <= 1e-15, "{how:?}: {q:?}");
+            }
+        }
     }
 
     #[test]

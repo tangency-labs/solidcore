@@ -454,7 +454,7 @@ fn curvature_meets_every_distance_across_a_mirror_knot() {
     let mut last = 0.0;
     for i in 1..=60 {
         let e = 0.85 + 0.005 * f64::from(i);
-        let Some(g) = source.extended(Continuity::Curvature, e).unwrap() else {
+        let Grown::Made(g) = source.extended(Continuity::Curvature, e).unwrap() else {
             break;
         };
         let out = Surface::from(BSplineSurface::from_gw_nurb(
@@ -483,7 +483,9 @@ fn tangents_first_point_is_the_exact_reflection() {
     };
     let net = b.gw_nurb().unwrap().clone();
     let source = Local::of(&net, BoxSide::UMax).unwrap();
-    let g = source.extended(Continuity::Tangent, 1.0).unwrap().unwrap();
+    let Grown::Made(g) = source.extended(Continuity::Tangent, 1.0).unwrap() else {
+        panic!("not made")
+    };
     for (r, src) in g.rows.iter().zip(&source.rows) {
         let n = src.len();
         let (pn, pn1) = (src[n - 1], src[n - 2]);
@@ -850,7 +852,7 @@ fn an_infinite_planes_sides_are_unbounded_and_a_finite_planes_extend() {
 }
 
 #[test]
-fn a_cone_extends_as_itself_along_up_to_its_apex_and_is_left_round_its_axis() {
+fn a_cone_extends_as_itself_up_to_its_apex_and_round_its_axis_within_the_open_turn() {
     let kk = k();
     // radius 2 at the bottom, 1 at height 1: the apex at height 2, sqrt 2 slant past the top
     let pl = Axis2Placement::new(Vec3::ZERO, Vec3::Z, Vec3::X);
@@ -858,18 +860,37 @@ fn a_cone_extends_as_itself_along_up_to_its_apex_and_is_left_round_its_axis() {
     c.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 90.0, 1.0))
         .unwrap();
     let c = Surface::from(c);
+    // round the axis (the u sides): a quarter of the 270 degrees left open, at the radius of
+    // the side's middle (1.5, at height 0.5)
+    let quarter = 67.5_f64.to_radians() * 1.5;
     for how in [Continuity::Tangent, Continuity::Natural] {
-        let e = c.extended_sides(&kk, &BoxSide::ALL, how, 5.0).unwrap();
+        // left round the axis unless asked
+        let left = c.extended_sides(&kk, &BoxSide::ALL, how, 5.0).unwrap();
+        assert!(
+            left.sides[..2]
+                .iter()
+                .all(|s| matches!(s, SideExtension::AroundAxis)),
+            "{:?}",
+            left.sides
+        );
+        let e = c
+            .extended_sides_with(&kk, &BoxSide::ALL, how, 5.0, RoundTheAxis::WithinOpenTurn)
+            .unwrap();
         assert!(matches!(e.surface.kind(), SurfaceKind::Cone(_)), "{how:?}");
-        let around = e
-            .sides
-            .iter()
-            .filter(|x| matches!(x, SideExtension::AroundAxis))
-            .count();
-        assert_eq!(around, 2, "{:?}", e.sides);
+        for s in &e.sides[..2] {
+            let SideExtension::UpToLimit(a) = s else {
+                panic!("{:?}", e.sides);
+            };
+            assert!((a.enclosure.mid() - quarter).abs() <= 1e-8, "{a:?}");
+        }
+        // the sweep grown to 225 degrees: the surface does not close
+        let SurfaceKind::Cone(g) = e.surface.kind() else {
+            unreachable!()
+        };
+        let sweep = g.rev().step_uv_domain().u_interval().length();
+        assert!((sweep - 225.0).abs() <= 1e-9, "{sweep}");
         // one side along runs the whole 5, the other stops short of the apex
-        let mut lengths: Vec<(bool, f64)> = e
-            .sides
+        let mut lengths: Vec<(bool, f64)> = e.sides[2..]
             .iter()
             .filter_map(|x| match x {
                 SideExtension::Extended(a) => Some((false, a.enclosure.mid())),
@@ -883,5 +904,66 @@ fn a_cone_extends_as_itself_along_up_to_its_apex_and_is_left_round_its_axis() {
         };
         assert!((long - 5.0).abs() <= 1e-8, "{long}");
         assert!(short < 2f64.sqrt() && short > 2f64.sqrt() - 1e-6, "{short}");
+    }
+}
+
+/// #2730: callers keep their trims in the source's parameters, so an analytic widened keeps
+/// them: a cylinder whose NURBS form was reparametrised (as a face read from a file is) is
+/// widened on its own parameters, the source's points at the source's parameters.
+#[test]
+fn an_analytic_widened_keeps_the_sources_parameters() {
+    let kk = k();
+    let pl = Axis2Placement::new(Vec3::new(1.0, 2.0, 3.0), Vec3::X, Vec3::Y);
+    let mut c = Cone::create_canonical(&kk, &pl, 1.5, 1.5, 1.0, false, false).unwrap();
+    c.adjust_step_uv_domain(&kk, &Extent2d::from_bounds(0.0, 0.0, 360.0, 8.0))
+        .unwrap();
+    let mut s = Surface::from(c);
+    s.reparameterize(&kk, &Extent2d::from_bounds(0.0, 0.0, 9.0, 8.0))
+        .unwrap();
+    let d = dom(&s);
+    for side in [BoxSide::VMin, BoxSide::VMax] {
+        let e = s
+            .extended_by_distance(&kk, &d, side, Continuity::Natural, 7.5)
+            .unwrap();
+        assert!(matches!(e.surface.kind(), SurfaceKind::Cone(_)));
+        for (a, b) in [(e.dom.min(), d.min()), (e.dom.max(), d.max())] {
+            assert!((a - b).length() <= 1e-12, "{side:?}: {a:?} {b:?}");
+        }
+        for (u, v) in [(0.0, 0.0), (4.5, 4.0), (9.0, 8.0), (1.0, 7.0)] {
+            let uv = Point2::new(u, v);
+            let (p, q) = (
+                s.evaluate_point(&kk, uv).unwrap(),
+                e.surface.evaluate_point(&kk, uv).unwrap(),
+            );
+            assert!((p - q).length() <= 1e-12, "{side:?} {uv:?}: {p:?} {q:?}");
+        }
+        meets(&e, 7.5);
+    }
+}
+
+/// Ruled (upstream's `SM_CT_G1R`): the parabola `y = x^2` runs on past `x = 1` as its tangent
+/// there, the line `y = 2 x - 1`, exactly, by the distance along it; the quarter circle's
+/// rows (rational) run on straight along the circle's tangent at its end.
+#[test]
+fn a_ruled_extension_runs_on_as_the_end_tangent() {
+    let s = parabola();
+    let e = s
+        .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, 2.0)
+        .unwrap();
+    meets(&e, 2.0);
+    for p in past(&e, BoxSide::UMax) {
+        assert!((p.y - (2.0 * p.x - 1.0)).abs() <= 1e-12, "{p:?}");
+    }
+    let end = *past(&e, BoxSide::UMax).last().unwrap();
+    let start = Vec3::new(1.0, 1.0, end.z);
+    assert!(((end - start).length() - 2.0).abs() <= 2e-9, "{end:?}");
+    // the quarter of radius 2 ends at (0, 2) going -x: its rows run on along y = 2
+    let q = quarter();
+    let e = q
+        .extended_by_distance(&k(), &dom(&q), BoxSide::UMax, Continuity::Ruled, 1.5)
+        .unwrap();
+    meets(&e, 1.5);
+    for p in past(&e, BoxSide::UMax) {
+        assert!((p.y - 2.0).abs() <= 1e-12 && p.x <= 1e-12, "{p:?}");
     }
 }

@@ -974,14 +974,15 @@ fn rust_op(k: &Kernel, op: &OpIn, a: &mut Plane, o: &mut Vec<f64>) -> Result<(),
         }
         OpIn::Extend { dir, dist, cont } => {
             let cont = continuity_of(*cont)?;
-            let r = match dir {
-                Some(d) => {
-                    let d = SurfParamType::from_code(u64::from(*d))
-                        .ok_or_else(|| harness(format!("bad direction {d}")))?;
-                    a.create_extended_surface_dir(d, *dist, cont)
-                }
-                None => a.create_extended_surface(*dist, cont),
+            let dir = match dir {
+                Some(d) => Some(
+                    SurfParamType::from_code(u64::from(*d))
+                        .ok_or_else(|| harness(format!("bad direction {d}")))?,
+                ),
+                None => None,
             };
+            let r = crate::util::extension::surface(k, &Surface::from(a.clone()), dir, *dist, cont)
+                .and_then(|e| crate::util::extension::as_b_spline(k, &e));
             if let Some(e) = st(o, r)? {
                 put_surface_nurb(o, e.gw_nurb());
             }

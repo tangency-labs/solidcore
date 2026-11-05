@@ -83,7 +83,6 @@ use crate::geom::context::{Context, MarkType};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::object::{NotifyOperation, ObjectRef};
 use crate::geom::solution_array::{Solution, SolutionArray};
@@ -186,78 +185,60 @@ pub struct VertexOffset {
 
 /// Not upstream (WR-532; the fork's tangency-labs/smlib@b283ea2, `sm_ExtendConeAsItself`):
 /// cone (or cylinder) `surface` extended by `dist` along its rulings and around its axis
-/// as itself, each direction's end spans carried on (`SM_CT_CINFINITY`), which stays on
-/// the circle where a tangent extension (`SM_CT_G1R`) leaves it. Around the axis it goes
-/// no farther than half the turn the cone leaves open on each side, so it never laps
-/// itself; a closed cone is extended along its rulings only. Around the axis each
-/// side is extended on its own and each old end made a knot of multiplicity equal to
-/// the degree again ([`full_knot`]; tangency-labs/smlib@3626d4b).
+/// as itself, by the exact extension (#2730): Natural on a cone is the same cone widened
+/// ([`Surface::extended_by_distance`]), which stays on the circle where a tangent extension
+/// leaves it. Along the rulings both sides go up to the apex where `dist` runs past it
+/// ([`Surface::extended_sides`]); around the axis each side goes no farther than half the
+/// turn the cone leaves open, so it never laps itself; a closed cone is extended along its
+/// rulings only.
 ///
 /// # Errors
 ///
-/// Those of the extensions and knot insertions.
+/// Those of the exact extension, a refusal included.
 fn extend_cone_as_itself(
     kernel: &Kernel,
     surface: &Surface,
     cone: &crate::surface::cone::Cone,
     dist: f64,
 ) -> Result<Surface> {
-    use crate::nurbs::b_spline_surface::SurfParamType;
+    use crate::surface::extend::Continuity;
+    use crate::surface::side::BoxSide;
     let (around, along) = if cone.rev().swap_uv() {
-        (SurfParamType::V, SurfParamType::U)
+        (
+            [BoxSide::VMin, BoxSide::VMax],
+            [BoxSide::UMin, BoxSide::UMax],
+        )
     } else {
-        (SurfParamType::U, SurfParamType::V)
+        (
+            [BoxSide::UMin, BoxSide::UMax],
+            [BoxSide::VMin, BoxSide::VMax],
+        )
     };
-    let along_srf =
-        surface.create_extended_surface_dir(kernel, along, dist, ContinuityType::CInfinity)?;
+    let along_srf = surface
+        .extended_sides(kernel, &along, Continuity::Natural, dist)?
+        .surface;
 
     // around: half the open turn on each side, in arc length on the smaller end circle
     let sweep_rad = cone.rev().step_uv_domain().u_interval().length() * PI / 180.0;
     let radius = min2(cone.bot_radius(), cone.top_radius());
     let open = 2.0 * PI - sweep_rad;
     let around_dist = min2(dist, 0.5 * 0.5 * open * radius);
-    // (`SM_CAST_PTR(SmBSplineSurface, ..)`: the B-spline surface and its subclasses)
-    let is_bspline = !matches!(
-        along_srf.kind(),
-        SurfaceKind::OffsetSurface(_)
-            | SurfaceKind::CurveBounded(_)
-            | SurfaceKind::Step(_)
-            | SurfaceKind::SrfInVolume(_)
-    );
-    if !is_bspline || open <= 0.0 || around_dist <= EFF_ZERO_SQRT * (1.0 + radius) {
+    if open <= 0.0 || around_dist <= EFF_ZERO_SQRT * (1.0 + radius) {
         return Ok(along_srf);
     }
-    // (tangency-labs/smlib@3626d4b) each side on its own, each old end then a knot of
-    // multiplicity equal to the degree again: SMLib's own form for a circle
-    // (`SmCone::IsNurbSurfaceCone` takes only a triple knot at each end and double knots
-    // inside); both sides in one call extend the first side's extended span again and
-    // leave a single knot at the old end, and a face on that surface is no longer found
-    // to be a cone
-    let around_ivl = if around == SurfParamType::U {
-        along_srf.natural_uv_domain_with_nurb(kernel)?.u_interval()
-    } else {
-        along_srf.natural_uv_domain_with_nurb(kernel)?.v_interval()
-    };
-    let (min_side, max_side) = if around == SurfParamType::U {
-        (SurfParamType::UMin, SurfParamType::UMax)
-    } else {
-        (SurfParamType::VMin, SurfParamType::VMax)
-    };
-    let mut min_srf = along_srf.create_extended_surface_dir(
+    // each side on its own: the second on the side the first left it on
+    let dom = along_srf.natural_uv_domain_with_nurb(kernel)?;
+    let [first, second] = around;
+    let one =
+        along_srf.extended_by_distance(kernel, &dom, first, Continuity::Natural, around_dist)?;
+    let both = one.surface.extended_by_distance(
         kernel,
-        min_side,
+        &one.surface.natural_uv_domain_with_nurb(kernel)?,
+        one.side_of(second),
+        Continuity::Natural,
         around_dist,
-        ContinuityType::CInfinity,
     )?;
-    full_knot(&mut min_srf, around, around_ivl.min())?;
-    let mut both = min_srf.create_extended_surface_dir(
-        kernel,
-        max_side,
-        around_dist,
-        ContinuityType::CInfinity,
-    )?;
-    full_knot(&mut both, around, around_ivl.max())?;
-    Ok(both)
+    Ok(both.surface)
 }
 
 /// Not upstream (WR-728, #2484): ball patch `patch` (the face's surface `surface`)
@@ -288,6 +269,8 @@ fn extend_ball_patch_as_itself(
 ) -> Result<Surface> {
     use crate::math::Point2;
     use crate::nurbs::b_spline_surface::SurfParamType;
+    use crate::surface::extend::Continuity;
+    use crate::surface::side::BoxSide;
     let net = patch.net();
     let dom = net.natural_uv_domain();
     let (lo, hi) = (dom.min(), dom.max());
@@ -300,36 +283,34 @@ fn extend_ball_patch_as_itself(
         (
             lo,
             [Point2::new(lo.x, hi.y), hi],
-            SurfParamType::U,
-            SurfParamType::VMax,
+            &[BoxSide::UMin, BoxSide::UMax][..],
+            BoxSide::VMax,
         )
     } else if at_lo.singular {
         (
             lo,
             [Point2::new(hi.x, lo.y), hi],
-            SurfParamType::V,
-            SurfParamType::UMax,
+            &[BoxSide::VMin, BoxSide::VMax][..],
+            BoxSide::UMax,
         )
     } else if at_hi.singular && at_hi.direction == SurfParamType::U {
         (
             hi,
             [lo, Point2::new(hi.x, lo.y)],
-            SurfParamType::U,
-            SurfParamType::VMin,
+            &[BoxSide::UMin, BoxSide::UMax][..],
+            BoxSide::VMin,
         )
     } else if at_hi.singular {
         (
             hi,
             [lo, Point2::new(lo.x, hi.y)],
-            SurfParamType::V,
-            SurfParamType::UMin,
+            &[BoxSide::VMin, BoxSide::VMax][..],
+            BoxSide::UMin,
         )
     } else {
-        return Ok(Surface::from(net.create_extended_surface(
-            kernel,
-            dist,
-            ContinuityType::G1R,
-        )?));
+        return Ok(Surface::from(net.copy())
+            .extended_sides(kernel, &BoxSide::ALL, Continuity::Ruled, dist)?
+            .surface);
     };
     let centre = patch.centre();
     let radius = patch.radius();
@@ -351,53 +332,21 @@ fn extend_ball_patch_as_itself(
     }
     let around_dist = min2(dist, 0.25 * (2.0 * PI - angle(a, b)) * radius);
     let away_dist = min2(dist, 0.5 * (PI - farthest) * radius);
-    let round =
-        net.create_extended_surface_dir(kernel, around, around_dist, ContinuityType::CInfinity)?;
-    let both =
-        round.create_extended_surface_dir(kernel, away, away_dist, ContinuityType::CInfinity)?;
+    let round = Surface::from(net.copy())
+        .extended_sides(kernel, around, Continuity::Natural, around_dist)?
+        .surface;
+    let both = round
+        .extended_sides(kernel, &[away], Continuity::Natural, away_dist)?
+        .surface;
+    let SurfaceKind::BSpline(both) = both.kind() else {
+        return Err(SolidError::port_invariant(
+            "offset::offset_executive::p1::extend_ball_patch_as_itself",
+            "a ball patch's net extended is not a B-spline",
+        ));
+    };
     Ok(Surface::from(
-        crate::surface::ball_patch::BallPatch::create(&both, centre, radius)?,
+        crate::surface::ball_patch::BallPatch::create(both, centre, radius)?,
     ))
-}
-
-/// Not upstream (WR-532; tangency-labs/smlib@3626d4b): makes the knot of B-spline
-/// `surface` at `at` in direction `dir` of multiplicity equal to the degree
-/// (`InsertOneKnot` of the missing count; a knot within `EFF_ZERO` of the interval's
-/// length counts as the same).
-///
-/// # Errors
-///
-/// `SM_ERR_NULL_POINTER` for a surface that is not a B-spline surface (upstream's
-/// `NER` of the cast); those of the knot query and insertion.
-fn full_knot(
-    surface: &mut Surface,
-    dir: crate::nurbs::b_spline_surface::SurfParamType,
-    at: f64,
-) -> Result<()> {
-    use crate::nurbs::b_spline_surface::SurfParamType;
-    const OP: &str = "offset::offset_executive::p1::extend_cone_as_itself";
-    let SurfaceKind::BSpline(bs) = surface.kind_mut() else {
-        return Err(SolidError::null_pointer(OP));
-    };
-    let (knots, mults) = bs.knots(dir, None)?;
-    let domain = bs.natural_uv_domain();
-    let ivl = if dir == SurfParamType::U {
-        domain.u_interval()
-    } else {
-        domain.v_interval()
-    };
-    let same = EFF_ZERO * (1.0 + ivl.length());
-    let mut have = 0;
-    for (&knot, &mult) in knots.iter().zip(&mults) {
-        if (knot - at).abs() <= same {
-            have = mult;
-        }
-    }
-    let degree = bs.degree(dir);
-    if have < degree {
-        bs.insert_one_knot(at, degree - have, dir)?;
-    }
-    Ok(())
 }
 
 /// The 27-bit object namespace under which the lamina clean-up's `DeleteFaces`
@@ -852,7 +801,9 @@ impl OffsetExecutive {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 // The obsolete offset-specific `else` at cpp:2158 is unreachable:
                 // NER(pBase) already established pOrigSurf == pBase != NULL.
-                let dist = self.offset_distance * 5.0;
+                // a size: five times the offset either way (an inward offset's distance is
+                // negative)
+                let dist = (self.offset_distance * 5.0).abs();
                 let extension = match base.kind() {
                     // Not upstream (WR-532), opt-in `offset_extends_cones_as_themselves`
                     SurfaceKind::Cone(cone) if kernel.fixes.offset_extends_cones_as_themselves => {
@@ -864,7 +815,23 @@ impl OffsetExecutive {
                     {
                         extend_ball_patch_as_itself(kernel, base, patch, dist)?
                     }
-                    _ => base.create_extended_surface(kernel, dist, ContinuityType::G1R)?,
+                    // the exact extension, ruled (upstream's `SM_CT_G1R`), its refusal the
+                    // offset's (#2730); as its exact NURBS form, the B-spline
+                    // the offset's later steps take an extension to be (upstream's
+                    // extension of every kind is its B-spline part extended)
+                    _ => {
+                        let e = base.extended_every_side(
+                            kernel,
+                            crate::surface::extend::Continuity::Ruled,
+                            dist,
+                        )?;
+                        match crate::blend::fillet_section::station::as_b_spline(kernel, &e)? {
+                            Some(b) if !matches!(e.kind(), SurfaceKind::OffsetSurface(_)) => {
+                                Surface::from(b.into_owned())
+                            }
+                            _ => e,
+                        }
+                    }
                 };
                 Ok(entry.insert(extension))
             }
@@ -3979,8 +3946,14 @@ mod tests {
         let mut executive = executive();
         let base = plane(0.0);
         let expected = base
-            .create_extended_surface(&kernel, 0.125 * 5.0, ContinuityType::G1R)
-            .unwrap();
+            .extended_sides(
+                &kernel,
+                &crate::surface::side::BoxSide::ALL,
+                crate::surface::extend::Continuity::Ruled,
+                0.125 * 5.0,
+            )
+            .unwrap()
+            .surface;
         let first = executive
             .get_create_extended_surface(&kernel, 41, &base)
             .unwrap();

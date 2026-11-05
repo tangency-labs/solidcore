@@ -1,7 +1,8 @@
 //! Advanced NURBS curve routines, part 1: homogeneous points and derivatives at a
 //! parameter, evenly spaced points, an upper bound on the second derivative, planar
-//! offset derivatives, and the two curve extension algorithms (by arc length and by
-//! parameter distance) behind `N_CrvExtendByDist` / `N_CrvExtendByParamDist`.
+//! offset derivatives, and the curve extension by parameter distance behind
+//! `N_CrvExtendByParamDist` (`N_CrvExtendByDist`, by arc length, has no counterpart: a
+//! curve is extended by the exact extension, `BSplineCurve::extended_by_distance`, #2730).
 //!
 //! Upstream: `source/SMLib/src/NL_CrvAdv.cpp` (declarations in
 //! `source/SMLib/inc/NL_CrvAdv.h`).
@@ -13,12 +14,11 @@
 //! | [`Curve::eval_even_spaced_pts`], [`EvenSpacedPts`] | `N_CrvEvalEvenSpacedPts` |
 //! | [`Curve::max_2nd_deriv`]                 | `N_CrvGetMax2ndDeriv`          |
 //! | [`Curve::planar_offset_derivs`]          | `N_CrvPlanarOffsetGetDeriv`    |
-//! | [`Curve::extend_by_dist_at_depth`]       | `ST_curxcdr` (file-private)    |
 //! | [`Curve::extend_by_param_dist_at_depth`] | `ST_curxcrr` (file-private)    |
 //! | [`CurveEnd`]                             | `NL_START` / `NL_END`          |
 //! | [`Continuity`]                           | `NL_G1` / `NL_G2` / `NL_CMAX`  |
 //! | [`KNOT_TOL`]                             | `KN_TOL` (file-private)        |
-//! | [`MAX_DIST_DEPTH`], [`MAX_PARAM_DEPTH`]  | recursion limits of `ST_curxcdr` / `ST_curxcrr` |
+//! | [`MAX_PARAM_DEPTH`]                      | recursion limit of `ST_curxcrr` |
 //!
 //! Deviations:
 //! - Out-params become return values; errors are [`SolidError::Nlib`] values with the
@@ -66,10 +66,10 @@
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::Vec3;
-use crate::nurbs::basis_basic::{basis_derivs, PTOL};
+use crate::nurbs::basis_basic::basis_derivs;
 use crate::nurbs::bezier::{binomial, check_short_degree};
 use crate::nurbs::crv_basic::Curve;
-use crate::nurbs::crv_geom::{ToleranceKind, ITER_LIMIT};
+use crate::nurbs::crv_geom::ITER_LIMIT;
 use crate::nurbs::geom::{cpt_reflect, dist_pt_pt, normalize, Plane};
 use crate::nurbs::index::{get, oob, set, storage, sx, ux};
 use crate::nurbs::knots::Side;
@@ -79,9 +79,6 @@ use crate::nurbs::srf_basic::{WEIGHT_MAX, WEIGHT_MIN};
 /// Upstream `KN_TOL`: smallest knot distance the extension routines create, relative
 /// to the curve's parameter range.
 pub const KNOT_TOL: f64 = 1.0e-6;
-
-/// Deepest recursion of [`Curve::extend_by_dist_at_depth`] (upstream fails above it).
-pub const MAX_DIST_DEPTH: usize = 50;
 
 /// Deepest recursion of [`Curve::extend_by_param_dist_at_depth`] (upstream fails above
 /// it).
@@ -100,7 +97,6 @@ const OP_DERIVS_AT_KNOT: &str = "nurbs::crv_adv::p1::Curve::derivs_at_knot";
 const OP_EVEN: &str = "nurbs::crv_adv::p1::Curve::eval_even_spaced_pts";
 const OP_MAX2: &str = "nurbs::crv_adv::p1::Curve::max_2nd_deriv";
 const OP_OFFSET: &str = "nurbs::crv_adv::p1::Curve::planar_offset_derivs";
-const OP_XCDR: &str = "nurbs::crv_adv::p1::Curve::extend_by_dist_at_depth";
 const OP_XCRR: &str = "nurbs::crv_adv::p1::Curve::extend_by_param_dist_at_depth";
 
 fn nlib(operation: &'static str, code: NlibCode) -> SolidError {
@@ -592,474 +588,14 @@ impl Curve {
         Ok((od1, od2))
     }
 
-    /// Extends the curve at `end` by about the arc length `dist` (`ST_curxcdr`, the
-    /// body of `N_CrvExtendByDist`, which calls it with `depth = 0`); a
-    /// [`ToleranceKind::Relative`] distance is scaled by the curve's arc length. The
-    /// original parameter range still maps to the original curve.
-    ///
-    /// - [`Continuity::G1`]: a linear segment along the end tangent, degree-elevated;
-    /// - [`Continuity::G2`]: an end segment of about the extension length reflected in
-    ///   the plane through the end point normal to the end tangent (extensions longer
-    ///   than `0.9313` times the curve are done in two recursive steps);
-    /// - [`Continuity::Cmax`]: the polynomial continuation of the end span, its
-    ///   length fitted by up to five secant steps, after which the old end knot and
-    ///   any inserted knots are removed again.
-    ///
-    /// Errors with [`SolidError::NotConverged`] above [`MAX_DIST_DEPTH`] recursion
-    /// levels, [`NlibCode::Input`] for a curve shorter than the tolerances (relative
-    /// distance or `G2`), [`NlibCode::Geometry`] when no end tangent can be computed,
-    /// [`NlibCode::Weight`] when a rational `Cmax` extension keeps creating weights
-    /// outside `[NL_WMIN, NL_WMAX]`, and with the errors of [`Curve::arc_length`],
-    /// [`Curve::insert_knot`], [`Curve::remove_knot`] and the knot span search.
-    pub fn extend_by_dist_at_depth(
-        &self,
-        dist: f64,
-        kind: ToleranceKind,
-        end: CurveEnd,
-        cont: Continuity,
-        depth: usize,
-    ) -> Result<Curve> {
-        const OP: &str = OP_XCDR;
-
-        // Limit recursion to 50 levels.
-        if depth > MAX_DIST_DEPTH {
-            return Err(depth_limit(OP, depth));
-        }
-
-        // Get local notation.
-        let pw = self.cpts();
-        let up = self.knots();
-        let pu = self.degree();
-        check_short_degree(pu, OP)?;
-        let p = sx(pu, OP)?;
-        let n = sx(self.n(), OP)?;
-        let m = sx(self.m(), OP)?;
-        let up0 = get(up, 0, OP)?;
-        let upm = get(up, m, OP)?;
-
-        // Get extension distance.
-        let mut ldst = dist;
-        let mut d1 = 0.0;
-        if kind == ToleranceKind::Relative || cont == Continuity::G2 {
-            d1 = self.arc_length(up0, upm, 0.01, ToleranceKind::Relative)?;
-            if kind == ToleranceKind::Relative {
-                ldst *= d1;
-            }
-            // Upstream `d1 <= NL_MTOL AND d1 <= NL_PTOL` (the second implies the first).
-            if d1 <= PTOL {
-                return Err(nlib(OP, NlibCode::Input));
-            }
-
-            // Extend long G2 extensions in two steps.
-            if cont == Continuity::G2 && ldst > 0.9313 * d1 {
-                let dd = 0.4671 * d1;
-                let cq = self.extend_by_dist_at_depth(
-                    ldst - dd,
-                    ToleranceKind::Absolute,
-                    end,
-                    cont,
-                    depth + 1,
-                )?;
-                return cq.extend_by_dist_at_depth(
-                    dd,
-                    ToleranceKind::Absolute,
-                    end,
-                    cont,
-                    depth + 1,
-                );
-            }
-        }
-
-        // Find the parameter `uu` of the segment to mirror / continue and the number
-        // of knots of the extended curve.
-        let mut uu = 0.0;
-        let mut span: isize = 0;
-        let mut mult: isize = 0;
-        let mq: isize;
-        let ktol = KNOT_TOL * (upm - up0);
-        match cont {
-            Continuity::G2 => {
-                let knt = self.knot_vector()?;
-                let du = (upm - up0) * (ldst / d1);
-                uu = up0 - 10.0;
-                if end == CurveEnd::Start {
-                    // Find the parameter range that maps to the extension length.
-                    let mut ur = up0;
-                    let mut dr = 0.0;
-                    let mut ul;
-                    let mut dl;
-                    let mut steps = 0usize;
-                    loop {
-                        ul = ur;
-                        dl = dr;
-                        ur += du;
-                        if ur > upm {
-                            ur = upm;
-                        }
-                        steps += 1;
-                        if ur == ul || steps > MAX_G2_STEPS {
-                            // Upstream repeats this step forever (or for about
-                            // `d1 / ldst` steps).
-                            return Err(depth_limit(OP, steps));
-                        }
-                        dr = self.arc_length(up0, ur, 0.005, ToleranceKind::Relative)?;
-                        if (ldst - dr).abs() < ldst * 0.05 || ur == upm {
-                            uu = ur;
-                            break;
-                        }
-                        if dr > ldst {
-                            break;
-                        }
-                    }
-
-                    // Refine a range that is too long.
-                    if uu < up0 {
-                        for _ in 0..4 {
-                            uu = ul + (ldst - dl) * ((ur - ul) / (dr - dl));
-                            let dd = self.arc_length(up0, uu, 0.005, ToleranceKind::Relative)?;
-                            if (ldst - dd).abs() < ldst * 0.05 {
-                                break;
-                            }
-                            if dd > ldst {
-                                ur = uu;
-                                dr = dd;
-                            } else {
-                                ul = uu;
-                                dl = dd;
-                            }
-                        }
-                    }
-
-                    // Find the span (and multiplicity) of uu; keep it off the span's
-                    // lower knot.
-                    let (s, k) = knt.find_span_and_mult(pu, uu, Side::Right)?;
-                    span = sx(s, OP)?;
-                    mult = sx(k, OP)?;
-                    let (lo, hi) = (get(up, span, OP)?, get(up, span + 1, OP)?);
-                    if uu != hi && uu - lo < ktol && lo + ktol < hi {
-                        uu = lo + ktol;
-                    }
-                    mq = m + span;
-                } else {
-                    // Find the parameter range [uu, U[m]] with the extension length.
-                    let mut ul = upm;
-                    let mut dl = 0.0;
-                    let mut ur;
-                    let mut dr;
-                    let mut steps = 0usize;
-                    loop {
-                        ur = ul;
-                        dr = dl;
-                        ul -= du;
-                        if ul < up0 {
-                            ul = up0;
-                        }
-                        steps += 1;
-                        if ul == ur || steps > MAX_G2_STEPS {
-                            // Upstream repeats this step forever (or for about
-                            // `d1 / ldst` steps).
-                            return Err(depth_limit(OP, steps));
-                        }
-                        dl = self.arc_length(ul, upm, 0.005, ToleranceKind::Relative)?;
-                        if (ldst - dl).abs() < ldst * 0.05 || ul == up0 {
-                            uu = ul;
-                            break;
-                        }
-                        if dl > ldst {
-                            break;
-                        }
-                    }
-
-                    // Refine a range that is too long.
-                    if uu < up0 {
-                        for _ in 0..4 {
-                            uu = ur - (ldst - dr) * ((ur - ul) / (dl - dr));
-                            let dd = self.arc_length(uu, upm, 0.005, ToleranceKind::Relative)?;
-                            if (ldst - dd).abs() < ldst * 0.05 {
-                                break;
-                            }
-                            if dd > ldst {
-                                ul = uu;
-                                dl = dd;
-                            } else {
-                                ur = uu;
-                                dr = dd;
-                            }
-                        }
-                    }
-
-                    // Find the span (and multiplicity) of uu; keep it off the span's
-                    // upper knot.
-                    let (s, k) = knt.find_span_and_mult(pu, uu, Side::Left)?;
-                    span = sx(s, OP)?;
-                    mult = sx(k, OP)?;
-                    let (lo, hi) = (get(up, span, OP)?, get(up, span + 1, OP)?);
-                    if uu != lo && hi - uu < ktol && hi - ktol > lo {
-                        uu = hi - ktol;
-                    }
-                    mq = 2 * m - span - 1;
-                }
-            }
-            Continuity::Cmax => {
-                (uu, mult) = cmax_knot(up, p, m, end, OP)?;
-                mq = m + 2 * p - mult;
-            }
-            Continuity::G1 => {
-                mq = m + p;
-            }
-        }
-
-        // Output arrays (upstream: N_CrvSizeArrays / N_AllocCrvArrays).
-        let nq = mq - p - 1;
-        let mut qw: Vec<CPoint> = storage(nq, OP)?;
-        let mut uq: Vec<f64> = storage(mq, OP)?;
-
-        // Compute the new control points and knots defining the extension.
-        match cont {
-            Continuity::G1 => {
-                let (mut kk, mut kq, mut kp);
-                let dd = pf_of(p);
-                if end == CurveEnd::Start {
-                    // New start control point.
-                    let p1 = get(pw, 0, OP)?.to_euclid();
-                    let p2 = get(pw, 1, OP)?.to_euclid();
-                    let (v, mag) = end_tangent(p1, p2, || Ok(get(pw, 2, OP)?.to_euclid()), OP)?;
-                    let p1 = moved(p1, ldst, v);
-                    let q0 = g1_end_cpt(p1, get(pw, 1, OP)?.w, get(pw, 0, OP)?);
-                    set(&mut qw, 0, q0, OP)?;
-
-                    // p - 1 new interior control points (degree elevation).
-                    let pw0 = get(pw, 0, OP)?;
-                    for ii in 1..p {
-                        let d = ii as f64 / dd;
-                        set(&mut qw, ii, CPoint::combine2(1.0 - d, q0, d, pw0), OP)?;
-                    }
-
-                    // New start knot.
-                    let mut du = ldst * (get(up, p + 1, OP)? - up0) / (dd * mag);
-                    if du < ktol {
-                        du = ktol;
-                    }
-                    let u = up0 - du;
-                    for ii in 0..=p {
-                        set(&mut uq, ii, u, OP)?;
-                    }
-                    kk = p;
-                    kq = p + 1;
-                    kp = 1;
-                } else {
-                    // New end control point.
-                    let p1 = get(pw, n - 1, OP)?.to_euclid();
-                    let p2 = get(pw, n, OP)?.to_euclid();
-                    let (v, mag) = end_tangent(p2, p1, || Ok(get(pw, n - 2, OP)?.to_euclid()), OP)?;
-                    let p2 = moved(p2, ldst, v);
-                    let qe = g1_end_cpt(p2, get(pw, n - 1, OP)?.w, get(pw, 0, OP)?);
-                    set(&mut qw, n + p, qe, OP)?;
-
-                    // p - 1 new interior control points (degree elevation).
-                    let pwn = get(pw, n, OP)?;
-                    for ii in 1..p {
-                        let d = ii as f64 / dd;
-                        set(&mut qw, n + ii, CPoint::combine2(1.0 - d, pwn, d, qe), OP)?;
-                    }
-
-                    // New end knot.
-                    let mut du = ldst * (upm - get(up, m - p - 1, OP)?) / (dd * mag);
-                    if du < ktol {
-                        du = ktol;
-                    }
-                    let u = upm + du;
-                    for ii in 0..=p {
-                        set(&mut uq, m + ii, u, OP)?;
-                    }
-                    kk = 0;
-                    kq = 0;
-                    kp = 0;
-                }
-                copy_rest(
-                    &mut qw, &mut uq, pw, up, n, m, &mut kk, &mut kq, &mut kp, OP,
-                )?;
-                Curve::new(qw, pu, uq).map_err(|_| oob(OP))
-            }
-            Continuity::G2 => {
-                let mut slot = None;
-                let r = with_mult_p(self, uu, p, mult, &mut slot, OP)?;
-                if mult < p && end == CurveEnd::End {
-                    span += p - mult;
-                }
-                let (mut kk, mut kq, mut kp);
-                if end == CurveEnd::Start {
-                    // Reflection plane at the start point.
-                    let p1 = get(pw, 0, OP)?.to_euclid();
-                    let p2 = get(pw, 1, OP)?.to_euclid();
-                    let (v, _) = end_tangent(p1, p2, || Ok(get(pw, 2, OP)?.to_euclid()), OP)?;
-                    let pln = Plane::new(p1, v);
-                    kk = reflect_start(&mut qw, r, span, pln, OP)?;
-                    kq = start_mirror_knots(&mut uq, up, p, span, uu, OP)?;
-                    kp = 1;
-                } else {
-                    // Reflection plane at the end point.
-                    let p1 = get(pw, n, OP)?.to_euclid();
-                    let p2 = get(pw, n - 1, OP)?.to_euclid();
-                    let (v, _) = end_tangent(p1, p2, || Ok(get(pw, n - 2, OP)?.to_euclid()), OP)?;
-                    let pln = Plane::new(p1, v);
-                    reflect_end(&mut qw, r, n, p, span, pln, OP)?;
-                    end_mirror_knots(
-                        &mut uq,
-                        up,
-                        r.knots(),
-                        p,
-                        m,
-                        sx(r.m(), OP)?,
-                        mq,
-                        span,
-                        uu,
-                        OP,
-                    )?;
-                    kk = 0;
-                    kq = 0;
-                    kp = 0;
-                }
-                copy_rest(
-                    &mut qw, &mut uq, pw, up, n, m, &mut kk, &mut kq, &mut kp, OP,
-                )?;
-                Curve::new(qw, pu, uq).map_err(|_| oob(OP))
-            }
-            Continuity::Cmax => {
-                let mut slot = None;
-                let r = with_mult_p(self, uu, p, mult, &mut slot, OP)?;
-                let rw = r.cpts();
-                let ur = r.knots();
-                let nr = sx(r.n(), OP)?;
-                let mr = sx(r.m(), OP)?;
-                let rat = r.is_rational();
-                let start = end == CurveEnd::Start;
-                let mut cur = if start {
-                    for ii in 0..=nr {
-                        set(&mut qw, ii + p, get(rw, ii, OP)?, OP)?;
-                    }
-                    for ii in 1..=mr {
-                        set(&mut uq, ii + p, get(ur, ii, OP)?, OP)?;
-                    }
-                    let dw = cmax_derivs(rw, ur, p, nr, mr, true, OP)?;
-
-                    // Iteratively compute the new start segment until its arc length
-                    // is right (u: span length, d: arc length).
-                    let ur0 = get(ur, 0, OP)?;
-                    let (mut u1, mut d1, mut u2) = (0.0, 0.0, get(ur, p + 1, OP)? - ur0);
-                    for ii in 0..5 {
-                        for jj in 0..=p {
-                            set(&mut uq, jj, ur0 - u2, OP)?;
-                        }
-                        cmax_new_cpts(&mut qw, &dw, p, nr, u2, true, OP)?;
-                        if rat && bad_weight(&qw, 0, p - 1, OP)? {
-                            if ii == 4 || u2 <= u1 {
-                                return Err(nlib(OP, NlibCode::Weight));
-                            }
-                            u2 = 0.5 * (u1 + u2);
-                            continue;
-                        }
-
-                        // Check the arc length of the new segment.
-                        let cq = Curve::with_indices(
-                            qw.clone(),
-                            ux(nq, OP)?,
-                            pu,
-                            uq.clone(),
-                            ux(mq, OP)?,
-                        )?;
-                        let d2 = cq.arc_length(
-                            get(&uq, 0, OP)?,
-                            get(&uq, p + 1, OP)?,
-                            0.005,
-                            ToleranceKind::Relative,
-                        )?;
-                        if (ldst - d2).abs() < ldst * 0.03 {
-                            break;
-                        }
-                        if float_op_is_bad(u2 - u1, d2 - d1, FloatOp::Division) {
-                            break;
-                        }
-                        let u3 = u2;
-                        u2 = u1 + (ldst - d1) * ((u2 - u1) / (d2 - d1));
-                        u1 = u3;
-                        d1 = d2;
-                    }
-
-                    // Remove the original start knot.
-                    let cq = Curve::with_indices(qw, ux(nq, OP)?, pu, uq, ux(mq, OP)?)?;
-                    cq.remove_knot(up0, pu, MODEL_TOL)?.curve
-                } else {
-                    for ii in 0..=nr {
-                        set(&mut qw, ii, get(rw, ii, OP)?, OP)?;
-                    }
-                    for ii in 0..mr {
-                        set(&mut uq, ii, get(ur, ii, OP)?, OP)?;
-                    }
-                    let dw = cmax_derivs(rw, ur, p, nr, mr, false, OP)?;
-
-                    // Iteratively compute the new end segment until its arc length is
-                    // right (u: span length, d: arc length).
-                    let urm = get(ur, mr, OP)?;
-                    let (mut u1, mut d1, mut u2) = (0.0, 0.0, urm - get(ur, mr - p - 1, OP)?);
-                    for ii in 0..5 {
-                        for jj in 0..=p {
-                            set(&mut uq, mr + jj, urm + u2, OP)?;
-                        }
-                        cmax_new_cpts(&mut qw, &dw, p, nr, u2, false, OP)?;
-                        if rat && bad_weight(&qw, nr + 1, nr + p, OP)? {
-                            if ii == 4 || u2 <= u1 {
-                                return Err(nlib(OP, NlibCode::Weight));
-                            }
-                            u2 = 0.5 * (u1 + u2);
-                            continue;
-                        }
-
-                        // Check the arc length of the new segment.
-                        let cq = Curve::with_indices(
-                            qw.clone(),
-                            ux(nq, OP)?,
-                            pu,
-                            uq.clone(),
-                            ux(mq, OP)?,
-                        )?;
-                        let d2 = cq.arc_length(
-                            get(&uq, mq - p - 1, OP)?,
-                            get(&uq, mq, OP)?,
-                            0.005,
-                            ToleranceKind::Relative,
-                        )?;
-                        if (ldst - d2).abs() < ldst * 0.03 {
-                            break;
-                        }
-                        if float_op_is_bad(u2 - u1, d2 - d1, FloatOp::Division) {
-                            break;
-                        }
-                        let u3 = u2;
-                        u2 = u1 + (ldst - d1) * ((u2 - u1) / (d2 - d1));
-                        u1 = u3;
-                        d1 = d2;
-                    }
-
-                    // Remove the original end knot.
-                    let cq = Curve::with_indices(qw, ux(nq, OP)?, pu, uq, ux(mq, OP)?)?;
-                    cq.remove_knot(upm, pu, MODEL_TOL)?.curve
-                };
-
-                // Remove the additional instances of uu.
-                if mult < p {
-                    cur = cur.remove_knot(uu, ux(p - mult, OP)?, MODEL_TOL)?.curve;
-                }
-                Ok(cur)
-            }
-        }
-    }
-
     /// Extends the curve at `end` to the parameter `par` (`ST_curxcrr`, the body of
     /// `N_CrvExtendByParamDist`, which calls it with `depth = 0`). The original
     /// parameter range still maps to the original curve; the new end knot is `par`.
     ///
-    /// The continuities are those of [`Curve::extend_by_dist_at_depth`]; `G2`
+    /// [`Continuity::G1`] is a linear segment along the end tangent, degree-elevated;
+    /// [`Continuity::G2`] an end segment reflected in the plane through the end point
+    /// normal to the end tangent; [`Continuity::Cmax`] the polynomial continuation of the
+    /// end span. `G2`
     /// extensions longer than `0.9213` times the parameter range are done in two
     /// recursive steps, and `Cmax` uses the exact span length `|par - end knot|`.
     ///
@@ -1429,58 +965,6 @@ fn reflect_end(
     Ok(())
 }
 
-/// Start knots of a reflected (`NL_G2`) start extension of `ST_curxcdr`: `UQ[0..=p] =
-/// 2 U[0] - uu`, then `2 U[0] - U[ii]` for `ii = span` down to `p + 1`. Returns the
-/// next knot index `kq`.
-fn start_mirror_knots(
-    uq: &mut [f64],
-    up: &[f64],
-    p: isize,
-    span: isize,
-    uu: f64,
-    op: &'static str,
-) -> Result<isize> {
-    let dd = 2.0 * get(up, 0, op)?;
-    for ii in 0..=p {
-        set(uq, ii, dd - uu, op)?;
-    }
-    let mut kq = p + 1;
-    let mut ii = span;
-    while ii > p {
-        set(uq, kq, dd - get(up, ii, op)?, op)?;
-        kq += 1;
-        ii -= 1;
-    }
-    Ok(kq)
-}
-
-/// End knots of a reflected (`NL_G2`) end extension of `ST_curxcdr`: `UQ[mq-p..=mq] =
-/// 2 U[m] - uu`, then `2 U[m] - UR[ii]` for `ii = span + 1 .. mr - p` stored downwards
-/// from `UQ[mq-p-1]`.
-fn end_mirror_knots(
-    uq: &mut [f64],
-    up: &[f64],
-    ur: &[f64],
-    p: isize,
-    m: isize,
-    mr: isize,
-    mq: isize,
-    span: isize,
-    uu: f64,
-    op: &'static str,
-) -> Result<()> {
-    let dd = 2.0 * get(up, m, op)?;
-    for ii in 0..=p {
-        set(uq, mq - p + ii, dd - uu, op)?;
-    }
-    let mut kq = mq - p - 1;
-    for ii in span + 1..mr - p {
-        set(uq, kq, dd - get(ur, ii, op)?, op)?;
-        kq -= 1;
-    }
-    Ok(())
-}
-
 /// Copies the original control points `Pw[0..=n]` to `Qw[kk..]` and the knots
 /// `UP[kp..kp+m]` to `UQ[kq..]` ("load remaining control points / knots").
 fn copy_rest(
@@ -1609,54 +1093,32 @@ mod tests {
         let c = line3(3);
         for cont in [Continuity::G1, Continuity::G2, Continuity::Cmax] {
             for end in [CurveEnd::Start, CurveEnd::End] {
-                let q = c
-                    .extend_by_dist_at_depth(0.5, ToleranceKind::Relative, end, cont, 0)
-                    .unwrap();
+                let par = if end == CurveEnd::Start { -0.4 } else { 1.4 };
+                let q = c.extend_by_param_dist_at_depth(par, end, cont, 0).unwrap();
                 for u in [0.1, 0.5, 0.9] {
                     let a = c.eval(u, Side::Left).unwrap();
                     let b = q.eval(u, Side::Left).unwrap();
                     assert!((a - b).length() < 1e-6, "{cont:?} {end:?} {u}");
                 }
-                let par = if end == CurveEnd::Start { -0.4 } else { 1.4 };
-                let q = c.extend_by_param_dist_at_depth(par, end, cont, 0).unwrap();
                 let (a, b) = q.param_bounds();
                 assert!(a == par || b == par, "{cont:?} {end:?}");
             }
         }
-        assert!(matches!(
-            c.extend_by_dist_at_depth(
-                1.0,
-                ToleranceKind::Absolute,
-                CurveEnd::End,
-                Continuity::G1,
-                51
-            ),
-            Err(SolidError::NotConverged { .. })
-        ));
         assert_eq!(Continuity::from_flag(4), Some(Continuity::Cmax));
         assert_eq!(CurveEnd::from_flag(2).map(CurveEnd::flag), Some(2));
     }
 
-    /// Fuzz regressions: a degree near `i64::MAX` overflowed the index arithmetic of
-    /// the extension routines, and a vanishing `NL_G2` extension searched practically
-    /// forever.
+    /// Fuzz regression: a degree near `i64::MAX` overflowed the index arithmetic of the
+    /// extension routine.
     #[test]
-    fn extensions_reject_huge_degree_and_vanishing_g2_distance() {
+    fn extensions_reject_huge_degree() {
         let c = line3(3);
         for p in [1usize << 31, i64::MAX as usize, usize::MAX] {
             let h = Curve::new(c.cpts().to_vec(), p, c.knots().to_vec()).unwrap();
             for cont in [Continuity::G1, Continuity::G2, Continuity::Cmax] {
-                let r =
-                    h.extend_by_dist_at_depth(0.5, ToleranceKind::Relative, CurveEnd::End, cont, 0);
-                assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
                 let r = h.extend_by_param_dist_at_depth(-0.5, CurveEnd::Start, cont, 0);
                 assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
             }
-        }
-        for end in [CurveEnd::Start, CurveEnd::End] {
-            let r =
-                c.extend_by_dist_at_depth(1e-300, ToleranceKind::Relative, end, Continuity::G2, 0);
-            assert!(matches!(r, Err(SolidError::NotConverged { .. })), "{r:?}");
         }
     }
 }

@@ -545,109 +545,14 @@ fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
-/// Whether `CreateExtendedSurface` would retry a failed `N_SrfExtendByDist`: upstream
+/// Whether the case extends the surface (`CreateExtendedSurface`). Not generated: upstream
 /// extends in place (`surP == surQ`), and a failed attempt leaves the surface on freshly
-/// allocated, partly written `NL_STACKS` storage that the halved retry then reads
-/// (undefined; its outcome depends on earlier calls in the process, see
-/// `plan/findings.md`). Such cases are not generated. The side sequence is the one of
-/// `create_extended_surface_dispatched` (singular and closed sides skipped); any failure
-/// of the emulation counts as a retry.
-fn extension_retries_in_place(i: &Inputs) -> bool {
-    let (dir, dist, cont) = match &i.op {
-        OpIn::Extend { dist, cont } => (SurfParamType::Both, *dist, *cont),
-        OpIn::ExtendDir { dir, dist, cont } => match param_of(*dir) {
-            Ok(d) => (d, *dist, *cont),
-            Err(_) => return false,
-        },
-        _ => return false,
-    };
-    let Some(b) = i
-        .this
-        .as_ref()
-        .filter(|t| !t.base)
-        .and_then(|t| t.bss.as_ref())
-    else {
-        return false;
-    };
-    let Ok(bs) = bss_of(b) else {
-        return false;
-    };
-    !matches!(extension_needs_no_retry(&bs, dir, dist, cont), Ok(true))
-}
-
-/// The first attempts of [`extension_retries_in_place`]: `Ok(true)` when every side
-/// extends at the full distance.
-fn extension_needs_no_retry(
-    bs: &BSplineSurface,
-    dir: SurfParamType,
-    dist: f64,
-    cont: u8,
-) -> solidcore::Result<bool> {
-    use solidcore::nurbs::crv_adv::p1::CurveEnd;
-    use solidcore::nurbs::srf_adv::p1::extend_by_dist;
-    use solidcore::nurbs::srf_adv::p2::SrfContinuity;
-    use solidcore::nurbs::srf_basic::Direction;
-    use SurfParamType as P;
-
-    let Some(nurb) = bs.gw_nurb() else {
-        return Ok(true);
-    };
-    let k = Kernel::default();
-    let s = Surface::from(bs.clone_exact());
-    let dom = bs.natural_uv_domain();
-    let gflg = match continuity_of(cont) {
-        Ok(ContinuityType::G1R) => SrfContinuity::G1R,
-        Ok(ContinuityType::G1G2) => SrfContinuity::G2,
-        Ok(ContinuityType::CInfinity) => SrfContinuity::Cmax,
-        _ => SrfContinuity::G1,
-    };
-    let u_dir = matches!(dir, P::U | P::UMin | P::UMax);
-    let v_dir = matches!(dir, P::V | P::VMin | P::VMax);
-    let neither = dir == P::Neither;
-    let mut skip_umin = neither || v_dir || dir == P::UMax;
-    let mut skip_umax = neither || v_dir || dir == P::UMin;
-    let mut skip_vmin = neither || u_dir || dir == P::VMax;
-    let mut skip_vmax = neither || u_dir || dir == P::VMin;
-    let sing = s.is_singularity(&k, dom.min(), solidcore::math::EFF_ZERO, false)?;
-    if sing.singular {
-        if sing.direction == P::U {
-            skip_vmin = true;
-        } else {
-            skip_umin = true;
-        }
-    }
-    let sing = s.is_singularity(&k, dom.max(), solidcore::math::EFF_ZERO, false)?;
-    if sing.singular {
-        if sing.direction == P::U {
-            skip_vmax = true;
-        } else {
-            skip_umax = true;
-        }
-    }
-    let mut cur = nurb.clone();
-    let mut sides = Vec::new();
-    if !v_dir && !s.is_closed(&k, &dom, P::U, None, false)?.0 {
-        sides.extend([
-            (Direction::U, CurveEnd::Start, skip_umin),
-            (Direction::U, CurveEnd::End, skip_umax),
-        ]);
-    }
-    if !u_dir && !s.is_closed(&k, &dom, P::V, None, false)?.0 {
-        sides.extend([
-            (Direction::V, CurveEnd::Start, skip_vmin),
-            (Direction::V, CurveEnd::End, skip_vmax),
-        ]);
-    }
-    for (d, e, skipped) in sides {
-        if skipped {
-            continue;
-        }
-        match extend_by_dist(&cur, dist, d, e, gflg) {
-            Ok(x) => cur = x,
-            Err(_) => return Ok(false),
-        }
-    }
-    Ok(true)
+/// allocated, partly written `NL_STACKS` storage that its halved retry then reads
+/// (undefined, see `plan/findings/`); which cases retry was decided by emulating
+/// `N_SrfExtendByDist` on the port, which solidcore no longer has (#2730: a surface is
+/// extended by the exact extension, whose cases are its own closed-form tests).
+fn extends(i: &Inputs) -> bool {
+    matches!(i.op, OpIn::Extend { .. } | OpIn::ExtendDir { .. })
 }
 
 // ---- C++ side -----------------------------------------------------------------------
@@ -1606,8 +1511,8 @@ fn rust_surface_op(k: &Kernel, op: &OpIn, t: &This) -> Result<Run, HarnessError>
             let cont = continuity_of(*cont)?;
             record(|o| {
                 let e = match &s {
-                    Some(x) => x.create_extended_surface(k, *dist, cont)?,
-                    None => sp2::base_create_extended_surface()?,
+                    Some(x) => crate::util::extension::surface(k, x, None, *dist, cont)?,
+                    None => return Err(SolidError::sm_err("surface.surface_p2: no surface")),
                 };
                 dump_state(o, Some(&e));
                 Ok(())
@@ -1618,8 +1523,8 @@ fn rust_surface_op(k: &Kernel, op: &OpIn, t: &This) -> Result<Run, HarnessError>
             let dir = param_of(*dir)?;
             record(|o| {
                 let e = match &s {
-                    Some(x) => x.create_extended_surface_dir(k, dir, *dist, cont)?,
-                    None => sp2::base_create_extended_surface()?,
+                    Some(x) => crate::util::extension::surface(k, x, Some(dir), *dist, cont)?,
+                    None => return Err(SolidError::sm_err("surface.surface_p2: no surface")),
                 };
                 dump_state(o, Some(&e));
                 Ok(())
@@ -3085,7 +2990,7 @@ impl UnitDiff for Runner {
             let Ok((op, input)) = cpp_input(&i) else {
                 continue;
             };
-            if extension_retries_in_place(&i) {
+            if extends(&i) {
                 continue;
             }
             if ffi::validate(op, &input).is_ok() {

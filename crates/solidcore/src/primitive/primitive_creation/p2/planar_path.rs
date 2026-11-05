@@ -13,6 +13,8 @@
 //! ignores keep the previous values of their outputs, as its reused locals do; a
 //! cutting curve that was never built (a null dereference upstream) is an error.
 //! `CreateExtendedCurve`'s end flag 1 is the start and 0 or 2 the end, as in NLib.
+//! A cutting line is extended by the exact extension (`BSplineCurve::extended_by_distance`,
+//! Tangent, for `SM_CT_G1`), whose refusal always propagates (#2730).
 //! With `planar_path_sweep_statuses` (#483), mandatory statuses propagate and every
 //! owned temporary B-rep is released on failure. Successful prefix edits are kept;
 //! the caller's context body and a transferred result are never released. The path
@@ -30,7 +32,6 @@ use crate::curve::curve::Curve;
 use crate::error::{checked_or_ignored, ignored, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::solution_array::{ObjectKind, SolutionObject};
 use crate::kernel::Kernel;
@@ -42,6 +43,7 @@ use crate::primitive::primitive_creation::p1::{
     extend_path_curves_with_kernel, position_profile_curves_impl, PrimitiveCreation,
 };
 use crate::primitive::primitive_creation::SweepOptions;
+use crate::surface::extend::Continuity;
 use crate::topology::brep::p10::TrimType;
 use crate::topology::BrepId;
 
@@ -79,21 +81,12 @@ fn evaluate_keep(
     Ok(())
 }
 
-/// `CreateExtendedCurve(dist, end, SM_CT_G1, out)` whose ignored status leaves `out`.
-fn extend_into(
-    checked: bool,
-    curve: &BSplineCurve,
-    distance: f64,
-    end: CurveEnd,
-    out: &mut Option<BSplineCurve>,
-) -> Result<()> {
-    if let Some(Some(next)) = checked_or_ignored(
-        curve.create_extended_curve_by_distance(distance, end, ContinuityType::G1),
-        checked,
-    )? {
-        *out = Some(next);
-    }
-    Ok(())
+/// `curve` continued `distance` past `end`, tangent continuous, by the exact extension
+/// ([`BSplineCurve::extended_by_distance`]); its refusal is the sweep's.
+fn extended_line(curve: &BSplineCurve, distance: f64, end: CurveEnd) -> Result<BSplineCurve> {
+    Ok(curve
+        .extended_by_distance(end, Continuity::Tangent, distance)?
+        .curve)
 }
 
 /// `CreateLineSegment(3, start, end, out)` whose ignored status leaves `out`.
@@ -399,8 +392,8 @@ impl PrimitiveCreation {
         let mut before_brep: Option<BrepId> = None;
         let mut first_brep: Option<BrepId> = None;
         let mut cut_line: Option<BSplineCurve> = None;
-        let mut cutting: Option<BSplineCurve> = None;
-        let mut temp_cutting: Option<BSplineCurve> = None;
+        let mut cutting: Option<BSplineCurve>;
+        let mut temp_cutting: Option<BSplineCurve>;
         let mut before = [Vec3::UNDEF; 2];
         let mut after = [Vec3::UNDEF; 2];
         let mut first_pv = [Vec3::UNDEF; 2];
@@ -475,7 +468,7 @@ impl PrimitiveCreation {
                 let line = cut_line
                     .as_ref()
                     .ok_or_else(|| SolidError::null_pointer(OP))?;
-                extend_into(checked, line, extend, CurveEnd::Start, &mut temp_cutting)?;
+                temp_cutting = Some(extended_line(line, extend, CurveEnd::Start)?);
 
                 cutting = None;
                 let previous = ii
@@ -588,12 +581,8 @@ impl PrimitiveCreation {
                             let mut line = None;
                             line_into(checked, best, best2, &mut line)?;
                             let mut line = line.ok_or_else(|| SolidError::null_pointer(OP))?;
-                            let mut extended_line = None;
-                            extend_into(checked, &line, extend, CurveEnd::End, &mut extended_line)?;
-                            if let Some(next) = extended_line {
-                                line = next;
-                            }
-                            extend_into(checked, &line, extend, CurveEnd::Start, &mut cutting)?;
+                            line = extended_line(&line, extend, CurveEnd::End)?;
+                            cutting = Some(extended_line(&line, extend, CurveEnd::Start)?);
                         }
                     }
                 }
@@ -654,7 +643,7 @@ impl PrimitiveCreation {
                     let line = cut_line
                         .as_ref()
                         .ok_or_else(|| SolidError::null_pointer(OP))?;
-                    extend_into(checked, line, 50.0, CurveEnd::Start, &mut cutting)?;
+                    cutting = Some(extended_line(line, 50.0, CurveEnd::Start)?);
                     let curve = cutting
                         .as_ref()
                         .ok_or_else(|| SolidError::null_pointer(OP))?;

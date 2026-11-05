@@ -7,8 +7,9 @@
 //! `IntersectInsertRelate` ignores those failures and goes on (`SmTopologyIntersector.cpp:1233`),
 //! which is defined because `MakeEdgeInFace` makes both checks before any edit. The port
 //! used to stop there as for UB-242's half-edited B-reps, so the XOR kept 7 faces instead
-//! of 10 and the feature's patches differed. The C++ reference gives the values asserted
-//! here.
+//! of 10 and the feature's patches differed. The C++ reference gives the first loop's
+//! values asserted here; the second loop's follow from the exact extension (#2730, see
+//! `EXPECTED`).
 //!
 //! The model is the upstream test file, read by the Rust reader when the pinned upstream
 //! checkout is present (as the difftest does).
@@ -93,5 +94,8 @@ fn defeature_goes_on_past_imprints_without_a_vertex_sector() {
     assert_eq!(got, EXPECTED);
 }
 
-/// The C++ reference's patch face counts (difftest `single_face_defillet_2`).
-const EXPECTED: &[(i64, i64)] = &[(4, 4), (0, 0)];
+/// The patch face counts: the first loop's are the C++ reference's (difftest
+/// `single_face_defillet_2`). The second loop's patch is one face: face 8 is extended by the
+/// exact extension (#2730), which does not fold over itself as upstream's fitted one does,
+/// so the face the C++ cannot make there (its patch is empty) is made.
+const EXPECTED: &[(i64, i64)] = &[(4, 4), (1, 1)];

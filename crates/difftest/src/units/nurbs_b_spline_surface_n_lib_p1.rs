@@ -882,11 +882,12 @@ fn rust_member(k: &solidcore::kernel::Kernel, this: &mut BSplineSurface, op: &Op
             cont,
         } => {
             let cont = continuity_of(*cont)?;
-            let r = if *dir_overload {
-                this.create_extended_surface_dir(k, param_of(*dir)?, *dist, cont)
+            let dir = if *dir_overload {
+                Some(param_of(*dir)?)
             } else {
-                this.create_extended_surface(k, *dist, cont)
+                None
             };
+            let r = crate::util::extension::b_spline(k, &this, dir, *dist, cont);
             new(&mut o, r)
         }
         OpIn::Join { other, dir, tol } => {

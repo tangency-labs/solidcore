@@ -1229,9 +1229,9 @@ fn rust_query(k: &Kernel, s: &Surface, q: &QueryIn, o: &mut Vec<f64>) -> Result<
         QueryIn::Extend { dir, dist, cont } => {
             let cont = continuity_of(cont);
             let r = match dir {
-                None => s.create_extended_surface(k, dist, cont),
+                None => crate::util::extension::surface(k, &s, None, dist, cont),
                 Some(d) => match SurfParamType::from_code(u64::from(d)) {
-                    Some(d) => s.create_extended_surface_dir(k, d, dist, cont),
+                    Some(d) => crate::util::extension::surface(k, &s, Some(d), dist, cont),
                     None => Err(solidcore::SolidError::invalid_input(
                         "difftest",
                         "parameter type",

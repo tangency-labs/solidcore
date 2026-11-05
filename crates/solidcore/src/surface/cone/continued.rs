@@ -82,7 +82,16 @@ impl Cone {
                 // the slant length from the side to where the radius meets twice its rounding,
                 // the radius shrinking by |sin(theta)| per unit of slant (theta < 0 narrows upward)
                 let end = if high { old[1] } else { old[0] };
-                let room = (self.radius(end) - 2.0 * rounding(end)) / theta.sin().abs();
+                // the rounding grows with the height, so the margin is the one at the apex's
+                // height, the farthest the continuation can reach: the named distance is then
+                // proved short of the apex wherever it ends
+                let apex = -self.radius(0.0) / tan;
+                let margin = rounding(end).max(if apex.is_finite() {
+                    rounding(apex)
+                } else {
+                    0.0
+                });
+                let room = (self.radius(end) - 2.0 * margin) / theta.sin().abs();
                 return Err(SolidError::ExtendRefused {
                     operation: OP,
                     refusal: ExtendRefusal::PastApex,

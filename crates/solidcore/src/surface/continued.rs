@@ -256,6 +256,81 @@ impl Surface {
     }
 }
 
+impl Surface {
+    /// For a cone, sphere or torus and side `side` of the face box `dom` (in its NURBS
+    /// parameters) across which the surface runs round its axis: the arc length, at the side's
+    /// middle, of a quarter of the turn its STEP sweep leaves open. Each of the two sides round
+    /// the axis extended by at most this, the surface never closes on itself. `None` for
+    /// another kind or a side across which the surface runs along its generator.
+    ///
+    /// # Errors
+    ///
+    /// Those of the parameter conversions and the evaluation; `InvalidInput` for a side's
+    /// middle on the axis.
+    pub(crate) fn round_room(
+        &self,
+        k: &Kernel,
+        dom: &Extent2d,
+        side: BoxSide,
+    ) -> Result<Option<f64>> {
+        let (rows, rho) = match self.kind() {
+            SurfaceKind::Cone(c) => {
+                let swap = c.canonical().swap_uv;
+                if side.is_u() == swap {
+                    return Ok(None);
+                }
+                let rows = step_rows(
+                    &|uv| c.convert_uv_from_nurbs_to_step(k, uv),
+                    dom,
+                    side,
+                    swap,
+                )?;
+                let rho = c.radius(rows.mid.y);
+                (rows, rho)
+            }
+            SurfaceKind::Sphere(sp) => {
+                let swap = sp.base.swap_uv;
+                if side.is_u() == swap {
+                    return Ok(None);
+                }
+                let (o, z) = (sp.base.position.origin(), sp.base.position.z_axis());
+                let rows = step_rows(
+                    &|uv| sp.convert_uv_from_nurbs_to_step(k, uv),
+                    dom,
+                    side,
+                    swap,
+                )?;
+                let rho = axis_distance(sp.evaluate_step_point(rows.mid)?, o, z);
+                (rows, rho)
+            }
+            SurfaceKind::Torus(t) => {
+                let swap = t.base.swap_uv;
+                if side.is_u() == swap {
+                    return Ok(None);
+                }
+                let (o, z) = (t.base.position.origin(), t.base.position.z_axis());
+                let rows = step_rows(
+                    &|uv| t.convert_uv_from_nurbs_to_step(k, uv),
+                    dom,
+                    side,
+                    swap,
+                )?;
+                let rho = axis_distance(t.evaluate_step_point(rows.mid)?, o, z);
+                (rows, rho)
+            }
+            _ => return Ok(None),
+        };
+        if rho.is_nan() || rho <= 0.0 {
+            return Err(SolidError::invalid_input(
+                OP,
+                "the side's middle is on the axis",
+            ));
+        }
+        let open = TURN - (rows.sweep[1] - rows.sweep[0]);
+        Ok(Some(0.25 * room_distance(open, rho)))
+    }
+}
+
 /// A face box's STEP rows: the STEP u (a revolution's sweep) and v (its generator) ranges,
 /// the side's middle in STEP, and the held coordinate's value there (the end of its row the
 /// side is at: the STEP image of the box's side is that row's end exactly).
