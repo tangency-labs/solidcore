@@ -443,7 +443,8 @@ impl FilletFinishAccess<FilletObject> for FinishAccess<'_, '_> {
             attributes,
             ..
         } = &mut *self.0;
-        let seeded = p3::seed_records(notification_records, target, &key_of);
+        // (not upstream) only the objects added since the last seeding are visited
+        let seeded = p3::seed_new_records(notification_records, target, Some(serial), &key_of)?;
         k.work_counters.add_records_seeded(seeded);
         crate::geom::context::Context::with_notification_context(k, |_, context| {
             let mut env = crate::topology::edge::NotifyEnv {

@@ -740,13 +740,12 @@ pub fn copy_brep(
 /// caller's [`NotifyEnv::records`], which `SmTopology::Notify` reads for every object a
 /// notification names (e.g. both vertices of `SqueezeEdge`'s `SM_NO_MERGE_IN_BREP`).
 /// Every edit seeds them ([`with_caller_identities`]), as a B-rep built upstream
-/// already has them; a record the caller keeps is left as it is. Returns the objects
-/// visited, the B-rep included.
+/// already has them; a record the caller keeps is left as it is.
 pub(crate) fn seed_records(
     records: &mut crate::topology::topology::NotifyRecords,
     b: &Brep,
     key_of: &dyn Fn(EntityRef) -> ObjectRef,
-) -> usize {
+) {
     if records.is_empty() {
         // Bulk build (sorted input is O(n)); the same map as entry-by-entry.
         *records = entities(b)
@@ -754,15 +753,12 @@ pub(crate) fn seed_records(
             .chain([p2::brep_ref(b).key])
             .map(|k| (k, topo::Topology::default()))
             .collect();
-        return records.len();
+        return;
     }
-    let mut visited = 1;
     for e in entities(b) {
         records.or_default(key_of(e).key);
-        visited += 1;
     }
     records.or_default(p2::brep_ref(b).key);
-    visited
 }
 
 /// Leaves `records` exactly as [`seed_records`] does on an empty map (a default record
@@ -1215,13 +1211,13 @@ fn check_keys_once(
 /// and a live object below [`topo::SeedProgress::seeded_to`] was live, so seeded,
 /// when the mark was set (arenas only append and empty slots for good). So only the
 /// slots added since are visited, and the store ends exactly as a full seeding leaves
-/// it.
+/// it. Returns the objects given or checked for a record, the B-rep included.
 fn seed_records_once(
     records: &mut topo::NotifyRecords,
     progress: (Vec<u64>, std::sync::Arc<()>),
     b: &Brep,
     key_of: &dyn Fn(EntityRef) -> ObjectRef,
-) -> Result<()> {
+) -> Result<usize> {
     let brep_key = p2::brep_ref(b).key;
     let (map, progress) = records
         .progress_for(progress.0, progress.1)
@@ -1230,16 +1226,39 @@ fn seed_records_once(
         .into_iter()
         .zip(progress.seeded_to.iter_mut())
         .enumerate();
+    let mut visited = 1;
     for (kind, (slots, seeded_to)) in kinds {
         for index in (*seeded_to..slots).map_while(|i| u32::try_from(i).ok()) {
             if is_live(b, kind, index) {
                 map.entry(key_of(kind_entity(kind, index)).key).or_default();
+                visited += 1;
             }
         }
         *seeded_to = slots.max(*seeded_to);
     }
     map.entry(brep_key).or_default();
-    Ok(())
+    Ok(visited)
+}
+
+/// [`seed_records`] of `b` for a caller that notifies through the same store again and
+/// again outside an edit (a merged fillet's finish notifies every face of its target):
+/// [`seed_records_once`] under the progress of `b` named by `key_of` under `serial`
+/// ([`progress_id`], [`Brep::progress_tag`]), so only the objects added since the store
+/// last seeded this B-rep value are visited, and the store ends exactly as a full seeding
+/// leaves it. Returns the objects given or checked for a record, the B-rep included.
+///
+/// # Errors
+///
+/// `InvalidInput` when the store keeps no progress for `b`.
+pub(crate) fn seed_new_records(
+    records: &mut topo::NotifyRecords,
+    b: &mut Brep,
+    serial: Option<u64>,
+    key_of: &dyn Fn(EntityRef) -> ObjectRef,
+) -> Result<usize> {
+    let id = progress_id(b, serial, key_of);
+    let instance = b.progress_tag();
+    seed_records_once(records, (id, instance), b, key_of)
 }
 
 /// Lends the kernel context's notify callbacks and identity domain to a stand-in
