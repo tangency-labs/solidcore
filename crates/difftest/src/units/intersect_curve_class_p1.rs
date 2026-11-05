@@ -2,20 +2,20 @@
 //! `SmCurveClassification`, `SmTouchData`'s touch-list helpers, the classification overloads
 //! of `SmTol` and the static helpers of `SmCurveClass.cpp`.
 //!
-//! C++: `solidcore_ffi::units::intersect_curve_class_p1` (upstream
-//! `source/SMLib/src/SmCurveClass.cpp`). Rust: `solidcore::intersect::curve_class`.
+//! Ported from upstream `source/SMLib/src/SmCurveClass.cpp`; checked against its golden.
+//! Rust: `solidcore::intersect::curve_class`.
 //!
 //! A case is a script: a pool of `objects` (curves as in unit `curve.curve_p6` plus real
 //! `SmEllipse` / `SmCircle`, planes, B-spline surfaces, points, vertex, edge and face objects,
-//! loop and "other" stand-ins) and `ops` on two default classifications `cc[0]`, `cc[1]`. Both
-//! sides produce the flat record documented in the ffi module (per op: code, status, outputs,
-//! state of the target classification), reported as the `out` values. A Rust error maps to
+//! loop and "other" stand-ins) and `ops` on two default classifications `cc[0]`, `cc[1]`. The
+//! Rust side produces a flat record (per op: code, status, outputs, state of the target
+//! classification), reported as the `out` values. A Rust error maps to
 //! its `SmStatus` (`InvalidInput` 1007, `-1` for one upstream cannot return); an `Unported`
 //! error anywhere defers the case.
 //!
 //! A few generated scripts (and none of the fixtures) add a real one-face B-rep (`face`, as in
-//! unit `intersect.curve_class_p4`: `sc_one_face_brep.h` in the shim,
-//! `heal_face_props::rust_brep` plus its down face use's side in Rust) whose face, loops,
+//! unit `intersect.curve_class_p4`: `heal_face_props::rust_brep` plus its down face use's
+//! side) whose face, loops,
 //! edges, vertices and edge uses follow the objects in the pool: a classification along a line
 //! through two of its corners, its interiors on its edges and its ends on its vertices, for
 //! `sm_MakeConsistentClassifications` (`SmEdge::GetVertex`, `SmVertex::GetEdges`, the edge
@@ -26,22 +26,20 @@
 //! `ComputePointParameters` are the ported topology members.
 //!
 //! `sm_SetXSectEdgeThroughPoint` and `sm_GetCCIGeometry` run on the edge's B-rep record
-//! (an edited edge curve is written back to the pool curve the shim's edge shares).
+//! (an edited edge curve is written back to the pool curve the edge shares).
 //!
-//! `sm_ComputeFacePointClass` runs on the face's B-rep record; both sides emit the status and the whole
+//! `sm_ComputeFacePointClass` runs on the face's B-rep record; the record holds the status and the whole
 //! point classification (object, face, deviation, parameters). On the one-face B-rep the points sit
 //! on the corners, edges and interior, lifted off the surface, and strays, so the classes are
 //! vertex, edge, face and outside. On a bare face (a surface, no loops, an empty UV domain) the
-//! point solve finds nothing and both sides end in `SM_ERR` with the default record, so those
+//! point solve finds nothing and it ends in `SM_ERR` with the default record, so those
 //! cases check the status, not a classification; so do points too far from the one-face
-//! B-rep's surface. The shim rejects a face whose UV domain has zero size on either axis (the
-//! C++ crashes on the single-point domain; cause not located).
+//! B-rep's surface.
 //!
-//! Inputs the shim rejects, for which the Rust side would defer or that are undefined upstream:
-//! surface point solves (`ComputePointParameters` on surfaces, `sm_GetCCISurfaceGaps` with
-//! surfaces), `SmTol::MapTo2d` for a curve of dimension other than 2 or 3 on a surface
-//! (`SmSurface::DropPoint`) and an `SmCrvOnSurf` over a plane. Generated scripts are filtered by the shim's
-//! run-time checks (scripts it rejects as undefined upstream are dropped).
+//! Every generated script is a case, including those undefined upstream (surface point
+//! solves, `SmTol::MapTo2d` for a curve of dimension other than 2 or 3 on a surface, an
+//! `SmCrvOnSurf` over a plane, a face whose UV domain has zero size): their golden is the
+//! Rust result, refusal or deferral.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -76,8 +74,6 @@ use solidcore::topology::face::p2 as topo_face;
 use solidcore::topology::vertex as topo_vertex;
 use solidcore::topology::{Brep, Edge, Face, Vertex, VertexId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::heal_face_props::FaceSpec;
-use solidcore_ffi::units::intersect_curve_class_p1::{self as ffi, kind, op};
 
 use super::intersect_curve_class_p4::{face_brep, gen_face, topology_entities, topology_kinds};
 use crate::units::heal_face_props::{self as hfp, FaceIn, LoopsIn};
@@ -85,6 +81,74 @@ use crate::units::heal_face_props::{self as hfp, FaceIn, LoopsIn};
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The pool object kinds of a script record.
+pub(crate) mod kind {
+    pub(crate) const CURVE: usize = 0;
+    pub(crate) const PLANE: usize = 1;
+    pub(crate) const BSURF: usize = 2;
+    pub(crate) const POINT: usize = 3;
+    pub(crate) const VERTEX: usize = 4;
+    pub(crate) const EDGE: usize = 5;
+    pub(crate) const FACE: usize = 6;
+    pub(crate) const LOOP: usize = 7;
+    pub(crate) const OTHER: usize = 8;
+}
+
+/// The op codes of a script record.
+mod op {
+    pub const SET_SIZE: usize = 0;
+    pub const REMOVE_AT: usize = 1;
+    pub const IVL_SET: usize = 2;
+    pub const IVL_SET_MIN: usize = 3;
+    pub const IVL_SET_MAX: usize = 4;
+    pub const IVL_RESET: usize = 5;
+    pub const IVL_ASSIGN: usize = 6;
+    pub const IVL_NEW: usize = 7;
+    pub const PC_SET_CLASS: usize = 8;
+    pub const PC_SET_T: usize = 9;
+    pub const PC_SET_UV: usize = 10;
+    pub const PC_SET_GAP: usize = 11;
+    pub const PC_SET_SSS: usize = 12;
+    pub const PC_SET_PRESNAP: usize = 13;
+    pub const PC_SET_SRC_TOL: usize = 14;
+    pub const SET_CURVE: usize = 15;
+    pub const SET_SURFACE1: usize = 16;
+    pub const SET_SURFACE2: usize = 17;
+    pub const SET_FACE: usize = 18;
+    pub const SET_INTERSECT_DATA: usize = 19;
+    pub const SET_IS_CURVE_CURRENT: usize = 20;
+    pub const SET_IGNORE_TANGENCY: usize = 21;
+    pub const SET_IS_CURVE_OWNED: usize = 22;
+    pub const SET_OK_TO_SET_TOL: usize = 23;
+    pub const SET_FILLET_DATA: usize = 24;
+    pub const SET_TGT_LOOPS_ONLY: usize = 25;
+    pub const ADD_TGT_LOOP: usize = 26;
+    pub const SET_SRC_TOL: usize = 27;
+    pub const SET_UV_CURVE1: usize = 28;
+    pub const SET_UV_CURVE2: usize = 29;
+    pub const SUB_INTERVAL: usize = 30;
+    pub const CLASSIFY_CRV_LOC: usize = 31;
+    pub const SET_PC_PARAMS: usize = 32;
+    pub const SQUEEZE_END: usize = 33;
+    pub const IS_REFERENCED: usize = 34;
+    pub const MAKE_CONSISTENT: usize = 35;
+    pub const TYPE: usize = 36;
+    pub const SRC_TOL: usize = 37;
+    pub const IVL_TOLS: usize = 38;
+    pub const OBJ_DIM: usize = 39;
+    pub const XSECT_CURVE: usize = 40;
+    pub const APPLY: usize = 41;
+    pub const ANGLE: usize = 42;
+    pub const CULL: usize = 43;
+    pub const TOL_PAIR: usize = 44;
+    pub const GAPS: usize = 45;
+    pub const TOUCH_CONNECTED: usize = 46;
+    pub const TOUCH_WINDING: usize = 47;
+    pub const EDGE_THROUGH: usize = 48;
+    pub const CCI_GEOMETRY: usize = 49;
+    pub const FACE_POINT_CLASS: usize = 50;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
@@ -102,8 +166,6 @@ pub(crate) const NOW: f64 = -f64::MAX;
 pub(crate) const USE_DEFAULT: f64 = 9876543.21;
 /// `SM_BIG_DOUBLE`.
 pub(crate) const BIG: f64 = 1.0e20;
-/// `SC_ERR_ARG`.
-pub(crate) const SC_ERR_ARG: i32 = -1002;
 
 // ---- inputs -----------------------------------------------------------------------------
 
@@ -335,76 +397,12 @@ pub(crate) fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-pub(crate) fn opt_id(o: Option<usize>) -> f64 {
-    o.map_or(-1.0, |i| i as f64)
-}
-
-pub(crate) fn curve_block(v: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Conic(c) => {
-            v.extend([if c.ry.is_some() { 3.0 } else { 4.0 }, 3.0]);
-            v.extend_from_slice(&c.center);
-            v.extend_from_slice(&c.x);
-            v.extend_from_slice(&c.y);
-            v.extend(c.domain);
-            v.push(c.rx);
-            if let Some(ry) = c.ry {
-                v.push(ry);
-            }
-            v.push(b(c.inside_out));
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            v.extend_from_slice(&l.p);
-            v.extend_from_slice(&l.v);
-            v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-        }
-    }
-}
-
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "serde's skip_serializing_if passes the field by reference"
 )]
 fn is_false(x: &bool) -> bool {
     !*x
-}
-
-pub(crate) fn surface_block(v: &mut Vec<f64>, s: &SurfIn) {
-    let n = s.net.len().saturating_sub(1);
-    let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
-    v.push(b(s.oob) + if s.raw_knots { 2.0 } else { 0.0 });
-    v.extend([
-        n as f64,
-        m as f64,
-        s.p as f64,
-        s.q as f64,
-        s.u.len().saturating_sub(1) as f64,
-        s.v.len().saturating_sub(1) as f64,
-    ]);
-    for row in &s.net {
-        for c in row {
-            v.extend_from_slice(c);
-        }
-    }
-    v.extend_from_slice(&s.u);
-    v.extend_from_slice(&s.v);
 }
 
 pub(crate) fn build_curve(c: &CurveIn) -> Result<Curve, HarnessError> {
@@ -480,190 +478,6 @@ pub(crate) fn build_surface(s: &SurfIn) -> Result<Surface, HarnessError> {
     Ok(Surface::from(bs))
 }
 
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn touches_block(v: &mut Vec<f64>, ts: &[TouchIn]) {
-    v.push(ts.len() as f64);
-    for t in ts {
-        v.extend([
-            opt_id(t.c),
-            f64::from(t.dir),
-            t.li as f64,
-            t.prm,
-            t.pi as f64,
-            opt_id(t.pc),
-        ]);
-    }
-}
-
-fn cpp_input(s: &Script) -> Vec<f64> {
-    let mut v = vec![s.objects.len() as f64];
-    for o in &s.objects {
-        match o {
-            ObjIn::Curve(c) => {
-                v.push(kind::CURVE as f64);
-                curve_block(&mut v, c);
-            }
-            ObjIn::Plane { o, n } => {
-                v.push(kind::PLANE as f64);
-                v.extend_from_slice(o);
-                v.extend_from_slice(n);
-            }
-            ObjIn::Bsurf(sf) => {
-                v.push(kind::BSURF as f64);
-                surface_block(&mut v, sf);
-            }
-            ObjIn::Point(p) => {
-                v.push(kind::POINT as f64);
-                v.extend_from_slice(p);
-            }
-            ObjIn::Vertex => v.push(kind::VERTEX as f64),
-            ObjIn::Edge(c) => v.extend([kind::EDGE as f64, opt_id(*c)]),
-            ObjIn::Face(sf) => v.extend([kind::FACE as f64, opt_id(*sf)]),
-            ObjIn::Loop => v.push(kind::LOOP as f64),
-            ObjIn::Other => v.push(kind::OTHER as f64),
-        }
-    }
-    v.push(s.ops.len() as f64);
-    for o in &s.ops {
-        let (code, t) = op_code(o);
-        v.extend([code as f64, t as f64]);
-        match o {
-            OpIn::SetSize { n, .. } => v.push(*n as f64),
-            OpIn::RemoveAt { j, .. }
-            | OpIn::IvlReset { j, .. }
-            | OpIn::SubInterval { j, .. }
-            | OpIn::SqueezeEnd { j, .. }
-            | OpIn::IvlTols { j, .. } => v.push(*j as f64),
-            OpIn::IvlSet { j, a, b: bb, .. } => v.extend([*j as f64, *a, *bb]),
-            OpIn::IvlSetMin { j, v: x, .. } | OpIn::IvlSetMax { j, v: x, .. } => {
-                v.extend([*j as f64, *x]);
-            }
-            OpIn::IvlAssign { j, k, .. } => v.extend([*j as f64, *k as f64]),
-            OpIn::IvlNew {
-                j, with, owner, a, b: bb, ..
-            } => v.extend([*j as f64, b(*with), b(*owner), *a, *bb]),
-            OpIn::PcSetClass { j, w, class, obj, .. } => {
-                v.extend([*j as f64, *w as f64, f64::from(*class), opt_id(*obj)]);
-            }
-            OpIn::PcSetT { j, w, v: x, .. } | OpIn::PcSetPresnap { j, w, v: x, .. } => {
-                v.extend([*j as f64, *w as f64, *x]);
-            }
-            OpIn::PcSetUv { j, w, u, v: x, .. } => v.extend([*j as f64, *w as f64, *u, *x]),
-            OpIn::PcSetGap { j, w, g, .. } => v.extend([*j as f64, *w as f64, *g]),
-            OpIn::PcSetSrcTol { j, w, tol, .. } => v.extend([*j as f64, *w as f64, *tol]),
-            OpIn::PcSetSss { j, w, p, .. } => {
-                v.extend([*j as f64, *w as f64]);
-                v.extend_from_slice(p);
-            }
-            OpIn::SetCurve { obj, owned, .. } => v.extend([opt_id(*obj), b(*owned)]),
-            OpIn::SetFilletData { obj, b: x, .. } => v.extend([opt_id(*obj), b(*x)]),
-            OpIn::SetSurface1 { obj, .. }
-            | OpIn::SetSurface2 { obj, .. }
-            | OpIn::SetFace { obj, .. }
-            | OpIn::AddTgtLoop { obj, .. }
-            | OpIn::SetUvCurve1 { obj, .. }
-            | OpIn::SetUvCurve2 { obj, .. }
-            | OpIn::IsReferenced { obj, .. }
-            | OpIn::ObjDim { obj, .. } => v.push(opt_id(*obj)),
-            OpIn::CciGeometry { e, .. } => v.push(opt_id(*e)),
-            OpIn::SetIntersectData {
-                s1, s2, uv2, current, ti, ..
-            } => v.extend([opt_id(*s1), opt_id(*s2), opt_id(*uv2), b(*current), opt_id(*ti)]),
-            OpIn::SetIsCurveCurrent { b: x, .. }
-            | OpIn::SetIgnoreTangency { b: x, .. }
-            | OpIn::SetIsCurveOwned { b: x, .. }
-            | OpIn::SetOkToSetTol { b: x, .. }
-            | OpIn::SetTgtLoopsOnly { b: x, .. }
-            | OpIn::SetPcParams { mids: x, .. } => v.push(b(*x)),
-            OpIn::SetSrcTol { tol, .. } => v.push(*tol),
-            OpIn::ClassifyCrvLoc { j, w, prm, .. } => v.extend([*j as f64, *w as f64, *prm]),
-            OpIn::Type { types, .. } => {
-                v.push(types.len() as f64);
-                v.extend(types.iter().map(|&x| x as f64));
-            }
-            OpIn::XsectCurve {
-                c, tol, uvc, srf, uv, prm, dev, p, ..
-            } => {
-                v.extend([opt_id(*c), *tol, uvc.len() as f64]);
-                v.extend(uvc.iter().map(|x| opt_id(*x)));
-                v.push(srf.len() as f64);
-                v.extend(srf.iter().map(|x| opt_id(*x)));
-                v.push(uv.len() as f64);
-                for q in uv {
-                    v.extend_from_slice(q);
-                }
-                v.extend([*prm, *dev]);
-                v.extend_from_slice(p);
-            }
-            OpIn::Apply {
-                use_cc,
-                edge,
-                emate,
-                srf,
-                uv,
-                sol,
-                sss,
-                ..
-            } => {
-                v.extend([b(*use_cc), opt_id(*edge), opt_id(*emate)]);
-                for (s, q) in srf.iter().zip(uv) {
-                    v.extend([opt_id(*s), q[0], q[1]]);
-                }
-                v.extend_from_slice(sol);
-                v.extend_from_slice(sss);
-            }
-            OpIn::Angle { c1, t1, c2, t2, dev, .. } => {
-                v.extend([opt_id(*c1), *t1, opt_id(*c2), *t2, *dev]);
-            }
-            OpIn::Cull {
-                s, uvc, ivl1, c2, ivl2, tol, sols, ..
-            } => {
-                v.extend([opt_id(*s), opt_id(*uvc), ivl1[0], ivl1[1], opt_id(*c2), ivl2[0], ivl2[1], *tol]);
-                v.push(sols.len() as f64);
-                for x in sols {
-                    v.extend([x.ty as f64, x.s[0], x.s[1], x.e[0], x.e[1], x.value]);
-                }
-            }
-            OpIn::TolPair {
-                c, s, p1, tol1, p2, tol2, ..
-            } => v.extend([opt_id(*c), opt_id(*s), *p1, *tol1, *p2, *tol2]),
-            OpIn::Gaps {
-                cp, ep, sol, pairs, count, ..
-            } => {
-                v.extend_from_slice(cp);
-                v.extend_from_slice(ep);
-                v.extend_from_slice(sol);
-                v.push(pairs.len() as f64);
-                for (s, u) in pairs {
-                    v.extend([opt_id(*s), opt_id(*u)]);
-                }
-                v.push(*count as f64);
-            }
-            OpIn::TouchConnected { c, touches, .. } => {
-                v.push(opt_id(*c));
-                touches_block(&mut v, touches);
-            }
-            OpIn::TouchWinding { touches, .. } => touches_block(&mut v, touches),
-            OpIn::EdgeThrough { e, p, srf, uv, prm, .. } => {
-                v.push(opt_id(*e));
-                v.extend_from_slice(p);
-                for (s, q) in srf.iter().zip(uv) {
-                    v.extend([opt_id(*s), q[0], q[1]]);
-                }
-                v.push(*prm);
-            }
-            OpIn::FacePointClass { f, p, tol, .. } => {
-                v.push(opt_id(*f));
-                v.extend_from_slice(p);
-                v.push(*tol);
-            }
-            OpIn::MakeConsistent { .. } | OpIn::SrcTol { .. } => {}
-        }
-    }
-    v
-}
-
 fn op_code(o: &OpIn) -> (usize, usize) {
     match *o {
         OpIn::SetSize { t, .. } => (op::SET_SIZE, t),
@@ -718,16 +532,6 @@ fn op_code(o: &OpIn) -> (usize, usize) {
         OpIn::CciGeometry { t, .. } => (op::CCI_GEOMETRY, t),
         OpIn::FacePointClass { t, .. } => (op::FACE_POINT_CLASS, t),
     }
-}
-
-fn ffi_face(s: &Script) -> Option<FaceSpec> {
-    s.face.as_ref().map(hfp::ffi_face)
-}
-
-fn cpp(s: &Script) -> Result<Output, HarnessError> {
-    let input = cpp_input(s);
-    let out = ffi::run(ffi_face(s).as_ref(), &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1110,9 +914,11 @@ pub(crate) fn status(e: &SolidError) -> f64 {
     }
 }
 
-/// A Rust failure: deferred for `Unported`, a harness error otherwise.
+/// A Rust failure: deferred for `Unported`, refused with the status of an operation
+/// upstream never fails on (its input is undefined upstream), a harness error otherwise.
 pub(crate) enum Fail {
     Deferred(Box<Output>),
+    Refused(f64),
     Harness(HarnessError),
 }
 
@@ -1120,6 +926,11 @@ impl From<HarnessError> for Fail {
     fn from(e: HarnessError) -> Self {
         Fail::Harness(e)
     }
+}
+
+/// The output of a case refused with status `s`.
+pub(crate) fn refused(s: f64) -> Output {
+    Output::err(format!("refused_{s}"))
 }
 
 /// `Ok(v)` or the status; `Unported` defers the case.
@@ -1133,9 +944,10 @@ pub(crate) fn st<T>(r: solidcore::Result<T>) -> Result<Result<T, f64>, Fail> {
     }
 }
 
-/// The value, or a harness error for a status (an operation upstream cannot fail).
+/// The value, or the case refused with the status (an operation upstream cannot fail: the
+/// input is undefined upstream).
 pub(crate) fn must<T>(r: solidcore::Result<T>) -> Result<T, Fail> {
-    st(r)?.map_err(|s| Fail::Harness(harness(format!("unexpected status {s}"))))
+    st(r)?.map_err(Fail::Refused)
 }
 
 pub(crate) fn id(h: Option<H>) -> f64 {
@@ -1196,7 +1008,7 @@ fn put_cc(o: &mut Vec<f64>, k: &Kernel, cc: &CurveClassification<H>) {
     }
 }
 
-/// The curve record (see the ffi module).
+/// The curve record.
 pub(crate) fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: &Curve) {
     let ivl = c.natural_interval();
     o.extend([ivl.min(), ivl.max()]);
@@ -1541,7 +1353,7 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                         }
                         Err(s) => {
                             pool.put_curve(ci, curve);
-                            return Err(harness(format!("xsect: status {s}")).into());
+                            return Err(Fail::Refused(s));
                         }
                     }
                 }
@@ -1599,7 +1411,7 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                         Ok(Ok(r)) => r,
                         Ok(Err(s)) => {
                             done(&mut pool, curve);
-                            return Err(harness(format!("apply: status {s}")).into());
+                            return Err(Fail::Refused(s));
                         }
                         Err(f) => {
                             done(&mut pool, curve);
@@ -1842,6 +1654,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
     match rust_run(s) {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
+        Err(Fail::Refused(s)) => Ok(refused(s)),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -2678,15 +2491,6 @@ fn gen_face_script(rng: &mut Rng) -> Option<Script> {
     Some(Script { objects, face: Some(face), ops })
 }
 
-/// Whether the shim accepts the script (it rejects what is undefined upstream).
-fn shim_accepts(s: &Script) -> bool {
-    match ffi::run(ffi_face(s).as_ref(), &cpp_input(s)) {
-        Ok(_) => true,
-        Err(solidcore_ffi::FfiError::Status(c)) if c == SC_ERR_ARG => false,
-        Err(_) => false,
-    }
-}
-
 /// Appends the topology of `face`'s one-face B-rep to the pool, in the shim's order.
 pub(crate) fn add_face(k: &Kernel, pool: &mut Pool, face: &FaceIn) -> Result<(), HarnessError> {
     let (mut b, f) = face_brep(k, face)?;
@@ -2865,14 +2669,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let s = gen_script(rng);
-            if ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_err() || !shim_accepts(&s) {
-                continue;
-            }
-            return serde_json::to_value(s).ok();
-        }
-        None
+        serde_json::to_value(gen_script(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -2892,10 +2689,6 @@ impl UnitDiff for Runner {
         Ok(cases)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -2905,8 +2698,7 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
-    /// Generated scripts are accepted by the ffi checks, and most of them are comparable
-    /// now (not deferred).
+    /// Most generated scripts are not deferred.
     #[test]
     fn generated_scripts_are_mostly_comparable() {
         let mut rng = Rng::new(11);

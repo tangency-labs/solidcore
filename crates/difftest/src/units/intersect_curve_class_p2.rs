@@ -3,21 +3,20 @@
 //! location and dead topology), `SmCurveInterval::GetMinUV` / `GetMaxUV` and the entry checks
 //! of `sm_RefineCCIToSurfaces`.
 //!
-//! C++: `solidcore_ffi::units::intersect_curve_class_p2` (upstream
-//! `source/SMLib/src/SmCurveClass.cpp`). Rust: `solidcore::intersect::curve_class`.
+//! Ported from upstream `source/SMLib/src/SmCurveClass.cpp`; checked against its golden.
+//! Rust: `solidcore::intersect::curve_class`.
 //!
 //! A case is a script: a pool of `objects` (as in unit `intersect.curve_class_p1`: curves of
 //! every kind the code branches on, 2D curves, planes, B-spline surfaces, points, vertex, edge,
 //! face, loop and other stand-ins), curves on B-spline surfaces appended to the pool, two
 //! classifications built from data (curve, surfaces, UV curves, face, topology intersector and
 //! other classification stand-ins, flags, target loops, zone tolerance, intervals with their
-//! three point classifications), and `ops` on them. Both sides produce the flat record
-//! documented in the ffi module, reported as the `out` values. A Rust error maps to its
+//! three point classifications), and `ops` on them. The Rust side produces a flat record (per
+//! op: code, status, outputs, state), reported as the `out` values. A Rust error maps to its
 //! `SmStatus` (`InvalidInput` 1007); an `Unported` error anywhere defers the case.
 //!
 //! Three in ten generated scripts add a real one-face B-rep (`face`, as in unit
-//! `intersect.curve_class_p4`: `sc_one_face_brep.h` in the shim, `heal_face_props::rust_brep`
-//! plus its down face use's side in Rust) after the curves on surfaces in the pool; their
+//! `intersect.curve_class_p4`: `heal_face_props::rust_brep` plus its down face use's side) after the curves on surfaces in the pool; their
 //! face, edge and vertex classifications (and most classification faces) then name its real
 //! topology, so the zone tolerances, `HasDeadTopologyPointObject` (also against that B-rep)
 //! and the face surface drop of `GetMinUV` / `GetMaxUV` run the ported topology through
@@ -26,17 +25,17 @@
 //! Some classification faces intentionally stay on the base pool's bare face while that
 //! B-rep is present; the bare face owns the same B-spline surface. [`P2Geometry`] falls back
 //! to the bare record only when the real topology lookup misses, so the UV surface drop
-//! compares the native stand-in surface rather than deferring it.
+//! answers from the stand-in surface rather than deferring it.
 //!
-//! Without that B-rep, the vertex, edge and face stand-ins are B-rep records in the shim's
+//! Without that B-rep, the vertex, edge and face stand-ins are B-rep records in their
 //! bare state (see unit `intersect.curve_class_p1`,
 //! [`BareTopology`](super::intersect_curve_class_p1::BareTopology)), so the members those
-//! records answer (zone tolerances, edge curve / interval, face surface) are compared too.
+//! records answer (zone tolerances, edge curve / interval, face surface) are recorded too.
 //!
 //! Deferred cases: members on the bare vertex and edge stand-ins (no B-rep behind them:
-//! `topology.vertex`, `topology.edge`, `topology.brep_p1`). Generated scripts are filtered by the
-//! shim's run-time checks (scripts it rejects as undefined upstream, or as topology walks over
-//! the bare stand-ins, are dropped).
+//! `topology.vertex`, `topology.edge`, `topology.brep_p1`). Every generated script is a case,
+//! including those undefined upstream and topology walks over the bare stand-ins: their golden
+//! is the Rust result, refusal or deferral.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -59,21 +58,35 @@ use solidcore::surface::volume::Volume;
 use solidcore::topology::Brep;
 use solidcore::EntityRef;
 
-use solidcore_ffi::units::intersect_curve_class_p1::kind;
-use solidcore_ffi::units::intersect_curve_class_p2::{self as ffi, op};
 
 use super::intersect_curve_class_p1::{
-    b, build_pool, curve_block, gen_bspline, gen_objects, gen_tol, id, must, of_kind, opt_id,
-    put_pc, rp, st, surface_block, BSplineIn, CurveIn, Fail, LineIn, ObjIn, Pool, PoolObj, H,
-    NOW, NOZ, SC_ERR_ARG, USE_DEFAULT,
+    refused,
+    b, build_pool, gen_bspline, gen_objects, gen_tol, id, must, of_kind, put_pc, rp, st,
+    BSplineIn, CurveIn, Fail, LineIn, ObjIn, Pool, PoolObj, H, NOW, NOZ, USE_DEFAULT,
 };
-use super::intersect_curve_class_p1::add_face;
+use super::intersect_curve_class_p1::{add_face, kind};
 use super::intersect_curve_class_p4::{gen_face, topology_kinds};
-use crate::units::heal_face_props::{self as hfp, FaceIn, LoopsIn};
-use solidcore_ffi::units::heal_face_props::FaceSpec;
+use crate::units::heal_face_props::{FaceIn, LoopsIn};
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The op codes of a script record.
+mod op {
+    pub const ASSIGN: usize = 0;
+    pub const OBJ_TOL: usize = 1;
+    pub const DEAD: usize = 2;
+    pub const CRV_LOC: usize = 3;
+    pub const INSERT: usize = 4;
+    pub const RESET: usize = 5;
+    pub const CONNECT: usize = 6;
+    pub const UPDATE_PC: usize = 7;
+    pub const EDIT_MIN: usize = 8;
+    pub const EDIT_MAX: usize = 9;
+    pub const MIN_UV: usize = 10;
+    pub const MAX_UV: usize = 11;
+    pub const REFINE: usize = 12;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -224,136 +237,6 @@ struct Script {
     cos: Vec<[usize; 2]>,
     cc: [CcIn; 2],
     ops: Vec<OpIn>,
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn objects_block(v: &mut Vec<f64>, objects: &[ObjIn]) {
-    v.push(objects.len() as f64);
-    for o in objects {
-        match o {
-            ObjIn::Curve(c) => {
-                v.push(kind::CURVE as f64);
-                curve_block(v, c);
-            }
-            ObjIn::Plane { o, n } => {
-                v.push(kind::PLANE as f64);
-                v.extend_from_slice(o);
-                v.extend_from_slice(n);
-            }
-            ObjIn::Bsurf(sf) => {
-                v.push(kind::BSURF as f64);
-                surface_block(v, sf);
-            }
-            ObjIn::Point(p) => {
-                v.push(kind::POINT as f64);
-                v.extend_from_slice(p);
-            }
-            ObjIn::Vertex => v.push(kind::VERTEX as f64),
-            ObjIn::Edge(c) => v.extend([kind::EDGE as f64, opt_id(*c)]),
-            ObjIn::Face(sf) => v.extend([kind::FACE as f64, opt_id(*sf)]),
-            ObjIn::Loop => v.push(kind::LOOP as f64),
-            ObjIn::Other => v.push(kind::OTHER as f64),
-        }
-    }
-}
-
-fn pc_block(v: &mut Vec<f64>, pc: &PcIn) {
-    v.extend([f64::from(pc.class), opt_id(pc.obj), pc.t, pc.gap]);
-}
-
-fn ivl_block(v: &mut Vec<f64>, ivl: &IvlIn) {
-    v.extend([ivl.a, ivl.b]);
-    for pc in &ivl.pcs {
-        pc_block(v, pc);
-    }
-}
-
-fn cpp_input(s: &Script) -> Vec<f64> {
-    let mut v = Vec::new();
-    objects_block(&mut v, &s.objects);
-    v.push(s.cos.len() as f64);
-    for [uv, sf] in &s.cos {
-        v.extend([*uv as f64, *sf as f64]);
-    }
-    for c in &s.cc {
-        v.extend([
-            opt_id(c.curve),
-            opt_id(c.s1),
-            opt_id(c.uv1),
-            opt_id(c.s2),
-            opt_id(c.uv2),
-            opt_id(c.face),
-            opt_id(c.ti),
-            opt_id(c.other),
-            b(c.fillet),
-            b(c.current),
-            b(c.ignore),
-            b(c.ok_tol),
-            b(c.tgt_only),
-        ]);
-        v.push(c.loops.len() as f64);
-        v.extend(c.loops.iter().map(|&l| l as f64));
-        v.push(c.tol);
-        v.push(c.ivls.len() as f64);
-        for ivl in &c.ivls {
-            ivl_block(&mut v, ivl);
-        }
-    }
-    v.push(s.ops.len() as f64);
-    for o in &s.ops {
-        let (code, t) = o.code_t();
-        v.extend([code as f64, t as f64]);
-        match o {
-            OpIn::Assign { .. } => {}
-            OpIn::ObjTol { j, .. } | OpIn::CrvLoc { j, .. } => v.push(*j as f64),
-            OpIn::Dead { brep, live, .. } => v.push(if *live { 2.0 } else { b(*brep) }),
-            OpIn::Insert { j, ivl, .. } => {
-                v.push(*j as f64);
-                ivl_block(&mut v, ivl);
-            }
-            OpIn::Reset { r, .. } => {
-                let [a, bb] = r.ivl.unwrap_or([0.0, 0.0]);
-                v.extend([opt_id(r.curve), b(r.ivl.is_some()), a, bb, opt_id(r.uv), r.tol]);
-                v.extend([b(r.owned), b(r.current)]);
-                v.extend([opt_id(r.s1), opt_id(r.s2), opt_id(r.uv2), opt_id(r.ti)]);
-            }
-            OpIn::Connect { j, end, allow, .. } => v.extend([*j as f64, *end as f64, b(*allow)]),
-            OpIn::UpdatePc { j, tol, pc, .. } => {
-                v.extend([*j as f64, *tol]);
-                pc_block(&mut v, pc);
-            }
-            OpIn::EditMin { j, param, collapse, .. } | OpIn::EditMax { j, param, collapse, .. } => {
-                v.extend([*j as f64, *param, b(*collapse)]);
-            }
-            OpIn::MinUv { j, uv, .. } | OpIn::MaxUv { j, uv, .. } => v.extend([*j as f64, uv[0], uv[1]]),
-            OpIn::Refine { sol, edge, sss, count, .. } => {
-                v.extend([sol.ty as f64, sol.s[0], sol.s[1], sol.e[0], sol.e[1], sol.value]);
-                v.push(opt_id(*edge));
-                v.extend_from_slice(sss);
-                v.push(*count as f64);
-            }
-        }
-    }
-    v
-}
-
-fn ffi_face(s: &Script) -> Option<FaceSpec> {
-    s.face.as_ref().map(hfp::ffi_face)
-}
-
-fn cpp(s: &Script) -> Result<Output, HarnessError> {
-    let out = ffi::run(ffi_face(s).as_ref(), &cpp_input(s)).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
-}
-
-/// Whether the shim accepts the script (it rejects what is undefined upstream).
-fn shim_accepts(s: &Script) -> bool {
-    match ffi::run(ffi_face(s).as_ref(), &cpp_input(s)) {
-        Ok(_) => true,
-        Err(solidcore_ffi::FfiError::Status(c)) if c == SC_ERR_ARG => false,
-        Err(_) => false,
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -635,6 +518,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
     match rust_run(s) {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
+        Err(Fail::Refused(s)) => Ok(refused(s)),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -1216,14 +1100,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let s = gen_script(rng);
-            if ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_err() || !shim_accepts(&s) {
-                continue;
-            }
-            return serde_json::to_value(s).ok();
-        }
-        None
+        serde_json::to_value(gen_script(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1243,10 +1120,6 @@ impl UnitDiff for Runner {
         Ok(cases)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1256,8 +1129,7 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
-    /// Generated scripts are accepted by the ffi checks, and most of them are comparable now
-    /// (not deferred).
+    /// Most generated scripts are not deferred.
     #[test]
     fn generated_scripts_are_mostly_comparable() {
         let mut rng = Rng::new(11);
@@ -1276,71 +1148,30 @@ mod tests {
         assert!(deferred * 3 < total, "{deferred} of {total} deferred");
     }
 
-    /// The 17 baseline cases (main before the fallback) that deferred on
-    /// `SmFace::GetSurface`: generated name and case index from the baseline report.
-    const MIXED_TOPOLOGY_CASES: [(&str, usize); 17] = [
-        ("gen0009", 9),
-        ("gen0036", 36),
-        ("gen0039", 39),
-        ("gen0205", 205),
-        ("gen0212", 212),
-        ("gen0519", 519),
-        ("gen0667", 667),
-        ("gen0700", 700),
-        ("gen0722", 722),
-        ("gen0748", 748),
-        ("gen0919", 919),
-        ("gen0971", 971),
-        ("gen0973", 973),
-        ("gen1022", 1022),
-        ("gen1025", 1025),
-        ("gen1383", 1383),
-        ("gen1415", 1415),
-    ];
-
     /// A classification face may stay on the base pool's bare face while a real one-face
-    /// B-rep is also present. The native `SmFace::GetSurface` answers from that stand-in's
-    /// surface, so `GetMinUV` / `GetMaxUV` must compare real values through the bare fallback.
+    /// B-rep is also present. `SmFace::GetSurface` answers from that stand-in's surface, so
+    /// `GetMinUV` / `GetMaxUV` answer through the bare fallback instead of deferring on it.
     #[test]
-    fn baseline_mixed_topology_cases_compare() {
-        for (name, index) in MIXED_TOPOLOGY_CASES {
-            let mut rng = Rng::new(CaseContext::seed_for("intersect.curve_class_p2", index));
-            let v = Runner
-                .generate(&mut rng)
-                .unwrap_or_else(|| panic!("{name}: generation rejected"));
+    fn mixed_topology_cases_do_not_defer_on_the_face_surface() {
+        let mut mixed = 0;
+        for i in 0..MIN_GENERATED {
+            let mut rng = Rng::new(CaseContext::seed_for("intersect.curve_class_p2", i));
+            let Some(v) = Runner.generate(&mut rng) else { continue };
             let s: Script = serde_json::from_value(v).unwrap();
+            let bare_face = s.objects.iter().any(|o| matches!(o, ObjIn::Face(Some(_))));
+            let uv_op = s.ops.iter().any(|o| matches!(o, OpIn::MinUv { .. } | OpIn::MaxUv { .. }));
+            if !bare_face || s.face.is_none() || !uv_op {
+                continue;
+            }
+            mixed += 1;
+            let out = rust(&s).unwrap_or_else(|e| panic!("gen{i}: rust: {e}"));
             assert!(
-                s.objects.iter().any(|o| matches!(o, ObjIn::Face(Some(_)))),
-                "{name}: no bare face with a surface"
+                out.deferred.as_ref().is_none_or(|d| d.symbol != "SmFace::GetSurface"),
+                "gen{i}: {:?}",
+                out.deferred
             );
-            assert!(s.face.is_some(), "{name}: no real one-face B-rep");
-            assert!(
-                s.ops
-                    .iter()
-                    .any(|o| matches!(o, OpIn::MinUv { .. } | OpIn::MaxUv { .. })),
-                "{name}: no GetMinUV/GetMaxUV operation"
-            );
-
-            let native = cpp(&s).unwrap_or_else(|e| panic!("{name}: native: {e}"));
-            let rust_out = rust(&s).unwrap_or_else(|e| panic!("{name}: rust: {e}"));
-            assert!(
-                rust_out.deferred.is_none(),
-                "{name}: unexpected deferral: {:?}",
-                rust_out.deferred
-            );
-            let diff = crate::compare::compare(&native, &rust_out, &[]);
-            assert!(diff.pass(), "{name}: {:?}", diff.mismatches);
-            assert!(diff.values_compared > 0, "{name}: no native values compared");
         }
-    }
-
-    #[test]
-    fn edge_cases_are_accepted() {
-        for (name, v) in edge_cases() {
-            let s: Script = serde_json::from_value(v).unwrap();
-            assert!(ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_ok(), "{name}");
-            assert!(shim_accepts(&s), "{name}");
-        }
+        assert!(mixed >= 17, "{mixed} mixed topology cases");
     }
 }
 

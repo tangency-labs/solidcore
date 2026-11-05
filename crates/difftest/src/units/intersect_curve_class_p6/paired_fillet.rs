@@ -1,6 +1,6 @@
 //! Actual paired classifications; each role resolves into one retained real box.
 use super::{
-    brep_p1, ffi, h, status, topo_edge, Brep, ClassGeometry, ClassGeometryMut, ClassObject,
+    brep_p1, h, status, topo_edge, Brep, ClassGeometry, ClassGeometryMut, ClassObject,
     ClassObjectKind, Curve, CurveClassification, CurveInterval, EntityRef, HarnessError, Kernel,
     MergeContext, MergeIntervalBrep, Output, PointClassType, PointClassification, Surface, Vec3,
     Volume,
@@ -21,14 +21,6 @@ impl Mode {
             "legacy-none" => Some(Self::LegacyNone),
             "linked-disabled" => Some(Self::LinkedDisabled),
             _ => None,
-        }
-    }
-    fn code(self) -> i32 {
-        match self {
-            Self::Metadata => 0,
-            Self::Linked => 1,
-            Self::LegacyNone => 2,
-            Self::LinkedDisabled => 3,
         }
     }
 }
@@ -220,16 +212,6 @@ fn classification(
         end: pc(PointClassType::Vertex, EntityRef::Vertex(end), d.max()),
     };
     Ok(cc)
-}
-pub(super) fn cpp(mode: Mode) -> Result<Output, HarnessError> {
-    let result = if mode == Mode::Metadata {
-        ffi::paired_fillet()
-    } else {
-        ffi::paired_fillet_scoped(mode.code())
-    };
-    result
-        .map(|v| Output::new().values("out", v))
-        .map_err(|e| h(e.to_string()))
 }
 pub(super) fn rust(mode: Mode) -> Result<Output, HarnessError> {
     let mut k = Kernel::default();

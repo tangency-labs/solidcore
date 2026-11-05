@@ -1,6 +1,7 @@
-//! Differential runner for the part-5 `SmCurveClassification` operations.
+//! Runner for the part-5 `SmCurveClassification` operations, ported from upstream
+//! `source/SMLib/src/SmCurveClass.cpp`; checked against its golden.
 //! Real lines, circles and stationary B-splines; complete interval and solution
-//! state is compared. Topology-handle and part-6 gaps are explicit deferrals.
+//! state is recorded. Topology-handle and part-6 gaps are explicit deferrals.
 //!
 //! Cases with a `topo` input run on real B-reps instead (module `topo`): an edge target
 //! of `sm_InsertSolutions` and the vertices of `IntersectVertices`, including the edits
@@ -29,7 +30,6 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
 use solidcore::{Result as ScResult, SolidError};
-use solidcore_ffi::units::intersect_curve_class_p5 as ffi;
 
 #[path = "intersect_curve_class_p5/topo.rs"]
 mod topo;
@@ -97,43 +97,6 @@ struct Input {
     /// A B-rep case (module `topo`); the fields above are then unused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     topo: Option<topo::TopoIn>,
-}
-
-impl Input {
-    fn flat(&self) -> Vec<f64> {
-        let n = self.bounds.len().saturating_sub(1);
-        let other_bounds = self.other_bounds.as_ref().unwrap_or(&self.bounds);
-        let other_n = other_bounds.len().saturating_sub(1);
-        let mut out = vec![
-            self.op as f64,
-            self.shape as f64,
-            if self.dim2 { 0. } else { 1. },
-            f64::from(self.ignore),
-            f64::from(self.flag1),
-            f64::from(self.flag2),
-            f64::from(self.flag3),
-            self.target as f64,
-            self.index as f64,
-            self.scale,
-            self.tol,
-            self.angle,
-            n as f64,
-            self.solutions.len() as f64,
-            self.xsect_tol,
-            other_n as f64,
-        ];
-        out.extend(&self.bounds);
-        out.extend(other_bounds);
-        for (c, count) in [(&self.classes, n), (&self.other_classes, other_n)] {
-            if c.is_empty() {
-                out.extend(std::iter::repeat_n(100., 3 * count));
-            } else {
-                out.extend(c.iter().map(|x| f64::from(*x)));
-            }
-        }
-        out.extend(self.solutions.iter().flatten());
-        out
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -544,97 +507,92 @@ impl UnitDiff for Runner {
         "intersect.curve_class_p5"
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let op = [0, 0, 0, 0, 0, 1, 1, 1, 3, 3, 6, 6, 2, 2, 4, 5]
-                .get(rng.below(16) as usize)
-                .copied()
-                .unwrap_or(0);
-            let n = 1 + rng.below(5) as usize;
-            let target = if op == 6 {
-                2
-            } else if op == 3 && rng.below(2) == 0 {
-                3
-            } else {
-                rng.below(2) as usize
-            };
-            let scale = [1e-6, 1., 1e6]
-                .get(rng.below(3) as usize)
-                .copied()
-                .unwrap_or(1.);
-            let mut i: Input =
-                serde_json::from_value(json!({"op":op,"target":target,"scale":scale})).ok()?;
-            i.shape = rng.below(2) as usize;
-            i.dim2 = rng.below(4) == 0;
-            i.ignore = rng.below(2) == 0;
-            i.angle = if rng.below(2) == 0 {
-                0.
-            } else {
-                rng.unit() * std::f64::consts::PI
-            };
-            i.bounds = (0..=n).map(|j| j as f64 / n as f64).collect();
-            i.tol = [0., 1e-9, 1e-6, 0.01]
-                .get(rng.below(4) as usize)
-                .copied()
-                .unwrap_or(1e-6);
-            i.flag1 = rng.below(2) == 0;
-            i.flag2 = rng.below(2) == 0;
-            i.flag3 = rng.below(2) == 0;
-            i.index = rng.below(2) as usize;
-            if op == 2 {
-                i.classes = (0..3 * n)
-                    .map(|j| {
-                        if j % 3 == 1 {
-                            if target == 0 {
-                                106
-                            } else {
-                                107
-                            }
+        let op = [0, 0, 0, 0, 0, 1, 1, 1, 3, 3, 6, 6, 2, 2, 4, 5]
+            .get(rng.below(16) as usize)
+            .copied()
+            .unwrap_or(0);
+        let n = 1 + rng.below(5) as usize;
+        let target = if op == 6 {
+            2
+        } else if op == 3 && rng.below(2) == 0 {
+            3
+        } else {
+            rng.below(2) as usize
+        };
+        let scale = [1e-6, 1., 1e6]
+            .get(rng.below(3) as usize)
+            .copied()
+            .unwrap_or(1.);
+        let mut i: Input =
+            serde_json::from_value(json!({"op":op,"target":target,"scale":scale})).ok()?;
+        i.shape = rng.below(2) as usize;
+        i.dim2 = rng.below(4) == 0;
+        i.ignore = rng.below(2) == 0;
+        i.angle = if rng.below(2) == 0 {
+            0.
+        } else {
+            rng.unit() * std::f64::consts::PI
+        };
+        i.bounds = (0..=n).map(|j| j as f64 / n as f64).collect();
+        i.tol = [0., 1e-9, 1e-6, 0.01]
+            .get(rng.below(4) as usize)
+            .copied()
+            .unwrap_or(1e-6);
+        i.flag1 = rng.below(2) == 0;
+        i.flag2 = rng.below(2) == 0;
+        i.flag3 = rng.below(2) == 0;
+        i.index = rng.below(2) as usize;
+        if op == 2 {
+            i.classes = (0..3 * n)
+                .map(|j| {
+                    if j % 3 == 1 {
+                        if target == 0 {
+                            106
                         } else {
-                            100
+                            107
                         }
-                    })
-                    .collect();
-            }
-            if op == 3 && target == 3 {
-                i.classes = vec![102; 3 * n];
-                i.other_classes.clone_from(&i.classes);
-            }
-            if op == 6 {
-                i.flag1 = true;
-                i.flag2 = false;
-                i.flag3 = true;
-                i.angle = if i.shape == 0 { rng.unit() } else { 1.0 };
-            }
-            if op == 0 || op == 1 {
-                i.xsect_tol = if rng.below(2) == 0 {
-                    -1.
-                } else {
-                    rng.unit() * 0.01
-                };
-                for _ in 0..=rng.below(4) {
-                    let a = rng.unit();
-                    let b = if rng.below(2) == 0 {
-                        a + 1e-10
                     } else {
-                        rng.unit()
-                    };
-                    let typ = if rng.below(3) == 0 { 2. } else { 1. };
-                    i.solutions.push([
-                        typ,
-                        a,
-                        rng.unit(),
-                        b.min(1.),
-                        rng.unit(),
-                        rng.unit() * 1e-7,
-                        rng.unit() * 1e-7,
-                    ]);
-                }
-            }
-            if ffi::run(&i.flat()).is_ok() {
-                return serde_json::to_value(i).ok();
+                        100
+                    }
+                })
+                .collect();
+        }
+        if op == 3 && target == 3 {
+            i.classes = vec![102; 3 * n];
+            i.other_classes.clone_from(&i.classes);
+        }
+        if op == 6 {
+            i.flag1 = true;
+            i.flag2 = false;
+            i.flag3 = true;
+            i.angle = if i.shape == 0 { rng.unit() } else { 1.0 };
+        }
+        if op == 0 || op == 1 {
+            i.xsect_tol = if rng.below(2) == 0 {
+                -1.
+            } else {
+                rng.unit() * 0.01
+            };
+            for _ in 0..=rng.below(4) {
+                let a = rng.unit();
+                let b = if rng.below(2) == 0 {
+                    a + 1e-10
+                } else {
+                    rng.unit()
+                };
+                let typ = if rng.below(3) == 0 { 2. } else { 1. };
+                i.solutions.push([
+                    typ,
+                    a,
+                    rng.unit(),
+                    b.min(1.),
+                    rng.unit(),
+                    rng.unit() * 1e-7,
+                    rng.unit() * 1e-7,
+                ]);
             }
         }
-        None
+        serde_json::to_value(i).ok()
     }
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
         let context = CaseContext {
@@ -649,7 +607,7 @@ impl UnitDiff for Runner {
         };
         let stream = format!("{}/topo", self.id());
         for mut case in topo_context.generated_cases(&stream, |rng| {
-            let t = topo::generate(rng)?;
+            let t = topo::generate(rng);
             Some(json!({"op": 7, "topo": t}))
         }) {
             case.unit = self.id().to_string();
@@ -658,21 +616,11 @@ impl UnitDiff for Runner {
         }
         Ok(cases)
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Input = case.parse()?;
-        if let Some(t) = &i.topo {
-            return topo::cpp(t);
-        }
-        ffi::run(&i.flat())
-            .map(|v| Output::new().values("out", v))
-            .map_err(|e| HarnessError::new(e.to_string()))
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Input = case.parse()?;
         if let Some(t) = &i.topo {
             return topo::rust(t);
         }
-        ffi::validate(&i.flat()).map_err(|e| HarnessError::new(e.to_string()))?;
         rust(&i).map_err(|e| HarnessError::new(e.to_string()))
     }
 }

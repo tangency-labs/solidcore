@@ -1,24 +1,19 @@
 //! B-rep cases of the part-5 runner: `sm_InsertSolutions` against a real edge and
-//! `IntersectVertices` against real vertices (shim
-//! `harness/cpp/shim/intersect_curve_class_p5_topo.cpp`, layouts in
-//! `solidcore_ffi::units::intersect_curve_class_p5`).
+//! `IntersectVertices` against real vertices.
 //!
-//! The C++ side builds a B-rep of unit `topology.edgeuse_p1`'s block (here a box, a face,
-//! points and lines, or a wire network), applies the case's edits (stored tolerances,
-//! vertex points, UV trim curves) and, with edge mates, builds it a second time and
-//! relates the edges through an `SmTopologyIntersector`. The Rust side builds the same
-//! B-reps with the Rust kernel and makes the same edits ([`resolve_own`]; no C++ export
-//! reaches it) and runs
+//! The case builds a B-rep of unit `topology.edgeuse_p1`'s block (here a box, a face,
+//! points and lines, or a wire network) with the Rust kernel, applies the case's edits
+//! (stored tolerances, vertex points, UV trim curves) and, with edge mates, builds it a
+//! second time and relates the edges ([`resolve_own`]), then runs
 //! [`insert_solutions_mut`] / [`CurveClassification::intersect_vertices_mut`] on them,
 //! with the classification curve and the B-reps owned by the adapter, so the edits
 //! upstream makes in place (an edge-end vertex's tolerance, the classification curve
 //! through a surf/surf/surf point, the deleted UV trim curves of the vertex's edges and
-//! their mates) are made and compared.
+//! their mates) are made and recorded.
 //!
-//! Geometry is resolved on the Rust build and passed to both sides as numbers: the
-//! line of an edge case crosses the edge at a fraction of its interval (plus an
+//! The line of an edge case crosses the edge at a fraction of its interval (plus an
 //! offset), and the curve of a vertex case is given in a frame at a vertex (along the
-//! intersection of the two classification planes through it). Both sides compare the
+//! intersection of the two classification planes through it). The record holds the
 //! status, the whole classification, the solutions, the classification curve and the
 //! state of every vertex tolerance and edge-use UV trim curve.
 //!
@@ -28,7 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use solidcore::curve::curve::p2::{CurveKind, BSPLINE_CURVE_TYPE, LINE_TYPE};
+use solidcore::curve::curve::p2::CurveKind;
 use solidcore::curve::curve::Curve;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::solution_array::{Solution, SolutionType};
@@ -47,11 +42,9 @@ use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
 use solidcore::topology::{Brep, EdgeId, FaceId, VertexId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::intersect_curve_class_p5::{self as ffi, TopoOp};
 
 use super::super::topology_edgeuse_p1::{
-    brep_block_of, bspline_of, import_with_types, path_of, push_curve, push_surface, sel,
-    surface_of, BrepIn, BssIn, CrvIn, SrfIn,
+    bspline_of, sel, surface_of, BrepIn, BssIn, CrvIn, SrfIn,
 };
 use crate::{HarnessError, Output, Rng};
 
@@ -325,11 +318,8 @@ impl ClassGeometryMut<T> for World {
 
 // ---- resolution -------------------------------------------------------------------------
 
-/// A case resolved against the imported B-reps: the C++ input and the Rust world.
+/// A case resolved on the Rust kernel's B-reps.
 struct Resolved {
-    path: String,
-    /// B-rep block, edits and mates.
-    prefix: Vec<f64>,
     breps: Vec<Brep>,
     /// The related edges (first B-rep, second).
     mates: Vec<(EdgeId, EdgeId)>,
@@ -396,12 +386,9 @@ fn apply_own_edits(k: &Kernel, b: &mut Brep, edits: &[Edit]) -> Result<(), Solid
 /// The case's B-reps built by the Rust kernel as the shim's `build_model` builds them
 /// ([`crate::own_builder::build_any`]: the Rust `.smb` reader or constructors,
 /// renumbered into the shim's traversal order, then [`apply_own_edits`]; with mates
-/// built a second time with the same edits), with the C++ input; no C++ export reaches
-/// the Rust side. `Err(Output)` when one cannot be built.
+/// built a second time with the same edits). `Err(Output)` when one cannot be built.
 fn resolve_own(i: &TopoIn) -> Result<Result<Resolved, Output>, HarnessError> {
     use crate::own_builder::{build_any, failed_output, Built, Conventions};
-    let path = path_of(Some(&i.brep))?;
-    let block = brep_block_of(Some(&i.brep), false, false)?;
     let mut k = Kernel::default();
     let one = |k: &mut Kernel| -> Result<Result<Brep, Output>, HarnessError> {
         match build_any(k, &i.brep, false, false, &Conventions::EDGEUSE_GRAPH)? {
@@ -420,14 +407,6 @@ fn resolve_own(i: &TopoIn) -> Result<Result<Resolved, Output>, HarnessError> {
         Err(o) => return Ok(Err(o)),
     };
     let n_e = first.edges().len();
-    let mut prefix = block;
-    prefix.push(i.edits.len() as f64);
-    for e in &i.edits {
-        if e.sel < 0 {
-            return Err(harness("negative edit selector"));
-        }
-        prefix.extend([f64::from(e.kind.min(6)), e.sel as f64, e.value]);
-    }
     let mut mates: Vec<(i64, i64)> = Vec::new();
     for &[a, b] in &i.mates {
         let (a, b) = (sel(a, n_e), sel(b, n_e));
@@ -435,10 +414,6 @@ fn resolve_own(i: &TopoIn) -> Result<Result<Resolved, Output>, HarnessError> {
             continue;
         }
         mates.push((a, b));
-    }
-    prefix.push(mates.len() as f64);
-    for &(a, b) in &mates {
-        prefix.extend([a as f64, b as f64]);
     }
     let mut breps = vec![first];
     if !mates.is_empty() {
@@ -457,103 +432,9 @@ fn resolve_own(i: &TopoIn) -> Result<Result<Resolved, Output>, HarnessError> {
         })
         .collect::<Result<Vec<_>, HarnessError>>()?;
     Ok(Ok(Resolved {
-        path,
-        prefix,
         breps,
         mates,
         exact: true,
-    }))
-}
-
-/// The case resolved for one side: on the Rust build ([`resolve_own`]) for both sides,
-/// so they get the same numbers; the C++ side on the import of its own exports
-/// ([`resolve_import`]) only when the Rust build fails.
-fn resolve(i: &TopoIn, rust: bool) -> Result<Result<Resolved, Output>, HarnessError> {
-    match resolve_own(i)? {
-        Ok(r) => Ok(Ok(r)),
-        Err(o) if rust => Ok(Err(o)),
-        Err(_) => resolve_import(i),
-    }
-}
-
-/// Builds and imports the case's B-reps (the C++ side's fallback of [`resolve`]);
-/// `Err(Output)` when one cannot be built.
-fn resolve_import(i: &TopoIn) -> Result<Result<Resolved, Output>, HarnessError> {
-    let path = path_of(Some(&i.brep))?;
-    let block = brep_block_of(Some(&i.brep), false, false)?;
-    let plain = crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-        solidcore_ffi::units::topology_edgeuse_p1::eval(
-            solidcore_ffi::units::topology_edgeuse_p1::Op::Export,
-            &path,
-            &block,
-        )
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some(counts) = solidcore_ffi::units::topology_edgeuse_p1::counts(&plain) else {
-        return Ok(Err(Output::err(format!(
-            "brep_build_status_{}",
-            plain.get(1).copied().unwrap_or(0.0)
-        ))));
-    };
-    let n_e = counts[7];
-    let mut prefix = block;
-    prefix.push(i.edits.len() as f64);
-    for e in &i.edits {
-        if e.sel < 0 {
-            return Err(harness("negative edit selector"));
-        }
-        prefix.extend([f64::from(e.kind.min(6)), e.sel as f64, e.value]);
-    }
-    let mut mates: Vec<(i64, i64)> = Vec::new();
-    for &[a, b] in &i.mates {
-        let (a, b) = (sel(a, n_e), sel(b, n_e));
-        if a < 0 || b < 0 || mates.iter().any(|&(x, y)| x == a || y == b) {
-            continue;
-        }
-        mates.push((a, b));
-    }
-    prefix.push(mates.len() as f64);
-    for &(a, b) in &mates {
-        prefix.extend([a as f64, b as f64]);
-    }
-    let mut breps = Vec::new();
-    let mut exact = true;
-    for which in 0..if mates.is_empty() { 1 } else { 2 } {
-        let mut input = prefix.clone();
-        input.push(f64::from(which));
-        let ex = crate::export_memo::export("intersect_curve_class_p5_topo", &[&path], &input, || {
-            ffi::topo(TopoOp::Export, &path, &input)
-        })
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-        if ex.first() != Some(&0.0) {
-            return Ok(Err(Output::err(format!(
-                "brep_build_status_{}_{}",
-                ex.first().copied().unwrap_or(0.0),
-                ex.get(1).copied().unwrap_or(0.0)
-            ))));
-        }
-        let (brep, types) = import_with_types(&ex)?;
-        exact &= (0..brep.faces().len()).all(|f| types.inexact_surface(f).is_none());
-        exact &= (0..types.edge_curve_types.len())
-            .filter_map(|e| types.inexact_curve(e))
-            .all(|t| t < 0 || t == BSPLINE_CURVE_TYPE || t == LINE_TYPE);
-        breps.push(brep);
-    }
-    let mates = mates
-        .iter()
-        .map(|&(a, b)| {
-            Ok((
-                EdgeId::from_index(u32::try_from(a).map_err(hx)?),
-                EdgeId::from_index(u32::try_from(b).map_err(hx)?),
-            ))
-        })
-        .collect::<Result<Vec<_>, HarnessError>>()?;
-    Ok(Ok(Resolved {
-        path,
-        prefix,
-        breps,
-        mates,
-        exact,
     }))
 }
 
@@ -635,10 +516,9 @@ fn uv_curve(a: [f64; 2], b: [f64; 2]) -> CrvIn {
     }
 }
 
-/// The resolved op: its C++ arguments and what the Rust side needs.
+/// The resolved op.
 enum Op {
     EdgeInsert {
-        args: Vec<f64>,
         edge: EdgeId,
         p: Vec3,
         q: Vec3,
@@ -646,7 +526,6 @@ enum Op {
         sols: Vec<[f64; 7]>,
     },
     Vertices {
-        args: Vec<f64>,
         face: FaceId,
         verts: Vec<VertexId>,
         curve: CrvIn,
@@ -681,24 +560,7 @@ fn op_args(k: &Kernel, r: &Resolved, op: &TopoOpIn) -> Result<Op, HarnessError> 
                 .iter()
                 .map(|&[t, s0, e0, s1, e1, g0, g1]| [t, s0, param(e0), s1, param(e1), g0, g1])
                 .collect();
-            let mut args = vec![
-                f64::from(edge.index()),
-                f64::from(u8::from(e.ok_set)),
-                f64::from(u8::from(e.ignore)),
-                e.tol,
-            ];
-            args.extend([p.x, p.y, p.z, q.x, q.y, q.z, e.opt_tol]);
-            args.push(f64::from(u8::from(srf.is_some())));
-            if let Some([s1, s2]) = &srf {
-                push_surface(&mut args, s1)?;
-                push_surface(&mut args, s2)?;
-            }
-            args.push(sols.len() as f64);
-            for s in &sols {
-                args.extend(s);
-            }
             Ok(Op::EdgeInsert {
-                args,
                 edge,
                 p,
                 q,
@@ -767,30 +629,7 @@ fn op_args(k: &Kernel, r: &Resolved, op: &TopoOpIn) -> Result<Op, HarnessError> 
                 v.uv1.then(|| uv_curve([0.0, 0.0], [1.0, 1.0])),
                 v.uv2.then(|| uv_curve([1.0, 0.0], [0.0, 1.0])),
             ];
-            let flag = |x: bool| f64::from(u8::from(x));
-            let mut args = vec![
-                f64::from(face.index()),
-                flag(v.big),
-                flag(v.uv_ok),
-                v.tol,
-                flag(v.cc_face),
-            ];
-            push_curve(&mut args, &curve)?;
-            args.push(flag(srf.is_some()));
-            if let Some([s1, s2]) = &srf {
-                push_surface(&mut args, s1)?;
-                push_surface(&mut args, s2)?;
-            }
-            for c in &uv {
-                args.push(flag(c.is_some()));
-                if let Some(c) = c {
-                    push_curve(&mut args, c)?;
-                }
-            }
-            args.push(verts.len() as f64);
-            args.extend(verts.iter().map(|v| f64::from(v.index())));
             Ok(Op::Vertices {
-                args,
                 face,
                 verts,
                 curve,
@@ -799,61 +638,6 @@ fn op_args(k: &Kernel, r: &Resolved, op: &TopoOpIn) -> Result<Op, HarnessError> 
             })
         }
     }
-}
-
-// ---- the C++ side -----------------------------------------------------------------------
-
-pub(super) fn cpp(i: &TopoIn) -> Result<Output, HarnessError> {
-    let k = Kernel::default();
-    let r = match resolve(i, false)? {
-        Ok(r) => r,
-        Err(o) => return Ok(o),
-    };
-    if !r.exact {
-        return Ok(Output::err("inexact_geometry"));
-    }
-    let (code, args) = match op_args(&k, &r, &i.op)? {
-        Op::EdgeInsert { args, .. } => (TopoOp::EdgeInsert, args),
-        Op::Vertices { args, .. } => (TopoOp::Vertices, args),
-    };
-    let mut input = r.prefix.clone();
-    input.extend(&args);
-    let o = ffi::topo(code, &r.path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    match o.first() {
-        // the op's own guard (`run_vertices`: a large-gap vertex without a vertex use on
-        // the gap face, which `GetVertexuseOfFace` returns NULL for since v1.0.1)
-        Some(&0.0) if o.get(1..) == Some(&[-3.0][..]) => Ok(Output::rejected(
-            "upstream would dereference a null edge curve, end vertex, surface owner or vertex use",
-        )),
-        Some(&0.0) => Ok(Output::new().values("out", o.get(1..).unwrap_or(&[]).to_vec())),
-        Some(&-3.0) => Ok(Output::rejected(
-            "upstream would dereference a null edge curve, end vertex, surface owner or vertex use",
-        )),
-        Some(x) => Err(harness(format!("c++ setup failed after export ({x})"))),
-        None => Err(harness("empty c++ output")),
-    }
-}
-
-/// Validates a case's C++ input (for the generator).
-pub(super) fn valid(i: &TopoIn) -> bool {
-    let k = Kernel::default();
-    matches!(cpp_checked(&k, i), Ok(true))
-}
-
-fn cpp_checked(k: &Kernel, i: &TopoIn) -> Result<bool, HarnessError> {
-    let Ok(r) = resolve(i, false)? else {
-        return Ok(false);
-    };
-    if !r.exact {
-        return Ok(false);
-    }
-    let (code, args) = match op_args(k, &r, &i.op)? {
-        Op::EdgeInsert { args, .. } => (TopoOp::EdgeInsert, args),
-        Op::Vertices { args, .. } => (TopoOp::Vertices, args),
-    };
-    let mut input = r.prefix.clone();
-    input.extend(&args);
-    Ok(ffi::topo(code, &r.path, &input).is_ok_and(|o| o.first() == Some(&0.0)))
 }
 
 // ---- the Rust side ----------------------------------------------------------------------
@@ -971,7 +755,7 @@ fn classification(
 
 pub(super) fn rust(i: &TopoIn) -> Result<Output, HarnessError> {
     let k = Kernel::default();
-    let r = match resolve(i, true)? {
+    let r = match resolve_own(i)? {
         Ok(r) => r,
         Err(o) => return Ok(o),
     };
@@ -1539,17 +1323,11 @@ fn gen_vertices(rng: &mut Rng) -> TopoIn {
     }
 }
 
-/// A generated B-rep case whose C++ input is valid, or `None`.
-pub(super) fn generate(rng: &mut Rng) -> Option<TopoIn> {
-    for _ in 0..32 {
-        let i = if rng.chance(0.5) {
-            gen_edge_insert(rng)
-        } else {
-            gen_vertices(rng)
-        };
-        if valid(&i) {
-            return Some(i);
-        }
+/// A generated B-rep case.
+pub(super) fn generate(rng: &mut Rng) -> TopoIn {
+    if rng.chance(0.5) {
+        gen_edge_insert(rng)
+    } else {
+        gen_vertices(rng)
     }
-    None
 }

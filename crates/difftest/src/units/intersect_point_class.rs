@@ -2,14 +2,14 @@
 //! point-classification overloads of `SmTol` and the `SmSpaceBend` / `SmSpaceUnbend`
 //! class type queries.
 //!
-//! C++: `solidcore_ffi::units::intersect_point_class` (upstream
-//! `source/SMLib/src/SmPointClass.cpp`). Rust: `solidcore::intersect::point_class`.
+//! Ported from upstream `source/SMLib/src/SmPointClass.cpp`; checked against its golden.
+//! Rust: `solidcore::intersect::point_class`.
 //!
 //! A case is a script: a pool of `objects` (curves as in unit `curve.curve_p6`, planes,
 //! points, a volume, region, edgeuse and "other" stand-in, and vertex, edge and face
 //! objects), the source tolerances of two classifications `pc[0]`, `pc[1]`, and `ops`
-//! on them. Both sides produce the flat record documented in the ffi module (per op:
-//! code, status, outputs, state of the target), reported as the `out` values. A Rust
+//! on them. The Rust side produces a flat record (per op: code, status, outputs, state of
+//! the target), reported as the `out` values. A Rust
 //! error maps to its `SmStatus` (`-1` for one upstream cannot return); an `Unported`
 //! error anywhere defers the case.
 //!
@@ -18,7 +18,7 @@
 //! `ComputePointParameters` come from the ported topology members.
 //!
 //! `MergeIntoObject` and `Combine` on a vertex run on the pool's B-rep
-//! (`merge_into_brep`, `combine_in_brep`): the merge compares its status, new-topology
+//! (`merge_into_brep`, `combine_in_brep`): the merge records its status, new-topology
 //! counts and repointed classification, and combine writes the propagated surf/surf/surf
 //! point to the vertex. A trace appended after the existing records reads every
 //! pool vertex after each Combine: `op_index n_vertices (pool_index x y z)*`.
@@ -30,8 +30,8 @@
 //! `surface.volume_p2`), and stand-in regions and edgeuses whose
 //! tolerance upstream takes from the system (the port asks their topology units).
 //! Scripts never call a member of a stand-in object or of an `SmPoint3d` cast to
-//! `SmObject` (undefined behaviour upstream): both sides reject those ops, and the
-//! generator drops such scripts.
+//! `SmObject` (undefined behaviour upstream): the Rust side rejects those ops, and the
+//! generator drops scripts the Rust side fails on.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,12 +60,58 @@ use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
 use solidcore::topology::{Brep, EdgeId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::intersect_point_class::{self as ffi, kind, op};
 
 use super::intersect_curve_class_p1::BareTopology;
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The pool object kinds of a script record.
+mod kind {
+    pub const CURVE: usize = 0;
+    pub const PLANE: usize = 1;
+    pub const VOLUME: usize = 2;
+    pub const POINT: usize = 3;
+    pub const VERTEX: usize = 4;
+    pub const EDGE: usize = 5;
+    pub const FACE: usize = 6;
+    pub const REGION: usize = 7;
+    pub const EDGEUSE: usize = 8;
+    pub const OTHER: usize = 9;
+}
+
+/// The op codes of a script record.
+mod op {
+    pub const RESET: usize = 0;
+    pub const SET_CLASS_OBJECT: usize = 1;
+    pub const SET_T: usize = 2;
+    pub const SET_UV: usize = 3;
+    pub const SET_UVW: usize = 4;
+    pub const UNSET: usize = 5;
+    pub const SET_GAP: usize = 6;
+    pub const SET_PRESNAP: usize = 7;
+    pub const SET_SSS: usize = 8;
+    pub const SET_SRC_TOL: usize = 9;
+    pub const SET_FACE: usize = 10;
+    pub const ASSIGN: usize = 11;
+    pub const COPY_CLASS_ONLY: usize = 12;
+    pub const COPY_SSS: usize = 13;
+    pub const COMBINE: usize = 14;
+    pub const COMPUTE: usize = 15;
+    pub const FIND: usize = 16;
+    pub const GAP: usize = 17;
+    pub const LOAD: usize = 18;
+    pub const MERGE: usize = 19;
+    pub const BREP: usize = 20;
+    pub const CONNECTED: usize = 21;
+    pub const CONNECTED_ANY: usize = 22;
+    pub const CURVE_OBJECT: usize = 23;
+    pub const OBJ_TOL: usize = 24;
+    pub const XSECT_TOL: usize = 25;
+    pub const SRC_TOL: usize = 26;
+    pub const SET_DEVIATION: usize = 27;
+    pub const BEND_TYPES: usize = 28;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
@@ -332,47 +378,6 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Conic(c) => {
-            v.extend([if c.ry.is_some() { 3.0 } else { 4.0 }, 3.0]);
-            v.extend_from_slice(&c.center);
-            v.extend_from_slice(&c.x);
-            v.extend_from_slice(&c.y);
-            v.extend(c.domain);
-            v.push(c.rx);
-            if let Some(ry) = c.ry {
-                v.push(ry);
-            }
-            v.push(b(c.inside_out));
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            v.extend_from_slice(&l.p);
-            v.extend_from_slice(&l.v);
-            v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-        }
-        CurveIn::Circle(_) => return Err(harness("unresolved circle")),
-    }
-    Ok(())
-}
-
 fn build_line(l: &LineIn) -> Line {
     let opts = BoundedLineOptions {
         scale: l.scale,
@@ -443,81 +448,6 @@ fn build_curve(c: &CurveIn) -> Result<Curve, HarnessError> {
     }
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
-fn opt_id(o: Option<usize>) -> f64 {
-    o.map_or(-1.0, |i| i as f64)
-}
-
-fn cpp_input(s: &Script) -> Result<Vec<f64>, HarnessError> {
-    let mut v = vec![s.objects.len() as f64];
-    for o in &s.objects {
-        match o {
-            ObjIn::Curve(c) => {
-                v.push(kind::CURVE as f64);
-                curve_block(&mut v, c)?;
-            }
-            ObjIn::Plane { o, n } => {
-                v.push(kind::PLANE as f64);
-                v.extend_from_slice(o);
-                v.extend_from_slice(n);
-            }
-            ObjIn::Volume => v.push(kind::VOLUME as f64),
-            ObjIn::Point(p) => {
-                v.push(kind::POINT as f64);
-                v.extend_from_slice(p);
-            }
-            ObjIn::Vertex => v.push(kind::VERTEX as f64),
-            ObjIn::Edge(c) => v.extend([kind::EDGE as f64, opt_id(*c)]),
-            ObjIn::Face(s) => v.extend([kind::FACE as f64, opt_id(*s)]),
-            ObjIn::Region => v.push(kind::REGION as f64),
-            ObjIn::Edgeuse => v.push(kind::EDGEUSE as f64),
-            ObjIn::Other => v.push(kind::OTHER as f64),
-        }
-    }
-    v.extend(s.tol);
-    v.push(s.ops.len() as f64);
-    for o in &s.ops {
-        let (code, t) = op_code(o);
-        v.extend([code as f64, t as f64]);
-        match o {
-            OpIn::Reset { tol, .. } => v.extend([b(tol.is_some()), tol.unwrap_or(0.0)]),
-            OpIn::SetClassObject { class, obj, .. } => v.extend([f64::from(*class), opt_id(*obj)]),
-            OpIn::SetT { v: x, snap, .. } => v.extend([*x, b(*snap)]),
-            OpIn::SetUv { u, v: x, .. } => v.extend([*u, *x]),
-            OpIn::SetUvw { p, .. }
-            | OpIn::SetSss { p, .. }
-            | OpIn::Compute { p, .. }
-            | OpIn::Merge { p, .. } => v.extend_from_slice(p),
-            OpIn::SetGap { g, .. } | OpIn::SetDeviation { g, .. } => v.push(*g),
-            OpIn::SetPresnap { v: x, .. } => v.push(*x),
-            OpIn::SetSrcTol { tol, .. } => v.push(*tol),
-            OpIn::SetFace { obj, .. } => v.push(opt_id(*obj)),
-            OpIn::Gap { s, .. } => v.push(opt_id(*s)),
-            OpIn::Load {
-                tol,
-                obj,
-                value,
-                params,
-                offset,
-                pre,
-                ..
-            } => {
-                v.extend([*tol, *obj as f64, *value]);
-                v.extend((0..10).map(|i| params.get(i).copied().unwrap_or(0.0)));
-                v.extend([*offset as f64, *pre]);
-            }
-            OpIn::Connected { j, .. } => v.push(*j as f64),
-            OpIn::ConnectedAny { js, .. } => {
-                v.push(js.len() as f64);
-                v.extend(js.iter().map(|&j| j as f64));
-            }
-            _ => {}
-        }
-    }
-    Ok(v)
-}
-
 fn op_code(o: &OpIn) -> (usize, usize) {
     match *o {
         OpIn::Reset { t, .. } => (op::RESET, t),
@@ -550,12 +480,6 @@ fn op_code(o: &OpIn) -> (usize, usize) {
         OpIn::SrcTol { t } => (op::SRC_TOL, t),
         OpIn::BendTypes { t } => (op::BEND_TYPES, t),
     }
-}
-
-fn cpp(s: &Script) -> Result<Output, HarnessError> {
-    let input = cpp_input(s)?;
-    let out = ffi::run(&input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -1575,14 +1499,6 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let s = gen_script(k, rng);
-            let Ok(input) = cpp_input(&s) else {
-                continue;
-            };
-            // the static checks of the ffi wrapper and the run-time rejections (which
-            // the Rust side reproduces)
-            if ffi::validate(&input).is_err() {
-                continue;
-            }
             if let Err(Fail::Harness(_)) = rust_run(&s) {
                 continue;
             }
@@ -1597,10 +1513,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1626,21 +1538,17 @@ mod tests {
             ]
         }))
         .unwrap();
-        let native = cpp(&script).unwrap();
-        let mut actual = rust(&script).unwrap();
-        assert!(crate::compare::compare(&native, &actual, &[]).pass());
-        let out = actual.values.get_mut("out").unwrap();
+        let actual = rust(&script).unwrap();
+        let out = &actual.values["out"];
         let start = out.len() - 14;
+        // the trace: Combine's SetPoint moved vertex 0, the bystanders stay
         assert_eq!(
             &out[start..],
             &[5., 3., 0., 2., -3., 5., 1., 0., 0., 0., 2., 0., 0., 0.]
         );
-        out[start + 3] = 0.0; // losing the SetPoint side effect must be detected
-        assert!(!crate::compare::compare(&native, &actual, &[]).pass());
     }
 
-    /// Generated scripts are accepted by the ffi checks, and most of them are
-    /// comparable now (not deferred).
+    /// Most generated scripts are not deferred.
     #[test]
     fn generated_scripts_are_mostly_comparable() {
         let mut rng = Rng::new(11);

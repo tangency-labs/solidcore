@@ -2,30 +2,29 @@
 //! `GetLoopCrossings`, `GetLoopTouches`, `SmCurveInterval::GetIvlBound_EdgeuseObj` and the
 //! static `sm_SqueezeOutSmallestInterval` of `SmCurveClass.cpp`.
 //!
-//! C++: `solidcore_ffi::units::intersect_curve_class_p4` (upstream
-//! `source/SMLib/src/SmCurveClass.cpp`). Rust: `solidcore::intersect::curve_class::p4`.
+//! Ported from upstream `source/SMLib/src/SmCurveClass.cpp`; checked against its golden.
+//! Rust: `solidcore::intersect::curve_class::p4`.
 //!
 //! A case is a script: a pool of `objects` (curves as in unit `curve.curve_p6` plus real
 //! `SmEllipse` / `SmCircle`, planes, B-spline surfaces, points and "other" stand-ins), an
-//! optional `face` (a one-face B-rep built with `SmBrepConstructor` as in unit
-//! `heal.face_props`: a plane or `SmSurfOfRevolution::CreateCanonical` surface, cylinder or
-//! sphere among them, with a vertex loop or edge loops of line edges; rebuilt record by record
-//! on the Rust side by `heal_face_props::rust_brep` plus its down face use's side,
-//! `heal_face_props::add_down_side`) whose face, loops, edges, vertices and edge
+//! optional `face` (a one-face B-rep as in unit `heal.face_props`: a plane or
+//! `SmSurfOfRevolution::CreateCanonical` surface, cylinder or sphere among them, with a vertex
+//! loop or edge loops of line edges; built record by record by `heal_face_props::rust_brep`
+//! plus its down face use's side, `heal_face_props::add_down_side`) whose face, loops, edges, vertices and edge
 //! uses join the pool after the objects, and `ops` on two default classifications `cc[0]`,
 //! `cc[1]`: the setters of unit `intersect.curve_class_p1` build them (intervals, boundary
 //! classifications on the face's edges and vertices, the classification curve, face and
 //! tolerances), then the part-4 ops run. The topology handles resolve to the B-rep through the
-//! `ClassGeometry` hooks, so the topology members are the ported ones. Both sides produce the
-//! flat record documented in the ffi module (per op: code, status, outputs, state of the
-//! classification; `GetLoopCrossings` also the face props snapshot when they are passed),
+//! `ClassGeometry` hooks, so the topology members are the ported ones. The Rust side produces a
+//! flat record (per op: code, status, outputs, state of the classification;
+//! `GetLoopCrossings` also the face props snapshot when they are passed),
 //! reported as the `out` values. A Rust error maps to its `SmStatus` (`InvalidInput` 1007, `-1`
 //! for one upstream cannot return); an `Unported` error anywhere defers the case. What a
 //! `GetLoopCrossings` leaves on the face's B-rep (the UV trim curves, tolerance growth and
 //! gap caches of its `SetProps_Stage2` seam check) is kept on the Rust B-rep for the later
-//! ops, as the shim's B-rep keeps it.
+//! ops, as upstream's B-rep keeps it.
 //!
-//! Compared: `GetLoopCrossings` over the face's real loops up to the touch list (the face
+//! Recorded: `GetLoopCrossings` over the face's real loops up to the touch list (the face
 //! props stage 2, computed by `SetProps_Stage2` or preset by seeds at stage `2a` or later, the
 //! face's surface and zone tolerance, `IsClosed` / `IsDegenerate` of the classification curve
 //! and the return without crossings of a degenerate one), and with an empty loop list;
@@ -36,15 +35,15 @@
 //! `topology.face_p4`), the edge ends of `GetIvlBound_EdgeuseObj` (`SmEdge::GetCurve` in
 //! `PointClassification::curve_object`). The constructor's `ReSet`, `ConnectIntervals` and
 //! `GetMinUV` / `GetMaxUV` are part 2's (wired when `intersect.curve_class_p2` was merged
-//! with `boolean.topology_intersector_p3`). Generated scripts are filtered by the shim's
-//! run-time checks (scripts it rejects as undefined upstream are dropped), among them
-//! `GetLoopCrossings` on an empty classification (a squeeze can empty it), which reads
-//! `GetAt(0)` unchecked.
+//! with `boolean.topology_intersector_p3`). Every generated script is a case, including those
+//! undefined upstream, among them `GetLoopCrossings` on an empty classification (a squeeze can
+//! empty it), which reads `GetAt(0)` unchecked upstream: their golden is the Rust result,
+//! refusal or deferral.
 //!
 //! `GetLoopTouches` (new in 1.0.1; `GetLoopCrossings` now derives its crossings from it) runs
 //! on a `_touches` twin of every script with a loop crossings op, that op replaced by the
 //! touches op over the same loops, props and seeds. Its record is the status, then on success
-//! the touch list and the props snapshot; a failing status is compared alone, as upstream may
+//! the touch list and the props snapshot; a failing status is recorded alone, as upstream may
 //! leave the touches collected before it.
 
 use serde::{Deserialize, Serialize};
@@ -78,12 +77,65 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_curve_class_p4::{self as ffi, kind, op};
 
 use crate::case::{CaseContext, CaseSource};
 use crate::units::heal_face_props::{self as hfp, FaceIn, GenIn, LoopsIn, SurfIn as FaceSurfIn};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The pool object kinds of a script record.
+mod kind {
+    pub const CURVE: usize = 0;
+    pub const PLANE: usize = 1;
+    pub const BSURF: usize = 2;
+    pub const POINT: usize = 3;
+    pub const VERTEX: usize = 4;
+    pub const EDGE: usize = 5;
+    pub const FACE: usize = 6;
+    pub const LOOP: usize = 7;
+    pub const OTHER: usize = 8;
+    /// An edge use of the face (B-rep topology only).
+    pub const EDGEUSE: usize = 9;
+}
+
+/// The op codes of a script record.
+mod op {
+    pub const SET_SIZE: usize = 0;
+    pub const REMOVE_AT: usize = 1;
+    pub const IVL_SET: usize = 2;
+    pub const IVL_SET_MIN: usize = 3;
+    pub const IVL_SET_MAX: usize = 4;
+    pub const IVL_RESET: usize = 5;
+    pub const IVL_ASSIGN: usize = 6;
+    pub const IVL_NEW: usize = 7;
+    pub const PC_SET_CLASS: usize = 8;
+    pub const PC_SET_T: usize = 9;
+    pub const PC_SET_UV: usize = 10;
+    pub const PC_SET_GAP: usize = 11;
+    pub const PC_SET_SSS: usize = 12;
+    pub const PC_SET_PRESNAP: usize = 13;
+    pub const PC_SET_SRC_TOL: usize = 14;
+    pub const SET_CURVE: usize = 15;
+    pub const SET_SURFACE1: usize = 16;
+    pub const SET_SURFACE2: usize = 17;
+    pub const SET_FACE: usize = 18;
+    pub const SET_INTERSECT_DATA: usize = 19;
+    pub const SET_IS_CURVE_CURRENT: usize = 20;
+    pub const SET_IGNORE_TANGENCY: usize = 21;
+    pub const SET_IS_CURVE_OWNED: usize = 22;
+    pub const SET_OK_TO_SET_TOL: usize = 23;
+    pub const SET_FILLET_DATA: usize = 24;
+    pub const SET_TGT_LOOPS_ONLY: usize = 25;
+    pub const ADD_TGT_LOOP: usize = 26;
+    pub const SET_SRC_TOL: usize = 27;
+    pub const SET_UV_CURVE1: usize = 28;
+    pub const SET_UV_CURVE2: usize = 29;
+    pub const SQUEEZE: usize = 30;
+    pub const IVL_BOUND: usize = 31;
+    pub const LOOP_CROSSINGS: usize = 32;
+    pub const CONSTRUCT: usize = 33;
+    pub const LOOP_TOUCHES: usize = 34;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -101,8 +153,6 @@ const NOW: f64 = -f64::MAX;
 const USE_DEFAULT: f64 = 9876543.21;
 /// `SM_BIG_DOUBLE`.
 const BIG: f64 = 1.0e20;
-/// `SC_ERR_ARG`.
-const SC_ERR_ARG: i32 = -1002;
 
 // ---- inputs -----------------------------------------------------------------------------
 
@@ -290,70 +340,6 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn opt_id(o: Option<usize>) -> f64 {
-    o.map_or(-1.0, |i| i as f64)
-}
-
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Conic(c) => {
-            v.extend([if c.ry.is_some() { 3.0 } else { 4.0 }, 3.0]);
-            v.extend_from_slice(&c.center);
-            v.extend_from_slice(&c.x);
-            v.extend_from_slice(&c.y);
-            v.extend(c.domain);
-            v.push(c.rx);
-            if let Some(ry) = c.ry {
-                v.push(ry);
-            }
-            v.push(b(c.inside_out));
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            v.extend_from_slice(&l.p);
-            v.extend_from_slice(&l.v);
-            v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-        }
-    }
-}
-
-fn surface_block(v: &mut Vec<f64>, s: &SurfIn) {
-    let n = s.net.len().saturating_sub(1);
-    let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
-    v.push(b(s.oob));
-    v.extend([
-        n as f64,
-        m as f64,
-        s.p as f64,
-        s.q as f64,
-        s.u.len().saturating_sub(1) as f64,
-        s.v.len().saturating_sub(1) as f64,
-    ]);
-    for row in &s.net {
-        for c in row {
-            v.extend_from_slice(c);
-        }
-    }
-    v.extend_from_slice(&s.u);
-    v.extend_from_slice(&s.v);
-}
-
 fn build_curve(c: &CurveIn) -> Result<Curve, HarnessError> {
     match c {
         CurveIn::Bspline(bs) => {
@@ -427,112 +413,7 @@ fn build_surface(s: &SurfIn) -> Result<Surface, HarnessError> {
     Ok(Surface::from(bs))
 }
 
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn cpp_input(s: &Script) -> Vec<f64> {
-    let mut v = vec![s.objects.len() as f64];
-    for o in &s.objects {
-        match o {
-            ObjIn::Curve(c) => {
-                v.push(kind::CURVE as f64);
-                curve_block(&mut v, c);
-            }
-            ObjIn::Plane { o, n } => {
-                v.push(kind::PLANE as f64);
-                v.extend_from_slice(o);
-                v.extend_from_slice(n);
-            }
-            ObjIn::Bsurf(sf) => {
-                v.push(kind::BSURF as f64);
-                surface_block(&mut v, sf);
-            }
-            ObjIn::Point(p) => {
-                v.push(kind::POINT as f64);
-                v.extend_from_slice(p);
-            }
-            ObjIn::Other => v.push(kind::OTHER as f64),
-        }
-    }
-    v.push(s.ops.len() as f64);
-    for o in &s.ops {
-        let (code, t) = op_code(o);
-        v.extend([code as f64, t as f64]);
-        match o {
-            OpIn::SetSize { n, .. } => v.push(*n as f64),
-            OpIn::RemoveAt { j, .. } | OpIn::IvlReset { j, .. } => v.push(*j as f64),
-            OpIn::IvlSet { j, a, b: bb, .. } => v.extend([*j as f64, *a, *bb]),
-            OpIn::IvlSetMin { j, v: x, .. } | OpIn::IvlSetMax { j, v: x, .. } => {
-                v.extend([*j as f64, *x]);
-            }
-            OpIn::IvlAssign { j, k, .. } => v.extend([*j as f64, *k as f64]),
-            OpIn::IvlNew {
-                j, with, owner, a, b: bb, ..
-            } => v.extend([*j as f64, b(*with), b(*owner), *a, *bb]),
-            OpIn::PcSetClass { j, w, class, obj, .. } => {
-                v.extend([*j as f64, *w as f64, f64::from(*class), opt_id(*obj)]);
-            }
-            OpIn::PcSetT { j, w, v: x, .. } | OpIn::PcSetPresnap { j, w, v: x, .. } => {
-                v.extend([*j as f64, *w as f64, *x]);
-            }
-            OpIn::PcSetUv { j, w, u, v: x, .. } => v.extend([*j as f64, *w as f64, *u, *x]),
-            OpIn::PcSetGap { j, w, g, .. } => v.extend([*j as f64, *w as f64, *g]),
-            OpIn::PcSetSrcTol { j, w, tol, .. } => v.extend([*j as f64, *w as f64, *tol]),
-            OpIn::PcSetSss { j, w, p, .. } => {
-                v.extend([*j as f64, *w as f64]);
-                v.extend_from_slice(p);
-            }
-            OpIn::SetCurve { obj, owned, .. } => v.extend([opt_id(*obj), b(*owned)]),
-            OpIn::SetFilletData { obj, b: x, .. } => v.extend([opt_id(*obj), b(*x)]),
-            OpIn::SetSurface1 { obj, .. }
-            | OpIn::SetSurface2 { obj, .. }
-            | OpIn::SetFace { obj, .. }
-            | OpIn::AddTgtLoop { obj, .. }
-            | OpIn::SetUvCurve1 { obj, .. }
-            | OpIn::SetUvCurve2 { obj, .. } => v.push(opt_id(*obj)),
-            OpIn::SetIntersectData {
-                s1, s2, uv2, current, ti, ..
-            } => v.extend([opt_id(*s1), opt_id(*s2), opt_id(*uv2), b(*current), opt_id(*ti)]),
-            OpIn::SetIsCurveCurrent { b: x, .. }
-            | OpIn::SetIgnoreTangency { b: x, .. }
-            | OpIn::SetIsCurveOwned { b: x, .. }
-            | OpIn::SetOkToSetTol { b: x, .. }
-            | OpIn::SetTgtLoopsOnly { b: x, .. } => v.push(b(*x)),
-            OpIn::SetSrcTol { tol, .. } => v.push(*tol),
-            OpIn::Squeeze { .. } => {}
-            OpIn::IvlBound { j, do_min, .. } => v.extend([*j as f64, b(*do_min)]),
-            OpIn::LoopCrossings {
-                loops, with_props, seeds, ..
-            }
-            | OpIn::LoopTouches {
-                loops, with_props, seeds, ..
-            } => {
-                v.push(loops.len() as f64);
-                v.extend(loops.iter().map(|&l| l as f64));
-                v.push(b(*with_props));
-                v.push(seeds.len() as f64);
-                for sd in seeds {
-                    v.extend_from_slice(sd);
-                }
-            }
-            OpIn::Construct {
-                curve, a, b: bb, uv, tol, data_size, owned, current, s1, s2, uv2, ..
-            } => v.extend([
-                opt_id(*curve),
-                *a,
-                *bb,
-                opt_id(*uv),
-                *tol,
-                *data_size as f64,
-                b(*owned),
-                b(*current),
-                opt_id(*s1),
-                opt_id(*s2),
-                opt_id(*uv2),
-            ]),
-        }
-    }
-    v
-}
+// ---- records ----------------------------------------------------------------------------
 
 fn op_code(o: &OpIn) -> (usize, usize) {
     match *o {
@@ -572,17 +453,6 @@ fn op_code(o: &OpIn) -> (usize, usize) {
         OpIn::LoopTouches { t, .. } => (op::LOOP_TOUCHES, t),
         OpIn::Construct { t, .. } => (op::CONSTRUCT, t),
     }
-}
-
-/// The ffi face of the script.
-fn ffi_face(s: &Script) -> Option<solidcore_ffi::units::heal_face_props::FaceSpec> {
-    s.face.as_ref().map(hfp::ffi_face)
-}
-
-fn cpp(s: &Script) -> Result<Output, HarnessError> {
-    let input = cpp_input(s);
-    let out = ffi::run(ffi_face(s).as_ref(), &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1999,15 +1869,6 @@ fn gen_script(rng: &mut Rng) -> Script {
     Script { face, objects, ops }
 }
 
-/// Whether the shim accepts the script (it rejects what is undefined upstream).
-fn shim_accepts(s: &Script) -> bool {
-    match ffi::run(ffi_face(s).as_ref(), &cpp_input(s)) {
-        Ok(_) => true,
-        Err(solidcore_ffi::FfiError::Status(c)) if c == SC_ERR_ARG => false,
-        Err(_) => false,
-    }
-}
-
 // ---- fixtures built in code ---------------------------------------------------------------
 
 /// A touch list: its length, then `connected dir loop_index param pt_classify_index` per touch.
@@ -2282,12 +2143,11 @@ fn edge_cases() -> Vec<(String, Value)> {
     out
 }
 
-/// Scripts undefined upstream that the shim must reject: the squeeze of an empty
-/// classification, the bounding edge use without face, of an interval past the intervals and
-/// of an edge end without classification curve, the loop crossings over a loop without
-/// classification curve (UB-124). The flag is true for a script the ffi guard itself rejects
-/// (the seeded face props of UB-131: `SetProps_Stage2` after `SetProps_Gaps` returned early
-/// dereferences the null `m_pFace`), false for one the shim rejects at run time.
+/// Scripts undefined upstream: the squeeze of an empty classification, the bounding edge use
+/// without face, of an interval past the intervals and of an edge end without classification
+/// curve, the loop crossings over a loop without classification curve (UB-124). The flag is
+/// true for the seeded face props of UB-131 (`SetProps_Stage2` after `SetProps_Gaps` returned
+/// early dereferences the null `m_pFace` upstream).
 #[cfg(test)]
 fn rejected_cases() -> Vec<(String, Script, bool)> {
     let objs = edge_objects(1.0);
@@ -2327,14 +2187,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let s = gen_script(rng);
-            if ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_err() || !shim_accepts(&s) {
-                continue;
-            }
-            return serde_json::to_value(s).ok();
-        }
-        None
+        serde_json::to_value(gen_script(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -2369,10 +2222,6 @@ impl UnitDiff for Runner {
         Ok(cases)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -2382,7 +2231,7 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
-    /// Generated scripts are accepted by the ffi checks, and a share of them is compared.
+    /// A share of the generated scripts is not deferred.
     #[test]
     fn generated_scripts_are_accepted() {
         let mut rng = Rng::new(11);
@@ -2401,38 +2250,22 @@ mod tests {
         assert!(compared * 5 > total, "{compared} of {total} compared");
     }
 
-    /// The edge cases are accepted by the shim.
+    /// The edge cases have loop touches twins.
     #[test]
-    fn edge_cases_are_accepted() {
-        for (name, v) in edge_cases() {
-            let s: Script = serde_json::from_value(v).unwrap();
-            assert!(ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_ok(), "{name}");
-            assert!(shim_accepts(&s), "{name}");
-        }
-    }
-
-    /// The loop touches twins of the edge cases are accepted by the shim.
-    #[test]
-    fn touches_twins_are_accepted() {
-        let mut n = 0;
-        for (name, v) in edge_cases() {
-            let s: Script = serde_json::from_value(v).unwrap();
-            let Some(twin) = touches_twin(&s) else { continue };
-            n += 1;
-            assert!(ffi::validate(ffi_face(&twin).as_ref(), &cpp_input(&twin)).is_ok(), "{name}");
-            assert!(shim_accepts(&twin), "{name}");
-        }
+    fn edge_cases_have_touches_twins() {
+        let n = edge_cases()
+            .into_iter()
+            .filter_map(|(_, v)| touches_twin(&serde_json::from_value(v).unwrap()))
+            .count();
         assert!(n > 0);
     }
 
-    /// The scripts undefined upstream are rejected by the shim (or the ffi guard), and the
-    /// Rust side reports an error status (or defers) instead of reading past its data.
+    /// On the scripts undefined upstream the Rust side reports an error status (or defers)
+    /// instead of reading past its data.
     #[test]
     fn undefined_scripts_are_rejected() {
         for (name, s, guard) in rejected_cases() {
-            let valid = ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_ok();
             if guard {
-                assert!(!valid, "{name}");
                 // Rust reports the null dereference instead of carrying on: the last op
                 // (the loop crossings) records SM_ERR_NULL_POINTER (InvalidInput, 1007) right
                 // after the record of the ops before it
@@ -2448,8 +2281,6 @@ mod tests {
                 );
                 continue;
             }
-            assert!(valid, "{name}");
-            assert!(!shim_accepts(&s), "{name}");
             assert!(rust_run(&s).is_ok() || matches!(rust_run(&s), Err(Fail::Deferred(_))), "{name}");
         }
     }

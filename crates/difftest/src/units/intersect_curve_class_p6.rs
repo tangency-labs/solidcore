@@ -1,15 +1,13 @@
-//! Real Rust/C++ comparisons for curve-classification interval integration (part 6).
-//! Classifications are built with p1 setters; native geometry uses its true dynamic type.
-//! Unported p2/p7 calls defer the whole case. Construction failures are harness errors.
-//! Explicit `expected_rejection` fixtures check FFI rejection only; they are reported
-//! as both-errored cases, separately from successful kernel comparisons.
+//! Curve-classification interval integration (part 6), ported from upstream
+//! `source/SMLib/src/SmCurveClass.cpp`; checked against its golden.
+//! Classifications are built with p1 setters. Unported p2/p7 calls defer the whole case.
+//! Construction failures are harness errors.
 //!
-//! The topology objects are those of the shim's `SmApiCreateBox(0, 1, 1, 1)` B-rep (face,
+//! The topology objects are those of an `SmApiCreateBox(0, 1, 1, 1)` B-rep (face,
 //! edge, vertex and region: the first of `GetFaces`, `GetEdges`, `GetVertices`,
-//! `GetRegions`). The Rust side builds the same box with the Rust kernel (unit
-//! `heal.stitch_p1`'s `own_unit_box`, no C++ export) and resolves the handles to it through the
-//! `ClassGeometry` hooks, so their tolerances, points and topology are the ported ones.
-//! Each case works on a fresh copy of that box (the shim builds one per case), and
+//! `GetRegions`), built with the Rust kernel (unit `heal.stitch_p1`'s `own_unit_box`); the
+//! handles resolve to it through the `ClassGeometry` hooks, so their tolerances, points and
+//! topology are the ported ones. Each case works on a fresh copy of that box, and
 //! `MergeInterval` edits it through `MergeIntervalBrep`; a merge also reports the box
 //! after it (counts, sorted vertex and edge tolerances, the new vertices and edges).
 //! `InsertCurveInterval` runs through `insert_curve_interval_mut` (its `Combine` may move
@@ -44,11 +42,13 @@ use solidcore::topology::face::p2 as topo_face;
 use solidcore::topology::vertex as topo_vertex;
 use solidcore::topology::Brep;
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::intersect_curve_class_p6 as ffi;
 use std::cell::OnceCell;
 use std::rc::Rc;
 
-/// Curve-classification part 6 oracle.
+/// Numbers per interval (two endpoints, three eight-number classifications).
+const WIDTH: usize = 26;
+
+/// Curve-classification part 6 runner.
 pub struct Runner;
 
 #[path = "intersect_curve_class_p6/paired_fillet.rs"]
@@ -56,8 +56,6 @@ mod paired_fillet;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Fixture {
-    #[serde(default)]
-    expected_rejection: bool,
     /// The box's face, edge, vertex and region (indices into its lists) the
     /// classification kinds 2 to 5 name; the first of each by default.
     #[serde(default)]
@@ -382,9 +380,9 @@ fn classification(
     let mut c = CurveClassification::new(k);
     c.set_curve(Some(Handle::Curve), false);
     c.set_src_zone_tol_3d(tol);
-    c.set_size(k, p.len() / ffi::WIDTH)
+    c.set_size(k, p.len() / WIDTH)
         .map_err(|e| h(e.to_string()))?;
-    for (i, p) in p.as_chunks::<{ ffi::WIDTH }>().0.iter().enumerate() {
+    for (i, p) in p.as_chunks::<WIDTH>().0.iter().enumerate() {
         *c.at_mut(i).map_err(|e| h(e.to_string()))? = ivl(p, tol, first)?;
     }
     Ok(c)
@@ -518,7 +516,6 @@ fn record(bounds: [f64; 2], classes: [i32; 3], stored: bool) -> Vec<f64> {
 fn base() -> Fixture {
     let p = record([0.0, 1.0], [0, 0, 0], false);
     Fixture {
-        expected_rejection: false,
         pick: [0; 4],
         editing: false,
         op: 0,
@@ -544,37 +541,9 @@ fn add(v: &mut Vec<Case>, name: String, i: Fixture) -> Result<(), HarnessError> 
     });
     Ok(())
 }
-fn rejected<T>(result: Result<T, solidcore_ffi::FfiError>) -> Result<Output, HarnessError> {
-    match result {
-        Err(
-            solidcore_ffi::FfiError::InvalidArgument(_)
-            | solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG),
-        ) => Ok(Output::err("fixture_rejected")),
-        Err(e) => Err(h(format!("unexpected rejection: {e}"))),
-        Ok(_) => Err(h("expected invalid fixture to be rejected")),
-    }
-}
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "intersect.curve_class_p6"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if case.inputs.get("paired_fillet").and_then(Value::as_bool) == Some(true) {
-            return paired_fillet::cpp(paired_fillet::Mode::Metadata);
-        }
-        if let Some(mode) = paired_fillet::Mode::from_input(&case.inputs) {
-            return paired_fillet::cpp(mode);
-        }
-        let i: Fixture = case.parse()?;
-        let result = ffi::run_picked(
-            i.op, i.kind, i.scale, i.tol, i.flags, i.index, &i.a, &i.b, &i.input, i.pick, i.editing,
-        );
-        if i.expected_rejection {
-            return rejected(result);
-        }
-        result
-            .map(|v| Output::new().values("out", v))
-            .map_err(|e| h(e.to_string()))
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         if case.inputs.get("paired_fillet").and_then(Value::as_bool) == Some(true) {
@@ -584,13 +553,6 @@ impl UnitDiff for Runner {
             return paired_fillet::rust(mode);
         }
         let i: Fixture = case.parse()?;
-        let validation = ffi::validate_picked(
-            i.op, i.kind, i.scale, i.tol, i.flags, i.index, &i.a, &i.b, &i.input, i.pick,
-        );
-        if i.expected_rejection {
-            return rejected(validation);
-        }
-        validation.map_err(|e| h(e.to_string()))?;
         let mut k = Kernel::default();
         let mut g = geometry(&k, i.kind, i.scale, i.pick)?;
         if i.editing {

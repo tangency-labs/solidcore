@@ -3,29 +3,29 @@
 //! met, edge and face crossings, near misses, coincident-maybe and partial-coincidence
 //! heuristics, face classification of an interval) and `sm_SetDoFilletingGeometry`.
 //!
-//! C++: `solidcore_ffi::units::intersect_curve_class_p7` (upstream
-//! `source/SMLib/src/SmCurveClass.cpp`). Rust: `solidcore::intersect::curve_class`.
+//! Ported from upstream `source/SMLib/src/SmCurveClass.cpp`; checked against its golden.
+//! Rust: `solidcore::intersect::curve_class`.
 //!
 //! A case is a script: a pool of `objects` (as in unit `intersect.curve_class_p1`: curves of
 //! every kind the code branches on, planes, B-spline surfaces, points, vertex, edge and face
 //! stand-ins), two classifications built from data (curve, surface 1, UV curve 1, tangency
 //! flag, zone tolerance, fillet data, intervals with their three point classifications), and
-//! `ops` on them. Both sides produce the flat record documented in the ffi module, reported
-//! as the `out` values. A Rust error maps to its `SmStatus` (`InvalidInput` 1007); an
+//! `ops` on them. The Rust side produces a flat record (per op: code, status, outputs, state),
+//! reported as the `out` values. A Rust error maps to its `SmStatus` (`InvalidInput` 1007); an
 //! `Unported` error anywhere defers the case.
 //!
 //! Half the generated scripts add a real one-face B-rep (`face`, as in unit
-//! `intersect.curve_class_p4`: `sc_one_face_brep.h` in the shim, `heal_face_props::rust_brep`
-//! plus its down face use's side, [`hfp::add_down_side`], in Rust) whose face, loops, edges,
+//! `intersect.curve_class_p4`: `heal_face_props::rust_brep` plus its down face use's side,
+//! [`hfp::add_down_side`]) whose face, loops, edges,
 //! vertices and edge uses follow the objects in the pool; their classifications and targets
 //! usually name its real topology, so the `SmVertex` / `SmEdge` connection tests, intervals,
 //! curves, points and tolerances run the ported topology members through the
 //! `ClassGeometry::topology_entity` hook.
 //!
-//! Without that B-rep, the vertex, edge and face stand-ins are B-rep records in the shim's
+//! Without that B-rep, the vertex, edge and face stand-ins are B-rep records in their
 //! bare state (see unit `intersect.curve_class_p1`,
 //! [`BareTopology`](super::intersect_curve_class_p1::BareTopology)), so the members those
-//! records answer (zone tolerances, edge curve / interval, face surface) are compared too.
+//! records answer (zone tolerances, edge curve / interval, face surface) are recorded too.
 //!
 //! Deferred cases: those members on the bare stand-ins (no B-rep behind them), the edits of
 //! `sm_SetDoFilletingGeometry` (`SmVertex::SetPoint`, `SmEdge::SetCurve`), the face queries of
@@ -35,11 +35,11 @@
 //! Generated scripts with a real B-rep that has edges also yield `<name>_real_vertex`,
 //! `<name>_real_edge` and `<name>_real_point` twins ([`real_twin`], up to [`REAL_TWINS`]): one
 //! interval reclassified to start at the B-rep's own vertex or edge, or left unclassified with
-//! the point classification on, classified against the B-rep's face (op 13 in the shim, which
-//! runs `SmFace::FindVertexSector`, `SmFace::EdgeCurveOnClassify` and `SmFace::PointClassify`
-//! on its real loops).
-//! Generated scripts are filtered by the shim's run-time checks (scripts it rejects as
-//! undefined upstream, or as topology walks over the bare stand-ins, are dropped).
+//! the point classification on, classified against the B-rep's face (op 13, which runs
+//! `SmFace::FindVertexSector`, `SmFace::EdgeCurveOnClassify` and `SmFace::PointClassify` on its
+//! real loops).
+//! Every generated script is a case, including those undefined upstream and topology walks
+//! over the bare stand-ins: their golden is the Rust result, refusal or deferral.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -58,20 +58,36 @@ use solidcore::surface::volume::Volume;
 use solidcore::topology::Brep;
 use solidcore::EntityRef;
 use solidcore::kernel::Kernel;
-use solidcore_ffi::units::intersect_curve_class_p1::kind;
-use solidcore_ffi::units::intersect_curve_class_p7::{self as ffi, op};
 
 use super::intersect_curve_class_p1::{
-    add_face, b, build_pool, curve_block, gen_bspline, gen_objects, gen_tol, id, must, obj_kind, of_kind,
-    opt_id, put_curve, put_pc, rp, st, surface_block, BSplineIn, ConicIn, CurveIn, Fail, LineIn,
-    ObjIn, Pool, H, NOW, SC_ERR_ARG, USE_DEFAULT,
+    refused,
+    add_face, b, build_pool, gen_bspline, gen_objects, gen_tol, id, kind, must, obj_kind, of_kind,
+    put_curve, put_pc, rp, st, BSplineIn, ConicIn, CurveIn, Fail, LineIn, ObjIn, Pool, H, NOW,
+    USE_DEFAULT,
 };
 use super::intersect_curve_class_p4::{gen_face, topology_kinds};
 use crate::units::heal_face_props::{self as hfp, FaceIn};
-use solidcore_ffi::units::heal_face_props::FaceSpec;
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The op codes of a script record.
+mod op {
+    pub const PC_BY_INDEX: usize = 0;
+    pub const MATE: usize = 1;
+    pub const COLLAPSE: usize = 2;
+    pub const TOUCHES: usize = 3;
+    pub const FIND_VERTEX: usize = 4;
+    pub const FIND_EDGE: usize = 5;
+    pub const CROSSED_BY_EDGE: usize = 6;
+    pub const CROSSING_FACE: usize = 7;
+    pub const NEAR_MISSES: usize = 8;
+    pub const COIN_MAYBE: usize = 9;
+    pub const CLASSIFY_FACE: usize = 10;
+    pub const PARTIAL: usize = 11;
+    pub const FILLET: usize = 12;
+    pub const CLASSIFY_FACE_REAL: usize = 13;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -175,98 +191,6 @@ struct Script {
     face: Option<FaceIn>,
     cc: [CcIn; 2],
     ops: Vec<OpIn>,
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn objects_block(v: &mut Vec<f64>, objects: &[ObjIn]) {
-    v.push(objects.len() as f64);
-    for o in objects {
-        match o {
-            ObjIn::Curve(c) => {
-                v.push(kind::CURVE as f64);
-                curve_block(v, c);
-            }
-            ObjIn::Plane { o, n } => {
-                v.push(kind::PLANE as f64);
-                v.extend_from_slice(o);
-                v.extend_from_slice(n);
-            }
-            ObjIn::Bsurf(sf) => {
-                v.push(kind::BSURF as f64);
-                surface_block(v, sf);
-            }
-            ObjIn::Point(p) => {
-                v.push(kind::POINT as f64);
-                v.extend_from_slice(p);
-            }
-            ObjIn::Vertex => v.push(kind::VERTEX as f64),
-            ObjIn::Edge(c) => v.extend([kind::EDGE as f64, opt_id(*c)]),
-            ObjIn::Face(sf) => v.extend([kind::FACE as f64, opt_id(*sf)]),
-            ObjIn::Loop => v.push(kind::LOOP as f64),
-            ObjIn::Other => v.push(kind::OTHER as f64),
-        }
-    }
-}
-
-fn cpp_input(s: &Script) -> Vec<f64> {
-    let mut v = Vec::new();
-    objects_block(&mut v, &s.objects);
-    for c in &s.cc {
-        v.extend([opt_id(c.curve), opt_id(c.s1), opt_id(c.uv1), b(c.ignore), c.tol]);
-        v.push(c.fillet.map_or(-1.0, b));
-        v.push(c.ivls.len() as f64);
-        for ivl in &c.ivls {
-            v.extend([ivl.a, ivl.b]);
-            for pc in &ivl.pcs {
-                v.extend([f64::from(pc.class), opt_id(pc.obj), pc.t, pc.gap]);
-            }
-        }
-    }
-    v.push(s.ops.len() as f64);
-    for o in &s.ops {
-        let (code, t) = o.code_t();
-        v.extend([code as f64, t as f64]);
-        match o {
-            OpIn::PcByIndex { j, .. } | OpIn::Mate { j, .. } | OpIn::Collapse { j, .. } => {
-                v.push(*j as f64);
-            }
-            OpIn::Touches { targets, .. } => {
-                v.push(targets.len() as f64);
-                v.extend(targets.iter().map(|&x| x as f64));
-            }
-            OpIn::FindVertex { target, .. } => v.push(opt_id(*target)),
-            OpIn::FindEdge { target, flag, .. } => v.extend([opt_id(*target), *flag as f64]),
-            OpIn::CrossedByEdge { .. } => {}
-            OpIn::CrossingFace { face, .. } => v.push(opt_id(*face)),
-            OpIn::NearMisses { b: x, .. } => v.push(b(*x)),
-            OpIn::CoinMaybe { j, own, report, .. } => v.extend([*j as f64, b(*own), b(*report)]),
-            OpIn::ClassifyFace {
-                j, do_point, face, old, uv_ok, ..
-            } => v.extend([*j as f64, b(*do_point), opt_id(*face), opt_id(*old), b(*uv_ok)]),
-            OpIn::Partial { own, .. } => v.push(b(*own)),
-            OpIn::Fillet { j, todo, .. } => v.extend([*j as f64, *todo as f64]),
-        }
-    }
-    v
-}
-
-fn ffi_face(s: &Script) -> Option<FaceSpec> {
-    s.face.as_ref().map(hfp::ffi_face)
-}
-
-fn cpp(s: &Script) -> Result<Output, HarnessError> {
-    let out = ffi::run(ffi_face(s).as_ref(), &cpp_input(s)).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
-}
-
-/// Whether the shim accepts the script (it rejects what is undefined upstream).
-fn shim_accepts(s: &Script) -> bool {
-    match ffi::run(ffi_face(s).as_ref(), &cpp_input(s)) {
-        Ok(_) => true,
-        Err(solidcore_ffi::FfiError::Status(c)) if c == SC_ERR_ARG => false,
-        Err(_) => false,
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -522,6 +446,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
     match rust_run(s) {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
+        Err(Fail::Refused(s)) => Ok(refused(s)),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -1039,9 +964,6 @@ fn real_twin(s: &Script, variant: RealVariant) -> Option<Script> {
         uv_ok: point,
         real: true,
     }];
-    if ffi::validate(ffi_face(&twin).as_ref(), &cpp_input(&twin)).is_err() || !shim_accepts(&twin) {
-        return None;
-    }
     Some(twin)
 }
 
@@ -1051,14 +973,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let s = gen_script(rng);
-            if ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_err() || !shim_accepts(&s) {
-                continue;
-            }
-            return serde_json::to_value(s).ok();
-        }
-        None
+        serde_json::to_value(gen_script(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1099,10 +1014,6 @@ impl UnitDiff for Runner {
         Ok(cases)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1112,8 +1023,7 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
-    /// Generated scripts are accepted by the ffi checks, and a good share of them is
-    /// comparable now (not deferred).
+    /// A good share of the generated scripts is not deferred.
     #[test]
     fn generated_scripts_are_partly_comparable() {
         let mut rng = Rng::new(7);
@@ -1151,14 +1061,12 @@ mod tests {
         assert_eq!(&out[..3], &[2.0, 1001.0, 3.0]);
     }
 
-    /// Endpoint arbitration and old-face updates compare full state against C++.
+    /// Endpoint arbitration and old-face updates.
     #[test]
-    fn real_endpoint_branches_match_cpp() {
+    fn real_endpoint_branches() {
         for (name, inputs) in real_endpoint_cases() {
             let script: Script = serde_json::from_value(inputs).unwrap();
-            let native = ffi::run(ffi_face(&script).as_ref(), &cpp_input(&script)).unwrap();
             let actual = rust_run(&script).ok().unwrap();
-            assert_eq!(actual, native, "{name}");
             assert_eq!(actual[1], 0.0, "{name}: operation must succeed");
             // op, status, interval count, interval bounds, start PC (17 fields), mid PC.
             let mid = 22;
@@ -1196,15 +1104,6 @@ mod tests {
                 }
             }
             assert!(twins >= 20, "{variant:?}: {twins} twins");
-        }
-    }
-
-    #[test]
-    fn edge_cases_are_accepted() {
-        for (name, v) in edge_cases() {
-            let s: Script = serde_json::from_value(v).unwrap();
-            assert!(ffi::validate(ffi_face(&s).as_ref(), &cpp_input(&s)).is_ok(), "{name}");
-            assert!(shim_accepts(&s), "{name}");
         }
     }
 }
