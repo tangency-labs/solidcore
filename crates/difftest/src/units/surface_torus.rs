@@ -5,14 +5,13 @@
 //! `GlobalSurfaceIntersect` with a plane; `IsNurbSurfaceTorus` on its NURB, fixtures
 //! only).
 //!
-//! C++: `solidcore_ffi::units::surface_torus` (upstream `source/SMLib/src/SmTorus.cpp`).
+//! Ported from upstream `source/SMLib/src/SmTorus.cpp`; checked against its golden.
 //! Rust: `solidcore::surface::torus`.
 //!
 //! A case is `torus` (placement, radii, flags, optional domain and generator circle)
-//! plus `op` and its parameters. Both sides produce the same flat record (layout in
-//! the FFI module docs), split into `build` (the construction status), `status` (the
+//! plus `op` and its parameters. The Rust side produces a flat record, split into `build` (the construction status), `status` (the
 //! op status) and `out` (the rest). Statuses are `0` (`SM_SUCCESS`) or the
-//! `SmStatus`; `-1` on the Rust side for an error upstream cannot produce.
+//! `SmStatus`; `-1` for an error upstream cannot produce.
 //!
 //! Deferred cases: `Transform` other than the identity or a rejected scale
 //! (`SmSurfOfRevolution::Transform`, `surface.surf_of_revolution_p3`); a plane
@@ -29,7 +28,7 @@ use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::vector2d::{Point2, Vec2};
 use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
-use solidcore::nurbs::b_spline_surface::{BSplineSurface, IsoCurveOptions, SurfParamType};
+use solidcore::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use solidcore::nurbs::crv_basic::Curve as NurbCurve;
 use solidcore::surface::surface::p2::{
     B_SPLINE_SURFACE_TYPE, SURF_OF_REVOLUTION_TYPE, TORUS_TYPE, TYPE,
@@ -38,7 +37,6 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::p2::{Surface, SurfaceIntersection};
 use solidcore::surface::torus::{Torus, TorusOptions};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_torus as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -198,132 +196,6 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -------------------------------------------------------------------------
-
-fn ffi_torus(t: &TorusIn) -> ffi::TorusIn {
-    ffi::TorusIn {
-        origin: t.origin,
-        x: t.x,
-        y: t.y,
-        major: t.major,
-        minor: t.minor,
-        swap: t.swap,
-        inside_out: t.inside_out,
-        dom: t.dom,
-        circle: t.circle.as_ref().map(|c| ffi::CircleIn {
-            c: c.c,
-            x: c.x,
-            y: c.y,
-            d: c.d,
-            r: c.r,
-        }),
-    }
-}
-
-fn ffi_dom(d: DomIn) -> ffi::Dom {
-    match d {
-        DomIn::Natural => ffi::Dom::Natural,
-        DomIn::Explicit { d } => ffi::Dom::Explicit(d),
-    }
-}
-
-fn ffi_args(a: &Args) -> ffi::IsectArgs {
-    ffi::IsectArgs {
-        dom: ffi_dom(a.dom),
-        other_dom: ffi_dom(a.other_dom),
-        tol: a.tol,
-    }
-}
-
-fn ffi_plane(p: &PlaneIn) -> ffi::Plane {
-    match p {
-        PlaneIn::Bounded {
-            origin,
-            x,
-            y,
-            scale,
-            dom,
-        } => ffi::Plane::Bounded {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            dom: *dom,
-        },
-        PlaneIn::Infinite { origin, normal } => ffi::Plane::Infinite {
-            origin: *origin,
-            normal: *normal,
-        },
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = match &i.op {
-        OpIn::Build {} => ffi::Op::Build,
-        OpIn::EvalStep { u, v, k, point } => ffi::Op::EvalStep {
-            u: *u,
-            v: *v,
-            k: *k,
-            point: *point,
-        },
-        OpIn::ToStep { u, v } => ffi::Op::ToStep { u: *u, v: *v },
-        OpIn::ToNurbs { u, v } => ffi::Op::ToNurbs { u: *u, v: *v },
-        OpIn::Iso { param, iso, dom } => ffi::Op::Iso {
-            param: *param,
-            iso: *iso,
-            dom: *dom,
-        },
-        OpIn::Offset { dist, tol, rebuild } => ffi::Op::Offset {
-            dist: *dist,
-            tol: *tol,
-            rebuild: *rebuild,
-        },
-        OpIn::Rebuild {} => ffi::Op::Rebuild,
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => ffi::Op::Transform {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
-        },
-        OpIn::Eq { other } => ffi::Op::Eq {
-            other: Box::new(ffi_torus(other)),
-        },
-        OpIn::Copy {} => ffi::Op::Copy,
-        OpIn::IsectPlane { plane, args } => ffi::Op::IsectPlane {
-            plane: ffi_plane(plane),
-            args: ffi_args(args),
-        },
-        OpIn::Global { plane, args } => ffi::Op::Global {
-            plane: ffi_plane(plane),
-            args: ffi_args(args),
-        },
-        OpIn::TrimDomain { dom } => ffi::Op::TrimDomain { dom: *dom },
-        OpIn::IsNurb {
-            scale,
-            net_scale,
-            perturb,
-        } => ffi::Op::IsNurb {
-            scale: *scale,
-            net_scale: *net_scale,
-            perturb: perturb
-                .iter()
-                .map(|p| ffi::Perturb {
-                    i: p.i,
-                    j: p.j,
-                    d: p.d,
-                })
-                .collect(),
-        },
-    };
-    let flat = ffi::torus_op(&ffi_torus(&i.torus), &op).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
-}
-
 /// Splits a record into `build`, `status` and `out`.
 fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
     let (b, rest) = flat
@@ -369,9 +241,6 @@ fn status(e: &SolidError) -> f64 {
         _ => -1.0,
     }
 }
-
-/// `SC_ERR_ARG` (`harness/cpp/shim/sc_shim.h`): the shim rejected the arguments.
-const SC_ERR_ARG: f64 = -1002.0;
 
 /// Builds the torus; `Ok(Err(e))` when the construction fails.
 fn rust_torus(k: &Kernel, t: &TorusIn) -> Result<solidcore::Result<Torus>, HarnessError> {
@@ -616,29 +485,11 @@ fn rust_op(
             .map(|p| o.extend([0.0, p.x, p.y])),
         OpIn::Iso { param, iso, dom } => {
             let dom = dom.map(|[a, b, c, d]| Extent2d::from_bounds(a, b, c, d));
-            // the shim's guard: the base extraction must succeed
-            let probe = t.base().base().create_iso_parametric_curve(
-                k,
-                param_of(*param),
-                *iso,
-                IsoCurveOptions {
-                    domain: dom,
-                    uv_iso_curve: false,
-                },
-            );
-            match probe {
-                Err(e) if e.is_unported() => Err(e),
-                Err(_) => {
-                    o.push(SC_ERR_ARG);
-                    Ok(())
-                }
-                Ok(_) => t
-                    .create_iso_parametric_curve(k, param_of(*param), *iso, dom.as_ref(), false)
-                    .map(|c| {
-                        o.extend([0.0, c.max_gap_3d]);
-                        put_curve(o, Some(&c.curve));
-                    }),
-            }
+            t.create_iso_parametric_curve(k, param_of(*param), *iso, dom.as_ref(), false)
+                .map(|c| {
+                    o.extend([0.0, c.max_gap_3d]);
+                    put_curve(o, Some(&c.curve));
+                })
         }
         OpIn::Offset { dist, tol, rebuild } => {
             t.create_offset_surface(k, *dist, *tol).and_then(|off| {
@@ -774,8 +625,8 @@ fn rust_op(
     Ok(r)
 }
 
-/// The shim's `OP_IS_NURB`: a copy of the torus's NURB, scaled and changed, as a plain
-/// B-spline surface owning it, given to `IsNurbSurfaceTorus`.
+/// The `is_nurb` op: a copy of the torus's NURB, scaled and changed, as a plain B-spline
+/// surface owning it, given to `IsNurbSurfaceTorus`.
 fn is_nurb(
     k: &Kernel,
     t: &Torus,
@@ -1269,23 +1120,12 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
 }
 
 // ---- lazy NURB (`surface.surface_p2` `common_const_make` cases) ------------------------
-
-/// The native side of a torus `common_const_make` case.
-pub(super) fn const_make_cpp(value: Value) -> Result<Output, HarnessError> {
-    let t: TorusIn = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
-    let flat = ffi::const_make(&ffi_torus(&t)).map_err(|e| harness(e.to_string()))?;
-    super::surface_cone_p1::const_make_nurb_cpp(&flat)
-}
 
 /// The Rust side: the torus as its constructor leaves it (no NURB), then the shared
 /// const-query, `Copy`, `==` and `Transform` sequence.

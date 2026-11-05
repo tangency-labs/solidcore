@@ -44,7 +44,7 @@ use solidcore::SolidError;
 
 use super::surface_surface_cache_p1::{
     bss_of, domain_of_srf, flag, gen_bss, gen_srf, gen_sub_dom, gvec, harness, push3, push_box,
-    push_bss, push_dom, srf, status, surface_of, v3, BssIn, InlineSrf, SrfIn,
+    push_dom, srf, status, surface_of, v3, BssIn, InlineSrf, SrfIn,
 };
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -183,30 +183,6 @@ struct Inputs {
     opts: OptsIn,
     #[serde(flatten)]
     op: OpIn,
-}
-
-// ---- surface wire -------------------------------------------------------------------
-
-pub(crate) fn push_surf(o: &mut Vec<f64>, s: &SurfIn) -> Result<(), HarnessError> {
-    match s {
-        SurfIn::Bspline(b) => {
-            o.push(0.0);
-            push_bss(o, b)
-        }
-        SurfIn::Plane(p) => {
-            o.push(1.0);
-            o.extend(p.o);
-            o.extend(p.x);
-            o.extend(p.y);
-            o.extend(p.scale);
-            o.extend(p.dom);
-            Ok(())
-        }
-        SurfIn::CurveBounded(b) => {
-            o.push(2.0);
-            push_bss(o, b)
-        }
-    }
 }
 
 fn to_output(flat: &[f64]) -> Output {

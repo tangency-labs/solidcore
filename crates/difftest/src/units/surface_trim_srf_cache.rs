@@ -3,21 +3,19 @@
 //! on hand-built decomposition trees, and `BuildTree` / `PointTest` / `PointClassify` on the
 //! cache of a face).
 //!
-//! C++: `solidcore_ffi::units::surface_trim_srf_cache` (upstream
-//! `source/SMLib/src/SmTrimSrfCache.cpp`; trees are built by hand. Edge uses either
+//! Ported from upstream `source/SMLib/src/SmTrimSrfCache.cpp`; checked against its golden
+//! (trees are built by hand. Edge uses either
 //! carry ownerless UV inputs or genuinely own them through a real wire edge with
 //! an explicit edge tolerance; faces come from `SmBrep::CreateFaceFromSurface`).
 //!
 //! A case is a surface `srf` (`oob`, `form` and an inline or `.sms` surface) and an `op` with
-//! its parameters. Both sides produce the flat record documented in the ffi module; the runner
+//! its parameters. The Rust side produces a flat record; the runner
 //! reports its first entry as the `status` (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for
 //! a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest as `out`.
 //!
-//! Face cases independently construct the same naturally trimmed B-spline face as
-//! the shim, then use the shared `BrepCacheFace` adapter for cache construction and
+//! Face cases construct the naturally trimmed B-spline face, then use the shared `BrepCacheFace` adapter for cache construction and
 //! classification. Missing downstream services remain explicit deferrals. Every
-//! run has at least [`MIN_GENERATED`] generated cases; generated inputs the ffi
-//! wrapper rejects are redrawn.
+//! run has at least [`MIN_GENERATED`] generated cases.
 //!
 //! Deviations: the runner-local SMS reader validates counts below the exclusive
 //! `2^usize::BITS` bound, checks dimension and payload arithmetic and available
@@ -47,7 +45,6 @@ use solidcore::surface::surface_cache::p1::FaceContainment;
 use solidcore::surface::surface_cache::{BezierAux2d, BezierPatch, SurfaceCacheOptions};
 use solidcore::surface::trim_srf_cache::{EdgeuseInput, TrimSrfCache};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_trim_srf_cache::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -190,17 +187,6 @@ enum OpIn {
     },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            Self::New { .. } => Op::New,
-            Self::PointTest { .. } => Op::PointTest,
-            Self::ImplantEu { .. } => Op::ImplantEu,
-            Self::Face { .. } => Op::Face,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     srf: BssIn,
@@ -232,126 +218,7 @@ fn srf(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 // ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, b: &BssIn) -> Result<(), HarnessError> {
-    o.push(flag(b.oob));
-    o.push(f64::from(b.form));
-    let s = srf(&b.srf)?;
-    let (n, m) = shape(&s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    let ku =
-        s.u.len()
-            .checked_sub(1)
-            .ok_or_else(|| harness("empty u knots"))?;
-    let kv =
-        s.v.len()
-            .checked_sub(1)
-            .ok_or_else(|| harness("empty v knots"))?;
-    o.extend([ku as f64, kv as f64]);
-    for row in &s.net {
-        for p in row {
-            o.extend(p);
-        }
-    }
-    o.extend(&s.u);
-    o.extend(&s.v);
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &Crv2In) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([
-        2.0,
-        n as f64,
-        c.p as f64,
-        (c.u.len().saturating_sub(1)) as f64,
-    ]);
-    for &[x, y, w] in &c.cpts {
-        o.extend([x, y, NOZ, w]);
-    }
-    o.extend(&c.u);
-}
-
-fn push_tree(o: &mut Vec<f64>, t: &[NodeIn]) {
-    o.push(t.len() as f64);
-    for n in t {
-        o.extend([
-            n.parent as f64,
-            n.c1 as f64,
-            n.c2 as f64,
-            f64::from(n.aux),
-            f64::from(n.split),
-            flag(n.marked),
-            f64::from(n.class),
-        ]);
-        o.extend(n.dom);
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    push_srf(&mut o, &i.srf)?;
-    match &i.op {
-        OpIn::New { opts, kinds } => {
-            o.extend(opts);
-            o.push(kinds.len() as f64);
-            o.extend(kinds.iter().map(|&k| k as f64));
-        }
-        OpIn::PointTest {
-            enabled,
-            modified,
-            uv,
-            tol,
-        } => {
-            o.extend([flag(*enabled), flag(*modified), uv[0], uv[1]]);
-            o.extend([flag(tol.is_some()), tol.unwrap_or(0.0)]);
-        }
-        OpIn::ImplantEu {
-            dom,
-            factor,
-            tree,
-            fe,
-            calls,
-        } => {
-            o.extend(dom);
-            o.push(*factor);
-            push_tree(&mut o, tree);
-            o.push(flag(fe.is_none()));
-            o.extend(fe.unwrap_or([0.0; 4]));
-            o.push(calls.len() as f64);
-            for c in calls {
-                push_crv(&mut o, &c.crv);
-                o.extend([flag(c.subdiv), c.node as f64]);
-                o.extend([flag(c.owner_tol.is_some()), c.owner_tol.unwrap_or(0.0)]);
-            }
-        }
-        OpIn::Face { build, points } => {
-            o.push(flag(*build));
-            o.push(points.len() as f64);
-            for p in points {
-                o.extend([p.uv[0], p.uv[1], flag(p.test_tol), p.tol]);
-            }
-        }
-    }
-    Ok((i.op.ffi(), o))
-}
 
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
@@ -360,12 +227,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -644,17 +505,6 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
-    // the shim never runs it, so the Rust side must not either. Nightly fuzz case
-    // fuzz00295 (run 41040730716) made one control point of a non-rational surface
-    // rational (weight 1, the others the non-rational marker -f64::MAX): the FFI refuses
-    // the mixed rationality for the C++ side, while this side built and subdivided the
-    // face's trimmed-surface cache on those weights past the fuzz time limit. The checks
-    // see the same input vector as `cpp`; an input `cpp_input` cannot encode keeps its
-    // own error from `rust_op`, as before.
-    if let Ok((op, input)) = cpp_input(i) {
-        ffi::validate(op, &input).map_err(|e| harness(e.to_string()))?;
-    }
     Ok(match rust_op(i)? {
         Ok(o) => to_output(&o),
         Err(e) => Output::unported(&e).unwrap_or_else(|| to_output(&[status(&e)])),
@@ -1058,16 +908,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1078,16 +919,6 @@ impl UnitDiff for Runner {
         let mut cases = default_cases(self, &ctx)?;
         cases.extend(poly_edges::cases()?);
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if let Some(input) = case.inputs.get("native_face") {
-            return native_face::run_cpp(input);
-        }
-        if let Some(input) = case.inputs.get("poly_edges") {
-            return poly_edges::run_cpp(input);
-        }
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1106,45 +937,6 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// Nightly fuzz case `surface.trim_srf_cache/fuzz00295` (run 41040730716): a
-    /// non-rational surface (weights the marker `-f64::MAX`) with one weight set to 1. The
-    /// FFI refuses the mixed rationality for the C++ side, and the Rust side must be
-    /// refused the same way instead of building the face's cache on those weights.
-    #[test]
-    fn mixed_rationality_is_refused_on_both_sides() {
-        let now = -f64::MAX;
-        let pts = [
-            [[0.11307040887730813, 0.10428250472428902], [-0.09038368866398652, 1.0336054504782248]],
-            [[1.048156188788074, 0.1113438097366451], [0.9873484175035264, 0.9965020776828566]],
-            [[1.8306904106008646, 0.09690621762981516], [1.869628076706222, 0.9971845203273039]],
-            [[2.83019372825851, -0.10432981786793692], [2.9612161378113626, 0.9929387077342768]],
-            [[4.044729229663047, -0.16631713640389256], [3.901839295125552, 1.1782262897029905]],
-        ];
-        let net: Vec<Vec<[f64; 4]>> = pts
-            .iter()
-            .enumerate()
-            .map(|(r, row)| {
-                row.iter()
-                    .enumerate()
-                    .map(|(c, &[x, y])| [x, y, 0.0, if r == 0 && c == 0 { 1.0 } else { now }])
-                    .collect()
-            })
-            .collect();
-        let v = serde_json::json!({
-            "build": true, "op": "face", "points": [],
-            "srf": {"form": 4, "oob": false, "srf": {
-                "net": net, "p": 3, "q": 1,
-                "u": [0.0, 0.0, 0.0, 0.0, 0.3629795435276152, 1.0, 1.0, 1.0, 1.0],
-                "v": [0.0, 0.0, 1.0, 1.0]
-            }}
-        });
-        let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = cpp(&i).unwrap_err().to_string();
-        let rust = rust(&i).unwrap_err().to_string();
-        assert_eq!(cpp, "invalid argument: surface: mixed rationality");
-        assert_eq!(rust, cpp);
-    }
-
     /// The generators reach every op with successful outcomes on the Rust side.
     #[test]
     fn generated_cases_cover_ops() {
@@ -1152,12 +944,6 @@ mod tests {
         for seed in 0..2000u64 {
             let mut rng = Rng::new(0x5eed_1000 + seed);
             let i = gen_case(&mut rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
             let out = rust(&i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.unit)
@@ -1186,7 +972,13 @@ mod tests {
                     at += 3 + k;
                 }
             }
-            *tally.entry((format!("{op:?}"), kind)).or_default() += 1;
+            let op = match &i.op {
+                OpIn::New { .. } => "New",
+                OpIn::PointTest { .. } => "PointTest",
+                OpIn::ImplantEu { .. } => "ImplantEu",
+                OpIn::Face { .. } => "Face",
+            };
+            *tally.entry((op.to_string(), kind)).or_default() += 1;
         }
         for key in ["implant:curved", "implant:line"] {
             assert!(

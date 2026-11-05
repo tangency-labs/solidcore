@@ -3,14 +3,14 @@
 //! boxes, the exact inverse and point solves, domain predicates, copies, equality,
 //! database reads).
 //!
-//! C++: `solidcore_ffi::units::surface_twist_volume` (upstream
-//! `source/SMLib/src/SmTwistVolume.cpp`). Rust: `solidcore::surface::twist_volume`
+//! Ported from upstream `source/SMLib/src/SmTwistVolume.cpp`; checked against its golden.
+//! Rust: `solidcore::surface::twist_volume`
 //! through the [`Volume`] dispatch of `solidcore::surface::volume`.
 //!
 //! A case is a twist (`twist`: optional component-constructor arguments `ctor`, the
 //! default constructor without; optional `next` transform `[origin, X, Y, Z]`
-//! appended as an owned next map) and an `op` with its parameters. Both sides produce
-//! the flat record documented in the ffi module; the runner reports its first entry
+//! appended as an owned next map) and an `op` with its parameters. The Rust side produces
+//! a flat record; the runner reports its first entry
 //! as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
 //! `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest as
 //! `out`.
@@ -33,7 +33,6 @@ use solidcore::surface::twist_volume::TwistVolume;
 use solidcore::surface::volume::{EvalOptions, Volume, VolumeKind};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_twist_volume::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -139,33 +138,6 @@ enum Inputs {
 
 // ---- C++ side -----------------------------------------------------------------------
 
-fn put3(o: &mut Vec<f64>, p: [f64; 3]) {
-    o.extend(p);
-}
-
-fn twist_block(o: &mut Vec<f64>, t: &TwistIn) {
-    match &t.ctor {
-        Some(c) => {
-            o.push(1.0);
-            put3(o, c.o);
-            put3(o, c.axis);
-            put3(o, c.mid);
-            o.push(c.period);
-            o.push(c.min);
-        }
-        None => o.push(0.0),
-    }
-    match &t.next {
-        Some(n) => {
-            o.push(1.0);
-            for p in n {
-                put3(o, *p);
-            }
-        }
-        None => o.push(0.0),
-    }
-}
-
 fn fl(b: bool) -> f64 {
     if b {
         1.0
@@ -174,111 +146,12 @@ fn fl(b: bool) -> f64 {
     }
 }
 
-fn cpp_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::Info { twist, types } => {
-            twist_block(&mut o, twist);
-            o.push(types.len() as f64);
-            o.extend(types.iter().map(|&t| t as f64));
-            Op::Info
-        }
-        Inputs::Eval { twist, p, n, comp } => {
-            twist_block(&mut o, twist);
-            put3(&mut o, *p);
-            o.push(*n as f64);
-            o.push(fl(*comp));
-            Op::Eval
-        }
-        Inputs::EvalSimple { twist, p, n } => {
-            twist_block(&mut o, twist);
-            put3(&mut o, *p);
-            o.push(*n as f64);
-            Op::EvalSimple
-        }
-        Inputs::BBox {
-            twist,
-            a,
-            b,
-            want_box,
-            want_pseudo,
-        } => {
-            twist_block(&mut o, twist);
-            put3(&mut o, *a);
-            put3(&mut o, *b);
-            o.push(fl(*want_box));
-            o.push(fl(*want_pseudo));
-            Op::BBox
-        }
-        Inputs::InvGuess { twist, p } => {
-            twist_block(&mut o, twist);
-            put3(&mut o, *p);
-            Op::InvGuess
-        }
-        Inputs::Global { twist, p, dom } | Inputs::Local { twist, p, dom, .. } => {
-            twist_block(&mut o, twist);
-            put3(&mut o, *p);
-            let op = if let Inputs::Local { g, .. } = i {
-                put3(&mut o, *g);
-                Op::Local
-            } else {
-                Op::Global
-            };
-            match dom {
-                Some([a, b]) => {
-                    o.push(1.0);
-                    put3(&mut o, *a);
-                    put3(&mut o, *b);
-                }
-                None => o.push(0.0),
-            }
-            op
-        }
-        Inputs::Preds { twist, p, a, b } => {
-            twist_block(&mut o, twist);
-            put3(&mut o, *p);
-            put3(&mut o, *a);
-            put3(&mut o, *b);
-            Op::Preds
-        }
-        Inputs::Copy { twist, simple } => {
-            twist_block(&mut o, twist);
-            o.push(fl(*simple));
-            Op::Copy
-        }
-        Inputs::Equal {
-            twist,
-            other,
-            self_cmp,
-        } => {
-            twist_block(&mut o, twist);
-            twist_block(&mut o, other);
-            o.push(fl(*self_cmp));
-            Op::Equal
-        }
-        Inputs::ReadDb { data } => {
-            o.push(data.len() as f64);
-            o.extend(data.bytes().map(f64::from));
-            Op::ReadDb
-        }
-    };
-    (op, o)
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i);
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -767,23 +640,12 @@ fn gen_case(rng: &mut Rng) -> Inputs {
 }
 
 impl UnitDiff for Runner {
-    fn reference_platform(&self) -> Option<crate::platform::ReferencePlatform> {
-        Some(crate::platform::X86_64_TWIST_CASTS)
-    }
-
     fn id(&self) -> &'static str {
         "surface.twist_volume"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let (op, input) = cpp_input(&i);
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -792,10 +654,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

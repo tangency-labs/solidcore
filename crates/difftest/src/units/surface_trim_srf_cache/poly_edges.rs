@@ -2,11 +2,11 @@
 //! Both kernels receive the original face surface separately from the cache surface.
 
 use super::{
-    bss_of, build_tree, cache_of, class_code, cpp_input, curve_of, dom_of, domain_of_srf, ffi,
-    flag, gen_cache_dom, gen_srf, harness, link, push_crv, push_dom, push_srf, push_tree, status,
-    to_output, BssIn, CallIn, Case, CaseContext, Crv2In, Deserialize, Extent2d, HarnessError,
-    InlineSrf, Inputs, Kernel, NodeData, NodeId, NodeIn, Op, OpIn, Output, Rng, Run, Serialize,
-    SolidError, SplitDir, SrfIn, Surface, Value, DEFAULT_OPTS, NOW,
+    bss_of, build_tree, cache_of, class_code, curve_of, dom_of, domain_of_srf, flag,
+    gen_cache_dom, gen_srf, harness, link, push_dom, status, to_output, BssIn, CallIn, Case,
+    CaseContext, Crv2In, Deserialize, Extent2d, HarnessError, InlineSrf, Kernel, NodeData,
+    NodeId, NodeIn, Output, Rng, Run, Serialize, SolidError, SplitDir, SrfIn, Surface, Value,
+    DEFAULT_OPTS, NOW,
 };
 use crate::case::CaseSource;
 use solidcore::geom::vector3d::Point3;
@@ -31,38 +31,6 @@ struct Input {
     calls: Vec<CallIn>,
     #[serde(default)]
     remap: bool,
-}
-
-fn encoded(i: &Input) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    if i.calls.iter().any(|call| call.owner_tol.is_some()) {
-        return Err(harness("owned UV inputs require the ImplantEu protocol"));
-    }
-    push_srf(&mut o, &i.srf)?;
-    o.extend(i.dom);
-    o.push(i.factor);
-    push_tree(&mut o, &i.tree);
-    push_srf(&mut o, &i.original_srf)?;
-    o.push(i.edges.len() as f64);
-    for edge in &i.edges {
-        o.extend(edge.start);
-        o.extend(edge.end);
-        o.extend([edge.tolerance, edge.node as f64]);
-    }
-    o.push(flag(i.remap));
-    o.push(i.calls.len() as f64);
-    for call in &i.calls {
-        push_crv(&mut o, &call.crv);
-        o.extend([flag(call.subdiv), call.node as f64]);
-    }
-    Ok(o)
-}
-
-pub(super) fn run_cpp(value: &Value) -> Result<Output, HarnessError> {
-    let i: Input = serde_json::from_value(value.clone()).map_err(|e| harness(e.to_string()))?;
-    ffi::eval(Op::ImplantPoly, &encoded(&i)?)
-        .map(|o| to_output(&o))
-        .map_err(|e| harness(e.to_string()))
 }
 
 pub(super) fn run_rust(value: &Value) -> Result<Output, HarnessError> {
@@ -268,8 +236,6 @@ pub(super) fn cases() -> Result<Vec<Case>, HarnessError> {
             calls,
             remap: index % 3 == 0,
         };
-        // Invalid generated data is a generator bug, never silently dropped.
-        ffi::validate(Op::ImplantPoly, &encoded(&input)?).map_err(|e| harness(e.to_string()))?;
         cases.push(Case {
             unit: "surface.trim_srf_cache".into(),
             name: format!("poly_edges_gen{index:04}"),
@@ -281,23 +247,16 @@ pub(super) fn cases() -> Result<Vec<Case>, HarnessError> {
 }
 
 /// The shared surface generator can repeat an interior knot even for degree one;
-/// redraw those invalid NURBs just as the existing runner's generator does.
+/// redraw the NURBs the Rust constructor refuses.
 fn valid_surface(rng: &mut Rng) -> Result<InlineSrf, HarnessError> {
     for _ in 0..64 {
         let s = gen_srf(rng, 2);
-        let i = Inputs {
-            srf: BssIn {
-                oob: false,
-                form: 11,
-                srf: SrfIn::Inline(s.clone()),
-            },
-            op: OpIn::New {
-                opts: DEFAULT_OPTS,
-                kinds: Vec::new(),
-            },
+        let b = BssIn {
+            oob: false,
+            form: 11,
+            srf: SrfIn::Inline(s.clone()),
         };
-        let (_, encoded) = cpp_input(&i)?;
-        if ffi::validate(Op::New, &encoded).is_ok() {
+        if bss_of(&b).is_ok() {
             return Ok(s);
         }
     }

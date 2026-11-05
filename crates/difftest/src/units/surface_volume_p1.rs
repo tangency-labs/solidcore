@@ -2,21 +2,21 @@
 //! evaluation through orient and next maps, domain predicates, transforms, copies,
 //! equality) and the chain-rule helpers `smvol_Lift*Derivative` / `smvol_ConcatEvals`.
 //!
-//! C++: `solidcore_ffi::units::surface_volume_p1` (upstream
-//! `source/SMLib/src/SmVolume.cpp` on chains of plain `SmVolume`, `SmTransform`,
-//! default `SmTwistVolume` and default `SmUnbendVolume` maps, each optionally
-//! oriented by an `SmTransform`). Rust: `solidcore::surface::volume`.
+//! Ported from upstream `source/SMLib/src/SmVolume.cpp`; checked against its golden (on
+//! chains of plain `SmVolume`, `SmTransform`, default `SmTwistVolume` and default
+//! `SmUnbendVolume` maps, each optionally oriented by an `SmTransform`). Rust:
+//! `solidcore::surface::volume`.
 //!
 //! A case is a volume (`vol`: maps `{kind, t, orient}`, kind `0` plain, `1`
 //! transform `t = [origin, X, Y, Z]`, `2` twist, `3` unbend) and an `op` with its
-//! parameters, or a static op. Both sides produce the flat record documented in the
-//! ffi module; the runner reports its first entry as the `status` int (`0` =
-//! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a
-//! Rust error upstream cannot produce) and the rest as `out`.
+//! parameters, or a static op. The Rust side produces a flat record; the runner reports
+//! its first entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007`
+//! for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest
+//! as `out`.
 //!
 //! Deferred cases: ops reaching an unported callee (none since the unbend volume,
 //! unit `surface.unbend_volume`, was wired). The twist and unbend maps are
-//! default-constructed on both sides (twist period `0`, unbend neutral distance `0`:
+//! default-constructed (twist period `0`, unbend neutral distance `0`:
 //! some of their values are NaN or infinite).
 
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,6 @@ use solidcore::surface::twist_volume::TwistVolume;
 use solidcore::surface::unbend_volume::UnbendVolume;
 use solidcore::surface::volume::{Discontinuities3d, EvalOptions, Volume, VolumeKind};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_volume_p1::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -287,222 +286,12 @@ fn b(x: bool) -> f64 {
     }
 }
 
-fn push3(o: &mut Vec<f64>, p: [f64; 3]) {
-    o.extend(p);
-}
-
-fn push_vol(o: &mut Vec<f64>, v: &Vol) -> Result<(), HarnessError> {
-    o.push(v.len() as f64);
-    for m in v {
-        o.push(f64::from(m.kind));
-        if m.kind == 1 {
-            let t = m.t.ok_or_else(|| harness("transform map without t"))?;
-            for p in t {
-                push3(o, p);
-            }
-        }
-        match m.orient {
-            Some(t) => {
-                o.push(1.0);
-                for p in t {
-                    push3(o, p);
-                }
-            }
-            None => o.push(0.0),
-        }
-    }
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    if let Some(v) = i.vol() {
-        push_vol(&mut o, v)?;
-    }
-    let op = match i {
-        Inputs::Info { types, .. } => {
-            o.push(types.len() as f64);
-            o.extend(types.iter().map(|&t| t as f64));
-            Op::Info
-        }
-        Inputs::Bounded { .. } => Op::Bounded,
-        Inputs::Eval {
-            p,
-            n,
-            left,
-            nz,
-            comp,
-            ..
-        }
-        | Inputs::Map {
-            p,
-            n,
-            left,
-            nz,
-            comp,
-            ..
-        } => {
-            push3(&mut o, *p);
-            o.push(*n as f64);
-            o.extend(left.map(b));
-            o.extend([b(*nz), b(*comp)]);
-            if matches!(i, Inputs::Eval { .. }) {
-                Op::Eval
-            } else {
-                Op::Map
-            }
-        }
-        Inputs::MapPoint { p, comp, .. } => {
-            push3(&mut o, *p);
-            o.push(b(*comp));
-            Op::MapPoint
-        }
-        Inputs::Orient { p, n, .. } => {
-            push3(&mut o, *p);
-            o.push(*n as f64);
-            Op::Orient
-        }
-        Inputs::OrientPoint { p, .. } => {
-            push3(&mut o, *p);
-            Op::OrientPoint
-        }
-        Inputs::OrientDir { p, d, n, .. } => {
-            push3(&mut o, *p);
-            push3(&mut o, *d);
-            o.push(*n as f64);
-            Op::OrientDir
-        }
-        Inputs::OrientVector { p, d, .. } => {
-            push3(&mut o, *p);
-            push3(&mut o, *d);
-            Op::OrientVector
-        }
-        Inputs::EvalSimple { p, n, .. } => {
-            push3(&mut o, *p);
-            o.push(*n as f64);
-            Op::EvalSimple
-        }
-        Inputs::EvalPointSimple { p, .. } => {
-            push3(&mut o, *p);
-            Op::EvalPointSimple
-        }
-        Inputs::Eval1stSimple { p, left, nz, .. } => {
-            push3(&mut o, *p);
-            o.extend(left.map(b));
-            o.push(b(*nz));
-            Op::Eval1stSimple
-        }
-        Inputs::InvGuess { p, .. } => {
-            push3(&mut o, *p);
-            Op::InvGuess
-        }
-        Inputs::SimplePreds { p, a, b: e, .. } => {
-            push3(&mut o, *p);
-            push3(&mut o, *a);
-            push3(&mut o, *e);
-            Op::SimplePreds
-        }
-        Inputs::PtInInSpace { p, comp, .. } => {
-            push3(&mut o, *p);
-            o.push(b(*comp));
-            Op::PtInInSpace
-        }
-        Inputs::LineInParam { a, b: e, comp, .. }
-        | Inputs::CurveInParam { a, b: e, comp, .. }
-        | Inputs::CurveInInSpace { a, b: e, comp, .. } => {
-            push3(&mut o, *a);
-            push3(&mut o, *e);
-            o.push(b(*comp));
-            match i {
-                Inputs::LineInParam { .. } => Op::LineInParam,
-                Inputs::CurveInParam { .. } => Op::CurveInParam,
-                _ => Op::CurveInInSpace,
-            }
-        }
-        Inputs::Transform {
-            o: org, x, y, scale, ..
-        }
-        | Inputs::TransformSimple {
-            o: org, x, y, scale, ..
-        } => {
-            push3(&mut o, *org);
-            push3(&mut o, *x);
-            push3(&mut o, *y);
-            o.push(b(scale.is_some()));
-            push3(&mut o, scale.unwrap_or([1.0, 1.0, 1.0]));
-            if matches!(i, Inputs::Transform { .. }) {
-                Op::Transform
-            } else {
-                Op::TransformSimple
-            }
-        }
-        Inputs::AddNext { other, copy, .. } => {
-            push_vol(&mut o, other)?;
-            o.push(b(*copy));
-            Op::AddNext
-        }
-        Inputs::Copy { simple, .. } => {
-            o.push(b(*simple));
-            Op::Copy
-        }
-        Inputs::Equal {
-            other, self_cmp, ..
-        } => {
-            push_vol(&mut o, other)?;
-            o.push(b(*self_cmp));
-            Op::Equal
-        }
-        Inputs::MakeSimple { .. } => Op::MakeSimple,
-        Inputs::Refresh { .. } => Op::Refresh,
-        Inputs::TrimBox {
-            a, b: e, c, d, ..
-        } => {
-            for p in [a, e, c, d] {
-                push3(&mut o, *p);
-            }
-            Op::TrimBox
-        }
-        Inputs::HasDisc { .. } => Op::HasDisc,
-        Inputs::PvEval { p, sq, x, jac, .. } => {
-            push3(&mut o, *p);
-            o.push(*sq);
-            push3(&mut o, *x);
-            o.push(b(*jac));
-            Op::PvEval
-        }
-        Inputs::Lift { form, order, vecs } => {
-            o.extend([*form as f64, *order as f64]);
-            for p in vecs {
-                push3(&mut o, *p);
-            }
-            Op::Lift
-        }
-        Inputs::Concat { n, a, b: e } => {
-            o.push(*n as f64);
-            for p in a.iter().chain(e) {
-                push3(&mut o, *p);
-            }
-            Op::Concat
-        }
-        Inputs::Disconts {} => Op::Disconts,
-    };
-    Ok((op, o))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1233,16 +1022,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1251,10 +1031,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

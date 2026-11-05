@@ -1,10 +1,8 @@
 //! Real `.smb` face topology with live native trim-cache operations.
 //!
-//! Each side reads the file itself: the C++ side with `SmBrep::ReadFromFile`, the
-//! Rust side with the Rust reader (`crate::own_builder::read_as`, renumbered into the
-//! shim's traversal order), so no C++ state reaches the Rust side. Both engines
-//! independently build/classify. Planes stay planes; faces are selected by surface
-//! type, loop count and occurrence on both sides. The existing synthetic lane and all of its cases are unchanged.
+//! The runner reads the file with the Rust reader (`crate::own_builder::read_as`,
+//! renumbered into upstream's traversal order) and builds/classifies. Planes stay
+//! planes; faces are selected by surface type, loop count and occurrence. The existing synthetic lane and all of its cases are unchanged.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,7 +21,6 @@ use solidcore::surface::trim_srf_cache::TrimSrfCache;
 use solidcore::topology::face::p4 as face_p4;
 use solidcore::topology::{Brep, FaceId};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::surface_trim_srf_cache_faces as ffi;
 
 use crate::{HarnessError, Output};
 
@@ -64,41 +61,12 @@ fn flag(value: bool) -> f64 {
     f64::from(u8::from(value))
 }
 
-impl Inputs {
-    /// The shim's `build_mode` (see the FFI module).
-    fn build_mode(&self) -> f64 {
-        match (self.build, self.get_tree) {
-            (false, 0) => 0.0,
-            (true, 0) => 1.0,
-            (true, g) => 1.0 + f64::from(g),
-            (false, g) => 3.0 + f64::from(g),
-        }
-    }
-
-    fn flat(&self) -> Vec<f64> {
-        let mut out = vec![
-            f64::from(self.surface_type),
-            f64::from(self.loops),
-            f64::from(self.occurrence),
-            self.build_mode(),
-            flag(self.editing),
-            flag(self.modified),
-            flag(self.test_tol),
-            flag(self.boundary_probes),
-            self.samples.len() as f64,
-        ];
-        out.extend(self.samples.iter().flatten().copied());
-        out
-    }
-}
-
 fn parse(value: &Value) -> Result<Inputs, HarnessError> {
     let input: Inputs = serde_json::from_value(value.clone())
         .map_err(|e| harness(format!("native_face input: {e}")))?;
     if input.get_tree > 2 {
         return Err(harness("native_face get_tree must be 0, 1 or 2"));
     }
-    ffi::validate(&input.path, &input.flat()).map_err(|e| harness(e.to_string()))?;
     Ok(input)
 }
 
@@ -169,11 +137,6 @@ fn integer(value: f64) -> Result<i64, HarnessError> {
         )));
     }
     Ok(value as i64)
-}
-
-pub(super) fn run_cpp(value: &Value) -> Result<Output, HarnessError> {
-    let input = parse(value)?;
-    output(&ffi::eval(&input.path, &input.flat()).map_err(|e| harness(e.to_string()))?)
 }
 
 fn identity(entity: EntityRef) -> (i64, u32) {

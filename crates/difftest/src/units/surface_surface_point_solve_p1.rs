@@ -1,15 +1,13 @@
 //! Runner for unit `surface.surface_point_solve_p1`: the problem data, global-solver
 //! helpers and local-stepper pieces of `SmSurfacePointSolve.cpp` the unit owns.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_point_solve_p1` (the shim compiles the
-//! upstream file, whose classes are file-local). Rust:
-//! `solidcore::surface::surface_point_solve::p1`.
+//! Ported from upstream `source/SMLib/src/SmSurfacePointSolve.cpp`; checked against its
+//! golden. Rust: `solidcore::surface::surface_point_solve::p1`.
 //!
 //! A case is a surface `surf` (a B-spline, a plane or a curve-bounded surface, wrapped in
 //! a STEP surface when `wrap`), the problem (solver domain `dom`, operation `solver`
 //! as an `SmSolverOperationType` code, test point `test`, tolerance `tol`) and an `op`
-//! with its parameters. Both sides produce the flat record documented in the ffi
-//! module; the runner reports its first entry as the `status` (`0` = `SM_SUCCESS`, else
+//! with its parameters. The Rust side produces a flat record; the runner reports its first entry as the `status` (`0` = `SM_SUCCESS`, else
 //! the `SmStatus`; `1007` for an index past the control net, a Rust `InvalidInput`;
 //! `-1` for a Rust error upstream cannot produce) and the rest as the `out` values.
 //!
@@ -40,16 +38,18 @@ use solidcore::surface::surface_point_solve::p1::{
     triangles_dist, well_behaved_control_net, SurfPtGlobalSolver, SurfPtSolveStepper,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_point_solve_p1::{self as ffi, Op, MAX_HIT_STEPS};
 
 use super::surface_surface_cache_p1::{
     default_form, dom_of, flag, gen_knots, gen_sub_dom, gvec, harness, push3, push_dom, srf, status, v3,
     BssIn, InlineSrf, SrfIn,
 };
-use super::surface_surface_cache_p3::{gen_surf, push_surf, surf_domain, surf_size, surface_in, SurfIn};
+use super::surface_surface_cache_p3::{gen_surf, surf_domain, surf_size, surface_in, SurfIn};
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most `HitBound` steps in one case.
+const MAX_HIT_STEPS: usize = 64;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 900;
@@ -130,29 +130,6 @@ enum OpIn {
     },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Ctor => Op::Ctor,
-            OpIn::Closed => Op::Closed,
-            OpIn::Func { .. } => Op::Func,
-            OpIn::TriGuess { .. } => Op::TriGuess,
-            OpIn::Leg { .. } => Op::Leg,
-            OpIn::Stride { .. } => Op::Stride,
-            OpIn::SeamsUv { .. } => Op::SeamsUv,
-            OpIn::SeamsCpts { .. } => Op::SeamsCpts,
-            OpIn::Crease => Op::Crease,
-            OpIn::Local { .. } => Op::Local,
-            OpIn::TriDist { .. } => Op::TriDist,
-            OpIn::Well { .. } => Op::Well,
-            OpIn::Stepper { .. } => Op::Stepper,
-            OpIn::HitBound { .. } => Op::HitBound,
-            OpIn::CheckBounds { .. } => Op::CheckBounds,
-            OpIn::DropIso { .. } => Op::DropIso,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     /// Wrap the surface in an `SmSTEPSurface`.
@@ -169,60 +146,6 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = vec![flag(i.wrap)];
-    push_surf(&mut o, &i.surf)?;
-    o.extend(i.dom);
-    o.push(f64::from(i.solver));
-    o.extend(i.test);
-    o.push(i.tol);
-    match &i.op {
-        OpIn::Ctor | OpIn::Closed | OpIn::Crease => {}
-        OpIn::Func { uv } | OpIn::Stride { uv } | OpIn::SeamsUv { uv } => o.extend(uv),
-        OpIn::TriGuess { iu, iv } | OpIn::Leg { iu, iv } | OpIn::SeamsCpts { iu, iv } => {
-            o.extend([*iu as f64, *iv as f64]);
-        }
-        OpIn::TriDist { i, j } | OpIn::Well { i, j } => o.extend([*i as f64, *j as f64]),
-        OpIn::Local { uv, ltol } => {
-            o.extend(uv);
-            o.push(*ltol);
-        }
-        OpIn::Stepper { uv, tight, uv2 } => {
-            o.extend(uv);
-            o.push(*tight);
-            o.extend(uv2);
-        }
-        OpIn::HitBound { uv, steps } => {
-            o.extend(uv);
-            o.push(steps.len() as f64);
-            for s in steps {
-                o.extend(s.uv);
-                o.push(flag(s.v));
-                o.push(f64::from(s.tob));
-            }
-        }
-        OpIn::CheckBounds { curr, next, bdom } => {
-            o.extend(curr);
-            o.extend(next);
-            o.extend(bdom);
-        }
-        OpIn::DropIso {
-            uv,
-            v,
-            crease,
-            param,
-        } => {
-            o.extend(uv);
-            o.push(flag(*v));
-            o.push(*crease);
-            o.push(*param);
-        }
-    }
-    Ok((i.op.ffi(), o))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
         .split_first()
@@ -230,12 +153,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -938,18 +855,9 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         let k = &Kernel::default();
-        for _ in 0..64 {
-            let Ok(i) = gen_case(k, rng) else {
-                continue;
-            };
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        (0..64)
+            .find_map(|_| gen_case(k, rng).ok())
+            .and_then(|i| serde_json::to_value(i).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -962,41 +870,8 @@ impl UnitDiff for Runner {
         Ok(v)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&i)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
-        rust(&i)
+        rust(&case.parse()?)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn op_codes_round_trip() {
-        let i = Inputs {
-            wrap: false,
-            surf: SurfIn::Bspline(BssIn {
-                oob: false,
-                form: default_form(),
-                srf: SrfIn::Inline(gen_bilinear(&mut Rng::new(1))),
-            }),
-            dom: [0.0, 0.0, 1.0, 1.0],
-            solver: 3,
-            test: [0.5, 0.5, 1.0],
-            tol: 1e-6,
-            op: OpIn::Ctor,
-        };
-        let (op, input) = cpp_input(&i).unwrap();
-        assert_eq!(op, Op::Ctor);
-        assert!(ffi::validate(op, &input).is_ok());
-    }
-}

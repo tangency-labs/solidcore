@@ -3,29 +3,26 @@
 //! `SmSurfaceEval`, `SmDerivSurfDefinition`, `SmDropCurveFail`, the `smsurf_*` numerics,
 //! the file-static helpers of `SmSurface.cpp` and `SmLSIGlobalSolver`'s box test.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p2` (upstream `source/SMLib/src/SmSurface.cpp`,
-//! called through `SmSurface*` so the virtual dispatch is upstream's; the file-static
-//! helpers are verbatim copies in the shim). Rust: `solidcore::surface::surface::p2`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden.
+//! Rust: `solidcore::surface::surface::p2`.
 //!
 //! A case is an optional `this` (`{"base": true}` for the base class, else `oob`, `form`
-//! and an inline or `.sms` surface) and an `op` with its parameters. Both sides produce
-//! the flat record documented in the ffi module; the runner reports its first entry as the
+//! and an inline or `.sms` surface) and an `op` with its parameters. The Rust side produces
+//! a flat record; the runner reports its first entry as the
 //! `status` (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`,
 //! `-1` for a Rust error upstream cannot produce) and the rest as the `out` values. The
-//! Rust side runs the base-class defaults (`base_*`) for `this.base`. Both sides take
-//! `base` over `rev`, and `rev` over the B-spline surface.
+//! Rust side runs the base-class defaults (`base_*`) for `this.base`. It takes `base` over
+//! `rev`, and `rev` over the B-spline surface.
 //!
-//! `this.rev` is a revolution record: a canonical torus or cone that each side builds,
+//! `this.rev` is a revolution record: a canonical torus or cone that the runner builds,
 //! writes with `WriteToDB` to an ASCII record, optionally clears the planar generator flag
-//! in that record, and reads back with `SmSurface::ReadFromDB` (no C++ bytes reach the
-//! Rust side). With the flag cleared, `STEPInversion` takes `SmSurfOfRevolution`'s general
+//! in that record, and reads back with `SmSurface::ReadFromDB`. With the flag cleared, `STEPInversion` takes `SmSurfOfRevolution`'s general
 //! solver branch with the torus's or cone's own parameter conversions
 //! ([`revolution_cases`]).
 //!
 //! Deferred cases: the paths into unported units (`CopyAndAddAnalytics` and
 //! `GetMaxAnalyticDomain` of B-splines, `GlobalSurfaceIntersect`, `CreatePlaneWith3DCurves`,
-//! curve property analyses). Every run has at least [`MIN_GENERATED`] generated cases;
-//! generated inputs the ffi wrapper rejects are redrawn.
+//! curve property analyses). Every run has at least [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -66,7 +63,6 @@ use solidcore::surface::surface::p2::{
 };
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -428,56 +424,6 @@ enum DbIn {
     Text { text: String },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Eval { .. } => Op::Eval,
-            OpIn::EvalPt { .. } => Op::EvalPt,
-            OpIn::Queries => Op::Queries,
-            OpIn::Knots { .. } => Op::Knots,
-            OpIn::Parallel { .. } => Op::Parallel,
-            OpIn::Reverse { .. } => Op::Reverse,
-            OpIn::Reparam { .. } => Op::Reparam,
-            OpIn::Swap => Op::Swap,
-            OpIn::Transform { .. } => Op::Transform,
-            OpIn::Trim { .. } => Op::Trim,
-            OpIn::Split { .. } => Op::Split,
-            OpIn::StepInv { .. } => Op::StepInv,
-            OpIn::AdjustStep { .. } => Op::AdjustStep,
-            OpIn::MaxAnal => Op::MaxAnal,
-            OpIn::Copy => Op::Copy,
-            OpIn::CopyAnal => Op::CopyAnal,
-            OpIn::DropFast { .. } => Op::DropFast,
-            OpIn::ConvertUv { .. } => Op::ConvertUv,
-            OpIn::SEval { .. } => Op::SEval,
-            OpIn::Gssi { .. } => Op::Gssi,
-            OpIn::Lift2 { .. } => Op::Lift2,
-            OpIn::Lift3 { .. } => Op::Lift3,
-            OpIn::ScaleStep { .. } => Op::ScaleStep,
-            OpIn::Geom { .. } => Op::Geom,
-            OpIn::PointType { .. } => Op::PointType,
-            OpIn::DropVecs { .. } => Op::DropVecs,
-            OpIn::ParamDelta { .. } => Op::ParamDelta,
-            OpIn::Merge { .. } => Op::Merge,
-            OpIn::MapUv { .. } => Op::MapUv,
-            OpIn::IsEven { .. } => Op::IsEven,
-            OpIn::Breaks { .. } => Op::Breaks,
-            OpIn::Limits { .. } => Op::Limits,
-            OpIn::DerivAssert { .. } => Op::DerivAssert,
-            OpIn::Cross { .. } => Op::Cross,
-            OpIn::CrossSkin { .. } => Op::CrossSkin,
-            OpIn::Dcf { .. } => Op::Dcf,
-            OpIn::CcLocal { .. } => Op::CcLocal,
-            OpIn::IsectSplit { .. } => Op::IsectSplit,
-            OpIn::IsectCurveSplit { .. } => Op::IsectCurveSplit,
-            OpIn::Lsi { .. } => Op::Lsi,
-            OpIn::CsPerpen { .. } => Op::CsPerpen,
-            OpIn::Plane3d { .. } => Op::Plane3d,
-            OpIn::ReadDb { .. } => Op::ReadDb,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -514,442 +460,11 @@ fn db_bytes(db: &DbIn) -> Result<Vec<u8>, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
 // ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend(
-        [
-            n,
-            m,
-            s.p,
-            s.q,
-            s.u.len().saturating_sub(1),
-            s.v.len().saturating_sub(1),
-        ]
-        .map(|x| x as f64),
-    );
-    for row in &s.net {
-        for p in row {
-            o.extend_from_slice(p);
-        }
-    }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn push_bss(o: &mut Vec<f64>, b: &BssIn) -> Result<(), HarnessError> {
-    o.push(flag(b.oob));
-    o.push(f64::from(b.form));
-    push_srf(o, &srf(&b.srf)?)
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &CrvIn) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([
-        c.dim as f64,
-        n as f64,
-        c.p as f64,
-        c.u.len().saturating_sub(1) as f64,
-    ]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn push_vecs(o: &mut Vec<f64>, v: &[[f64; 3]]) {
-    o.push(v.len() as f64);
-    for x in v {
-        o.extend_from_slice(x);
-    }
-}
-
-fn push_vals(o: &mut Vec<f64>, v: &[f64]) {
-    o.push(v.len() as f64);
-    o.extend_from_slice(v);
-}
-
-fn push_cross(o: &mut Vec<f64>, s: &CrossSets) {
-    o.push(s.pos.len() as f64);
-    let mut flags = 0u32;
-    for (b, x) in s.opt.iter().enumerate() {
-        if x.is_some() {
-            flags |= 1 << b;
-        }
-    }
-    o.push(f64::from(flags));
-    for x in &s.pos {
-        o.extend_from_slice(x);
-    }
-    push_vecs(o, &s.d1);
-    for x in s.opt.iter().flatten() {
-        push_vecs(o, x);
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    match &i.this {
-        None => o.push(0.0),
-        Some(t) if t.base => o.push(1.0),
-        Some(This { rev: Some(r), .. }) => {
-            o.push(3.0);
-            o.push(flag(r.cone));
-            o.extend_from_slice(&r.origin);
-            o.extend_from_slice(&r.x);
-            o.extend_from_slice(&r.y);
-            o.extend_from_slice(&r.r);
-            o.extend([flag(r.swap), flag(r.inside), flag(r.non_planar)]);
-        }
-        Some(t) => {
-            o.push(2.0);
-            let b = t
-                .bss
-                .as_ref()
-                .ok_or_else(|| harness("this: missing surface"))?;
-            push_bss(&mut o, b)?;
-        }
-    }
-    match &i.op {
-        OpIn::Eval {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-            upper,
-            nzt,
-        } => {
-            o.extend_from_slice(uv);
-            o.extend([
-                *hu as f64,
-                *hv as f64,
-                flag(*u_left),
-                flag(*v_left),
-                flag(*upper),
-                flag(*nzt),
-            ]);
-        }
-        OpIn::EvalPt { uv } | OpIn::ConvertUv { uv } => o.extend_from_slice(uv),
-        OpIn::Queries | OpIn::Swap | OpIn::MaxAnal | OpIn::Copy | OpIn::CopyAnal => {}
-        OpIn::Knots { dir, ivl } => {
-            o.push(f64::from(*dir));
-            o.push(flag(ivl.is_some()));
-            o.extend_from_slice(&ivl.unwrap_or([0.0, 1.0]));
-        }
-        OpIn::Parallel { v } => o.extend_from_slice(v),
-        OpIn::Reverse { dir } => o.push(f64::from(*dir)),
-        OpIn::Reparam { dom } | OpIn::Trim { dom } | OpIn::AdjustStep { dom } => {
-            o.extend_from_slice(dom);
-        }
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => {
-            o.extend_from_slice(origin);
-            o.extend_from_slice(x);
-            o.extend_from_slice(y);
-            o.push(flag(scale.is_some()));
-            o.extend_from_slice(&scale.unwrap_or([1.0, 1.0, 1.0]));
-        }
-        OpIn::Split { t, dir } => o.extend([*t, f64::from(*dir)]),
-        OpIn::StepInv { dom, p, tol, guess } => {
-            o.extend_from_slice(dom);
-            o.extend_from_slice(p);
-            o.push(*tol);
-            o.push(flag(guess.is_some()));
-            o.extend_from_slice(&guess.unwrap_or([0.0, 0.0]));
-        }
-        OpIn::DropFast { dom, p } => {
-            o.extend_from_slice(dom);
-            o.extend_from_slice(p);
-        }
-        OpIn::SEval {
-            ctor,
-            uv,
-            dir,
-            steps,
-        } => {
-            o.push(f64::from(*ctor));
-            o.extend_from_slice(uv);
-            o.extend_from_slice(dir);
-            o.push(steps.len() as f64);
-            for s in steps {
-                o.extend_from_slice(s);
-            }
-        }
-        OpIn::Gssi {
-            dom,
-            other,
-            other_dom,
-            tol,
-            translate,
-        } => {
-            o.extend_from_slice(dom);
-            push_bss(&mut o, other)?;
-            o.extend_from_slice(other_dom);
-            o.extend([flag(tol.is_some()), tol.unwrap_or(0.0)]);
-            o.push(flag(translate.is_some()));
-            o.extend_from_slice(&translate.unwrap_or([0.0; 3]));
-        }
-        OpIn::Lift2 { v } | OpIn::Lift3 { v } | OpIn::Geom { e: v } => {
-            for x in v {
-                o.extend_from_slice(x);
-            }
-        }
-        OpIn::ScaleStep {
-            hu,
-            hv,
-            u_ang,
-            v_ang,
-            d,
-        } => {
-            o.extend([*hu as f64, *hv as f64, flag(*u_ang), flag(*v_ang)]);
-            for x in d {
-                o.extend_from_slice(x);
-            }
-        }
-        OpIn::PointType {
-            n,
-            duu,
-            dvv,
-            want_uu,
-            want_vv,
-            side_uu,
-        } => {
-            o.extend_from_slice(n);
-            o.extend_from_slice(duu);
-            o.extend_from_slice(dvv);
-            o.extend([flag(*want_uu), flag(*want_vv), f64::from(*side_uu)]);
-        }
-        OpIn::DropVecs { du, dv, v } => {
-            o.extend_from_slice(du);
-            o.extend_from_slice(dv);
-            push_vecs(&mut o, v);
-        }
-        OpIn::ParamDelta { t, d } => {
-            o.extend_from_slice(t);
-            o.extend_from_slice(d);
-        }
-        OpIn::Merge { a, b } => {
-            push_vals(&mut o, a);
-            push_vals(&mut o, b);
-        }
-        OpIn::MapUv { uv, orient, dir } => {
-            o.extend_from_slice(uv);
-            o.push(f64::from(*orient));
-            o.extend_from_slice(dir);
-        }
-        OpIn::IsEven { i } => o.push(f64::from(*i)),
-        OpIn::Breaks { ivl, b } => {
-            o.extend_from_slice(ivl);
-            push_vals(&mut o, b);
-        }
-        OpIn::Limits { p } => o.extend_from_slice(p),
-        OpIn::DerivAssert {
-            samples,
-            tt,
-            dir_angles,
-            tref,
-            tan,
-            angles,
-            vector,
-            ct,
-            bet,
-            radii,
-            cref,
-            flip,
-            with_list,
-        } => {
-            o.extend([*samples as f64, f64::from(*tt)]);
-            o.extend_from_slice(dir_angles);
-            o.push(flag(*tref));
-            o.extend_from_slice(tan);
-            o.extend_from_slice(angles);
-            o.extend_from_slice(vector);
-            o.extend([f64::from(*ct), f64::from(*bet)]);
-            o.extend_from_slice(radii);
-            o.extend([flag(*cref), flag(*flip), flag(*with_list)]);
-        }
-        OpIn::Cross { sets } => push_cross(&mut o, sets),
-        OpIn::CrossSkin {
-            sets,
-            params,
-            rail1,
-            rail2,
-            tol,
-        } => {
-            push_cross(&mut o, sets);
-            push_vals(&mut o, params);
-            push_crv(&mut o, rail1);
-            o.push(flag(rail2.is_some()));
-            if let Some(r) = rail2 {
-                push_crv(&mut o, r);
-            }
-            o.push(*tol);
-        }
-        OpIn::Dcf {
-            status,
-            from,
-            path,
-            ctx,
-            dom,
-            ivl,
-            tols,
-            flags,
-            max_drop,
-            closed,
-            closure,
-            sing,
-            poles,
-            normals,
-            poly,
-            knots,
-            curves,
-        } => {
-            o.extend([
-                f64::from(*status),
-                *from as f64,
-                f64::from(*path),
-                flag(*ctx),
-            ]);
-            o.extend_from_slice(dom);
-            o.extend_from_slice(ivl);
-            o.extend_from_slice(tols);
-            o.extend(flags.map(f64::from));
-            o.push(*max_drop);
-            o.extend(closed.map(f64::from));
-            o.push(f64::from(*closure));
-            o.extend(sing.map(|x| x as f64));
-            push_vecs(&mut o, poles);
-            push_vecs(&mut o, normals);
-            push_vecs(&mut o, poly);
-            push_vals(&mut o, knots);
-            o.push(curves.len() as f64);
-            for c in curves {
-                push_crv(&mut o, c);
-            }
-        }
-        OpIn::CcLocal {
-            c1,
-            i1,
-            k1,
-            c2,
-            i2,
-            k2,
-            sop,
-            tol,
-        } => {
-            push_crv(&mut o, c1);
-            o.extend_from_slice(i1);
-            o.extend(k1.map(f64::from));
-            push_crv(&mut o, c2);
-            o.extend_from_slice(i2);
-            o.extend(k2.map(f64::from));
-            o.extend([f64::from(*sop), *tol]);
-        }
-        OpIn::IsectSplit { c, ivl, pp, pn, s } => {
-            push_crv(&mut o, c);
-            o.extend_from_slice(ivl);
-            o.extend_from_slice(pp);
-            o.extend_from_slice(pn);
-            push_vals(&mut o, s);
-        }
-        OpIn::IsectCurveSplit {
-            c,
-            ivl,
-            lp,
-            lv,
-            livl,
-            zero,
-            s,
-        } => {
-            push_crv(&mut o, c);
-            o.extend_from_slice(ivl);
-            o.extend_from_slice(lp);
-            o.extend_from_slice(lv);
-            o.extend_from_slice(livl);
-            o.push(*zero);
-            push_vals(&mut o, s);
-        }
-        OpIn::Lsi {
-            bbox,
-            lp,
-            lv,
-            ivl,
-            ray,
-            tol,
-        } => {
-            o.extend_from_slice(&bbox[0]);
-            o.extend_from_slice(&bbox[1]);
-            o.extend_from_slice(lp);
-            o.extend_from_slice(lv);
-            o.push(flag(ivl.is_some()));
-            o.extend_from_slice(&ivl.unwrap_or([0.0, 1.0]));
-            o.extend([flag(*ray), *tol]);
-        }
-        OpIn::CsPerpen {
-            caux,
-            cbox,
-            saux,
-            sbox,
-        } => {
-            o.push(f64::from(*caux));
-            o.extend_from_slice(&cbox[0]);
-            o.extend_from_slice(&cbox[1]);
-            o.push(f64::from(*saux));
-            o.extend_from_slice(&sbox[0]);
-            o.extend_from_slice(&sbox[1]);
-        }
-        OpIn::Plane3d { curves, tol } => {
-            o.push(curves.len() as f64);
-            for c in curves {
-                push_crv(&mut o, c);
-            }
-            o.push(*tol);
-        }
-        OpIn::ReadDb {
-            ty,
-            binary,
-            version,
-            db,
-        } => {
-            let bytes = db_bytes(db)?;
-            o.extend([
-                *ty as f64,
-                flag(*binary),
-                *version as f64,
-                bytes.len() as f64,
-            ]);
-            o.extend(bytes.iter().map(|&b| f64::from(b)));
-        }
-    }
-    Ok((i.op.ffi(), o))
-}
 
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
@@ -958,12 +473,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1296,7 +805,7 @@ fn edit(s: &mut Option<Surface>, f: impl FnOnce(&mut Surface) -> solidcore::Resu
 }
 
 fn rust_surface_op(k: &Kernel, op: &OpIn, t: &This) -> Result<Run, HarnessError> {
-    // `base` first, then `rev`, then the B-spline surface, as `cpp_input` encodes `this`
+    // `base` first, then `rev`, then the B-spline surface
     let mut s = match t.rev.as_ref().filter(|_| !t.base) {
         Some(r) => match revolution_surface(k, r)? {
             Ok(s) => Some(s),
@@ -2928,16 +2437,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -2952,37 +2452,6 @@ impl UnitDiff for Runner {
         cases.extend(super::surface_torus::const_make_cases());
         cases.extend(super::surface_surf_of_revolution_p1::const_make_cases());
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if case.inputs.get("common_const_make").is_some() {
-            if let Some(v) = case.inputs.get("common_sphere") { return super::surface_sphere::const_make_cpp(v.clone()); }
-            if let Some(v) = case.inputs.get("common_torus") { return super::surface_torus::const_make_cpp(v.clone()); }
-            if let Some(v) = case.inputs.get("common_revolution") { return super::surface_surf_of_revolution_p1::const_make_cpp(v.clone()); }
-        }
-        if case.inputs.get("common_const_make").is_some() {
-            let value = case.inputs.get("common_cone").ok_or_else(|| HarnessError::new("missing common_cone"))?;
-            return super::surface_cone_p1::const_make_cpp(value.clone());
-        }
-        if let Some(value) = case.inputs.get("common_cone") {
-            return super::surface_cone_p1::common_cpp(
-                value.clone(),
-                case.inputs.get("common_db"),
-                case.inputs
-                    .get("common_lazy")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                case.inputs
-                    .get("common_subdomain")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                case.inputs
-                    .get("common_queries")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            );
-        }
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -3031,14 +2500,10 @@ mod tests {
         for seed in 0..2000u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
             let i = gen_case(&mut rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
+            let op = format!("{:?}", i.op);
+            let op = op.split(|c: char| !c.is_alphanumeric()).next().unwrap_or_default();
             let base = i.this.as_ref().is_some_and(|t| t.base);
-            let name = format!("{op:?}{}", if base { " base" } else { "" });
+            let name = format!("{op}{}", if base { " base" } else { "" });
             let out = rust(k, &i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.unit)

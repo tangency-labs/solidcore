@@ -1,6 +1,8 @@
-//! Differential tests of the five p3 surface-point solver entry points.
+//! Runner for unit `surface.surface_point_solve_p3`: the five p3 surface-point solver
+//! entry points. Ported from upstream `source/SMLib/src/SmSurfacePointSolve.cpp`; checked
+//! against its golden.
 //!
-//! Native construction and generated surfaces reuse p1/p2: actual planes, rational
+//! Generated surfaces reuse p1/p2: actual planes, rational
 //! and non-rational B-splines, surfaces of revolution, curve-bounded and STEP surfaces.
 //! The wire result compares statuses, found flags, reasons, iterations, UV, distance,
 //! object identity and restoration of the out-of-bounds flag. No absolute floor.
@@ -16,13 +18,12 @@ use solidcore::nurbs::b_spline_surface::SurfParamType;
 use solidcore::surface::surface::p1::StepSurface;
 use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::surface::surface_point_solve::SurfPtSolveStepper;
-use solidcore_ffi::units::surface_surface_point_solve_p3::{self as ffi, Op};
 
 use super::surface_surf_of_revolution_p1::{
-    ffi_surf as rev_ffi, gen_surf as gen_rev, rust_surf as rev_rust, SurfIn as RevIn,
+    gen_surf as gen_rev, rust_surf as rev_rust, SurfIn as RevIn,
 };
 use super::surface_surface_cache_p1::{dom_of, flag, gen_sub_dom, harness, v3, BssIn, SrfIn};
-use super::surface_surface_cache_p3::{push_surf, surf_domain, surf_size, SurfIn};
+use super::surface_surface_cache_p3::{surf_domain, surf_size, SurfIn};
 use super::surface_surface_point_solve_p1::{
     gen_surface, gen_test, gen_uv, gen_uv_any, p2, solver_op, wrapped_of, SOLVERS,
     SURFACE_SMS_POINTS,
@@ -75,50 +76,6 @@ enum Operation {
     },
 }
 
-impl Operation {
-    fn code(&self) -> Op {
-        match self {
-            Self::Global { .. } => Op::Global,
-            Self::Local { .. } => Op::Local,
-            Self::Stepper { mode: 0, .. } => Op::Boundary,
-            Self::Stepper { mode: 1, .. } => Op::Next,
-            Self::Stepper { .. } => Op::Crease,
-        }
-    }
-}
-
-fn tail(i: &Inputs) -> Vec<f64> {
-    let mut out = i.dom.to_vec();
-    out.push(f64::from(i.solver));
-    out.extend(i.test);
-    out.push(i.tol);
-    match i.op {
-        Operation::Global { target, request } => {
-            out.extend([
-                flag(target.is_some()),
-                target.unwrap_or(0.0),
-                f64::from(request),
-            ]);
-        }
-        Operation::Local { guess } => out.extend(guess),
-        Operation::Stepper {
-            uv,
-            tight,
-            next,
-            iteration,
-            hu,
-            hv,
-            ..
-        } => {
-            out.extend(uv);
-            out.push(tight);
-            out.extend(next);
-            out.extend([f64::from(iteration), f64::from(hu), f64::from(hv)]);
-        }
-    }
-    out
-}
-
 fn record(flat: &[f64]) -> Output {
     let (status, rest) = flat
         .split_first()
@@ -126,36 +83,6 @@ fn record(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-/// The FFI's own validation of `i` (what [`cpp`] runs), applied to the Rust side too:
-/// its guards refuse inputs upstream (and the faithful port) never finish on. A
-/// surface of revolution is not checked here (its check builds the surface in C++).
-fn validate(i: &Inputs) -> Result<(), HarnessError> {
-    match &i.surf {
-        Geometry::Base(surface) => {
-            let mut input = vec![flag(i.wrap)];
-            push_surf(&mut input, surface)?;
-            input.extend(tail(i));
-            ffi::validate(i.op.code(), &input).map_err(|e| harness(e.to_string()))
-        }
-        Geometry::Rev { .. } => Ok(()),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let rest = tail(i);
-    let result = match &i.surf {
-        Geometry::Base(surface) => {
-            let mut input = vec![flag(i.wrap)];
-            push_surf(&mut input, surface)?;
-            input.extend(rest);
-            ffi::eval(i.op.code(), &input)
-        }
-        Geometry::Rev { rev } => ffi::eval_rev(i.op.code(), i.wrap, &rev_ffi(rev)?, &rest),
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    Ok(record(&result))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -219,7 +146,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let domain = dom_of(i.dom);
     let operation = solver_op(i.solver)?;
     // the object key is read from a second build of the geometry: a query on the
-    // solved surface would make and keep a lazy plane's NURB, which C++ does not
+    // solved surface would make and keep a lazy plane's NURB, which upstream does not
     let object = Object(geometry(&k, i)?.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?);
     let oob = |s: &Surface| match s.kind() {
         SurfaceKind::BSpline(b) => Some(b.is_out_of_bounds_enabled()),
@@ -415,46 +342,17 @@ fn candidate(rng: &mut Rng) -> Option<Inputs> {
     Some(case)
 }
 
-// Generate only structurally valid inputs, before either engine is run. Never
-// inspect solver outputs here. Fully discontinuous knot sequences are outside the
-// shared native surface reader's contract; retry them as in the p1/p2 generators.
+// Generate inputs before the engine is run; never inspect solver outputs here.
 fn generated(rng: &mut Rng) -> Option<Inputs> {
-    for _ in 0..64 {
-        let Some(input) = candidate(rng) else {
-            continue;
-        };
-        let rest = tail(&input);
-        let valid = match &input.surf {
-            Geometry::Base(surface) => {
-                let mut flat = vec![flag(input.wrap)];
-                if push_surf(&mut flat, surface).is_err() {
-                    continue;
-                }
-                flat.extend(rest);
-                ffi::validate(input.op.code(), &flat)
-            }
-            Geometry::Rev { rev } => {
-                ffi::validate_rev(input.op.code(), input.wrap, &rev_ffi(rev).ok()?, &rest)
-            }
-        };
-        if valid.is_ok() {
-            return Some(input);
-        }
-    }
-    None
+    (0..64).find_map(|_| candidate(rng))
 }
 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "surface.surface_point_solve_p3"
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i = case.parse()?;
-        validate(&i)?;
-        rust(&i)
+        rust(&case.parse()?)
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         serde_json::to_value(generated(rng)?).ok()

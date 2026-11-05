@@ -1,8 +1,7 @@
 //! The existing synthetic face protocol over independently constructed topology.
 //!
-//! Mirrors `op_face` in `harness/cpp/shim/surface_trim_srf_cache.cpp`. Cache setup
-//! follows the native-face probes, but no exported native topology or results are
-//! needed: the landed p8 constructor consumes the original B-spline input.
+//! Cache setup follows the native-face probes; the landed p8 constructor consumes the
+//! original B-spline input.
 
 
 use solidcore::geom::attribute::AttributeStore;
@@ -180,11 +179,6 @@ mod tests {
                     f64::from(PointClassType::Vertex.code()),
                 ]
             );
-            #[cfg(feature = "cpp")]
-            {
-                let cpp = super::super::cpp(&input).unwrap();
-                assert_eq!(cpp, rust, "native record differs with build={build}");
-            }
         }
     }
 }

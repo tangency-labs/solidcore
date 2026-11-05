@@ -3,19 +3,18 @@
 //! next maps, compound point evaluation, the inverse point solvers,
 //! `HasDiscontinuities` and the polymorphic `ReadFromDB`).
 //!
-//! C++: `solidcore_ffi::units::surface_volume_p2` (upstream
-//! `source/SMLib/src/SmVolume.cpp` on chains of plain `SmVolume`, `SmTransform`,
-//! `SmTwistVolume`, `SmBSplineVolume`, default and component-constructed
-//! `SmUnbendVolume` and `SmBendVolume` maps, each but the twist and the component
-//! unbend and bend optionally oriented by an `SmTransform`). Rust:
+//! Ported from upstream `source/SMLib/src/SmVolume.cpp`; checked against its golden (on
+//! chains of plain `SmVolume`, `SmTransform`, `SmTwistVolume`, `SmBSplineVolume`, default
+//! and component-constructed `SmUnbendVolume` and `SmBendVolume` maps, each but the twist
+//! and the component unbend and bend optionally oriented by an `SmTransform`). Rust:
 //! `solidcore::surface::volume`.
 //!
 //! A case is a volume (`vol`: maps `{kind, ...}`, kind `0` plain, `1` transform `t =
 //! [origin, X, Y, Z]`, `2` twist `tw`, `3` B-spline `bs`, `4` default unbend, `5`
 //! component unbend `ub`, `6` default bend, `7` component bend `ub`; optional
 //! `orient`) and an `op` with its parameters, or a
-//! `read_db` of ASCII text. Both sides
-//! produce the flat record documented in the ffi module; the runner reports its first
+//! `read_db` of ASCII text. The Rust side
+//! produces a flat record; the runner reports its first
 //! entry as the `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a
 //! Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest
 //! as `out`.
@@ -44,10 +43,12 @@ use solidcore::surface::b_spline_volume::BSplineVolume;
 use solidcore::surface::bend_volume::BendVolume;
 use solidcore::surface::twist_volume::TwistVolume;
 use solidcore::surface::unbend_volume::UnbendVolume;
+use solidcore::surface::volume::p1::{
+    BEND_VOLUME_TYPE, B_SPLINE_VOLUME_TYPE, TRANSFORM_TYPE, TWIST_VOLUME_TYPE, UNBEND_VOLUME_TYPE,
+};
 use solidcore::surface::volume::{Discontinuities3d, InvPoints, Volume, VolumeKind};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_volume_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -283,261 +284,12 @@ fn b(x: bool) -> f64 {
     }
 }
 
-fn push_tf(o: &mut Vec<f64>, t: &Tf) {
-    for p in t {
-        o.extend(p);
-    }
-}
-
-fn push_vol(o: &mut Vec<f64>, v: &Vol) -> Result<(), HarnessError> {
-    o.push(v.len() as f64);
-    for m in v {
-        o.push(f64::from(m.kind));
-        match m.kind {
-            1 => push_tf(o, &m.t.ok_or_else(|| harness("transform map without t"))?),
-            2 => {
-                let t = m.tw.as_ref().ok_or_else(|| harness("twist map without tw"))?;
-                o.extend(t.o);
-                o.extend(t.axis);
-                o.extend(t.mid);
-                o.extend([t.period, t.min]);
-            }
-            3 => {
-                let r = m.bs.as_ref().ok_or_else(|| harness("B-spline map without bs"))?;
-                o.extend(r.hi.map(|x| x as f64));
-                o.extend(r.deg.map(|x| x as f64));
-                for k in &r.knots {
-                    o.extend(k);
-                }
-                for c in &r.cpts {
-                    o.extend(c);
-                }
-            }
-            5 | 7 => {
-                let u = m.ub.as_ref().ok_or_else(|| harness("(un)bend map without ub"))?;
-                o.extend(u.c);
-                o.extend(u.axis);
-                o.extend(u.mid);
-                o.extend([u.d, u.tol]);
-            }
-            _ => {}
-        }
-        if m.kind != 2 && m.kind != 5 && m.kind != 7 {
-            match &m.orient {
-                Some(t) => {
-                    o.push(1.0);
-                    push_tf(o, t);
-                }
-                None => o.push(0.0),
-            }
-        }
-    }
-    Ok(())
-}
-
-fn push_box(o: &mut Vec<f64>, bx: &Bx) {
-    o.extend(bx[0]);
-    o.extend(bx[1]);
-}
-
-fn push_pb(o: &mut Vec<f64>, pb: &PbIn) {
-    for v in pb.basis {
-        o.extend(v);
-    }
-    for i in pb.ivl {
-        o.extend(i);
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>, Vec<u8>), HarnessError> {
-    let mut o = Vec::new();
-    if let Some(v) = i.vol() {
-        push_vol(&mut o, v)?;
-    }
-    let mut data = Vec::new();
-    let op = match i {
-        Inputs::PtInParam { p, comp, .. } => {
-            o.extend(p);
-            o.push(b(*comp));
-            Op::PtInParam
-        }
-        Inputs::LineInInSpace { a, b: e, comp, .. } => {
-            o.extend(a);
-            o.extend(e);
-            o.push(b(*comp));
-            Op::LineInInSpace
-        }
-        Inputs::BoxInParam { bx, comp, .. } => {
-            push_box(&mut o, bx);
-            o.push(b(*comp));
-            Op::BoxInParam
-        }
-        Inputs::PboxInInSpace { pb, comp, .. } => {
-            push_pb(&mut o, pb);
-            o.push(b(*comp));
-            Op::PBoxInInSpace
-        }
-        Inputs::EvalBbox {
-            bx,
-            ppb,
-            want,
-            comp,
-            ..
-        } => {
-            push_box(&mut o, bx);
-            o.push(b(ppb.is_some()));
-            if let Some(pb) = ppb {
-                push_pb(&mut o, pb);
-            }
-            o.extend(want.map(b));
-            o.push(b(*comp));
-            Op::EvalBBox
-        }
-        Inputs::MapPbox {
-            pb,
-            want,
-            comp,
-            trim,
-            ..
-        } => {
-            push_pb(&mut o, pb);
-            o.extend(want.map(b));
-            o.extend([b(*comp), b(*trim)]);
-            Op::MapPBox
-        }
-        Inputs::EvalPoint { p, comp, .. } => {
-            o.extend(p);
-            o.push(b(*comp));
-            Op::EvalPoint
-        }
-        Inputs::Eval1st {
-            p, left, nz, comp, ..
-        } => {
-            o.extend(p);
-            o.extend(left.map(b));
-            o.extend([b(*nz), b(*comp)]);
-            Op::Eval1st
-        }
-        Inputs::InvEval {
-            p,
-            guess,
-            dom,
-            comp,
-            ..
-        } => {
-            o.extend(p);
-            o.push(b(guess.is_some()));
-            if let Some(g) = guess {
-                o.extend(g);
-            }
-            o.push(b(dom.is_some()));
-            if let Some(d) = dom {
-                push_box(&mut o, d);
-            }
-            o.push(b(*comp));
-            Op::InvEval
-        }
-        Inputs::InvMap {
-            p,
-            guess,
-            dom,
-            comp,
-            ..
-        } => {
-            o.extend(p);
-            o.push(b(guess.is_some()));
-            if let Some(g) = guess {
-                o.extend(g);
-            }
-            o.push(b(dom.is_some()));
-            if let Some(d) = dom {
-                push_pb(&mut o, d);
-            }
-            o.push(b(*comp));
-            Op::InvMap
-        }
-        Inputs::Global { p, dom, comp, .. } => {
-            o.extend(p);
-            o.push(b(dom.is_some()));
-            if let Some(d) = dom {
-                push_box(&mut o, d);
-            }
-            o.push(b(*comp));
-            Op::Global
-        }
-        Inputs::HasDisc {
-            want, geometric, ..
-        } => {
-            o.extend([b(*want), b(*geometric)]);
-            Op::HasDisc
-        }
-        Inputs::BboxSimple { bx, ppb, want, .. } => {
-            push_box(&mut o, bx);
-            o.push(b(ppb.is_some()));
-            if let Some(pb) = ppb {
-                push_pb(&mut o, pb);
-            }
-            o.extend(want.map(b));
-            Op::BBoxSimple
-        }
-        Inputs::PboxSimple { pb, want, .. } => {
-            push_pb(&mut o, pb);
-            o.extend(want.map(b));
-            Op::PBoxSimple
-        }
-        Inputs::InvEvalSimple { p, guess, dom, .. } => {
-            o.extend(p);
-            o.push(b(guess.is_some()));
-            if let Some(g) = guess {
-                o.extend(g);
-            }
-            o.push(b(dom.is_some()));
-            if let Some(d) = dom {
-                push_box(&mut o, d);
-            }
-            Op::InvEvalSimple
-        }
-        Inputs::GlobalSimple { p, dom, .. } => {
-            o.extend(p);
-            o.push(b(dom.is_some()));
-            if let Some(d) = dom {
-                push_box(&mut o, d);
-            }
-            Op::GlobalSimple
-        }
-        Inputs::LocalSimple { p, g, dom, .. } => {
-            o.extend(p);
-            o.extend(g);
-            o.push(b(dom.is_some()));
-            if let Some(d) = dom {
-                push_box(&mut o, d);
-            }
-            Op::LocalSimple
-        }
-        Inputs::ReadDb { ty, data: text } => {
-            o.push(*ty as f64);
-            data = text.clone().into_bytes();
-            Op::ReadDb
-        }
-    };
-    Ok((op, o, data))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input, data) = cpp_input(i)?;
-    match ffi::eval(op, &input, &data) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1470,24 +1222,24 @@ fn text_base(rng: &mut Rng, depth: usize, out: &mut String) {
 
 fn gen_read(rng: &mut Rng) -> Inputs {
     let (ty, mut data) = match rng.below(12) {
-        0 => (ffi::TWIST_VOLUME_TYPE, {
+        0 => (TWIST_VOLUME_TYPE, {
             let mut s = format!("{}\n{}\n", rng.uniform(-10.0, 10.0), rng.uniform(0.0, 1.0));
             text_base(rng, 0, &mut s);
             s
         }),
-        1 => (ffi::B_SPLINE_VOLUME_TYPE, String::new()),
+        1 => (B_SPLINE_VOLUME_TYPE, String::new()),
         2 => (12345, String::from("0\n0\n")),
-        3 => (ffi::UNBEND_VOLUME_TYPE, {
+        3 => (UNBEND_VOLUME_TYPE, {
             let mut s = format!("{}\n{}\n", rng.uniform(0.0, 10.0), rng.uniform(0.0, 0.1));
             text_base(rng, 0, &mut s);
             s
         }),
-        4 | 5 => (ffi::BEND_VOLUME_TYPE, {
+        4 | 5 => (BEND_VOLUME_TYPE, {
             let mut s = format!("{}\n{}\n", rng.uniform(-1.0, 10.0), rng.uniform(0.0, 0.1));
             text_base(rng, 0, &mut s);
             s
         }),
-        _ => (ffi::TRANSFORM_TYPE, {
+        _ => (TRANSFORM_TYPE, {
             let mut s = String::new();
             text_transform(rng, 0, &mut s);
             s
@@ -1508,16 +1260,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input, data)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::check(op, &input, &data).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1526,10 +1269,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
