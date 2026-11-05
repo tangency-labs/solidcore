@@ -32,7 +32,15 @@ pub trait UnitDiff {
     /// undefined in C++ (AGENTS.md section 5.6), may use [`Output::rejected`], never
     /// ordinary operation errors. The C++ side never defers: an [`Output::deferred`]
     /// from it is a harness error (deferrals are decided by the Rust side only).
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError>;
+    ///
+    /// The default is no C++ side: a unit checked only against its golden
+    /// (`crate::golden`) does not implement it, and comparing it with the C++ fails.
+    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        Err(HarnessError(format!(
+            "{}: no C++ side (checked against its golden only)",
+            case.unit
+        )))
+    }
 
     /// Runs the solidcore Rust port on the same inputs. Return
     /// [`Output::deferred`] (e.g. via [`Output::unported`]) when the port hits a

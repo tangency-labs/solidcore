@@ -1,6 +1,6 @@
 //! Runner for unit `nlib.knots`: knot vectors and B-spline basis functions.
 //!
-//! C++: `solidcore_ffi::units::nlib_knots` (upstream `source/SMLib/src/NL_BasisBasic.cpp`).
+//! Ported from upstream `source/SMLib/src/NL_BasisBasic.cpp`; checked against its golden.
 //! Rust: `solidcore::nurbs::knots`.
 //!
 //! | op (`inputs.op`)     | Rust                                   | upstream                         |
@@ -23,8 +23,6 @@ use serde_json::Value;
 
 use solidcore::nurbs::knots::{KnotVector, Side};
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_knots as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -50,9 +48,6 @@ impl Flag {
             Flag::Left => Side::Left,
             Flag::Right => Side::Right,
         }
-    }
-    fn code(self) -> i32 {
-        self.side().flag()
     }
 }
 
@@ -115,21 +110,8 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
-fn i32_of(v: usize) -> Result<i32, HarnessError> {
-    i32::try_from(v).map_err(|_| harness(format!("{v} does not fit i32")))
-}
-
 fn i64_of(v: usize) -> Result<i64, HarnessError> {
     i64::try_from(v).map_err(|_| harness(format!("{v} does not fit i64")))
-}
-
-/// C++ failure -> normalised output (operation error) or harness error.
-fn cpp_err(e: &FfiError) -> Result<Output, HarnessError> {
-    match e {
-        FfiError::Status(code) if *code > 0 => Ok(Output::err(format!("nlib_{code}"))),
-        FfiError::Status(_) => Err(harness(format!("shim failure: {e}"))),
-        FfiError::InvalidArgument(m) => Err(harness(format!("ffi rejected: {m}"))),
-    }
 }
 
 /// Rust failure -> normalised output (`Unported` -> deferred case). Non-NLib errors (`InvalidInput`: an index
@@ -143,70 +125,6 @@ fn rust_err(e: &SolidError) -> Output {
         SolidError::Nlib { code, .. } => Output::err(format!("nlib_{}", code.code())),
         other => Output::err(format!("rust: {other}")),
     }
-}
-
-fn cpp(i: Inputs) -> Result<Output, HarnessError> {
-    let out = match i {
-        Inputs::Roundtrip { buf, m, new_m } => ffi::roundtrip(&buf, i64_of(m)?, i64_of(new_m)?)
-            .map(|(m, k)| Output::new().int("m", m).values("knots", k)),
-        Inputs::ParamChecks { knots, u } => ffi::param_checks(&knots, u).map(|(oob, end)| {
-            Output::new()
-                .int("out_of_bounds", i64::from(oob))
-                .int("end_param", i64::from(end))
-        }),
-        Inputs::IsValid { knots, degree } => {
-            ffi::is_valid(&knots, i32_of(degree)?).map(|()| Output::new().int("valid", 1))
-        }
-        Inputs::SpanCount { knots, degree } => {
-            ffi::span_count(&knots, i32_of(degree)?).map(|n| Output::new().int("count", n))
-        }
-        Inputs::FindSpan {
-            knots,
-            degree,
-            u,
-            flag,
-        } => ffi::find_span(&knots, i32_of(degree)?, u, flag.code())
-            .map(|s| Output::new().int("span", s)),
-        Inputs::FindSpanAndMult {
-            knots,
-            degree,
-            u,
-            flag,
-        } => ffi::find_span_and_mult(&knots, i32_of(degree)?, u, flag.code())
-            .map(|(s, m)| Output::new().int("span", s).int("mult", m)),
-        Inputs::BasisEval {
-            knots,
-            degree,
-            u,
-            flag,
-        } => ffi::basis_eval(&knots, i32_of(degree)?, u, flag.code())
-            .map(|(s, n)| Output::new().int("span", s).values("basis", n)),
-        Inputs::BasisIEval {
-            knots,
-            index,
-            degree,
-            u,
-            flag,
-        } => ffi::basis_i_eval(&knots, i64_of(index)?, i32_of(degree)?, u, flag.code())
-            .map(|v| Output::new().scalar("value", v)),
-        Inputs::BasisIDerivs {
-            knots,
-            index,
-            degree,
-            u,
-            flag,
-            der,
-        } => ffi::basis_i_derivs(
-            &knots,
-            i64_of(index)?,
-            i32_of(degree)?,
-            u,
-            flag.code(),
-            i64_of(der)?,
-        )
-        .map(|d| Output::new().values("derivs", d)),
-    };
-    out.or_else(|e| cpp_err(&e))
 }
 
 fn kv(knots: &[f64]) -> Result<KnotVector<'_>, HarnessError> {
@@ -590,10 +508,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
