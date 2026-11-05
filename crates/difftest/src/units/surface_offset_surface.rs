@@ -1,5 +1,6 @@
-//! Runner for unit `surface.offset_surface`. C++: `solidcore_ffi::units::surface_offset_surface`
-//! (shim `harness/cpp/shim/surface_offset_surface.cpp`). Rust: `solidcore::surface::offset_surface`.
+//! Runner for unit `surface.offset_surface`. Ported from upstream
+//! `source/SMLib/src/SmOffsetSurface.cpp`; checked against its golden. Rust:
+//! `solidcore::surface::offset_surface`.
 //!
 //! A case builds an `SmOffsetSurface` over a base surface (a B-spline, an upstream `.sms`
 //! file, a plane, a curve-bounded or STEP surface, a surface of revolution, or a nested
@@ -7,14 +8,14 @@
 //! upstream's `const` evaluators store is seen by the later ops (the Rust side runs the
 //! storing `*_extending` evaluators; an op marked `via` runs the `&self` evaluators through
 //! the `Surface` interface instead and is only generated where no extension can be
-//! stored). A `read_db` case reads the C++ `WriteToDB` record of an offset on both sides.
+//! stored). A `read_db` case reads an upstream `WriteToDB` record of an offset (frozen in
+//! `fixtures/surface.offset_surface/written_records.json`: solidcore has no writer, #2857).
 //! The `avNNNN` cases (their own seed stream, so the `genNNNN` inputs are unchanged) run
 //! `AssertValid` on an offset after an optional edit and compare every report.
 //!
-//! Output `out`: the construction status, then each op's status and outputs (see the
-//! FFI module); a failure is the upstream `SmStatus` (`InvalidInput` is
-//! `SM_ERR_INVALID_INPUT`, the zero-vector status of `Unitize`). `Unported` on the Rust
-//! side defers the case.
+//! Output `out`: the construction status, then each op's status and outputs; a failure
+//! is the upstream `SmStatus` (`InvalidInput` is `SM_ERR_INVALID_INPUT`, the zero-vector
+//! status of `Unitize`). `Unported` on the Rust side defers the case.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -38,11 +39,9 @@ use solidcore::surface::surface::p2::OFFSET_SURFACE_TYPE;
 use solidcore::surface::surface::{StepSurface, Surface, SurfaceKind};
 use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_offset_surface as ffi;
 
 use super::surface_surf_of_revolution_p1 as rev;
 use crate::case::CaseContext;
-use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 #[path = "fixtures/surface_offset_surface_sms.rs"]
@@ -237,7 +236,7 @@ enum Inputs {
         off: OffIn,
         steps: Vec<StepIn>,
     },
-    /// `bytes` absent in a fixture: filled with the C++ `WriteToDB` record of `off`.
+    /// `bytes` absent only in a generated draw, never in a case.
     ReadDb {
         off: OffIn,
         binary: bool,
@@ -264,158 +263,439 @@ fn read_sms(path: &str) -> Result<BssIn, HarnessError> {
     })
 }
 
-// ---- C++ side -------------------------------------------------------------------------------
+// ---- generated input contract ---------------------------------------------------------------
+//
+// The generator keeps a draw only inside the domain upstream's entry points are defined on,
+// without undefined behaviour or runaway work: well-formed clamped B-splines, planes with a
+// non-zero normal, offsets nested at most [`MAX_NESTING`] deep, finite values, parameters
+// within [`MAX_REACH`] domain lengths of the base domain, bounded derivative orders, no
+// bounding boxes or planarity tests over a curve-bounded or STEP base (their polar box
+// recurses without bound upstream), no box whose domain may lie outside the base domain, no
+// planarity test once an extension may exist, and surfaces of revolution as unit
+// `surface.surf_of_revolution_p1` builds them. Generated cases exercise the working path;
+// hostile inputs are the fixtures' job.
 
-fn ffi_srf(s: &SrfIn) -> Result<ffi::Srf, HarnessError> {
-    Ok(match s {
-        SrfIn::Bspline(b) => ffi::Srf::BSpline(ffi_bss(b)),
-        SrfIn::Sms(path) => ffi::Srf::BSpline(ffi_bss(&read_sms(path)?)),
-        SrfIn::Plane { o, n } => ffi::Srf::Plane { o: *o, n: *n },
-        SrfIn::Bounded { basis, implicit } => ffi::Srf::Bounded {
-            basis: Box::new(ffi_srf(basis)?),
-            implicit: *implicit,
-        },
-        SrfIn::Step { base } => ffi::Srf::Step {
-            base: Box::new(ffi_srf(base)?),
-        },
-        SrfIn::Revolution(r) => ffi::Srf::Revolution(rev::ffi_surf(r)?),
-        SrfIn::Offset(o) => ffi::Srf::Offset(Box::new(ffi_off(o)?)),
-    })
+/// Largest control point index.
+const MAX_INDEX: usize = 24;
+/// Largest degree.
+const MAX_DEGREE: usize = 5;
+/// Deepest offset nesting in a block.
+const MAX_NESTING: usize = 3;
+/// Largest number of ops in a script.
+const MAX_OPS: usize = 16;
+/// How many domain lengths outside the base domain a parameter may be.
+const MAX_REACH: f64 = 3.0;
+/// Largest derivative order.
+const MAX_ORDER: usize = 64;
+/// Largest control point index of a surface of revolution's B-spline generator.
+const MAX_REV_INDEX: usize = 256;
+/// Largest degree of a surface of revolution's B-spline generator.
+const MAX_REV_DEGREE: usize = 9;
+/// `SM_EFF_ZERO`.
+const EFF_ZERO: f64 = 1e-12;
+
+fn all_finite(v: &[f64]) -> bool {
+    v.iter().all(|c| c.is_finite())
 }
 
-fn ffi_bss(b: &BssIn) -> ffi::Bss {
-    ffi::Bss {
-        oob: b.oob,
-        form: b.form,
-        net: b.net.clone(),
-        p: b.p,
-        q: b.q,
-        u: b.u.clone(),
-        v: b.v.clone(),
+fn nonzero(v: [f64; 3]) -> bool {
+    all_finite(&v) && v.iter().map(|c| c * c).sum::<f64>() >= 1e-12
+}
+
+/// A finite domain with `u0 <= u1` and `v0 <= v1`.
+fn domain_ok(d: [f64; 4]) -> bool {
+    let [u0, v0, u1, v1] = d;
+    all_finite(&d) && u0 <= u1 && v0 <= v1
+}
+
+/// A clamped knot vector of degree `p`, optionally of a parameter range of at least
+/// `1e-6` relative; its ends.
+fn knots_ok(knots: &[f64], p: usize, min_range: bool) -> Option<(f64, f64)> {
+    if !all_finite(knots) || knots.windows(2).any(|w| w.first() > w.last()) {
+        return None;
+    }
+    let m = knots.len().checked_sub(1)?;
+    let (&a, &b) = (knots.first()?, knots.last()?);
+    if m < 2 * p + 1 {
+        return None;
+    }
+    let (head, tail, inner) = (knots.get(..=p)?, knots.get(m - p..)?, knots.get(p + 1..m - p)?);
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return None;
+    }
+    if min_range && b - a < 1e-6 * a.abs().max(b.abs()).max(1.0) {
+        return None;
+    }
+    if inner.iter().any(|&k| k == a || k == b) {
+        return None;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return None;
+        }
+    }
+    Some((a, b))
+}
+
+/// A B-spline base's natural domain, if it is well formed.
+fn bss_domain(s: &BssIn) -> Option<[f64; 4]> {
+    if s.form > 11 {
+        return None;
+    }
+    let n = s.net.len().checked_sub(1)?;
+    let cols = s.net.first().map_or(0, Vec::len);
+    let m = cols.checked_sub(1)?;
+    if s.net.iter().any(|r| r.len() != cols) {
+        return None;
+    }
+    if n > MAX_INDEX || m > MAX_INDEX || s.p > MAX_DEGREE || s.q > MAX_DEGREE {
+        return None;
+    }
+    if s.p == 0 || s.p > n || s.q == 0 || s.q > m {
+        return None;
+    }
+    if s.u.len() != n + s.p + 2 || s.v.len() != m + s.q + 2 {
+        return None;
+    }
+    let mut rational = None;
+    for &[x, y, z, w] in s.net.iter().flatten() {
+        let r = w != NOW;
+        if !all_finite(&[x, y, z]) || *rational.get_or_insert(r) != r {
+            return None;
+        }
+        if r && !(1e-3..=1e3).contains(&w) {
+            return None;
+        }
+    }
+    let (u0, u1) = knots_ok(&s.u, s.p, true)?;
+    let (v0, v1) = knots_ok(&s.v, s.q, true)?;
+    Some([u0, v0, u1, v1])
+}
+
+fn len3(v: [f64; 3]) -> f64 {
+    v.iter().map(|c| c * c).sum::<f64>().sqrt()
+}
+
+/// Two axes long enough, far from parallel, and of a length whose square does not
+/// overflow (a generator circle on a zero unitized axis gets no NURB).
+fn axes_ok(x: [f64; 3], y: [f64; 3]) -> bool {
+    let (lx, ly) = (len3(x), len3(y));
+    all_finite(&x)
+        && all_finite(&y)
+        && lx.is_finite()
+        && ly.is_finite()
+        && lx >= 1e-6
+        && ly >= 1e-6
+        && len3(rev::cross3(x, y)) >= 1e-3 * lx * ly
+}
+
+/// A unit vector within `SM_EFF_ZERO` on its squared length.
+fn unit_ok(v: [f64; 3]) -> bool {
+    (v.iter().map(|c| c * c).sum::<f64>() - 1.0).abs() <= EFF_ZERO
+}
+
+/// An angular domain of at most one turn within `[-360, 360]`.
+fn angular_ok(d0: f64, d1: f64) -> bool {
+    all_finite(&[d0, d1]) && d0 < d1 && d0 >= -360.0 && d1 <= 360.0 && d1 - d0 <= 360.0
+}
+
+/// A hyperbola domain bounded so that `cosh` stays finite.
+fn hyperbola_domain_ok(d0: f64, d1: f64) -> bool {
+    d0 < d1 && d0 >= -10.0 && d1 <= 10.0
+}
+
+/// A generator of a surface of revolution: a B-spline with consistent weights, a line
+/// or circle of at least `1e-6`, or a hyperbola with a bounded domain and positive semi
+/// axes.
+fn gen_ok(g: &rev::GenIn) -> bool {
+    match g {
+        rev::GenIn::BSpline(c) => {
+            let Some(n) = c.cpts.len().checked_sub(1) else {
+                return false;
+            };
+            if c.weights.as_ref().is_some_and(|w| w.len() != c.cpts.len()) {
+                return false;
+            }
+            if c.p == 0 || c.p > n || c.p > MAX_REV_DEGREE || n > MAX_REV_INDEX {
+                return false;
+            }
+            if c.u.len() != n + c.p + 2 {
+                return false;
+            }
+            let pts_ok = c.cpts.iter().enumerate().all(|(i, &[x, y, z])| match &c.weights {
+                None => all_finite(&[x, y, z]),
+                Some(w) => w.get(i).is_some_and(|&w| {
+                    all_finite(&[x * w, y * w, z * w]) && w != NOW && w.is_finite() && w > 0.0
+                }),
+            });
+            pts_ok && knots_ok(&c.u, c.p, false).is_some()
+        }
+        rev::GenIn::Line { a, b } => {
+            all_finite(a) && all_finite(b) && len3([b[0] - a[0], b[1] - a[1], b[2] - a[2]]) >= 1e-6
+        }
+        rev::GenIn::Circle { c, x, y, d, r } => {
+            all_finite(c) && axes_ok(*x, *y) && angular_ok(d[0], d[1]) && r.is_finite() && *r > 1e-6
+        }
+        rev::GenIn::Hyperbola { c, x, y, d, a, b } => {
+            all_finite(c)
+                && axes_ok(*x, *y)
+                && all_finite(d)
+                && hyperbola_domain_ok(d[0], d[1])
+                && a.is_finite()
+                && *a > 1e-6
+                && b.is_finite()
+                && *b > 1e-6
+        }
     }
 }
 
-fn ffi_off(o: &OffIn) -> Result<ffi::Off, HarnessError> {
-    Ok(ffi::Off {
-        d: o.d,
-        owns: o.owns,
-        sing: o.sing,
-        allow: o.allow,
-        base: ffi_srf(&o.base)?,
-    })
-}
-
-fn ffi_step(s: &StepIn) -> Result<ffi::Step, HarnessError> {
-    use ffi::Step as F;
-    Ok(match s {
-        StepIn::State => F::State,
-        StepIn::Eval {
-            uv,
-            hu,
-            hv,
-            ul,
-            vl,
-            upper,
-            nzt,
-            ..
-        } => F::Eval {
-            uv: *uv,
-            hu: *hu,
-            hv: *hv,
-            ul: *ul,
-            vl: *vl,
-            upper: *upper,
-            nzt: *nzt,
-        },
-        StepIn::EvalSimple {
-            uv,
-            hu,
-            hv,
-            ul,
-            vl,
-            upper,
-            ..
-        } => F::EvalSimple {
-            uv: *uv,
-            hu: *hu,
-            hv: *hv,
-            ul: *ul,
-            vl: *vl,
-            upper: *upper,
-        },
-        StepIn::EvalPt { uv, .. } => F::EvalPt { uv: *uv },
-        StepIn::Normal { uv, ul, vl, .. } => F::Normal {
-            uv: *uv,
-            ul: *ul,
-            vl: *vl,
-        },
-        StepIn::Knots { param, ivl } => F::Knots {
-            param: *param,
-            ivl: *ivl,
-        },
-        StepIn::MaxAnal => F::MaxAnal,
-        StepIn::BBox { dom, want, expand } => F::BBox {
-            dom: *dom,
-            want: *want,
-            expand: *expand,
-        },
-        StepIn::StepInv { dom, p, tol, guess } => F::StepInv {
-            dom: *dom,
-            p: *p,
-            tol: *tol,
-            guess: *guess,
-        },
-        StepIn::Reverse { param } => F::Reverse { param: *param },
-        StepIn::Swap => F::Swap,
-        StepIn::Transform {
+/// A surface of revolution inside the domain upstream's constructors are defined on (also
+/// the generated input contract of unit `surface.surf_of_revolution_p3`): a well-formed
+/// generator, unit placement axes for the constructor (its `IsOnPlane` test reads an
+/// uninitialised flag otherwise) and bounded angular domains (huge ones hang the polar
+/// set-up).
+pub(crate) fn revolution_ok(s: &rev::SurfIn) -> bool {
+    if !gen_ok(&s.gen) {
+        return false;
+    }
+    match &s.build {
+        rev::BuildIn::Canonical { point, axis } => all_finite(point) && all_finite(axis),
+        rev::BuildIn::Ctor {
             origin,
             x,
             y,
-            scale,
-        } => F::Transform {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
+            domain,
+        } => {
+            let [u0, v0, u1, v1] = *domain;
+            let v_ok = match &s.gen {
+                rev::GenIn::Circle { .. } => angular_ok(v0, v1),
+                rev::GenIn::Hyperbola { .. } => hyperbola_domain_ok(v0, v1),
+                _ => true,
+            };
+            all_finite(origin)
+                && axes_ok(*x, *y)
+                && unit_ok(*x)
+                && unit_ok(*y)
+                && domain_ok(*domain)
+                && angular_ok(u0, u1)
+                && v_ok
+        }
+    }
+}
+
+/// What the contract knows about a base: its natural domain (`None` when not known in
+/// advance) and whether a bounding box of it recurses upstream.
+#[derive(Debug, Clone, Copy)]
+struct BaseInfo {
+    dom: Option<[f64; 4]>,
+    unboxable: bool,
+}
+
+fn srf_info(s: &SrfIn, depth: usize) -> Option<BaseInfo> {
+    Some(match s {
+        SrfIn::Bspline(bs) => BaseInfo {
+            dom: Some(bss_domain(bs)?),
+            unboxable: false,
         },
-        StepIn::Trim { dom } => F::Trim { dom: *dom },
-        StepIn::Split { t, param } => F::Split {
-            t: *t,
-            param: *param,
+        SrfIn::Sms(path) => BaseInfo {
+            dom: Some(bss_domain(&read_sms(path).ok()?)?),
+            unboxable: false,
         },
-        StepIn::CreateOffset { d } => F::CreateOffset { d: *d },
-        StepIn::Copy => F::Copy,
-        StepIn::Eq { other } => F::Eq {
-            other: Box::new(ffi_off(other)?),
-        },
-        StepIn::SetDist { d } => F::SetDist { d: *d },
-        StepIn::SetAllow { b } => F::SetAllow { b: *b },
-        StepIn::IsPlanar { tol } => F::IsPlanar { tol: *tol },
-        StepIn::IsKindOf { t } => F::IsKindOf { t: *t },
-        StepIn::BaseOffset { d, tol } => F::BaseOffset { d: *d, tol: *tol },
-        StepIn::AssertValid { level } => F::AssertValid { level: *level },
+        SrfIn::Plane { o, n } => {
+            if !all_finite(o) || !nonzero(*n) {
+                return None;
+            }
+            BaseInfo {
+                dom: None,
+                unboxable: false,
+            }
+        }
+        SrfIn::Bounded { basis, .. } => {
+            if !matches!(**basis, SrfIn::Bspline(_) | SrfIn::Sms(_) | SrfIn::Plane { .. }) {
+                return None;
+            }
+            BaseInfo {
+                dom: srf_info(basis, depth)?.dom,
+                unboxable: true,
+            }
+        }
+        SrfIn::Step { base } => {
+            let bspline = matches!(**base, SrfIn::Bspline(_) | SrfIn::Sms(_));
+            if !bspline && !matches!(**base, SrfIn::Plane { .. } | SrfIn::Revolution(_)) {
+                return None;
+            }
+            let info = srf_info(base, depth)?;
+            BaseInfo {
+                // (the STEP domain of a surface of revolution differs)
+                dom: if bspline { info.dom } else { None },
+                unboxable: true,
+            }
+        }
+        SrfIn::Revolution(r) => {
+            if !revolution_ok(r) {
+                return None;
+            }
+            BaseInfo {
+                dom: None,
+                unboxable: false,
+            }
+        }
+        SrfIn::Offset(off) => {
+            if depth >= MAX_NESTING {
+                return None;
+            }
+            off_info(off, depth + 1)?
+        }
     })
 }
 
-fn ffi_steps(steps: &[StepIn]) -> Result<Vec<ffi::Step>, HarnessError> {
-    steps.iter().map(ffi_step).collect()
+fn off_info(off: &OffIn, depth: usize) -> Option<BaseInfo> {
+    if !off.d.is_finite() || off.sing > 16 {
+        return None;
+    }
+    srf_info(&off.base, depth)
 }
 
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let rec = match i {
-        Inputs::Script { off, steps } => ffi::script(&ffi_off(off)?, &ffi_steps(steps)?),
-        Inputs::ReadDb {
-            off,
-            binary,
-            version,
-            bytes,
-        } => {
-            let bytes = bytes.as_ref().ok_or_else(|| harness("read_db: no bytes"))?;
-            ffi::read_db(&ffi_off(off)?, *binary, *version, bytes)
+/// A parameter within [`MAX_REACH`] domain lengths of `dom` (any finite one within a
+/// fixed reach when the domain is not known in advance).
+fn uv_ok(uv: [f64; 2], dom: Option<[f64; 4]>) -> bool {
+    let [u, v] = uv;
+    all_finite(&uv)
+        && match dom {
+            Some([u0, v0, u1, v1]) => {
+                let (du, dv) = ((u1 - u0) * MAX_REACH, (v1 - v0) * MAX_REACH);
+                u >= u0 - du && u <= u1 + du && v >= v0 - dv && v <= v1 + dv
+            }
+            None => u.abs() <= 1.0e4 && v.abs() <= 1.0e4,
+        }
+}
+
+fn contained(inner: [f64; 4], outer: Option<[f64; 4]>) -> bool {
+    let tol = 1e-12;
+    outer.is_some_and(|[u0, v0, u1, v1]| {
+        inner[0] >= u0 - tol && inner[1] >= v0 - tol && inner[2] <= u1 + tol && inner[3] <= v1 + tol
+    })
+}
+
+/// The base a box asks for its boxes, through nested offsets.
+fn box_base(off: &OffIn) -> &SrfIn {
+    match &off.base {
+        SrfIn::Offset(inner) => box_base(inner),
+        s => s,
+    }
+}
+
+/// Whether a script on `off` is inside the contract.
+fn script_ok(off: &OffIn, steps: &[StepIn]) -> bool {
+    let Some(info) = off_info(off, 0) else {
+        return false;
+    };
+    if steps.len() > MAX_OPS {
+        return false;
+    }
+    // the base domain as the script goes (unknown once an edit may have changed it)
+    let mut dom = info.dom;
+    let unboxable =
+        info.unboxable || matches!(box_base(off), SrfIn::Bounded { .. } | SrfIn::Step { .. });
+    // an extension may exist once an evaluation ran with extension allowed
+    let mut allow = off.allow;
+    let mut ext_possible = false;
+    for s in steps {
+        let ok = match s {
+            StepIn::State | StepIn::MaxAnal | StepIn::Copy => true,
+            StepIn::Eval { uv, hu, hv, .. } | StepIn::EvalSimple { uv, hu, hv, .. } => {
+                ext_possible |= allow;
+                uv_ok(*uv, dom) && *hu <= MAX_ORDER && *hv <= MAX_ORDER
+            }
+            StepIn::EvalPt { uv, .. } | StepIn::Normal { uv, .. } => {
+                ext_possible |= allow;
+                uv_ok(*uv, dom)
+            }
+            StepIn::Knots { param, ivl } => *param <= 1 && all_finite(&ivl.unwrap_or([0.0, 0.0])),
+            StepIn::BBox { dom: d, .. } => {
+                domain_ok(*d) && !unboxable && (dom.is_none() || contained(*d, dom))
+            }
+            StepIn::StepInv { dom: d, p, tol, guess } => {
+                ext_possible |= allow;
+                domain_ok(*d)
+                    && all_finite(p)
+                    && tol.is_finite()
+                    && *tol > 0.0
+                    && *tol <= 1.0
+                    && uv_ok(guess.unwrap_or([0.0, 0.0]), dom)
+            }
+            StepIn::Reverse { param } => {
+                dom = None;
+                *param <= 1
+            }
+            StepIn::Swap => {
+                dom = None;
+                true
+            }
+            StepIn::Transform {
+                origin,
+                x,
+                y,
+                scale,
+            } => {
+                all_finite(origin)
+                    && nonzero(*x)
+                    && nonzero(*y)
+                    && rev::cross3(*x, *y).iter().map(|v| v * v).sum::<f64>() >= 1e-6
+                    && all_finite(&scale.unwrap_or([1.0, 1.0, 1.0]))
+            }
+            StepIn::Trim { dom: d } => {
+                let ok = domain_ok(*d)
+                    && d[2] - d[0] >= 1e-6
+                    && d[3] - d[1] >= 1e-6
+                    && uv_ok([d[0], d[1]], dom)
+                    && uv_ok([d[2], d[3]], dom);
+                ext_possible |= allow;
+                dom = None;
+                ok
+            }
+            StepIn::Split { t, param } => {
+                // strictly inside the current base domain (a plane or a surface of
+                // revolution, or a base an earlier op edited, has none known here)
+                t.is_finite()
+                    && *param <= 1
+                    && dom.is_some_and(|d| {
+                        let (a, z) = if *param == 0 { (d[0], d[2]) } else { (d[1], d[3]) };
+                        *t > a && *t < z
+                    })
+            }
+            StepIn::CreateOffset { d } | StepIn::SetDist { d } => d.is_finite(),
+            StepIn::Eq { other } => off_info(other, 1).is_some(),
+            StepIn::SetAllow { b } => {
+                allow = *b;
+                true
+            }
+            StepIn::IsPlanar { tol } => {
+                !unboxable && !ext_possible && tol.is_finite() && *tol >= 0.0
+            }
+            StepIn::IsKindOf { t } => t.unsigned_abs() <= 1 << 20,
+            StepIn::BaseOffset { d, tol } => d.is_finite() && tol.is_finite() && *tol >= 0.0,
+            // the self-intersection boxes the natural domain, as IsPlanar's box
+            StepIn::AssertValid { level } => {
+                !unboxable && !ext_possible && matches!(level, 0 | 1 | 2 | 4)
+            }
+        };
+        if !ok {
+            return false;
         }
     }
-    .map_err(|e| harness(e.to_string()))?;
-    Ok(Output::new().values("out", rec))
+    true
+}
+
+/// Whether a generated draw is inside the contract. A `read_db` draw is judged on the
+/// offset whose record it reads.
+fn admits(i: &Inputs) -> bool {
+    match i {
+        Inputs::Script { off, steps } => script_ok(off, steps),
+        Inputs::ReadDb { off, .. } => off_info(off, 0).is_some(),
+    }
 }
 
 // ---- Rust side ------------------------------------------------------------------------------
@@ -1516,41 +1796,17 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
     let scale = gen_scale(rng);
     let off = gen_off(rng, scale, 0);
     let (d, size) = base_info(&k, &off)?;
-    let foff = ffi_off(&off).ok()?;
     if rng.chance(0.08) {
         let binary = rng.chance(0.5);
         let version = *rng.choose(&[30, 33])?;
-        let bytes = ffi::write_db_bytes(&foff, binary, version).ok()??;
         return Some(Inputs::ReadDb {
             off,
             binary,
             version,
-            bytes: Some(bytes),
+            bytes: None,
         });
     }
     let steps = gen_steps(rng, &off, d, scale, size);
-    let fsteps = ffi_steps(&steps).ok()?;
-    ffi::check(&foff, &fsteps).ok()?;
-    // Domain/zero-offset guards depend on the actual C++ state after preceding
-    // edits. Preflight candidates requiring those checks, dropping only an explicit
-    // refusal: any other C++ error is kept so difftest reports it.
-    let dynamic_guard = fsteps.iter().any(|s| {
-        matches!(
-            s,
-            ffi::Step::BBox { .. }
-                | ffi::Step::IsPlanar { .. }
-                | ffi::Step::Eval { upper: true, .. }
-                | ffi::Step::EvalSimple { upper: true, .. }
-        )
-    });
-    if dynamic_guard
-        && matches!(
-            ffi::script(&foff, &fsteps),
-            Err(solidcore_ffi::FfiError::InvalidArgument(_))
-        )
-    {
-        return None;
-    }
     Some(Inputs::Script { off, steps })
 }
 
@@ -1611,20 +1867,7 @@ fn gen_assert_valid_case(rng: &mut Rng) -> Option<Inputs> {
     }
     let level = if rng.chance(0.75) { 4 } else { rng.below(3) as u8 };
     steps.push(StepIn::AssertValid { level });
-    let foff = ffi_off(&off).ok()?;
-    let fsteps = ffi_steps(&steps).ok()?;
-    ffi::check(&foff, &fsteps).ok()?;
-    // below SM_LEVEL_GIVEN the shim refuses some bases only on the actual surfaces
-    // (inherited checks reading unwritten outputs): drop those
-    if level != 4
-        && matches!(
-            ffi::script(&foff, &fsteps),
-            Err(solidcore_ffi::FfiError::InvalidArgument(_))
-        )
-    {
-        return None;
-    }
-    Some(Inputs::Script { off, steps })
+    Some(Inputs::Script { off, steps }).filter(admits)
 }
 
 /// Fills a fixture's placeholders from the base built on the Rust side: a `dom` of
@@ -1704,28 +1947,17 @@ fn fill_placeholders(case: &mut Case) -> Result<(), HarnessError> {
     Ok(())
 }
 
-/// Fills the bytes of a fixture `read_db` case with the C++ `WriteToDB` record.
-fn fill_read_bytes(case: &mut Case) -> Result<(), HarnessError> {
-    let mut i: Inputs = case.parse()?;
-    let Inputs::ReadDb {
-        off,
-        binary,
-        version,
-        bytes,
-    } = &mut i
-    else {
-        return Ok(());
-    };
-    if bytes.is_some() {
-        return Ok(());
-    }
-    *bytes = Some(
-        ffi::write_db_bytes(&ffi_off(off)?, *binary, *version)
-            .map_err(|e| harness(e.to_string()))?
-            .ok_or_else(|| harness(format!("case {}: WriteToDB failed", case.name)))?,
-    );
-    case.inputs = serde_json::to_value(i).map_err(|e| harness(e.to_string()))?;
-    Ok(())
+/// A generated case's draw: the first [`gen_case`] inside the input contract.
+fn draw(rng: &mut Rng) -> Option<Inputs> {
+    (0..16).find_map(|_| gen_case(rng).filter(admits))
+}
+
+/// A generated `read_db` draw (no record yet). Its case reads the record upstream's
+/// `WriteToDB` wrote of the drawn offset, which solidcore has no writer for (#2857): those
+/// cases are frozen in `fixtures/surface.offset_surface/written_records.json` under their
+/// generated names and the generated index is skipped.
+fn is_read_draw(i: &Inputs) -> bool {
+    matches!(i, Inputs::ReadDb { bytes: None, .. })
 }
 
 impl UnitDiff for Runner {
@@ -1734,12 +1966,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..16 {
-            if let Some(i) = gen_case(rng) {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        draw(rng)
+            .filter(|i| !is_read_draw(i))
+            .and_then(|i| serde_json::to_value(i).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1751,7 +1980,26 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        let mut cases = default_cases(self, &ctx)?;
+        let mut cases = ctx.fixture_cases(self.id())?;
+        // A skipped index (a `read_db` draw) is a fixture case of the same name. So is an
+        // index whose frozen `read_db` case the C++ shim's run-time refusal of an earlier
+        // draw reached (that refusal checked the actual surfaces, so the contract above
+        // cannot port it): the fixture keeps the index.
+        let frozen: std::collections::BTreeSet<String> =
+            cases.iter().map(|c| c.name.clone()).collect();
+        let generated = ctx.generated_cases(self.id(), |rng| {
+            let i = draw(rng)?;
+            Some(if is_read_draw(&i) {
+                Value::Null
+            } else {
+                serde_json::to_value(i).unwrap_or(Value::Null)
+            })
+        });
+        cases.extend(
+            generated
+                .into_iter()
+                .filter(|c| !c.inputs.is_null() && !frozen.contains(&c.name)),
+        );
         for mut c in av.generated_cases("surface.offset_surface:assert-valid", |rng| {
             (0..16)
                 .find_map(|_| gen_assert_valid_case(rng))
@@ -1763,13 +2011,8 @@ impl UnitDiff for Runner {
         }
         for case in &mut cases {
             fill_placeholders(case)?;
-            fill_read_bytes(case)?;
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
