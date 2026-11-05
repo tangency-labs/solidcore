@@ -215,7 +215,7 @@ fn foot_in(st: &GnStation, f: usize, i: usize, e: usize) -> Vec3 {
 }
 
 /// [`param`] as the span ending at the station takes it (`sm_InX`, 3bc54a4).
-fn param_in(st: &GnStation, q: usize, i: usize, e: usize) -> f64 {
+pub(crate) fn param_in(st: &GnStation, q: usize, i: usize, e: usize) -> f64 {
     st.in_x(q).map_or(f64::NAN, |x| x.at(i, e))
 }
 
@@ -458,6 +458,7 @@ pub(crate) fn varying(
         n,
         r,
         cells: GnAreaCells::default(),
+        w: [f64::INFINITY, f64::NEG_INFINITY],
     };
     if equal_area {
         let mut w_lo = f64::INFINITY;

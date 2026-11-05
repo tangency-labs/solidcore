@@ -71,6 +71,13 @@ impl FilletSession<'_> {
     /// ([`round_too_small`]), refused as [`BlendRefusal::RoundTooSmall`] with status `SM_ERR`
     /// before the edges are prepared. Edges without a blend edge use are left to the
     /// preparation.
+    ///
+    /// The check runs under [`crate::topology::Brep::with_rollback`] and keeps nothing: its
+    /// queries build the UV trim curves an edge use lacks and refit the edge's tolerance to
+    /// them
+    /// (`GetBlendEdgeuse`, `EvaluateBinormal`), and on the target that would change the body
+    /// before upstream's preparation reads it, a refused round included (an all-edges round
+    /// of `Fillet/cyl_on_box_w_fillet.smb` left edges at 1.03e-5 where they stay at 1e-5).
     pub(super) fn refuse_rounds_too_small(
         &mut self,
         k: &Kernel,
@@ -78,22 +85,34 @@ impl FilletSession<'_> {
         radii: &[f64],
         sections: &[FilletSurfaceGeneratorType],
     ) -> Result<()> {
-        for (i, &e) in edges.iter().enumerate() {
-            let radius = radii.get(i).or_else(|| radii.first()).copied();
-            let section = sections.get(i).or_else(|| sections.first()).copied();
-            let (Some(radius), Some(section)) = (radius, section) else {
-                continue; // a size list the preparation refuses
-            };
-            if section != FilletSurfaceGeneratorType::Circular
-                || !(radius.is_finite() && radius > 0.0)
-            {
-                continue;
-            }
-            if let Some(refusal) = round_too_small(k, self.objects.target, e, radius)? {
-                return Err(refusal.error(OP, SM_ERR));
-            }
+        // the check only reads: what its queries build (missing trim curves, a refitted
+        // edge tolerance) is put back with the target, never kept (#2715: a snapshot keeps
+        // the geometry's owners)
+        let refusal = self.objects.target.with_rollback(
+            |target| {
+                for (i, &e) in edges.iter().enumerate() {
+                    let radius = radii.get(i).or_else(|| radii.first()).copied();
+                    let section = sections.get(i).or_else(|| sections.first()).copied();
+                    let (Some(radius), Some(section)) = (radius, section) else {
+                        continue; // a size list the preparation refuses
+                    };
+                    if section != FilletSurfaceGeneratorType::Circular
+                        || !(radius.is_finite() && radius > 0.0)
+                    {
+                        continue;
+                    }
+                    if let Some(refusal) = round_too_small(k, target, e, radius)? {
+                        return Ok(Some(refusal));
+                    }
+                }
+                Ok(None)
+            },
+            |_| false,
+        )?;
+        match refusal {
+            Some(refusal) => Err(refusal.error(OP, SM_ERR)),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// `DoFilleting`'s result with its refusal typed, its status unchanged: a Setback's

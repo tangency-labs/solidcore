@@ -18,7 +18,8 @@ use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::Vec3;
 use crate::kernel::Kernel;
 use crate::nurbs::b_spline_surface::{BSplineSurface, IsoCurveOptions, SurfParamType};
-use crate::nurbs::math::{gamma, NOW};
+use crate::nurbs::math::{gamma, CPoint, NOW};
+use crate::nurbs::srf_basic::Surface as Net;
 use crate::surface::implicit::AnalyticSupport;
 use crate::surface::surface::{Surface, SurfaceKind};
 
@@ -137,6 +138,46 @@ impl Bracket {
     }
 }
 
+/// `form`'s net translated by `P0` (the iso's first point, as computed), and the
+/// translation's rounding: each homogeneous point `(X w - P0 w, w)`, its coordinates within
+/// `gamma_2 (|x| + |P0| |w|)` of the exact translation's (a product and a difference; the
+/// weights exact). A length is the same on the translated surface (`S - P0`, `P0` a fixed
+/// vector); measured there, the points' and their rounding's magnitudes are the net's size
+/// about `P0`, not its distance from the origin.
+///
+/// # Errors
+///
+/// `SM_ERR` for a form without a NURBS net; those of the net.
+fn translated(form: &BSplineSurface, p0: Vec3, op: &'static str) -> Result<(BSplineSurface, f64)> {
+    let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(op))?;
+    let cpts = nurb.cpts();
+    let size = p0.x.abs().max(p0.y.abs()).max(p0.z.abs());
+    let g = gamma(2);
+    let mut shift = 0.0_f64;
+    let net: Vec<Vec<CPoint>> = cpts
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|c| {
+                    let w = if c.w == NOW { 1.0 } else { c.w };
+                    let mag = c.x.abs().max(c.y.abs()).max(c.z.abs());
+                    shift = shift.max(g * (mag + size * w.abs()));
+                    CPoint::new(c.x - p0.x * w, c.y - p0.y * w, c.z - p0.z * w, c.w)
+                })
+                .collect()
+        })
+        .collect();
+    let (p, q) = nurb.degrees();
+    let out = Net::new(net, p, q, nurb.u_knots().to_vec(), nurb.v_knots().to_vec())?;
+    if !shift.is_finite() {
+        return Err(SolidError::invalid_input(
+            op,
+            "the net's translation is not bounded",
+        ));
+    }
+    Ok((BSplineSurface::from_gw_nurb(&out), shift))
+}
+
 /// A rational Bezier piece in homogeneous coordinates `(w x, w y, w z, w)`.
 type Piece = Vec<[f64; 4]>;
 
@@ -169,7 +210,10 @@ fn form_of<'a>(
 /// `gamma_3`, so a level moves a coordinate by at most `c = gamma_3 (1 + 6 K / S) . 2 M`,
 /// `K` the largest knot, `S` the least span, `M` the net's largest coordinate. `L` levels
 /// move it by `L c`; the Euclidean point `H / w` then by
-/// `sqrt3 (2 L c' + u) M_H w_max / w_min^2` (`c'` the relative part of `c`).
+/// `sqrt3 (2 L c' + u) M_H w_max / w_min^2` (`c'` the relative part of `c`). The weight
+/// coordinate is a combination of weights alone, so its move is the same with `M` the
+/// largest weight ([`Rounding::weight`]): sizing it by the coordinates (lengths) would make
+/// the Euclidean error `(dP - E dw) / w` grow as the square of the part's size.
 #[derive(Debug, Clone, Copy)]
 struct Rounding {
     /// The relative move of one level.
@@ -178,23 +222,160 @@ struct Rounding {
     scale: f64,
     /// `M_H`, the net's largest homogeneous coordinate.
     homogeneous: f64,
+    /// `w_max`, the net's largest weight.
+    weights: f64,
+}
+
+/// The largest knot magnitude and the least nonzero span of the knots of `kv` (the full
+/// vector) from `margin` indices under the last knot below `a` to `margin` over the first
+/// above `b`: what the knot insertions and the Bezier decomposition that make the pieces
+/// over `[a, b]` read of `kv` (a segment's coefficients `(t - u_i) / (u_(i+p) - u_i)` take
+/// `i` from its start group's last index, the one before it for its first points, to `p`
+/// past it; the iso's extraction the knots within `q` of its span).
+fn knot_window(kv: &[f64], a: f64, b: f64, margin: usize) -> (f64, f64) {
+    let lo = kv
+        .iter()
+        .position(|&x| x > a)
+        .unwrap_or(kv.len())
+        .saturating_sub(margin);
+    let hi = kv
+        .iter()
+        .rposition(|&x| x < b)
+        .unwrap_or(0)
+        .saturating_add(margin);
+    let (mut kmax, mut smin) = (0.0_f64, f64::INFINITY);
+    let window: Vec<f64> = kv
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| i >= lo && i <= hi)
+        .map(|(_, &x)| x)
+        .collect();
+    for (&x, &y) in window.iter().zip(window.iter().skip(1)) {
+        kmax = kmax.max(x.abs()).max(y.abs());
+        if y > x {
+            smin = smin.min(y - x);
+        }
+    }
+    (kmax, smin)
+}
+
+/// [`knot_window`] for the iso's extraction at `t` of a direction of degree `q` (full knot
+/// vector `kv`): knot insertion at `t` in its span `[u_s, u_(s+1))` forms its coefficients
+/// `(t - u_i) / (u_(i+q-j+1) - u_i)` from the knots `u_(s-q+1) .. u_(s+q)` only.
+fn extraction_window(kv: &[f64], t: f64, q: usize) -> (f64, f64) {
+    let s = kv.iter().rposition(|&x| x <= t).unwrap_or(0);
+    let (lo, hi) = (s.saturating_sub(q), s.saturating_add(q));
+    let window: Vec<f64> = kv
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| i >= lo && i <= hi)
+        .map(|(_, &x)| x)
+        .collect();
+    let (mut kmax, mut smin) = (t.abs(), f64::INFINITY);
+    for (&x, &y) in window.iter().zip(window.iter().skip(1)) {
+        kmax = kmax.max(x.abs()).max(y.abs());
+        if y > x {
+            smin = smin.min(y - x);
+        }
+    }
+    (kmax, smin)
+}
+
+/// [`knot_window`] for the Bezier decomposition along the pieces over `[a, b]` of a curve of
+/// degree `p` (full knot vector `kv`): the decomposition forms a coefficient only where it
+/// inserts, at an interior knot of multiplicity below `p`, and each of its denominators
+/// `u_(i+j) - u_i` there is at least the length of the segment that knot ends. So the least
+/// span read is the least such segment's in the window; a window whose interior knots are all
+/// of multiplicity `p` or more (Bezier joints already) forms none (`INFINITY`).
+fn decomposed_window(kv: &[f64], a: f64, b: f64, p: usize) -> (f64, f64) {
+    let margin = p.saturating_add(2);
+    let (kmax, _) = knot_window(kv, a, b, margin);
+    let lo = kv
+        .iter()
+        .position(|&x| x > a)
+        .unwrap_or(kv.len())
+        .saturating_sub(margin);
+    let hi = kv
+        .iter()
+        .rposition(|&x| x < b)
+        .unwrap_or(0)
+        .saturating_add(margin);
+    // the distinct knots in the window with their multiplicities in the whole vector
+    let mut groups: Vec<(f64, usize)> = Vec::new();
+    for (i, &x) in kv.iter().enumerate() {
+        match groups.last_mut() {
+            Some((y, m)) if *y == x => *m = m.saturating_add(1),
+            _ if i >= lo && i <= hi => groups.push((x, 1)),
+            _ => {}
+        }
+    }
+    let (first, last) = (kv.first().copied(), kv.last().copied());
+    let mut smin = f64::INFINITY;
+    for (&(x, _), &(y, my)) in groups.iter().zip(groups.iter().skip(1)) {
+        let interior = Some(y) != first && Some(y) != last;
+        if interior && my < p && y > x {
+            smin = smin.min(y - x);
+        }
+    }
+    (kmax, smin)
+}
+
+/// The control indices of degree `deg` on the knots `k` whose basis function's support
+/// `[k_i, k_(i + deg + 1)]` meets `[lo, hi]` (closed: a support ending at `lo` is kept).
+fn support_meets(k: &[f64], deg: usize, lo: f64, hi: f64) -> std::ops::RangeInclusive<usize> {
+    let count = k.len().saturating_sub(deg + 1);
+    let meets = |i: usize| matches!((k.get(i), k.get(i + deg + 1)), (Some(&a), Some(&b)) if a <= hi && b >= lo);
+    let first = (0..count).find(|&i| meets(i));
+    let last = (0..count).rev().find(|&i| meets(i));
+    match (first, last) {
+        (Some(f), Some(l)) => f..=l,
+        // none: every point, as the whole net's bound
+        _ => 0..=count.saturating_sub(1),
+    }
 }
 
 impl Rounding {
+    /// [`Rounding::of`] for the pieces of the iso at `fixed` (constant v for `along_u`)
+    /// over `[from, to]` alone: the knots read are only those near them. Knot insertion and
+    /// the Bezier decomposition are local: a segment's points are combinations whose
+    /// coefficients take the knots from its start's segment's start to `p` past its end
+    /// (`(t - u_i) / (u_(i+p) - u_i)`, i from the segment's start index), and the iso's
+    /// extraction at `fixed` the knots within `q` of it. A span far from the pieces (a sliver
+    /// at the net's other end) does not touch them.
+    fn local(
+        form: &BSplineSurface,
+        along_u: bool,
+        fixed: f64,
+        from: f64,
+        to: f64,
+        op: &'static str,
+    ) -> Result<Self> {
+        let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(op))?;
+        let (p, q) = nurb.degrees();
+        let (held, along, dp, dq) = if along_u {
+            (nurb.v_knots(), nurb.u_knots(), p, q)
+        } else {
+            (nurb.u_knots(), nurb.v_knots(), q, p)
+        };
+        let (a, b) = (from.min(to), from.max(to));
+        // each direction's coefficients read its own knots and parameters
+        let (k1, s1) = decomposed_window(along, a, b, dp);
+        let (k2, s2) = extraction_window(held, fixed, dq);
+        let ratio = (k1.max(from.abs()).max(to.abs()) / s1).max(k2 / s2);
+        // and only the control points the pieces are made of: those whose basis function's
+        // support meets `[from, to]` along and holds `fixed` across (a far row's size, the
+        // other end of a long spine, enters no piece)
+        let along_ix = support_meets(along, dp, a, b);
+        let held_ix = support_meets(held, dq, fixed, fixed);
+        let keep = |i: usize, j: usize| {
+            let (ia, ih) = if along_u { (i, j) } else { (j, i) };
+            along_ix.contains(&ia) && held_ix.contains(&ih)
+        };
+        Self::with_ratio_in(nurb, ratio, op, &keep)
+    }
+
     fn of(form: &BSplineSurface, extra: &[f64], op: &'static str) -> Result<Self> {
         let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(op))?;
-        let (mut h, mut wmin, mut wmax) = (0.0_f64, f64::INFINITY, 0.0_f64);
-        for row in nurb.rows() {
-            for c in row {
-                let w = if c.w == NOW { 1.0 } else { c.w };
-                if w.is_nan() || w <= 0.0 {
-                    return Err(SolidError::invalid_input(op, "a weight is not positive"));
-                }
-                h = h.max(c.x.abs()).max(c.y.abs()).max(c.z.abs());
-                wmin = wmin.min(w);
-                wmax = wmax.max(w);
-            }
-        }
         let (mut kmax, mut smin) = (0.0_f64, f64::INFINITY);
         for kv in [nurb.u_knots(), nurb.v_knots()] {
             for (&a, &b) in kv.iter().zip(kv.iter().skip(1)) {
@@ -207,13 +388,52 @@ impl Rounding {
         for &x in extra {
             kmax = kmax.max(x.abs());
         }
-        let level = gamma(3) * (1.0 + 6.0 * kmax / smin) * 2.0;
+        Self::with_ratio(nurb, kmax / smin, op)
+    }
+
+    /// The rounding of a net whose coefficients' knots and parameters are at most `ratio`
+    /// times the least span they divide by (`K / S`).
+    fn with_ratio(
+        nurb: &crate::nurbs::srf_basic::Surface,
+        ratio: f64,
+        op: &'static str,
+    ) -> Result<Self> {
+        Self::with_ratio_in(nurb, ratio, op, &|_, _| true)
+    }
+
+    /// [`Rounding::with_ratio`] over the control points `keep` names (`[i along u][j along
+    /// v]`): the pieces' points are combinations of those alone.
+    fn with_ratio_in(
+        nurb: &crate::nurbs::srf_basic::Surface,
+        ratio: f64,
+        op: &'static str,
+        keep: &dyn Fn(usize, usize) -> bool,
+    ) -> Result<Self> {
+        let (mut h, mut wmin, mut wmax) = (0.0_f64, f64::INFINITY, 0.0_f64);
+        for (i, row) in nurb.rows().enumerate() {
+            for c in row
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| keep(i, j))
+                .map(|(_, c)| c)
+            {
+                let w = if c.w == NOW { 1.0 } else { c.w };
+                if w.is_nan() || w <= 0.0 {
+                    return Err(SolidError::invalid_input(op, "a weight is not positive"));
+                }
+                h = h.max(c.x.abs()).max(c.y.abs()).max(c.z.abs());
+                wmin = wmin.min(w);
+                wmax = wmax.max(w);
+            }
+        }
+        let level = gamma(3) * (1.0 + 6.0 * ratio) * 2.0;
         let scale = h * wmax / (wmin * wmin);
         if level.is_finite() && scale.is_finite() {
             Ok(Self {
                 level,
                 scale,
                 homogeneous: h.max(wmax),
+                weights: wmax,
             })
         } else {
             Err(SolidError::invalid_input(
@@ -229,6 +449,12 @@ impl Rounding {
         (1.0 + 1e-12) * (2.0 * levels as f64 * self.level + f64::EPSILON) * self.homogeneous
     }
 
+    /// The error of a weight after `levels` levels.
+    #[allow(clippy::cast_precision_loss)]
+    fn weight(self, levels: usize) -> f64 {
+        (1.0 + 1e-12) * (2.0 * levels as f64 * self.level + f64::EPSILON) * self.weights
+    }
+
     /// The Euclidean error of a point after `levels` levels.
     #[allow(clippy::cast_precision_loss)]
     fn point(self, levels: usize) -> f64 {
@@ -242,65 +468,84 @@ fn euclid(h: [f64; 4]) -> Vec3 {
 }
 
 /// The rounding a rational Bezier piece's length carries, from its homogeneous points as
-/// computed, each coordinate within `made` of the exact piece's.
+/// computed, each of `x, y, z` within `made` and the weight within `made_w` of the exact
+/// piece's. A Euclidean point `E = P / w` moves by `(dP - E dw) / w`, so a point error
+/// `e` and a weight error `e_w` move it by at most `(sqrt3 e + M e_w) / w_min` (`M` the
+/// largest Euclidean point, `w_min` the least weight).
 ///
 /// - **The leaves' cuts** (`cut`): `2 p` de Casteljau levels on the piece's points for
 ///   `t` in `[0, 1]`, each a convex combination rounding by `gamma_3` of the sum of the
-///   magnitudes (at most `2 M_h`), so a leaf's homogeneous point is within
-///   `4 p gamma_4 M_h` of the computed piece's, and its Euclidean point within that times
-///   `(sqrt3 + M) / w_min` (`M` the largest Euclidean point, `w_min` the least weight).
+///   magnitudes (at most `2 M_h` for a point's coordinate, `2 w_max` for a weight), so a
+///   leaf's point is within `4 p gamma_4 M_h` and its weight within `4 p gamma_4 w_max` of
+///   the computed piece's.
 /// - **The piece moved** by `made`: the length of the computed piece is within
 ///   `int |C~' - C'|` of the exact one's. With `C' = (P' - C w') / w`,
-///   `C~' - C' = (dP' - C~ dw' - dC w') / w~ - C' dw / w~`; on `[0, 1]`, `|dP'| <= 2 p sqrt3
-///   made` and `|dw'| <= 2 p made` (the derivative's control points are `p` times the
-///   points' differences), `|dC| <= made (sqrt3 + M) / w_min`, `|w'| <= p max |w_i+1 - w_i|`
-///   and `|C'| <= p (w_max / w_min)^2 max |E_i+1 - E_i|` (the rational derivative's bound),
-///   each widened by `made` where it is taken from the computed points.
+///   `C~' - C' = (dP' - C~ dw' - dC w') / w~ - C' dw / w~`, integrated over `[0, 1]`:
+///   `int |dP'| <= 2 p sqrt3 made` and `int |dw'| <= 2 p made_w` (the derivative's control
+///   points are `p` times the points' differences, and each Bernstein basis function of
+///   degree `p - 1` integrates to `1 / p`), `|dC| <= (sqrt3 made + M made_w) / w_min`,
+///   `int |w'| <= sum |w_i+1 - w_i|` (variation diminishing; widened by `2 made_w` a
+///   difference), `|dw| <= made_w`, and `int |C'|` is the exact piece's length `L`, at
+///   most the computed piece's `L~` plus the move itself. So the move is at most
+///   `(F + B L~) / (1 - B)`, `B = made_w / w_min` ([`PieceBounds::moved`]): the pointwise
+///   rational-derivative bound `p (w_max / w_min)^2 max |E_i+1 - E_i|` is not needed.
 #[derive(Debug, Clone, Copy)]
 struct PieceBounds {
     /// The degree.
     p: f64,
     /// The Euclidean error of a leaf's point from its cut.
     cut: f64,
-    /// The bound on the length's move from the piece's rounding.
-    moved: f64,
+    /// The part `F` of the move not proportional to the piece's length.
+    fixed: f64,
+    /// The move per unit of the exact piece's length, `B`.
+    per_length: f64,
 }
 
 impl PieceBounds {
     /// `None` when a weight is not proved positive or a bound is not finite.
-    fn of(piece: &[[f64; 4]], made: f64) -> Option<Self> {
+    fn of(piece: &[[f64; 4]], made: f64, made_w: f64) -> Option<Self> {
         let n = piece.len().checked_sub(1)?;
         #[allow(clippy::cast_precision_loss)]
         let p = n as f64;
         let (mut mh, mut m, mut wmin, mut wmax) = (0.0_f64, 0.0_f64, f64::INFINITY, 0.0_f64);
         for h in piece {
-            mh = h.iter().fold(mh, |x, c| x.max(c.abs()));
+            let [x, y, z, w] = *h;
+            mh = mh.max(x.abs()).max(y.abs()).max(z.abs());
             m = m.max(euclid(*h).length());
-            wmin = wmin.min(h[3]);
-            wmax = wmax.max(h[3]);
+            wmin = wmin.min(w);
+            wmax = wmax.max(w.abs());
         }
-        let (mut leg, mut dw) = (0.0_f64, 0.0_f64);
+        let mut variation = 0.0_f64;
         for (a, b) in piece.iter().zip(piece.iter().skip(1)) {
-            leg = leg.max(euclid(*a).distance(euclid(*b)));
-            dw = dw.max((b[3] - a[3]).abs());
+            variation += (b[3] - a[3]).abs();
         }
         // a few ulps on each bound computed here
         let slack = 1.0 + gamma(16);
         let sqrt3 = 3f64.sqrt() * slack;
         let cut_h = 4.0 * p * gamma(4) * mh;
-        let low = wmin - made - cut_h;
+        let cut_w = 4.0 * p * gamma(4) * wmax;
+        let low = wmin - made_w - cut_w;
         if low.is_nan() || low <= 0.0 {
             return None;
         }
-        let cut = cut_h * (sqrt3 + m) / low * slack;
-        let point = made * (sqrt3 + m) / low * slack;
-        let w1 = p * (dw + 2.0 * made);
-        let ratio = (wmax + made) / low;
-        let d1 = p * ratio * ratio * (leg + 2.0 * point);
-        let moved =
-            (2.0 * p * sqrt3 * made + (m + point) * 2.0 * p * made + point * w1 + d1 * made) / low
-                * slack;
-        (cut.is_finite() && moved.is_finite()).then_some(Self { p, cut, moved })
+        let cut = (sqrt3 * cut_h + m * cut_w) / low * slack;
+        let point = (sqrt3 * made + m * made_w) / low * slack;
+        let w1 = (variation + 2.0 * p * made_w) * slack;
+        let fixed =
+            (2.0 * p * sqrt3 * made + (m + point) * 2.0 * p * made_w + point * w1) / low * slack;
+        let per_length = made_w / low * slack;
+        (cut.is_finite() && fixed.is_finite() && per_length < 0.5).then_some(Self {
+            p,
+            cut,
+            fixed,
+            per_length,
+        })
+    }
+
+    /// The bound on the length's move from the piece's rounding, `length` an upper bound
+    /// of the computed piece's length: `(F + B length) / (1 - B)`.
+    fn moved(self, length: f64) -> f64 {
+        (self.fixed + self.per_length * length) / (1.0 - self.per_length) * (1.0 + gamma(4))
     }
 }
 
@@ -565,16 +810,26 @@ impl Surface {
                 converged: true,
             });
         }
-        let rounding = Rounding::of(&form, &[fixed, from, to], OP_LENGTH)?;
+        let start = if side.is_u() {
+            Point2::new(from, fixed)
+        } else {
+            Point2::new(fixed, from)
+        };
+        let (form, shift) = translated(&form, form.evaluate_point(start)?, OP_LENGTH)?;
+        let rounding = Rounding::local(&form, side.is_u(), fixed, from, to, OP_LENGTH)?;
         let (pieces, levels) = iso_pieces(k, &form, side.is_u(), fixed, from, to)?;
-        // the pieces' homogeneous points as computed, within this of the exact ones
-        let made = rounding.homogeneous(levels);
+        // the pieces' homogeneous points as computed, within this of the exact ones (of the
+        // net translated exactly), the translation's rounding carried through the levels'
+        // convex combinations unchanged
+        let made = rounding.homogeneous(levels) + shift;
+        // the weights are not translated: their own levels' rounding alone
+        let made_w = rounding.weight(levels);
         let (mut chords, mut polygons, mut leaves) = (0.0_f64, 0.0_f64, 0_usize);
         let (mut chord_cuts, mut polygon_cuts, mut moved) = (0.0_f64, 0.0_f64, 0.0_f64);
         let mut converged = true;
         for piece in &pieces {
             // a weight not proved positive past the rounding: no measurement
-            let Some(bounds) = PieceBounds::of(piece, made) else {
+            let Some(bounds) = PieceBounds::of(piece, made, made_w) else {
                 return Ok(Across {
                     enclosure: Bracket {
                         lower: 0.0,
@@ -586,6 +841,7 @@ impl Surface {
                 });
             };
             let mut n = 0_usize;
+            let mut piece_polygons = 0.0_f64;
             let mut work = vec![(0.0_f64, 1.0_f64)];
             while let Some((a, b)) = work.pop() {
                 let leaf = cut(piece, a, b);
@@ -619,13 +875,18 @@ impl Surface {
                 }
                 chords += c;
                 polygons += q;
+                piece_polygons += q;
             }
+            let g_piece = gamma(n + 6 + piece.len());
             #[allow(clippy::cast_precision_loss)]
             let n = n as f64;
             // each leaf's chord within 2 of its cut's point error, its polygon within 2 p
             chord_cuts += n * 2.0 * bounds.cut;
             polygon_cuts += n * 2.0 * bounds.p * bounds.cut;
-            moved += bounds.moved;
+            // the computed piece's length is at most its leaves' polygons, with their
+            // rounding and cuts
+            moved +=
+                bounds.moved(piece_polygons * (1.0 + g_piece) + n * 2.0 * bounds.p * bounds.cut);
         }
         let g = gamma(leaves + 6 + pieces.iter().map(Vec::len).max().unwrap_or(0));
         // the leaves enclose the length of the pieces as computed; the exact curve's is within
@@ -831,5 +1092,70 @@ mod tests {
         assert!(s
             .length_across_side(&k(), &dom, BoxSide::UMin, 1e-9)
             .is_err());
+    }
+
+    /// A rational quadratic `(0, 0)`, `(1, 1)`, `(2, 0)` with the middle weight `w`, swept
+    /// 1 along z, all scaled by `scale`.
+    fn conic(w: f64, scale: f64) -> Surface {
+        use crate::geom::vector3d::Point3;
+        use crate::nurbs::b_spline_curve::KnotType;
+        use crate::nurbs::b_spline_surface::{BSplineSurfaceForm, CanonicalSurfaceData};
+        let mut pts = Vec::new();
+        for p in [[0.0, 0.0], [1.0, 1.0], [2.0, 0.0]] {
+            for z in [0.0, 1.0] {
+                pts.push(Point3::new(p[0] * scale, p[1] * scale, z * scale));
+            }
+        }
+        let weights = [1.0, 1.0, w, w, 1.0, 1.0];
+        Surface::from(
+            BSplineSurface::create_canonical(&CanonicalSurfaceData {
+                u_degree: 2,
+                v_degree: 1,
+                control_points: &pts,
+                form: BSplineSurfaceForm::Unspecified,
+                u_multiplicities: &[3, 3],
+                v_multiplicities: &[2, 2],
+                u_knots: &[0.0, 1.0],
+                v_knots: &[0.0, 1.0],
+                knot_type: KnotType::Unspecified,
+                weights: Some(&weights),
+                uv_domain: None,
+            })
+            .unwrap(),
+        )
+    }
+
+    /// The length's rounding grows with the part's size, not its square (the weights'
+    /// rounding is sized by the weights, not by the coordinates), and not with the square
+    /// of the weight ratio (the derivative's move is integrated as the piece's own length):
+    /// the same conic at 1000 times the size rounds 1000 times as much, and its enclosure
+    /// is the small one's scaled.
+    #[test]
+    fn the_rounding_scales_with_the_part_not_its_square() {
+        let dom = Extent2d::from_bounds(0.0, 0.0, 0.25, 1.0);
+        for w in [1.0, 10.0, 100.0] {
+            let small = conic(w, 1.0)
+                .length_across_side(&k(), &dom, BoxSide::UMax, 1e-9)
+                .unwrap();
+            let large = conic(w, 1000.0)
+                .length_across_side(&k(), &dom, BoxSide::UMax, 1e-9)
+                .unwrap();
+            assert!(
+                large.rounding <= 1001.0 * small.rounding,
+                "w {w}: {} at 1000 against {} at 1",
+                large.rounding,
+                small.rounding
+            );
+            // relative to the length, at part scale
+            assert!(
+                small.rounding <= 1e-7 * small.enclosure.lower,
+                "w {w}: {small:?}"
+            );
+            let (a, b) = (small.enclosure, large.enclosure);
+            assert!(
+                b.lower <= 1000.0 * a.upper && 1000.0 * a.lower <= b.upper,
+                "w {w}: {a:?} {b:?}"
+            );
+        }
     }
 }

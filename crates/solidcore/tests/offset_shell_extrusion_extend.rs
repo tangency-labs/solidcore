@@ -1,15 +1,25 @@
 //! An extended solid offset of `Defeature/extrusion.smb` keeping face 0 as a shell face,
-//! inset by 2 (the `offset.offset_executive_p2` case `pa_Defeature_extrusion_f0_d2_in_ext`).
+//! inset by 2 (the `offset.offset_executive_p2` case `defeature_extrusion_face0_inset2_extended`).
 //!
-//! Inset by 2, a round of the part offsets to a cylinder that the lines its edges were
-//! lifted to no longer lie on. `MapEdgeuses` then builds those edges' UV trim curves by
-//! dropping 101 points (`CreateUVTrimCurve`'s last resort), whose distance to the surface
-//! (`sm_CalcDistAndDev`, about 1.69) raises the edge tolerances. The port measured -1 for
-//! every point (its solve returned the solutions without the surface they lie on), so
-//! the edges kept their tolerance, the stitch that closes the offset glued fewer edges
-//! and the result kept five vertices more than the C++ reference.
+//! Inset by 2, the part's convex round of radius 2 (face 5's corner at (2, 8)) offsets onto
+//! a line: its offset collapses. Built on regardless, the edges `MapEdgeuses` lifts across it
+//! are 1.69 off its offset surface, and every later trim curve raises the tolerances again,
+//! to 11.46 and 20. No body built that way is sound:
+//! - the C++ reference (11 faces, 34 edges, 14 vertices) carries edge tolerances 16.06 and
+//!   6.77 on a B-rep of tolerance 1e-4, and edges whose ends lie about 3 from any vertex;
+//! - on the exact extension the port gave 11 faces, 32 edges, 13 vertices, and Level2
+//!   reported an edge/edge gap 4.14.
 //!
-//! The expected counts and bounds are the pinned C++ reference's.
+//! So the offset refuses it, naming why (#2350; owner ruling): a face whose offset is proved
+//! to collapse is refused before anything is built (`OffsetFailure::Collapses`, radius 2).
+//! Face 2's profile also bends with radius 1.53 towards the inset (at u = 2.68 of 0..4.37),
+//! so its offset folds: a folding face comes out inside out and the executive takes it
+//! away (`offset_shell_lamina_face_delete`'s inset 2.5), so it is not refused.
+//!
+//! When #2350 builds the offset as one construction (exact offsets and mitres: the faces
+//! beside a collapsed round meet across it), this becomes the sound-body assertion it
+//! replaces: `check_brep` clean at level 2, the inner walls exact (x = 2, y = 8 and the
+//! corner at (2, 8)), least vertex x 2.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -21,6 +31,8 @@
 mod offset_fixture;
 
 use offset_fixture::Notifications;
+use solidcore::error::offset::OffsetFailure;
+use solidcore::error::{ErrorKind, Reason};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::object::ObjectRef;
 use solidcore::offset::offset_executive::p1::{OffsetExecutive, OffsetOperation};
@@ -30,7 +42,8 @@ use solidcore::topology::brep::p10::TopologyEnv;
 use solidcore::topology::brep::p7::read_from_file;
 use solidcore::topology::database_io::FileType;
 use solidcore::topology::topology::NotifyRecords;
-use solidcore::{Brep, EntityRef, Kernel};
+use solidcore::topology::FaceId;
+use solidcore::{Brep, EntityRef, Kernel, SolidError};
 
 /// The upstream test file, read as the difftest runner reads it; `None` (the test is
 /// skipped) without the pinned upstream checkout.
@@ -38,6 +51,11 @@ fn extrusion(k: &mut Kernel) -> Option<Brep> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../upstream/TestFiles/pt_TestFiles/Defeature/extrusion.smb");
     let Ok(bytes) = std::fs::read(&path) else {
+        assert!(
+            std::env::var_os("SOLIDCORE_REQUIRE_UPSTREAM").is_none(),
+            "SOLIDCORE_REQUIRE_UPSTREAM is set and the upstream test file is missing: {}",
+            path.display()
+        );
         eprintln!("unavailable upstream test file: {}", path.display());
         return None;
     };
@@ -60,42 +78,50 @@ fn extrusion(k: &mut Kernel) -> Option<Brep> {
     Some(b)
 }
 
-#[test]
-fn inset_extended_offset_keeps_the_reference_topology() {
-    let mut k = Kernel::default();
-    let Some(mut part) = extrusion(&mut k) else {
-        return;
-    };
-    let face0 = bp1::faces(&part, None).unwrap()[0];
+/// The extended solid offset of the part, inset by 2, keeping `kept` as shell faces.
+fn inset_by_two(k: &mut Kernel, part: &mut Brep, kept: &[FaceId]) -> Result<Brep, SolidError> {
     let mut executive = OffsetExecutive::new(OffsetOperation::SolidOffset, 2.0, 1e-4);
     executive.set_inset(true);
     executive.set_extend_convex_edges(true);
     executive.set_merge_results(false);
     executive.set_create_offset_solid(false);
-    executive.set_shell_faces(&[face0]);
-    let mut notifications = Notifications::new(&mut part);
-    let result = executive
-        .do_solid_offset(
-            &mut k,
-            Some(&mut part),
-            SolidOffsetOptions::default(),
-            &mut notifications.context(),
-        )
-        .unwrap();
+    executive.set_shell_faces(kept);
+    let mut notifications = Notifications::new(part);
+    executive.do_solid_offset(
+        k,
+        Some(part),
+        SolidOffsetOptions::default(),
+        &mut notifications.context(),
+    )
+}
 
-    let faces = bp1::faces(&result, None).unwrap();
-    let edges = bp1::edges(&result, None).unwrap();
-    let vertices = bp1::vertices(&result, None).unwrap();
-    assert_eq!(
-        (faces.len(), edges.len(), vertices.len()),
-        (11, 34, 14),
-        "faces, edges, vertices"
-    );
-    // The C++ result's least vertex x is 3.999999999999994: no vertex is left on the
-    // x = 2 offset of the round (the port's was 2).
-    let min_x = vertices
-        .iter()
-        .map(|&v| result.vertex(v).unwrap().point.x)
-        .fold(f64::INFINITY, f64::min);
-    assert!((min_x - 4.0).abs() < 1e-9, "least vertex x {min_x}");
+/// The offset failure `e` carries.
+fn offset_failure(e: &SolidError) -> OffsetFailure {
+    match e.failure().map(|f| &f.reason) {
+        Some(Reason::Offset(failure)) => *failure,
+        other => panic!("not an offset refusal: {other:?} ({e})"),
+    }
+}
+
+#[test]
+fn inset_by_the_rounds_radius_is_refused_naming_why() {
+    let mut k = Kernel::default();
+    let Some(mut part) = extrusion(&mut k) else {
+        return;
+    };
+    let faces = bp1::faces(&part, None).unwrap();
+    let e = inset_by_two(&mut k, &mut part, &[faces[0]]).unwrap_err();
+    assert_eq!(e.kind(), ErrorKind::OffsetCollapses, "{e}");
+    let OffsetFailure::Collapses {
+        face,
+        distance,
+        radius,
+    } = offset_failure(&e)
+    else {
+        panic!("{e}");
+    };
+    assert_eq!(face, faces[5]);
+    assert_eq!(distance.abs(), 2.0);
+    assert!((radius - 2.0).abs() < 1e-9, "radius {radius}");
+    assert!(e.to_string().contains("collapses"), "{e}");
 }

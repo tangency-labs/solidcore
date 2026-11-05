@@ -17,26 +17,65 @@ harness/cpp            C++ reference build (build.sh -> bin/cpp) + shim/<unit>.c
 plan/                  units/<id>.toml, findings/<slug>.md, upstream-issues/<slug>.md (one file each), STATUS.md, order.md
 ```
 
-**What to work on first: a stable kernel for v1.1.0.** Work is chosen by priority, not first in,
-first out. The goal is a stable kernel: blends (fillets, chamfers, corners, Ends, setbacks), STEP
-read and write, and the operations a model is built with (booleans and their intersections,
-sweeps, offset and shell, the validity check), each giving the correct result or a named
-refusal, never a crash or a hang. Issues and PRs for that goal carry the `priority: high` label.
-1. Finish what is open before starting anything new: review, fix and land the open
-   `priority: high` PRs, then take an open `priority: high` issue.
-2. Only with no `priority: high` item you can take, work on anything else.
-3. Among them, the item that unblocks the most others goes first (a dependency, a layer others
-   build on); only between equals does the oldest go first.
+## 0. What to work on: read this before choosing anything
 
-A new issue or PR that belongs to the goal gets `priority: high` when it is filed; ask the
-maintainers on it if you are unsure.
+**Where the kernel is.** solidcore replaced SMLib as SolidCraft's kernel in 0.40. The switch came
+with bugs: not everything that worked before works now, and users meet those failures every day.
+The job now is to make what people actually build work again, correctly. It is not to polish code
+paths nobody reaches.
+
+**What to work on: what has been reported.** Take an open issue someone reported (a user, a
+maintainer, a failing rig case or sweep), in this order, and claim it before you start:
+1. **`urgent` issues.** Main's red difftest sweep comes first (#2794 lists each red unit and the
+   cases): every pull request's difftest stays red until main is green.
+2. **`help wanted` issues**, oldest first among equals.
+3. **The rig's failures and unported operations** with an issue: the case names its operation
+   and the result it expects (`cargo test -p solidcore-ops --test kernel_cases -- --ignored`).
+
+Work already taken is visible: an issue's assignee, its `in progress` label, or an open pull
+request that names it. Check all three, and build on the existing work rather than next to it.
+
+**What not to work on.**
+- **Defects you think you found** in code no user reaches: an overflow from an impossible input,
+  a branch only a fuzzer finds, an "improvement" to a solver or an integrator nobody asked for.
+  File an issue with a reproduction from a real use (a rig case, a STEP file, a SolidCraft
+  design), and leave it for triage. Don't open a pull request for it unless a maintainer asks.
+  Crashes and hangs from real inputs are still taken: they belong to the list above.
+- **Speed tricks.** A speed-up is taken only with its root cause, shown as a count (evaluations,
+  subdivisions, enclosures), never a timing, on a case that is slow for users or for CI. Making a
+  slow path a constant factor faster, or making a slow test cheaper, is not taken.
+- **Anything not reported** waits. A pull request names, in its first lines, the issue it fixes;
+  one that fixes no reported issue is reviewed after all the ones that do.
 
 ## 1. Hard rules
 
-**Read first.** Before changing an area, read its design doc and records: `docs/generic-blend.md`
-for fillets and chamfers, the unit's `plan/units/<id>.toml`, and its `plan/findings/` and
-`plan/upstream-issues/` entries. If the docs and the code don't answer your question, ask the
-maintainers on the area's hub issue before you build.
+**Read first.** Before changing an area, read its reference doc, then its records (the unit's
+`plan/units/<id>.toml`, its `plan/findings/` and `plan/upstream-issues/` entries):
+- [docs/definitions-and-certificates.md](docs/definitions-and-certificates.md): a surface is its
+  definition and its B-spline a certified approximation; the certificate; the exactness classes;
+  the exact extension; the invariants every construction keeps. Read this one whatever the area.
+- [docs/generic-blend.md](docs/generic-blend.md): fillets, chamfers, corners, setbacks.
+- [docs/procedural-sweep.md](docs/procedural-sweep.md): swept surfaces, their frames, threads.
+- [docs/ssi.md](docs/ssi.md): surface-surface intersection, and what the boolean takes from it.
+- [docs/layers.md](docs/layers.md): which layer each job lives in.
+
+Each reference ends with "If you're stuck". If the docs and the code don't answer your question,
+ask the maintainers on the area's hub issue before you build.
+
+**Show the problem first, then research it.** Before you build a fix, show the person you work
+for what you are solving: a schematic of the problem drawn in VectorCraft (house style:
+[docs/agent-style.md](docs/agent-style.md#figures)), or a rendition of the failing case, next to
+what the correct result is. For a body in an `.smb` file, `cargo run --release -p diagnostics --
+FILE.smb --out DIR` draws it through `solidcore-tess` with its large-tolerance edges over
+everything (`--highlight` and `--see-through` take face indices) and writes a JSON report of
+every face and edge with its tolerance and label pixel. A pull request that changes a case's
+result attaches its pictures before and after the change, drawn the same way from the same view,
+whenever the case can be drawn, and a VectorCraft schematic where the problem is a mechanism a
+picture of the body cannot show (a tolerance against a gap, an enclosure that does not shrink,
+the order of a solve). Then find how the problem is solved in the literature: search for the
+papers, read the ones that apply, and design from them. Say in the issue what you read and how
+the design follows it. A fix nobody has seen the problem of, or built without that research, is
+not ready for review.
 
 **Licence.** Read only `upstream/source/SMLib`, `upstream/source/SM_API`,
 `upstream/tests/SM_API_test`, `upstream/tests/prog_test`, `upstream/TestFiles/pt_TestFiles`,
@@ -113,282 +152,52 @@ worktrees with `cargo xtask worktree-rm <dir>`), never `rm -rf`: agent harnesses
 for a human's approval even with permissions bypassed, which stalls unattended runs. The
 xtask only deletes inside the worktree root, `bin/`, `reports/` and the temp dir.
 
-## 2. Machine budget
+## 2. Machine budget and code style
 
-8 cores / 16 threads shared by every agent.
+[docs/agent-style.md](docs/agent-style.md): the shared machine's budget (`nice -n 10`, at most
+`--jobs 4`, `CARGO_BUILD_JOBS=2`), the code style and the file header every source file carries.
 
-```sh
-export CARGO_BUILD_JOBS=2 RUSTC_WRAPPER=sccache      # sccache is installed in ~/.cargo/bin
-nice -n 10 cargo test -p solidcore                     # every cargo/C++ command under nice
+## 4. Pull requests
+
+**Claim with a draft PR** before you start: search open PRs (titles and bodies) for the issue,
+the symbols and the paths; branch from the latest `main`; open a draft whose body carries:
+```text
+Units:
+In scope: functions and intended behaviour
+Expected edits: paths and shared interfaces
+Evidence: failing cases, tests, validation planned
+Related PRs / dependencies:
+Available follow-ups: independent work others can take
+Status / blockers / next step:
 ```
+The earliest open claim wins for overlapping work; non-overlapping work is welcome, with the
+boundary stated. Never build a competing version of an actively claimed change. Push WIP or a
+progress note at least daily; after 24 h without either, propose the scope you take over and
+wait 12 h, then continue from the published WIP, crediting its author. When you stop, close the
+draft and say where the WIP is.
 
-- C++ reference: `scripts/fetch-cpp.sh` downloads the prebuilt libraries for the current
-  harness key (no compiling); it falls back to `nice -n 10 harness/cpp/build.sh --jobs 6`
-  when no prebuilt matches. Only refetch/rebuild if `bin/cpp/lib` is missing or the
-  harness changed; one shared `bin/cpp` serves all worktrees (below). With
-  `RUSTC_WRAPPER=sccache` the shims solidcore-ffi compiles are cached by sccache too.
-- Run it from the main tree; worktrees reuse that build by exporting
-  `SOLIDCORE_CPP_DIR=$HOME/github/solidcore/bin/cpp` (the CMake build dir is keyed by
-  source tree, so a worktree run gets its own build dir but installs to the same `lib/`).
-- Before claiming a unit, check load: `cut -d' ' -f1 /proc/loadavg`. If > 24, do not
-  claim; finish or wait.
-- After merging, delete your worktree's `bin/` (each worktree has its own cargo target).
-- Unset `RUSTC_WRAPPER` if sccache is missing; the repo never requires it.
+**Verify** (under `nice -n 10`): `cargo fmt --all --check`; `cargo clippy --workspace
+--all-targets -- -D warnings`; `cargo test -p solidcore`; `cargo check -p solidcore --target
+wasm32-unknown-unknown`; and, for kernel changes, the difftest of every unit you touched
+(`cargo run --profile difftest -p difftest --features cpp -- --unit <id>`). Every case your
+change moves is fixed or recorded with evidence that names it (§1, §4b).
 
-## 3. Code style
+**Finish:** rebase onto the latest `origin/main` (never merge `main` in), re-verify, put the
+difftest summary lines in the description, and mark the PR ready. CI is the merge gate.
 
-**Numerics: ported code keeps upstream's, new code chooses for correctness.** Code that is
-ported and unchanged keeps upstream numerics: same formulas, same operation order, same
-iteration order, same branch structure for tolerance tests and degenerate cases. Do not
-"simplify" `a*b + c` into `mul_add`, reorder sums, swap in `hypot`/`midpoint`, or replace
-loops with library calls that change rounding there; the C++ reference is built with
-`-ffp-contract=off`, so matching order gives matching bits. Code that fixes or replaces a
-construction uses the numerics its correctness needs (exact predicates, interval enclosures,
-certified rounding bounds) and says so in its doc comment. Everything else is Rust-first:
+**Records are files, never appended.** Every finding and upstream issue is its own new file
+(`plan/findings/<slug>.md`, `plan/upstream-issues/<slug>.md`); a merged record is never edited,
+an update is an addendum file. Known mismatches live in
+`crates/difftest/known_mismatches/<unit id>.toml`. Never commit `reports/difftest/`.
 
-- **Data model.** Topology lives in `topology::Brep` arenas addressed by typed ids
-  (`FaceId`, `EdgeId`, `VertexId`, `LoopId`, `ShellId`, `BrepId`); no pointers, `Rc`,
-  or `RefCell` graphs. Geometry is concrete `enum`s (`Curve`, `Surface`) over structs,
-  not trait objects. Points/vectors are `math::Vec3` (`Point3` is an alias, as upstream).
-- **Kernel.** Tolerances, RNG and caches are fields of `kernel::Kernel` (upstream
-  `SmContext`). Take `&Kernel` (or `&mut Kernel` when using rng/caches); it must stay
-  `Send`.
-- **APIs.** Return values, not out-params (tuples or small structs for multiple
-  outputs). Fallible fns return `solidcore::Result<T>`; build `SolidError` with the
-  `operation` path (e.g. `"nurbs::knots::insert"`) and entity id. Many optional
-  arguments become an options struct with `Default`. Upstream `SmStatus` codes with no
-  matching variant map to `SolidError::Upstream { code, .. }`.
-- **Names.** Drop `NL_`/`Sm`/`SM_`/`smgu_`/Hungarian prefixes; snake_case fns,
-  CamelCase types (`SmBSplineCurve` -> `BSplineCurve`, `NL_KnotInsert` -> `knot_insert`).
-- **Organisation.** A unit's `rust_module` (`nurbs::knots`) lives at
-  `crates/solidcore/src/nurbs/knots.rs`, declared with `pub mod knots;` in `nurbs.rs`
-  (no `mod.rs`). Keep `mod` lines sorted, one per line, so parallel merges conflict
-  cleanly. Unit tests go in the same file (`#[cfg(test)] mod tests`).
-- **Docs.** Every public item has a doc comment (`missing_docs` warns; CI uses
-  `-D warnings`). Lints are in root `Cargo.toml` `[workspace.lints]`; do not add
-  `#[allow]` for denied lints in library code.
+**No new document without the maintainers.** `docs/` holds the reference pages listed in §1 and
+what the maintainers have agreed to. Never add a file to `docs/` that hasn't been discussed with
+them first, on its issue. A pull request's evidence (validation runs, comparisons, measurements)
+goes in its description, or in a `plan/findings/` record when it must outlive the PR. A doc
+points to issues, code, tests and records, never to a pull request.
 
-### File header
-
-Every ported file starts with:
-
-```rust
-//! One-line summary of what the module does.
-//!
-//! Upstream: `source/SMLib/src/NL_KnotVec.cpp`, `source/SMLib/inc/NL_KnotVec.h`.
-//!
-//! | Rust                    | Upstream                         |
-//! |-------------------------|----------------------------------|
-//! | [`KnotVector`]          | `NL_KNOTVECTOR`                  |
-//! | [`KnotVector::insert`]  | `NL_KnotInsert`                  |
-//! | `find_span` (private)   | `nl_FindSpan`                    |
-//!
-//! Deviations: <anything not 1:1, e.g. out-param -> return value, rand() -> kernel.rng>.
-```
-
-## 4. Porting a unit (PR workflow)
-
-Unit list and states: `plan/units/<unit id>.toml`, one file per unit (format:
-`plan/modules.schema.md`, order: `plan/order.md`). **The [checklist](https://tangency-labs.github.io/solidcore/PROGRESS.md)** is generated
-from `main` by the Pages workflow (`harness/plan/progress.py`; not committed). **Any `todo` unit or unclaimed completion task can be claimed**, after the `priority: high` work above. A claim reserves
-its stated scope, not every future change to the unit. Missing functions, back-edge
-wiring, exact runner imports, fixtures and demonstrated parity bugs remain useful
-work in `partial` and `green` units; inspect source and reports, not status alone.
-A unit is *ready* when its `depends_on` are all
-`green` or `partial` (`soft_depends_on` never blocks; see section 4a); ready units are
-the easiest, lowest `layer` first. Claiming a unit that is not ready is fine:
-- Calls into a missing dependency are stubbed (`UNPORTED(<unit>)`, cases deferred; 4a).
-- If you need a **type** (struct, enum variant, base class) from a missing dependency,
-  port the minimum of it yourself and record it in that unit's `notes` in
-  `plan/units/<that unit>.toml` as `CO-PORTED in <your unit> (PR #n): <C++ symbols> -> <Rust path>`
-  so its eventual porter extends your code instead of duplicating it.
-- If that dependency has an open `port:` PR, do not port the same code twice: build on
-  that PR's branch (merge it into yours) or agree on the split in that PR's comments.
-
-**One-time setup** (per machine): clone this repo, clone upstream at the pinned commit
-into `upstream/` (see README), then run `scripts/fetch-cpp.sh`, or
-`nice -n 10 harness/cpp/build.sh --jobs 6` to build from source.
-
-1. **Claim = a scoped draft PR.** Search open PR titles and bodies for the unit,
-   symbols and affected paths, including `wire:`, `fix:` and `difftest:` work; a title
-   search for `port:` alone misses completion work. Branch from the latest `main`.
-   Do not edit `plan/units/` to claim.
-   Initial whole-unit ports keep the title **`port: <unit id>`**. For completion work,
-   use a descriptive title such as **`wire: <unit id> — <function group>`** and name
-   the unit in the body. An empty claim commit is sufficient to open a draft.
-
-   Include this scope in the PR body (update it as the work changes):
-   ```text
-   Units:
-   In scope: upstream symbols, Rust functions and intended behavior
-   Expected edits: paths and shared interfaces
-   Evidence: failing/deferred case IDs or missing branches; validation planned
-   Related PRs / dependencies:
-   Available follow-ups: independent work others can take
-   Status / blockers / next step:
-   ```
-   For overlapping whole-unit `port:` claims, the lowest-numbered open PR wins.
-   For completion tasks, the earliest open claim wins only for overlapping work.
-   Non-overlapping work in
-   the same unit is welcome. Link the related PR and state the boundary before
-   starting; independent work need not wait for a whole-unit owner to reply.
-   If work changes the same function or shared interface, agree on a split in the
-   existing PR first, or build on its branch and document the dependency. If the
-   boundary is unclear, ask there and take a different independent task meanwhile.
-   Never implement a competing version of an actively claimed change.
-
-   Push WIP or post a concrete progress update at least daily while implementing.
-   After 24 h without either, comment with the exact scope you propose to take over
-   and allow 12 h for a response; then continue from published WIP, crediting its
-   author. Do not take over a PR merely because it awaits review or CI: offer review,
-   conflict resolution or a coordinated follow-up instead. A blocker update should
-   identify what is blocked and release independent work, rather than reserve the
-   whole unit indefinitely. When pausing, release the scope and link the WIP.
-   Existing PR authors retain their active scope; this is not a reset of claims.
-   If the unit's notes mention a WIP branch, inspect it before starting.
-
-2. **Port** the upstream functions the unit owns (listed in
-   `harness/callgraph/units.json`) into its `rust_module`, plus the C++ shim
-   (`harness/cpp/shim/<unit_id_with_underscores>.cpp`, functions `sc_<unit>_<fn>`, plain
-   C data only), its `solidcore-ffi` binding, and its difftest runner and fixtures,
-   following `crates/difftest/README.md`. Inputs: the unit's upstream `tests`, plus
-   fixed-seed generated and edge cases (degenerate, boundary, tolerance limits).
-3. **Wire back-edges** (section 4a): replace `UNPORTED(<unit id>)` stubs elsewhere with
-   real calls and re-run the difftest of every unit you touched.
-4. **Verify** (`export CARGO_BUILD_JOBS=2 RUSTC_WRAPPER=sccache`, everything under
-   `nice -n 10`):
-   ```sh
-   cargo fmt --all --check
-   cargo clippy --workspace --all-targets -- -D warnings
-   cargo test -p solidcore
-   cargo check -p solidcore --target wasm32-unknown-unknown
-   cargo run --profile difftest -p difftest --features cpp -- --unit <unit id>   # and every unit you touched
-   cargo run --profile difftest -p difftest --features cpp -- --green --jobs 4   # what CI runs (with --jobs 0)
-   ```
-   `--jobs N` runs N units at a time, each in its own process (`0` = every core; the
-   output and reports are the same as a serial run). On a shared machine stay within the
-   section 2 budget: `--jobs 4` at most, fewer when the load is high.
-   CI also enforces the 75% value-share floor and exact-base artifact ratchet
-   (`crates/difftest/README.md`, Regression gate). Missing/expired baseline artifacts
-   fail closed; do not extract historical committed reports or waive lost coverage
-   to make a run pass. Local `--baseline` runs must use matching seeds and no filter.
-5. **Before you mark a PR ready**, check each item. Earlier PRs passed CI yet still
-   disagreed with the C++ because of these:
-   1. **Default arguments** match upstream (e.g. `IsDegenerate()` defaults to
-      `SM_EFF_ZERO`, not a zone tolerance).
-   2. **No parameter dropped or hard-coded** (e.g. `0.0` passed instead of the
-      caller's value).
-   3. **Every upstream special-case branch ported** (e.g. cylinder reparametrisation
-      for a line parallel to the axis).
-   4. **Statuses upstream relies on are honoured** (e.g. `Unitize()` turning a zero
-      vector into `(0,0,1)`).
-   5. **The shim builds every geometry kind the code branches on** (real
-      `SmEllipse`/`SmCircle`/`SmLine`/..., not B-spline stand-ins), or those branches
-      are never compared.
-   6. **FFI guards reject exactly the inputs that are undefined or crash in C++**: no
-      more (valid inputs stay covered), no fewer (no garbage or segfaults).
-   7. **Generated cases cover** degenerate, boundary, tolerance-limit, huge/tiny-scale
-      and sub-domain inputs, and most cases compare real values, not just an error
-      status.
-   8. **No panics on extreme caller input**: bound derivative orders and counts; file
-      readers bound header counts; input-driven recursion is bounded (section 1).
-   9. **`UNPORTED` stubs only for calls into units that are not `green`/`partial`**,
-      tagged with the owning unit from `harness/callgraph/units.json`; co-ports are
-      recorded as `CO-PORTED` in that unit's `plan/units/<id>.toml` notes.
-6. **Finish the PR**: rebase your branch onto the latest `origin/main` (never merge main
-   into it: history stays linear) and force-push your own PR branch with
-   `--force-with-lease`; never rewrite a branch someone else builds on, or `main`. Re-verify,
-   set the unit's `status` to `"green"` or `"partial"` in
-   `plan/units/<unit id>.toml` with case/deferred counts in `notes` (plus the files of
-   any units you promoted), commit, push, and mark the PR ready. Put the difftest summary lines in
-   the PR description. CI runs fmt, clippy, tests, wasm, difftest on every green or
-   partial unit, and the difftest runner tests. **CI is the merge gate.** Once CI is
-   green, a maintainer adds the PR to the merge queue after a quick check (stub tags,
-   no loosened tolerance, no case dropped), and the queue re-runs CI on the PR merged
-   with the latest `main`. Deep adversarial review happens after merge; anything it
-   finds comes back as a follow-up issue or PR, so keep the step-5 checklist honest.
-
-**Shared files (avoid merge conflicts).** Every open PR touches the same plan, so:
-- Edit only `plan/units/<id>.toml` of your unit (and of units you promote or co-port
-  into). There is no shared `plan/modules.toml` any more.
-- Never commit `reports/difftest/` (gitignored). difftest still writes your reports
-  there locally; CI regenerates them, uploads main's set as the `difftest-reports`
-  artifact, and the site and its checklist read that
-  (`scripts/fetch-reports.sh` downloads it). Quote your summary lines in the PR instead.
-- **Never append to a shared file.** Every finding and every upstream issue is its own
-  new file: `plan/findings/<slug>.md` and `plan/upstream-issues/<slug>.md` (formats in
-  each directory's `README.md`). Records are never edited after they merge (like ADRs):
-  an update is an addendum file. The old shared `plan/findings.md` and
-  `plan/upstream-issues.md` were split into those directories; CI fails if either comes
-  back. Two PRs that each add a file never conflict.
-  Known difftest mismatches likewise live in `crates/difftest/known_mismatches/<unit id>.toml`
-  (one file per unit; see `crates/difftest/src/known.rs`), and SolidCraft cases in
-  `fixtures/solidcraft/<issue>-<slug>.json` (one file per issue).
-  The same goes for anything new you design: a registry or log is a directory of
-  per-entry files that tools read in sorted order, never one file everybody appends to.
-- **Branches from before the per-unit split** (they edit `plan/modules.toml` or commit
-  reports): merge main, then run the migration, which moves your `modules.toml` edits
-  into `plan/units/*.toml` and untracks your reports. This one merge is the only exception
-  to rebasing (§4 step 6): the script reads the conflicted merge (`MERGE_HEAD`) to find
-  your edits. After it, rebase as usual:
-  ```sh
-  git fetch origin && git merge origin/main; scripts/units-migrate-branch.sh && git commit --no-edit
-  ```
-  It reports a `CONFLICT` for a field main also changed (it keeps yours; check it) and
-  lists any other conflicted files for you to resolve before committing.
-
-**Blocked** (gate cannot be met, upstream behaviour unclear): record details in
-`plan/findings/<slug>.md`, set `status = "blocked"` with a reason in `notes`, and open the PR
-with just that so others can see it. Never sit on a draft PR you have stopped working
-on: close it, and say where the WIP is.
-
-### Completion evidence
-
-For new ports and completion changes, include the [completion evidence checklist](docs/completion-evidence.md)
-in the PR description. The evidence table is required for `wire:` PRs that remove
-`UNPORTED` stubs, including when existing fixtures do not reach the continuation. Identify the owned functions and branches implemented, which
-operations actually complete successfully against C++, and which remain unreachable.
-A passing status or empty result is evidence for that case, not proof that the
-operation's successful construction or mutation path works.
-
-A dependency stub replaces the missing call only. Port the upstream logic following
-it as well, preserving control flow and operation order; do not omit the continuation
-and present the function as complete. If an incremental PR deliberately leaves an
-owned body or continuation missing, list the exact symbols and remaining work.
-Report that limitation even if existing fixtures never reach it. Unit status follows
-the existing gate; it does not certify complete function or branch coverage.
-
-When a dependency is wired, rerun the affected callers and add cases that reach the
-previously blocked continuations. Keep newly exposed mismatches visible. Review
-runner skips, stand-in geometry and absent-entity cases before claiming coverage.
-Record independent harness follow-ups with reproducible evidence and check existing
-PRs before implementing them. This checklist supplements the existing correctness
-gate; it does not change tolerances, outcomes or status accounting.
-
-## 4a. Cycles, back-edges and the merge lock
-
-The kernel core is one big call cycle, so the plan dropped ~2,300 calls as *back-edges*
-(listed in each unit's `notes`: `cycle back-edges (...): <unit>(<calls>)`). Rules:
-
-- **Soft dependencies.** `soft_depends_on` lists dependencies a unit calls at most twice
-  and needs no type from (generated by `harness/plan/soften.py` from the call graph).
-  They do not block claiming: treat every call into a soft dependency that is not
-  `green`/`partial` yet exactly like a back-edge below. Only `depends_on` blocks.
-- **Calling unported code.** A call into a unit that is not `green`/`partial` yet goes
-  through `Err(SolidError::Unported { upstream: "<C++ symbol>", unit: "<unit id>" })`.
-  Never panic, never fake a result. Every such site carries the comment
-  `// UNPORTED(<unit id>): <C++ symbol>` so the target's porter can find it with grep.
-- **Difftest with back-edges.** Cases whose C++ path reaches an unported callee are
-  classified `deferred` (the Rust side returns `Unported`); they are neither pass nor
-  fail. A unit with all non-deferred cases passing and >=1 deferred case is
-  **`partial`**. With zero deferred cases it is **`green`**. `partial` satisfies
-  `depends_on` for scheduling only; it is never reported as green.
-- **Wiring back-edges when you port a unit.** After your unit passes, grep
-  `UNPORTED(<your unit id>)` across `crates/solidcore`, replace each stub with the real
-  call, and re-run difftest for every unit you touched. Any unit whose deferred count
-  drops to 0 and passes becomes `green`; record this in the same commit.
-- **Local swarms only:** when several agents share one clone, everything that writes
-  that clone's `main` runs under `flock .git/swarm.lock -c '<commands>'`.
+**Porting and wiring units** (the work that remains of the port: `UNPORTED` stubs, back-edges,
+unit status): [docs/porting.md](docs/porting.md).
 
 ## 4b. Fixing defects and building constructions
 
@@ -422,7 +231,7 @@ own constructions. The policy (owner, 2026-11-04; supersedes 2026-11-02 and #101
   never a fixed angle.
 - **Don't extend code that is going away.** Improve the construction that replaces it; an old
   path is deleted when its replacement lands, never kept as a fallback.
-- **Crash, UB, hang and nondeterminism fixes are unconditional**, e.g. #1160 for UB-87.
+- **Crash, UB, hang and nondeterminism fixes are unconditional**, e.g. the fix for UB-87.
 - **Check that the issue is still open work before you claim it.** Many issues were
   fixed by a PR that did not close them (see #1206). Search merged PRs for the issue
   number, the upstream symbol and the `WR-`/`UB-`/`HANG-` record id, and grep

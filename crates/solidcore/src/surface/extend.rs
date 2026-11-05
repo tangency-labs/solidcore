@@ -1,10 +1,10 @@
 //! A surface extended past one side of its parameter box by a distance measured across that
 //! side, exactly: [`Surface::extended_by_distance`].
 //!
-//! Not upstream: the kernel's own extension (`N_SrfExtendByDist`, `srf_adv::p2`) estimates
+//! Not upstream: upstream's extension (`CreateExtendedSurface` on `N_SrfExtendByDist`) estimates
 //! its distance, fits a rational curvature-continuous extension by least squares and ends by
-//! removing knots within a tolerance, which can move the source's own part. This is a separate
-//! exact path; that one and its callers are unchanged.
+//! removing knots within a tolerance, which can move the source's own part. It is not ported;
+//! every surface extension in the kernel is this exact one.
 //!
 //! **The construction.** The surface's B-spline form (an analytic kind's only once proved on
 //! its label, [`AnalyticSupport::check`]) is worked on its homogeneous net `(H, w)`, one row of
@@ -23,6 +23,25 @@
 //! - **Curvature:** the Tangent construction with the extension's second row solved from the C2
 //!   condition on the homogeneous rows (linear, in closed form): the homogeneous surface is C2
 //!   across the side, so the surface is curvature continuous.
+//! - **Ruled:** each row continued past its end by the homogeneous line `H_n + s D`, `D = (p
+//!   / h) (rho H_n - H_(n-1))` (`h` the last span's length), with ONE `rho` for every row:
+//!   the rows' largest end weight ratio `w_(n-1) / w_n` (1 for polynomial rows). It is
+//!   written as one degree-`p` span by degree elevation of the line, joined at multiplicity
+//!   `p` (the joint point the source's own). A line in homogeneous space projects to a
+//!   straight line, so at a fixed parameter along the side the result is straight in `s`:
+//!   ruled. Across the side the homogeneous derivative is `H_u + mu H` with one `mu = (p /
+//!   h) (rho - 1)` for the whole side, the same tangent as `H_u` once projected: the surface
+//!   is C1 there exactly (`S_s = (D W - H D_w) / W^2 = S_u`), on polynomial and rational
+//!   rows alike, its direction the side's end tangent. Every weight is `w_n (1 + (i e / h)
+//!   (rho - rho_j)) >= w_n`. Where every row has the same ratio (every polynomial row; a
+//!   rational net whose weights are a product along and across the side, as a revolution's
+//!   or an extrusion's) the weights stay `w_n`: each row is the 3D segment `P_n + s T`
+//!   along its end tangent `T = C'(b)`, equally spaced, reaching any distance. Where the
+//!   ratios differ a row with a ratio below the largest has growing weights and its line
+//!   ends at a finite point (the row-wise exact ruled extension's reach is bounded; the
+//!   ruled surface `S + s S_u` itself is of degree `2q` along the side, which would move the
+//!   source's net): the length across saturates, and an ask past it is refused as not exact
+//!   naming the longest distance found.
 //!
 //! **Knots.** The source's net and knots are kept bit for bit: the end knot stays at
 //! multiplicity `p` as the joint, and the extension's spans follow it. No knot is removed.
@@ -47,9 +66,11 @@
 //! monotone either, so it is a long workable distance, not proved the longest).
 //!
 //! **Analytic kinds.** Natural on a plane, cone, sphere or torus is the same analytic widened
-//! ([`Surface::continued`]). So is Tangent or Curvature across a side whose B-spline form is of
-//! degree 1 across it (a plane; a cone or cylinder along its rulings): a straight row's mirror
-//! and its C2 condition are its own continuation.
+//! ([`Surface::continued`]). So is Tangent, Curvature or Ruled across a side whose B-spline form
+//! is of degree 1 across it (a plane; a cone or cylinder along its rulings): a straight row's
+//! mirror, its C2 condition and its tangent line are its own continuation.
+//!
+//! **Blends.** A procedural blend is extended by its definition, not its net (`blend`).
 //!
 //! Deviations: none (no upstream counterpart). No recursion.
 
@@ -103,6 +124,9 @@ pub enum Continuity {
     Tangent,
     /// Curvature continuous: the mirror with its second row from the C2 condition.
     Curvature,
+    /// Tangent continuous and ruled: each row continued by a homogeneous line along its end
+    /// tangent (a straight segment in 3D), a degree-`p` span by degree elevation of the line.
+    Ruled,
 }
 
 /// Why an extension is refused ([`SolidError::ExtendRefused`]).
@@ -191,9 +215,12 @@ impl Surface {
     ///
     /// - `InvalidInput`: a distance not finite and positive; a side not the form's end; a
     ///   form moved off its analytic label; a form not clamped at the side;
-    /// - `Unsupported`: a kind with no exact B-spline form here (a procedural blend, a curve
-    ///   bounded, STEP or in-volume surface); an offset surface is the offset of its base
-    ///   extended (`offset_extended`), with its base's errors;
+    /// - `Unsupported`: a kind with no exact B-spline form here (a curve bounded, STEP or
+    ///   in-volume surface); an offset surface is the offset of its base extended
+    ///   (`offset_extended`), with its base's errors; a procedural blend is extended by its
+    ///   definition (`blend`: across its section continued, along its spine by a span of its
+    ///   construction), refused for a G^n section across, a net cut across or turned, or a
+    ///   side that is not its definition's end station;
     /// - [`SolidError::ExtendRefused`]: a weight would not be positive, with a distance whose
     ///   weights are ([`ExtendRefusal::WeightVanishes`]); the length at the distance not
     ///   measurable to the stop, with the longest distance found that is
@@ -217,11 +244,8 @@ impl Surface {
         if let SurfaceKind::OffsetSurface(o) = self.kind() {
             return offset_extended(k, o, dom, side, how, distance);
         }
-        if matches!(self.kind(), SurfaceKind::ProceduralBlend(_)) {
-            return Err(SolidError::Unsupported {
-                operation: OP,
-                reason: "a blend is extended by its definition, not its net",
-            });
+        if let SurfaceKind::ProceduralBlend(pb) = self.kind() {
+            return blend::blend_extended(k, pb, dom, side, distance);
         }
         let analytic = AnalyticSupport::of(self).is_some();
         let form = crate::blend::fillet_section::station::as_b_spline(k, self)?.ok_or(
@@ -609,6 +633,9 @@ fn solve(
     };
     // (ask, f) running short of d and past it
     let (mut short, mut past): (Try, Try) = (None, None);
+    // the longest short ask's distance measured to the stop: what a length that saturates
+    // short of d reaches
+    let mut reach: Option<f64> = None;
     let mut overshoot = 1e-6;
     for _ in 0..BRACKET_TRIES {
         let Some((made_ask, s, b)) = try_ask(ask)? else {
@@ -619,6 +646,9 @@ fn solve(
             Says::Met => return finish(s, b),
             Says::Short(f) => {
                 short = Some((ask, f));
+                if let Some(l) = workable(b.as_ref(), s.1) {
+                    reach = Some(reach.map_or(l, |r| r.max(l)));
+                }
                 f
             }
             Says::Past(f) => {
@@ -654,6 +684,11 @@ fn solve(
         }
     }
     let (Some((mut lo, mut flo)), Some((mut hi, mut fhi))) = (short, past) else {
+        // every ask short of d, the length saturating (a ruled extension whose rows' end
+        // weight ratios differ): refused, naming the longest reached
+        if past.is_none() && reach.is_some() {
+            return Err(not_exact(reach));
+        }
         return Err(SolidError::NotConverged {
             operation: OP,
             iterations: u32::try_from(BRACKET_TRIES).unwrap_or(u32::MAX),
@@ -754,6 +789,12 @@ struct Local {
     /// A bound on how far each extension point's homogeneous coordinates are from the exact
     /// construction's (0 for the source's own points, which are kept bit for bit).
     err: f64,
+    /// The degree across the rows (the other direction's): `q + 1` consecutive rows make a
+    /// point of the surface.
+    q: usize,
+    /// The 3D bound of a construction made in a local frame ([`Self::natural`]), which
+    /// [`Self::bound`] returns in place of the one from [`Self::err`].
+    frame: Option<f64>,
 }
 
 fn op_err() -> SolidError {
@@ -771,6 +812,7 @@ impl Local {
                 [c.x, c.y, c.z, c.w]
             }
         };
+        let q = if side.is_u() { net.q() } else { net.p() };
         let (rows, knots, p): (Vec<Vec<H>>, &[f64], usize) = if side.is_u() {
             let cols = cpts.first().map_or(0, Vec::len);
             let rows = (0..cols)
@@ -787,6 +829,8 @@ impl Local {
             p,
             rational,
             err: 0.0,
+            q,
+            frame: None,
         };
         if !side.is_high() {
             l.reverse();
@@ -921,6 +965,8 @@ impl Local {
             p: self.p,
             rational: self.rational,
             err,
+            q: self.q,
+            frame: None,
         })
     }
 
@@ -942,6 +988,9 @@ impl Local {
     /// from the homogeneous bound [`Self::err`]: `S = sum N H / sum N w`, so a change of at
     /// most `err` in each coordinate moves it at most `err (sqrt 3 + |S|) / w_min`.
     fn bound(&self) -> f64 {
+        if let Some(b) = self.frame {
+            return b;
+        }
         if self.err == 0.0 {
             return 0.0;
         }
@@ -965,6 +1014,7 @@ impl Local {
         }
         let grown = match how {
             Continuity::Natural => self.natural(e)?,
+            Continuity::Ruled => self.ruled(e)?,
             Continuity::Tangent | Continuity::Curvature => {
                 let mut cur = self.clone();
                 let mut left = e;
@@ -1020,23 +1070,64 @@ impl Local {
             p: self.p,
             rational: self.rational,
             err: self.err,
+            q: self.q,
+            frame: None,
         })
     }
 
     /// Natural: the last span's Bezier points (from a copy with its start knot at multiplicity
     /// `p`) continued past `b` by de Casteljau at `t = 1 + e / (b - c)`: the points
     /// `blossom(1^(p-i), t^i)` are the polynomial's Bezier points over `[b, b + e]`.
+    ///
+    /// In a local frame: each row is translated by its own origin `O_j` (its end point), `H'
+    /// = H - w O_j` (the weights unchanged), continued, and its new points translated back,
+    /// `H = H' + w O_j`; the source's rows are kept as they are. Translation commutes with the
+    /// continuation (both are linear in the homogeneous points and keep the weights), so the
+    /// construction is the same; only its rounding changes. The continuation amplifies its
+    /// input's and its own rounding by `a^p` (`a = |1 - t| + |t|`), which is now relative to
+    /// the rows' local size, not to their absolute coordinates; the translations round once
+    /// each, the way back not amplified. The 3D bound ([`Self::bound`]) is then that of the
+    /// local construction ([`Self::frame`]).
     fn natural(&self, e: f64) -> Result<Self> {
         let b = self.end()?;
         let c = self.before_end(0)?;
         let p = self.p;
-        let span = if c > self.start()? {
-            self.with_knot(c)?
+        // each row's origin: its end point (any point would do: it is exact by choice)
+        let origins: Vec<[f64; 3]> = self
+            .rows
+            .iter()
+            .map(|r| {
+                let x = r.last().ok_or_else(op_err)?;
+                let w = if self.rational { x[3] } else { 1.0 };
+                if !(w.is_finite() && w > 0.0) {
+                    return Err(SolidError::invalid_input(
+                        OP,
+                        "a weight that is not positive",
+                    ));
+                }
+                Ok([x[0] / w, x[1] / w, x[2] / w])
+            })
+            .collect::<Result<_>>()?;
+        // the rows translated: one product and one difference a coordinate
+        let mut local = self.clone();
+        let mut moved = 0.0_f64;
+        for (r, o) in local.rows.iter_mut().zip(&origins) {
+            for x in r.iter_mut() {
+                let w = x[3];
+                for (v, &oc) in x.iter_mut().zip(o) {
+                    moved = moved.max(v.abs() + (w * oc).abs());
+                    *v -= w * oc;
+                }
+            }
+        }
+        local.err = self.err + gamma(2) * moved;
+        let span = if c > local.start()? {
+            local.with_knot(c)?
         } else {
-            self.clone()
+            local.clone()
         };
         let t = 1.0 + e / (b - c);
-        let ext: Vec<Vec<H>> = span
+        let ext_local: Vec<Vec<H>> = span
             .rows
             .iter()
             .map(|r| {
@@ -1055,15 +1146,112 @@ impl Local {
                 out
             })
             .collect();
-        let knots = vec![b + e; p + 1];
         // de Casteljau past the span: each level `(1 - t) x + t y` scales the errors and the
         // points by `a = |1 - t| + |t|` and rounds by gamma_3 of that, over p levels (the
         // rounding of t itself only reparametrises the continuation, its points stay on it)
         let a = (1.0 - t).abs() + t.abs();
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let amp = a.powi(p as i32);
+        let err_local = amp * (span.err + gamma(3 * p + 3) * span.size());
+        // the local frame's extent: its points' largest l1 size over their weight, the
+        // smallest weight (the source's rows and the new ones), and the new rows translated
+        // back, each coordinate one product and one sum
+        let (mut wmin, mut pmax, mut back) = (f64::INFINITY, 0.0_f64, 0.0_f64);
+        for x in local
+            .rows
+            .iter()
+            .flatten()
+            .chain(ext_local.iter().flatten())
+        {
+            let w = if self.rational { x[3] } else { 1.0 };
+            wmin = wmin.min(w);
+            pmax = pmax.max((x[0].abs() + x[1].abs() + x[2].abs()) / w.abs());
+        }
+        let ext: Vec<Vec<H>> = ext_local
+            .into_iter()
+            .zip(&origins)
+            .map(|(r, o)| {
+                r.into_iter()
+                    .map(|mut x| {
+                        let w = x[3];
+                        for (v, &oc) in x.iter_mut().zip(o) {
+                            back = back.max(v.abs() + (w * oc).abs());
+                            *v += w * oc;
+                        }
+                        x
+                    })
+                    .collect()
+            })
+            .collect();
+        // rows of different origins mix at a point: the q + 1 rows of a span across, so the
+        // largest l1 distance between two origins within q + 1 consecutive rows
+        let mut diam = 0.0_f64;
+        for (i, oi) in origins.iter().enumerate() {
+            for oj in origins.iter().skip(i + 1).take(self.q) {
+                let dist = (oi[0] - oj[0]).abs() + (oi[1] - oj[1]).abs() + (oi[2] - oj[2]).abs();
+                diam = diam.max(dist);
+            }
+        }
+        let knots = vec![b + e; p + 1];
         let mut out = self.joined(ext, &knots)?;
-        out.err = amp * (span.err + gamma(3 * p + 3) * span.size());
+        out.err = err_local;
+        // `S = sum N (H' + w O_j) / sum N w`: an error of at most `err_local` in each local
+        // coordinate and weight moves it at most `err_local (sqrt 3 + |S - O_j| ...)`, with
+        // `|S - O_j| <= pmax + diam` for every row j at the point; the way back's rounding
+        // `gamma_2 back` in each coordinate moves it at most `sqrt 3` of that over the weight
+        out.frame = Some(
+            (err_local * (2.0 + pmax + diam) * (1.0 + gamma(4)) + 2.0 * gamma(2) * back) / wmin
+                * (1.0 + gamma(8)),
+        );
+        Ok(out)
+    }
+
+    /// Ruled: each row continued by the homogeneous line `H_n + s D`, `D = (p / h) (rho
+    /// H_n - H_(n-1))` with one `rho`, the rows' largest `w_(n-1) / w_n` (module docs),
+    /// written by degree elevation over `[b, b + e]`: the points `H_n + (i e / h) (rho H_n -
+    /// H_(n-1))`, all four coordinates. Its bound: the points' rounding.
+    fn ruled(&self, e: f64) -> Result<Self> {
+        let b = self.end()?;
+        let h = b - self.before_end(0)?;
+        let p = self.p;
+        #[allow(clippy::cast_precision_loss)]
+        let pf = p as f64;
+        let c = e / h;
+        let mut ends = Vec::new();
+        for row in &self.rows {
+            let mut back = row.iter().rev();
+            let (Some(&pn), Some(&pn1)) = (back.next(), back.next()) else {
+                return Err(op_err());
+            };
+            ends.push((pn, pn1));
+        }
+        // one rho for every row (any one keeps the surface C1); the largest keeps every
+        // weight at least its row's end weight: w_n (1 + (i e / h) (rho - rho_j))
+        let rho = if self.rational {
+            ends.iter()
+                .fold(f64::NEG_INFINITY, |m, (pn, pn1)| m.max(pn1[3] / pn[3]))
+        } else {
+            1.0
+        };
+        let (mut err, mut ext) = (0.0_f64, Vec::new());
+        for (pn, pn1) in ends {
+            let leg = lin(rho, pn, -1.0, pn1);
+            let q: Vec<H> = (1..=p)
+                .map(|i| {
+                    #[allow(clippy::cast_precision_loss)]
+                    let t = c * i as f64;
+                    lin(1.0, pn, t, leg)
+                })
+                .collect();
+            // rounding: the leg (a product and a difference), t (two products) and the point
+            // (a product and a sum), gamma_6 of the terms' magnitudes
+            let m = |x: H| x.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
+            err = err.max(gamma(6) * (m(pn) + c * pf * (rho.abs() * m(pn) + m(pn1))));
+            ext.push(q);
+        }
+        let knots = vec![b + e; p + 1];
+        let mut out = self.joined(ext, &knots)?;
+        out.err = self.err.max(err);
         Ok(out)
     }
 
@@ -1246,6 +1434,9 @@ fn keeps(net: &Net, out: &Net, side: BoxSide) -> Result<bool> {
     Ok(points_kept && a.len() <= b.len())
 }
 
+mod analytic;
+mod ball;
+mod blend;
 mod sides;
 pub use sides::{ExtendedSides, SideExtension};
 

@@ -274,18 +274,6 @@ pub struct UpstreamFixes {
     /// `SmPlane::IsNurbSurfacePlane` places a recognised surface's origin after
     /// orthogonalising its axes (WR-652, upstream issue #1056).
     pub plane_recognition_origin_after_axes: bool,
-    /// `SmHashTable::IncMaxItemCount` ([`crate::geom::hash_table::HashTable::inc_max_item_count_with_fixes`],
-    /// [`crate::geom::hash_table::HashTable::add_with_fixes`], and
-    /// [`crate::geom::hash_table::ObjsInVoxels::add_with_fixes`]) preserves existing
-    /// removed `SmBucketItem` records (`bucket_index == None`, `item`, `item_id`) when
-    /// growing the item array while `GetUsedBucketItemCount() == 0`
-    /// (`GetTotalBucketItemCount() > 0`), so a subsequent `Remove` skips already-removed
-    /// slots instead of walking bucket `0` on `calloc`-zeroed records (`bucket_index == 0`,
-    /// `item == NULL`, `item_id == 0`) and incrementing the removed-item counter past the
-    /// total item count (WR-13, #2200; see
-    /// `plan/upstream-issues/WR-13--addendum-2026-11-01-preserve-removed-records-on-grow.md`).
-    /// Off by default for pinned C++ parity.
-    pub hash_table_grow_preserves_removed_records: bool,
     /// `SmGapFunction::BuildSampleSet` samples the B-spline spans inside the requested
     /// curve interval or surface domain, normalizing against that interval and keeping
     /// its exact endpoints. Upstream starts at the first knot and normalizes against
@@ -551,7 +539,7 @@ pub struct UpstreamFixes {
     /// `plan/upstream-issues/WR-27--addendum-2026-11-01-conic-zero-tangent-second-deriv.md`).
     /// Off by default for pinned C++ parity.
     pub conic_evaluate_uses_computed_second_deriv: bool,
-    /// The local solves take no value from a failed evaluation (WR-253; the fork's tangency-labs/smlib@d2757e1). The one-dimensional ones ignore a failed guess in `SolveOscillating`'s sign-change search (#481), and `SmLocalSolve1d::SolveIt` without an interval returns a failed first evaluation's status instead of iterating from it (no caller solves without an interval). The N-dimensional one (`SmLocalSolveNd::SolveIt`) sums no equations of a failed clamped or scaled evaluation, takes the clamped-and-scaled step only when it evaluated, and then with that evaluation's Jacobian and found flag (upstream kept the unscaled point's), stops the line search when the clamped step failed and no scaled one was taken, and finds no solution when the best guess cannot be re-evaluated (#1945), nor when the guess's first evaluation fails, where upstream reports the unevaluated guess as found (WR-20; the fork's tangency-labs/smlib@d5c5cfd).
+    /// The N-dimensional local solve takes no value from a failed evaluation (WR-253; the fork's tangency-labs/smlib@d2757e1). The one-dimensional solver does this by default since #2574, so this flag no longer reaches it. `SmLocalSolveNd::SolveIt` sums no equations of a failed clamped or scaled evaluation, takes the clamped-and-scaled step only when it evaluated, and then with that evaluation's Jacobian and found flag (upstream kept the unscaled point's), stops the line search when the clamped step failed and no scaled one was taken, and finds no solution when the best guess cannot be re-evaluated (#1945), nor when the guess's first evaluation fails, where upstream reports the unevaluated guess as found (WR-20; the fork's tangency-labs/smlib@d5c5cfd).
     pub oscillating_skips_failed_guesses: bool,
     /// `sm_RefineCCSolutions` judges a range end's shift by its distance from 1 (WR-383, #527).
     pub refine_cc_range_ends: bool,
@@ -1278,8 +1266,6 @@ pub struct UpstreamFixes {
     pub offset_closed_curve_trim_arc: bool,
     /// `TrimExtendedEdge` never takes an open edge's first trim point again as its second, by point as well as by parameter: on the closed curve a rim half of a sphere cap lifts onto (the whole offset circle), the first point's twin across the curve's seam (another parameter, the same point, often the far end of the coincident range the other rim half's offset gives) is refused, so the half no longer gets the whole circle (or nothing) and its offset loop no gap. Thickening the cap above z = 5 of a sphere whose rim is two half circles placed against its seam (the sphere cut by a turned box) failed with `SM_ERR_OFFSET_EDGE_VANISHES` (1043) under `offset_closes_loop_gaps`, and gave a non-manifold body without it (WR-673, #2174; the fork's tangency-labs/smlib@7ee0876, for #1502).
     pub offset_open_edge_second_trim_point: bool,
-    /// `TrimExtendedEdge` ends a lamina edge's offset (a thickened sheet's free edge), at a vertex whose next edge is lamina or a tangent sector, at the vertex's own image `V + d n(V)` on its face's offset, where the offset curve passes nearest that image, not where the two edges' UV trim curves cross (nor at the neighbour's offset vertex snapped to within ten tolerances). The crossing is a parameter of the UV curve, which the lifted 3D curve does not keep, so a corner landed up to 4.3e-5 (four tolerances) from its neighbour's; between tangent edges the crossing is also ill-conditioned (6e-6 along the curve). The merge of the thickened sheet's side walls then failed with 1001 (`TopologyIntersector::Relate`: a vertex already has a different mate) or split slivers off them and left no closed solid. A half pipe trimmed along an arc thickens to its closed-form volume at every arc radius and thickness tried (WR-736, #2611).
-    pub offset_lamina_corner_at_vertex_image: bool,
     /// The offset builds a vertex where more than three faces meet (a floor of four facets falling 1 degree to a drain, and its corners where two walls meet two facets) as the two vertices and the new edge the four offset planes give, where upstream fails the shell (1001): `SmOffsetGeometryCreation`'s tangency tolerance is half a degree, not two (the facets, 1.2 degrees apart, are intersected, not left to meet by extending their trims); `TrimExtendedEdge` keeps a trim point within 5 degrees of tangent where the curve crosses the surface (only a touch is dropped); and, where two faces' offsets cut the edge at a vertex all of whose edges are convex (or all concave), the edge ends at the cut it reaches first from its other end, not at the one nearest the vertex. It has no effect without `offset_closes_loop_gaps`, which closes the loop gaps the split leaves on the faces round the vertex (alone, the split returns a solid with those loops cut short, of the wrong volume) (WR-666, #2052; the fork's tangency-labs/smlib@2e1bb8c).
     pub offset_four_face_vertex_split: bool,
     /// `SmCone::CreateCanonical` (`Cone::create_canonical_with_semi_angle` and `Cone::create_canonical`) passes `inside_out` as the bounded cone constructor's `bInsideOut` and `false` as `bMakeNurbGenCurve` when `height` is `Some` (where upstream passes `FALSE` for `bInsideOut` and the caller's `bInsideOut` for `bMakeNurbGenCurve`, dropping an inside-out request), and rejects `height <= 0.0` in the two-radius overload with `SolidError::InvalidInput` (`SM_ERR_INVALID_INPUT`) instead of forwarding `top_radius` as the semi-angle in degrees of an unbounded cone (WR-63, #2207; see `plan/upstream-issues/WR-63--addendum-2026-11-01-cone-create-canonical-args.md`).
