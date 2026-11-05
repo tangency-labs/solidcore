@@ -45,11 +45,11 @@ use solidcore::nurbs::b_spline_curve_n_lib::TrimMode;
 use solidcore::nurbs::b_spline_surface::BSplineSurface;
 use solidcore::nurbs::crv_basic::Curve as NurbCurve;
 use solidcore::nurbs::math::CPoint;
+use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::surface::offset_surface::{OffsetSurface, SS_UNKNOWN};
 use solidcore::surface::surface::{Surface as SmSurface, SurfaceKind};
 use solidcore::topology::brep::validation::curve_assert_valid;
-use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream};
 use solidcore::topology::geometry_write::write_curve;
 use solidcore::SolidError;
@@ -305,6 +305,353 @@ fn b(x: bool) -> f64 {
 
 fn to_output(flat: Vec<f64>) -> Output {
     Output::new().values("out", flat)
+}
+
+// ---- input contract ---------------------------------------------------------------
+
+/// The largest last control point index of a UV curve.
+const MAX_INDEX: usize = 64;
+/// The most control points of a surface row or column.
+const MAX_POINTS: usize = 32;
+/// The largest degree of a UV curve or surface.
+const MAX_DEGREE: usize = 7;
+/// The largest magnitude of a coordinate, knot or scalar.
+const MAX_COORD: f64 = 1e5;
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 2.0;
+/// The longest type or break array.
+const MAX_ARRAY: usize = 256;
+/// The longest database record.
+const MAX_DB_BYTES: usize = 1 << 16;
+/// The highest derivative order evaluated.
+const MAX_DERIVS: usize = 6;
+/// The most ops of an object case.
+const MAX_OPS: usize = 16;
+
+fn fin(v: f64) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    v.iter().all(|&c| fin(c))
+}
+
+/// The range of clamped knots of degree `p` within range, spanning at least `1e-3`
+/// relative, with end multiplicity `p + 1` and interior multiplicity at most `p`.
+fn knots_ok(u: &[f64], p: usize) -> Option<(f64, f64)> {
+    if !u.iter().all(|&k| fin(k)) || u.windows(2).any(|w| w.first() > w.last()) {
+        return None;
+    }
+    let (&a, &b) = (u.first()?, u.last()?);
+    let m = u.len() - 1;
+    let head = u.get(..=p)?;
+    let tail = u.get(m.checked_sub(p)?..)?;
+    let inner = u.get(p + 1..m.checked_sub(p)?)?;
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return None;
+    }
+    if b - a < 1e-3 * a.abs().max(b.abs()).max(1.0) || inner.iter().any(|&k| k == a || k == b) {
+        return None;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return None;
+        }
+    }
+    Some((a, b))
+}
+
+/// A weight: `NOW` for a polynomial point, else in `[1e-3, 1e3]`.
+fn weight_ok(w: f64, w0: f64) -> bool {
+    (w == NOW) == (w0 == NOW) && (w == NOW || (1e-3..=1e3).contains(&w))
+}
+
+/// A UV curve's parameter range and Euclidean control points.
+type UvCurve = ((f64, f64), Vec<[f64; 2]>);
+
+/// The range and Euclidean control points of a UV B-spline within the size bounds, of
+/// one rationality, with Euclidean points within range and knots as [`knots_ok`] takes them.
+fn uv_bspline(bs: &UvBspline) -> Option<UvCurve> {
+    let n = bs.cpts.len().checked_sub(1)?;
+    let m = bs.u.len().checked_sub(1)?;
+    if n > MAX_INDEX
+        || bs.p > MAX_DEGREE
+        || m > MAX_INDEX + MAX_DEGREE + 1
+        || bs.p == 0
+        || bs.p > n
+        || m != n + bs.p + 1
+    {
+        return None;
+    }
+    let w0 = bs.cpts.first()?[2];
+    let mut pts = Vec::with_capacity(bs.cpts.len());
+    for &[x, y, w] in &bs.cpts {
+        if !x.is_finite() || !y.is_finite() || !weight_ok(w, w0) {
+            return None;
+        }
+        let (ex, ey) = if w == NOW { (x, y) } else { (x / w, y / w) };
+        if ex.abs() > MAX_COORD || ey.abs() > MAX_COORD {
+            return None;
+        }
+        pts.push([ex, ey]);
+    }
+    Some((knots_ok(&bs.u, bs.p)?, pts))
+}
+
+/// The domain `[u0, v0, u1, v1]` of a surface within the size bounds, with a full control
+/// net of one rationality, Euclidean points within range and knots as [`knots_ok`] takes them.
+fn surface(s: &InlineSrf) -> Option<[f64; 4]> {
+    let n = s.net.len().checked_sub(1)?;
+    let m = s.net.first()?.len().checked_sub(1)?;
+    let (r, q_) = (s.u.len().checked_sub(1)?, s.v.len().checked_sub(1)?);
+    let sizes = n < MAX_POINTS
+        && m < MAX_POINTS
+        && s.p <= MAX_DEGREE
+        && s.q <= MAX_DEGREE
+        && r <= MAX_POINTS + MAX_DEGREE
+        && q_ <= MAX_POINTS + MAX_DEGREE
+        && s.p >= 1
+        && s.q >= 1
+        && s.p <= n
+        && s.q <= m
+        && r == n + s.p + 1
+        && q_ == m + s.q + 1
+        && s.net.iter().all(|row| row.len() == m + 1);
+    if !sizes {
+        return None;
+    }
+    let w0 = s.net.first()?.first()?[3];
+    let points = s.net.iter().flatten().all(|&[x, y, z, w]| {
+        let d = if w == NOW { 1.0 } else { w };
+        x.is_finite()
+            && y.is_finite()
+            && z.is_finite()
+            && weight_ok(w, w0)
+            && [x / d, y / d, z / d].iter().all(|c| c.abs() <= MAX_COORD)
+    });
+    let (u0, u1) = knots_ok(&s.u, s.p)?;
+    let (v0, v1) = knots_ok(&s.v, s.q)?;
+    points.then_some([u0, v0, u1, v1])
+}
+
+/// A curve on surface that keeps the contract, as the ops before the current one left it:
+/// its parameter range, owner flag, whether its UV curve stays inside the surface domain,
+/// and whether a reparameterisation, reversal or trim has run.
+#[derive(Debug, Clone, Copy)]
+struct Object {
+    a: f64,
+    b: f64,
+    owner: u64,
+    inside: bool,
+    edited: bool,
+}
+
+fn in_domain(p: [f64; 2], d: [f64; 4]) -> bool {
+    let [u0, v0, u1, v1] = d;
+    let tu = 1e-9 * (u1 - u0);
+    let tv = 1e-9 * (v1 - v0);
+    p[0] >= u0 - tu && p[0] <= u1 + tu && p[1] >= v0 - tv && p[1] <= v1 + tv
+}
+
+/// Whether `t` is finite and at most [`MAX_REL_DIST`] range lengths outside `(a, b)`.
+fn near(t: f64, a: f64, b: f64) -> bool {
+    let far = MAX_REL_DIST * (b - a);
+    fin(t) && t >= a - far && t <= b + far
+}
+
+/// The object of a curve on surface: a UV B-spline or a UV line of distinct ends, a surface
+/// as [`surface`] takes it, an offset distance within range, a finite domain, an owner flag
+/// up to 7, and a cache of strictly increasing breaks near the range.
+fn object(c: &CosIn) -> Option<Object> {
+    let ((a, b), pts) = match &c.uv {
+        UvIn::Bspline(bs) => uv_bspline(bs)?,
+        UvIn::Line([x0, y0, x1, y1]) => {
+            let ok = [x0, y0, x1, y1].iter().all(|&&v| fin(v))
+                && ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt() >= 1e-6;
+            ok.then(|| ((0.0, 1.0), vec![[*x0, *y0], [*x1, *y1]]))?
+        }
+    };
+    let dom = surface(&resolve(&c.srf).ok()?)?;
+    let offset = c.offset.as_ref().is_none_or(|o| fin(o.distance));
+    let domain = c.domain.unwrap_or([0.0; 4]).iter().all(|&v| fin(v));
+    let cache = c.cache.as_ref().is_none_or(|k| {
+        k.breaks.len() <= MAX_ARRAY
+            && k.breaks.iter().all(|&t| near(t, a, b))
+            && k.breaks.windows(2).all(|w| w.first() < w.last())
+    });
+    (offset && domain && c.owner <= 7 && cache).then(|| Object {
+        a,
+        b,
+        owner: c.owner,
+        inside: pts.iter().all(|&p| in_domain(p, dom)),
+        edited: false,
+    })
+}
+
+/// An interval inside the range, longer than `1e-4` of it.
+fn inner_interval(c: &Object, x: f64, y: f64) -> bool {
+    let eps = 1e-12 * (c.b - c.a);
+    fin(x) && fin(y) && x >= c.a - eps && y <= c.b + eps && y - x > 1e-4 * (c.b - c.a)
+}
+
+/// At most [`MAX_ARRAY`] strictly increasing breaks inside the range.
+fn breaks_ok(c: &Object, br: &[f64]) -> bool {
+    let eps = 1e-12 * (c.b - c.a);
+    br.len() <= MAX_ARRAY
+        && br
+            .iter()
+            .all(|&t| fin(t) && t >= c.a - eps && t <= c.b + eps)
+        && br.windows(2).all(|w| w.first() < w.last())
+}
+
+fn tolerance(t: f64) -> bool {
+    fin(t) && (1e-7..=1.0).contains(&t)
+}
+
+/// A placement of finite axes of length `[0.5, 2]`, far from parallel.
+fn placement(o: &[f64; 3], x: &[f64; 3], y: &[f64; 3]) -> bool {
+    let len = |v: &[f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let dot = x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+    vec3(o)
+        && vec3(x)
+        && vec3(y)
+        && (0.5..=2.0).contains(&len(x))
+        && (0.5..=2.0).contains(&len(y))
+        && dot.abs() <= 0.9 * len(x) * len(y)
+}
+
+/// Whether `op` keeps the contract on `c` as the ops before it left it, updating `c` as the
+/// op does: a UV curve outside the surface domain takes only the ops that stay on the UV
+/// curve's own data.
+fn object_op(op: &OpIn, c: &mut Object) -> bool {
+    let safe_outside = matches!(
+        op,
+        OpIn::Info { .. }
+            | OpIn::State
+            | OpIn::Eval { .. }
+            | OpIn::EvalPoint { .. }
+            | OpIn::EvalUv { .. }
+            | OpIn::Equal { .. }
+            | OpIn::Copy
+            | OpIn::CopyEval { .. }
+            | OpIn::AssertValid { .. }
+    );
+    if !c.inside && !safe_outside {
+        return false;
+    }
+    let param = |c: &Object, t: f64| near(t, c.a, c.b);
+    match op {
+        OpIn::Info { types } => {
+            types.len() <= MAX_ARRAY && types.iter().all(|t| t.abs() <= 1 << 30)
+        }
+        OpIn::State | OpIn::Nnk | OpIn::Copy => true,
+        OpIn::AssertValid { level, .. } => *level <= 4 && *level != 3,
+        OpIn::Eval { t, n, .. } | OpIn::CopyEval { t, n, .. } => param(c, *t) && *n <= MAX_DERIVS,
+        OpIn::EvalPoint { t } | OpIn::EvalUv { t } | OpIn::EvalNormal { t, .. } => param(c, *t),
+        OpIn::Eval1st { t, n, .. } => param(c, *t) && *n <= 4,
+        OpIn::Knots { ivl, .. } => match ivl {
+            // the interval must hold no UV knot
+            Some([x, y]) => inner_interval(c, *x, *y) && !c.edited && (*x <= c.a || *y >= c.b),
+            None => true,
+        },
+        OpIn::Conts { angle } => fin(*angle) && (0.0..=90.0).contains(angle),
+        OpIn::Equal { other } => other.as_deref().is_none_or(|o| object(o).is_some()),
+        OpIn::EditParam { a, b } => {
+            c.edited = true;
+            let ok =
+                fin(*a) && fin(*b) && (b - a).abs() >= 1e-3 && a.abs() <= 1e3 && b.abs() <= 1e3;
+            c.a = a.min(*b);
+            c.b = a.max(*b);
+            ok
+        }
+        OpIn::Reverse { a, b } => {
+            c.edited = true;
+            inner_interval(c, *a, *b)
+        }
+        OpIn::Trim { a, b, mode } => {
+            c.edited = true;
+            let ok = inner_interval(c, *a, *b) && *mode <= 2;
+            if c.owner != 0 && *mode != 2 {
+                c.a = *a;
+                c.b = *b;
+            }
+            ok
+        }
+        OpIn::Transform {
+            origin,
+            x,
+            y,
+            scale,
+        } => {
+            let s = scale.unwrap_or([1.0; 3]);
+            placement(origin, x, y) && vec3(&s) && s.iter().all(|v| (0.1..=10.0).contains(v))
+        }
+        OpIn::Approx { breaks, tol, .. } => breaks_ok(c, breaks) && tolerance(*tol),
+        OpIn::GetOrCreate { tol, breaks, .. } => {
+            tolerance(*tol) && breaks_ok(c, breaks.as_deref().unwrap_or_default())
+        }
+        OpIn::Bbox { a, b } => inner_interval(c, *a, *b),
+        OpIn::Drop {
+            a,
+            b,
+            point,
+            vec,
+            tol,
+            guess,
+            solver_op,
+        } => {
+            inner_interval(c, *a, *b)
+                && vec3(point)
+                && vec3(&vec.unwrap_or([0.0; 3]))
+                && fin(*tol)
+                && (0.0..=1.0).contains(tol)
+                && param(c, guess.unwrap_or(*a))
+                && [0, 3, 4, 5, 6].contains(solver_op)
+        }
+        OpIn::Gap {
+            other,
+            a,
+            b,
+            s0,
+            s1,
+            samples,
+            tol,
+            max,
+        } => {
+            other
+                .as_deref()
+                .is_none_or(|o| object(o).is_some_and(|o| o.inside))
+                && inner_interval(c, *a, *b)
+                && fin(*s0)
+                && fin(*s1)
+                && *samples <= 8
+                && *samples != 1
+                && fin(*tol)
+                && (1e-9..=1.0).contains(tol)
+                && fin(max.unwrap_or(0.0))
+        }
+    }
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_crv_on_surf.rs`, `validate`): an object as
+/// [`object`] takes it with at most [`MAX_OPS`] ops, each as [`object_op`] takes it on the
+/// state the ops before it left; a record of at most [`MAX_DB_BYTES`] bytes, complete (ending
+/// in a newline) when it is ASCII.
+fn keeps_contract(i: &Inputs) -> bool {
+    match i {
+        Inputs::Object { cos, ops } => {
+            ops.len() <= MAX_OPS
+                && object(cos).is_some_and(|mut c| ops.iter().all(|op| object_op(op, &mut c)))
+        }
+        Inputs::ReadDb { read_db: r } => {
+            r.version <= 1 << 20
+                && r.bytes.len() <= MAX_DB_BYTES
+                && (r.binary || r.bytes.ends_with(b"\n"))
+        }
+    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -1396,6 +1743,7 @@ fn gen_read_db(rng: &mut Rng) -> Option<Inputs> {
     let (c, _) = gen_cos(rng, false);
     let binary = rng.chance(0.5);
     let version = *rng.choose(&[30u64, 33, 40])?;
+    object(&c)?;
     let cos = build(&c).ok()?.ok()?;
     let mut w = DatabaseWriter::open_for_write(if binary {
         FileType::Binary
@@ -1480,7 +1828,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            if let Some(i) = gen_case(rng) {
+            if let Some(i) = gen_case(rng).filter(keeps_contract) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -1500,7 +1848,10 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         for mut c in av.generated_cases("curve.crv_on_surf:assert_valid", |rng| {
-            serde_json::to_value(gen_assert_valid(rng)).ok()
+            let i = (0..64)
+                .map(|_| gen_assert_valid(rng))
+                .find(keeps_contract)?;
+            serde_json::to_value(i).ok()
         }) {
             c.name = c.name.replacen("gen", "av", 1);
             c.unit = self.id().to_string();
