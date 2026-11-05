@@ -16,10 +16,13 @@ Read, in this order, before you write a brief:
    keeps the invariants listed there. A fix that breaks one is wrong however good it looks.
 3. [layers.md](layers.md): which layer owns the job. A plan that puts a computation in ops or
    in an application is wrong before it starts.
-4. The area's reference ([generic-blend.md](generic-blend.md), [procedural-sweep.md](procedural-sweep.md),
-   [ssi.md](ssi.md)) and its records: the unit's `plan/units/<id>.toml`, its `plan/findings/` and `plan/upstream-issues/` entries. Where
-   an area has no reference, read the module's `//!` header, its records and its design issue,
-   and say in the plan that no reference covers it.
+4. The area's reference ([generic-blend.md](generic-blend.md),
+   [procedural-sweep.md](procedural-sweep.md), [ssi.md](ssi.md),
+   [validity-and-tolerances.md](validity-and-tolerances.md), [booleans.md](booleans.md),
+   [offset-and-shell.md](offset-and-shell.md)) and its records: the unit's
+   `plan/units/<id>.toml`, its `plan/findings/` and `plan/upstream-issues/` entries. Where an
+   area has no reference, read the module's `//!` header, its records and its design issue, and
+   say in the plan that no reference covers it.
 5. The code the problem runs through. Open the functions, not a grep of their names: a name
    tells you something exists, not what it does. The default for a textbook capability in this
    kernel is that it is already there and you are missing context.
@@ -133,8 +136,8 @@ Send back what does not hold, with the evidence, and keep the piece open until i
 ## 6. Report
 
 When the docs and the code do not settle a design question, ask the maintainers on the area's
-hub issue or in `#solidcore-dev` on the project Discord, and wait for the answer. Never let a
-subagent guess.
+hub issue or in [`#solidcore`](https://discord.gg/jNNJ39Nz3P) on the project Discord, and wait
+for the answer. Never let a subagent guess.
 
 Lead with the result and its evidence: what changed, the numbers, the picture. Then what is
 open and who has it. Keep it short; the person you work for knows the system. A decision that
