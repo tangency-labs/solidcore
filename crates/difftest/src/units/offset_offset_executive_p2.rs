@@ -2531,9 +2531,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn nonpositive_brep_tolerances_match_native_setup() {
-        for fixture in [
+    fn nonpositive_tolerance_fixtures() -> [Fixture; 6] {
+        [
             Fixture::Empty,
             wire([0.0; 3], 2.0),
             sheet([0.0; 3], 2.0, 0),
@@ -2550,7 +2549,21 @@ mod tests {
                 radius: 2.0,
                 height: 3.0,
             },
-        ] {
+        ]
+    }
+
+    fn assert_unresolved_offset(output: &Output) {
+        assert!(output.deferred.is_none(), "{output:?}");
+        assert!(output.error.is_none(), "{output:?}");
+        assert_eq!(output.ints.get("status"), Some(&vec![1007]));
+        assert_eq!(output.ints.get("result.present"), Some(&vec![0]));
+        assert_eq!(output.ints.get("input.pure"), Some(&vec![1, 1]));
+        assert_eq!(output.ints.get("source.after.present"), Some(&vec![1]));
+    }
+
+    #[test]
+    fn zero_member_distance_is_guarded_for_nonpositive_brep_tolerances() {
+        for fixture in nonpositive_tolerance_fixtures() {
             for tolerance in [0.0, -0.0, -1.0, -1e300] {
                 let mut input = input(Operation::Solid);
                 input.source = Some(fixture.clone());
@@ -2558,7 +2571,35 @@ mod tests {
                 input.config.member_distance = 0.0;
                 let case = case(&input);
                 let native = Runner.run_cpp(&case).unwrap();
+                assert!(
+                    native
+                        .rejected
+                        .as_deref()
+                        .is_some_and(|why| why.contains("HANG-53")),
+                    "{fixture:?}, tolerance={tolerance}: {native:?}"
+                );
+                assert!(native.values.is_empty() && native.ints.is_empty());
+                // No C++ operation ran: this is a guard-policy assertion, not parity.
+                assert_unresolved_offset(&Runner.run_rust(&case).unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn nonpositive_brep_tolerances_match_native_setup() {
+        for fixture in nonpositive_tolerance_fixtures() {
+            for tolerance in [0.0, -0.0, -1.0, -1e300] {
+                // Shell's native strict radius guard returns before constructing an offset,
+                // so its snapshots still compare constructor tolerance normalization.
+                // The zero member offset is separately tested as guarded above.
+                let mut input = input(Operation::StaticShell);
+                input.source = Some(fixture.clone());
+                input.tolerance = tolerance;
+                input.config.offset_distance = 0.0;
+                let case = case(&input);
+                let native = Runner.run_cpp(&case).unwrap();
                 let rust = Runner.run_rust(&case).unwrap();
+                assert!(native.rejected.is_none(), "{native:?}");
                 assert!(rust.deferred.is_none());
                 assert!(
                     crate::compare::compare(&native, &rust, Runner.abs_floors()).pass(),
@@ -3085,7 +3126,13 @@ mod tests {
                 input.config.member_distance = distance;
                 input.config.extend_convex = extend;
                 let output = Runner.run_rust(&case(&input)).unwrap();
-                assert_reaches(&output, symbol);
+                if distance == 0.0 {
+                    // check_resolvable refuses a distance below the source tolerance
+                    // before building even an empty offset (HANG-53).
+                    assert_unresolved_offset(&output);
+                } else {
+                    assert_reaches(&output, symbol);
+                }
             }
         }
         // The pure shell API copies the empty source and shells the copy: the strict
