@@ -40,7 +40,9 @@
 //! that keeps going after a failed status upstream (`RebuildUVTrimCurves`) stops at
 //! the first [`SolidError::Unported`]. The B-rep cache (`SmCacheMgr` slot
 //! `SM_OC_BREP`) is caller-held: [`notify`] edits the one in its `cache` slot (none:
-//! no cache). No recursion. Input-driven loops are bounded by their inputs:
+//! no cache). `RayFire` takes the B-rep's box from a caller that holds one made for the
+//! B-rep's state ([`crate::query::brep::BrepQuery::bounding_box`]) instead of making it
+//! at every fire. No recursion. Input-driven loops are bounded by their inputs:
 //! `MergeCurvesOnSurface`'s face queue only grows by the faces `MergeIntervals` creates
 //! (each split adds faces to the finite B-rep), `MateLaminaEdgeToSurface` samples 21
 //! points and scans the intersection curves once.
@@ -1751,9 +1753,46 @@ pub fn ray_fire(
     ray_zone_tol_3d: f64,
     answer_limit: Option<f64>,
 ) -> Result<RayFireResult> {
+    ray_fire_in_box(
+        k,
+        b,
+        None,
+        brep_id,
+        cache,
+        keys,
+        owner_of,
+        start,
+        direction,
+        ray_zone_tol_3d,
+        answer_limit,
+    )
+}
+
+/// [`ray_fire`] with `bbox`, the B-rep's box ([`qbrep::calculate_bounding_box`] with the
+/// default options) a caller holds made for the B-rep's state; `None` makes it, as
+/// upstream.
+///
+/// # Errors
+///
+/// Those of [`ray_fire`].
+#[allow(clippy::too_many_arguments)] // one upstream routine
+pub(crate) fn ray_fire_in_box(
+    k: &Kernel,
+    b: &mut Brep,
+    bbox: Option<Extent3d>,
+    brep_id: BrepId,
+    cache: &BrepCache,
+    keys: &dyn Fn(CacheObject) -> ObjectRef,
+    owner_of: &dyn Fn(ObjectRef) -> Option<ObjectRef>,
+    start: Point3,
+    direction: Vec3,
+    ray_zone_tol_3d: f64,
+    answer_limit: Option<f64>,
+) -> Result<RayFireResult> {
     ray_fire_with_solver(
         k,
         b,
+        bbox,
         start,
         direction,
         ray_zone_tol_3d,
@@ -1770,10 +1809,12 @@ pub fn ray_fire(
 }
 
 /// Shared numeric ray selection and sector classification; the caller supplies the
-/// solve's geometry access, including mutable lazy preparation when available.
+/// solve's geometry access, including mutable lazy preparation when available, and the
+/// B-rep's box when it holds one made for the B-rep's state (`None`: made here).
 pub(crate) fn ray_fire_with_solver(
     k: &Kernel,
     b: &mut Brep,
+    bbox: Option<Extent3d>,
     start: Point3,
     direction: Vec3,
     ray_zone_tol_3d: f64,
@@ -1785,8 +1826,10 @@ pub(crate) fn ray_fire_with_solver(
     ) -> Result<crate::geom::solution_array::SolutionArray<CacheObject>>,
 ) -> Result<RayFireResult> {
     // get Brep BoundingBox and BoundingSphere
-    let bbox = qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?;
-    k.work_counters.add_band_brep_box();
+    let bbox = match bbox {
+        Some(bbox) => bbox,
+        None => qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?,
+    };
     let sphere = bbox.sphere_bound();
     let radius = sphere.radius;
 

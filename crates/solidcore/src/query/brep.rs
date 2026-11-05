@@ -56,6 +56,10 @@
 //!   upstream reaches through the B-rep (`CacheMakeOrValidate`): a [`BrepQuery`] holds
 //!   the identities and builds the cache lazily, on the first solve that needs it (so
 //!   single-region classification without boundary intersections skips it, as upstream).
+//!   The query also keeps the B-rep's box its ray fires use, made at the first fire
+//!   ([`BrepQuery::bounding_box`]; upstream's `RayFire` makes it at every fire, so a
+//!   fire after one that grew a tolerance sees a box up to that growth smaller than
+//!   upstream's: it reaches the solve only as the hit tie-break's radius).
 //!   A caller keeps one query while
 //!   the B-rep is not edited and makes a fresh one after an edit (upstream revalidates).
 //!   [`BrepQuery::of_brep`] and [`BrepClassifier::of_brep`] resolve a lone B-rep's
@@ -536,11 +540,13 @@ const CLASSIFY_RAYS: [(Vec3, Vec3); 3] = [
 
 /// A B-rep's queries over its cache: the identities and the `SM_OC_BREP` cache, which
 /// upstream builds when a query first needs it and keeps on the B-rep
-/// (`SmSAGObject::CacheMakeOrValidate`). Keep one per B-rep state and reuse it across
-/// queries; edits to the B-rep invalidate it.
+/// (`SmSAGObject::CacheMakeOrValidate`), and the B-rep's box its ray fires use
+/// ([`Self::bounding_box`]). Keep one per B-rep state and reuse it across queries; edits
+/// to the B-rep invalidate it.
 pub struct BrepQuery<'a> {
     identity: ProvenBrepIdentity<'a>,
     cache: OnceCell<BrepCache>,
+    bounding_box: OnceCell<Extent3d>,
 }
 
 impl core::fmt::Debug for BrepQuery<'_> {
@@ -548,6 +554,7 @@ impl core::fmt::Debug for BrepQuery<'_> {
         f.debug_struct("BrepQuery")
             .field("identity", &self.identity)
             .field("cache", &self.cache)
+            .field("bounding_box", &self.bounding_box)
             .finish_non_exhaustive()
     }
 }
@@ -588,6 +595,7 @@ impl<'a> BrepQuery<'a> {
         Self {
             identity,
             cache: OnceCell::new(),
+            bounding_box: OnceCell::new(),
         }
     }
 
@@ -605,6 +613,7 @@ impl<'a> BrepQuery<'a> {
         Self {
             identity: ProvenBrepIdentity::plain(identity),
             cache: OnceCell::from(cache),
+            bounding_box: OnceCell::new(),
         }
     }
 
@@ -637,6 +646,35 @@ impl<'a> BrepQuery<'a> {
         Ok(self.cache.get_or_init(|| cache))
     }
 
+    /// The box of `b` ([`calculate_bounding_box`] with the default options: every vertex,
+    /// edge and face expanded by its tolerance) that the ray fires of
+    /// [`Self::point_3d_classify`] use (`SmBrep::RayFire` makes it at every fire), made
+    /// when a ray fire first asks and kept with the cache. It is a function of the B-rep's
+    /// entities and their tolerances. A ray's preparation can grow an edge's and its
+    /// vertices' tolerances (a UV trim curve made by `get_or_create_uv_trim_curve`), so a
+    /// later fire of a kept query (a ray after a failed one, or a later classification)
+    /// sees a box up to that growth smaller than a fresh one; the box reaches the solve
+    /// only as its sphere's radius, which sets the hit tie-break
+    /// `EFF_ZERO_SQRT * 100 * (1 + radius)` (the ray is unitized). A caller that must see
+    /// every tolerance remakes the query on a difference, as the band check does.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`calculate_bounding_box`].
+    pub fn bounding_box(&self, k: &Kernel, b: &mut Brep) -> Result<Extent3d> {
+        if let Some(bbox) = self.bounding_box.get() {
+            return Ok(*bbox);
+        }
+        let bbox = calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?;
+        Ok(*self.bounding_box.get_or_init(|| bbox))
+    }
+
+    /// Whether [`Self::bounding_box`] has made the box.
+    #[must_use]
+    pub fn has_bounding_box(&self) -> bool {
+        self.bounding_box.get().is_some()
+    }
+
     /// Mutable ray solve used by region nesting after stitching. Keeps lazy trim
     /// preparation in the original solve order.
     pub(crate) fn ray_fire_live(
@@ -652,6 +690,7 @@ impl<'a> BrepQuery<'a> {
         crate::topology::brep::p2::ray_fire_with_solver(
             k,
             b,
+            None,
             start,
             direction,
             tolerance,
@@ -783,13 +822,16 @@ impl<'a> BrepQuery<'a> {
         // Now do a ray fire to determine which region this lies in. Fire extra rays
         // only if the first rays fail: `Some(region)` on success (the region may be
         // none), `None` on failure.
-        // (the solve of each ray fire builds the cache when needed)
+        // (the solve of each ray fire builds the cache when needed, and the first fire
+        // the B-rep's box)
         let mut fire = |direction: Vec3| -> Result<Option<Option<RegionId>>> {
             let b = target.mutable()?;
             let fired = self.cache(k, b).and_then(|cache| {
-                bp2::ray_fire(
+                let bbox = self.bounding_box(k, b)?;
+                bp2::ray_fire_in_box(
                     k,
                     b,
+                    Some(bbox),
                     brep_id,
                     cache,
                     keys,

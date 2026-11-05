@@ -215,8 +215,8 @@ impl WorkCounters {
 
     /// Not the fork's: the boxes of the whole body (`SmBrep::CalculateBoundingBox`, a walk
     /// of every vertex, edge and face) the ray fires of the `band_cuts` checks'
-    /// classifications made, counted where a ray fire makes its box (a ray fire outside a
-    /// check counts too: read it around a check).
+    /// classifications made: one per B-rep cache ([`Self::band_brep_caches`]), made at the
+    /// first classification through that cache that fires a ray.
     #[must_use]
     pub fn band_brep_boxes(&self) -> u64 {
         self.band_brep_boxes.get()
@@ -265,7 +265,7 @@ impl WorkCounters {
             .set(self.band_brep_caches.get().saturating_add(1));
     }
 
-    /// Counts one box of the whole body made for a ray fire.
+    /// Counts one box of the whole body made for the ray fires of a `band_cuts` check.
     pub(crate) fn add_band_brep_box(&self) {
         self.band_brep_boxes
             .set(self.band_brep_boxes.get().saturating_add(1));

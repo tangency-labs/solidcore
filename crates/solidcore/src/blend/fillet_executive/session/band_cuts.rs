@@ -27,9 +27,9 @@
 //! error the fork would meet on an out-of-reach edge or face is not met. A station's plane
 //! crossings are found edge by edge as its sections ask for them, not all up front; each
 //! face's trimmed cache is made once per check, not once per section; the body's cache (the
-//! trees a classification solves through) is made once per check and again when a
-//! tolerance of the body differs from the ones it was made with, not once per
-//! classification; the check polls the
+//! trees a classification solves through) and the body's box its ray fires use are made
+//! once per check and again when a tolerance of the body differs from the ones they were
+//! made with, not once per classification and once per ray fire; the check polls the
 //! kernel's cancel token. The solutions of
 //! `SmSurface::GlobalCurveIntersect` carry no object handles (the fork reads only their
 //! parameters). Every loop is bounded by fixed counts (32 steps, 40 bisections, halvings
@@ -134,8 +134,8 @@ impl SolutionObject for Operand {
 /// to solver ([`band_cuts_the_part`] and [`band_breaks_through_the_part`] over every solver
 /// of a session, #2648). The body does not change during a check: the trimmed-surface
 /// caches and UV trims its solves make on it change no answer. So each face's trimmed
-/// cache is made once ([`FaceCaches`]), the body's cache once ([`BrepQuery`]), and each
-/// face's and edge's box once.
+/// cache is made once ([`FaceCaches`]), the body's cache once and the body's box its ray
+/// fires use once with it ([`BrepQuery`]), and each face's and edge's box once.
 ///
 /// The body's cache holds the trees of its vertices, edges and faces, keyed by the body's
 /// naming scheme and its proven geometry owners, each boxed with its tolerance of the
@@ -148,7 +148,11 @@ impl SolutionObject for Operand {
 /// made for that classification would hold it. So the check keeps, with the cache, every
 /// vertex's, edge's and face's tolerance as the cache was made ([`tolerances`]) and before
 /// each classification compares the body's to them: on any difference it makes the cache
-/// again. Each classification is then that of a cache made for it.
+/// again. Each classification is then that of a cache made for it. The body's box a ray
+/// fire uses is a function of the same entities and tolerances, so the query keeps it with
+/// the cache and it is made again with it ([`BrepQuery::bounding_box`]); within one
+/// classification a ray after a failed one uses the box of the first, as upstream's cache
+/// does its boxes.
 ///
 /// The boxes keep each section's tests to the geometry within its reach, by construction
 /// giving the answers of testing everything: a curve and a surface (or a plane) whose
@@ -256,7 +260,8 @@ impl BandCheck {
 
     /// `point`'s classification against `body` (`SmBrep::Point3DClassify`, with the boundary
     /// intersections) through the body's cache, made at the first classification and again
-    /// when a tolerance of the body differs from the ones the cache was made with.
+    /// when a tolerance of the body differs from the ones the cache was made with, and the
+    /// body's box, made at the first classification of the cache's query that fires a ray.
     fn classify(
         &mut self,
         k: &Kernel,
@@ -280,7 +285,12 @@ impl BandCheck {
             k.work_counters.add_band_brep_cache();
             &self.query.insert((query, now)).0
         };
-        query.point_3d_classify(k, body, point, zone, true)
+        let boxed = query.has_bounding_box();
+        let class = query.point_3d_classify(k, body, point, zone, true);
+        if !boxed && query.has_bounding_box() {
+            k.work_counters.add_band_brep_box();
+        }
+        class
     }
 }
 
