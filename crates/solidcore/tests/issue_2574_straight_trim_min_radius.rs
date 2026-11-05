@@ -147,6 +147,18 @@ fn rounded_straight_trim() -> BSplineCurve {
     BSplineCurve::from_data(2, cps.len() - 1, knots.len() - 1, 3, &cps, &knots).unwrap()
 }
 
+/// [`tight_bend`] with its knot vector stretched to `t_end`. The curve in space is
+/// identical for every `t_end`; only the parametrisation changes, and with it the speed.
+fn tight_bend_over(h: f64, t_end: f64) -> BSplineCurve {
+    let pts = [[0.0, 0.0], [h, 0.0], [h, h], [1.0, 1.0]];
+    let cps: Vec<CPoint> = pts
+        .iter()
+        .map(|q| CPoint::new(q[0], q[1], 0.0, 1.0))
+        .collect();
+    let knots = [0.0, 0.0, 0.0, 0.0, t_end, t_end, t_end, t_end];
+    BSplineCurve::from_data(3, cps.len() - 1, knots.len() - 1, 3, &cps, &knots).unwrap()
+}
+
 /// The trim's handle in the solutions of its own property analysis.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TrimCurve;
@@ -199,11 +211,16 @@ fn tight_bend(h: f64, at_end: bool) -> BSplineCurve {
 }
 
 /// The smallest radius of curvature |C'|^3 / |C' x C''| of `curve` over 20001
-/// parameters, with the parameter it sits at, and the smallest speed.
+/// parameters of [0, 1], with the parameter it sits at, and the smallest speed.
 fn smallest_radius(curve: &BSplineCurve) -> (f64, f64, f64) {
+    smallest_radius_over(curve, 1.0)
+}
+
+/// As [`smallest_radius`], over [0, `t_end`].
+fn smallest_radius_over(curve: &BSplineCurve, t_end: f64) -> (f64, f64, f64) {
     let (mut best, mut at, mut slow) = (f64::MAX, f64::NAN, f64::MAX);
     for i in 0..=20000 {
-        let t = f64::from(i) / 20000.0;
+        let t = t_end * f64::from(i) / 20000.0;
         let d = curve.evaluate(t, 3, false, false).unwrap();
         let speed = d[1].length();
         slow = slow.min(speed);
@@ -383,6 +400,59 @@ fn the_check_still_reports_a_tight_bend_next_to_a_domain_end() {
         assert!(
             (value - min_radius).abs() <= 1e-4 * min_radius,
             "reported radius {value:e} is not the minimum {min_radius:e}"
+        );
+    }
+}
+
+/// **A slow parametrisation keeps its minimum radius.** The radius of curvature belongs
+/// to the curve, not to the parameter, so stretching the knot vector must not change what
+/// the search finds. `|C' x C''|` carries the speed cubed and falls under `scaled_zero`
+/// on a domain of 1e3 for this curve, so testing it for zero lost a real minimum
+/// (`CodeRabbit` on #2637); the curvature `|C' x C''| / |C'|^3` is what "the radius is
+/// unbounded" means, and that the parametrisation cannot move.
+///
+/// Measured: the smallest radius is 5.81556870231039e-6 for every domain below, to
+/// fifteen digits, and the search reports it within 1e-4 relative at each of them.
+///
+/// This checks the search, not `AssertValid`. The check reports the radius only for the
+/// unstretched domain: handed the same correct 5.8155e-6 it stays clean from a domain of
+/// 1e2 upwards, which is a second defect, in the check and not in this objective. It is
+/// out of this change's scope and recorded separately; the case below pins what this
+/// change owns.
+#[test]
+fn a_slow_parametrisation_keeps_its_minimum_radius() {
+    for t_end in [1.0, 1e2, 1e3, 1e4] {
+        let curve = tight_bend_over(BEND_H, t_end);
+        let k = check_kernel();
+
+        // the geometry is the same curve, whatever the domain
+        let (min_radius, _, slow) = smallest_radius_over(&curve, t_end);
+        assert!(slow > 0.0, "domain {t_end:e}: the speed vanishes");
+        assert!(
+            (min_radius - BEND_MIN_RADIUS).abs() <= 1e-9 * BEND_MIN_RADIUS,
+            "domain {t_end:e}: smallest radius {min_radius:e}"
+        );
+
+        // and the search has to find it, whatever the domain
+        let opts: PropertyAnalysisOptions<'_, TrimCurve> = PropertyAnalysisOptions::default();
+        let found = Curve::from(curve.clone())
+            .global_property_analysis(
+                &k,
+                &curve.natural_interval(),
+                CurvePropertyType::MinimizeRadiusOfCurvature,
+                t_end * 0.05,
+                &opts,
+            )
+            .unwrap();
+        let best = found
+            .solutions
+            .as_slice()
+            .iter()
+            .map(|s| s.start.solution_value)
+            .fold(f64::MAX, f64::min);
+        assert!(
+            (best - min_radius).abs() <= 1e-4 * min_radius,
+            "domain {t_end:e}: the search reports {best:e}, not the minimum {min_radius:e}"
         );
     }
 }
