@@ -1558,35 +1558,33 @@ mod tests {
         }
     }
 
-    /// #2545: a whole sphere at 1e-8 with WR-472's error scale off does not converge;
-    /// the estimated entry says so, typed, where the API entry keeps upstream's `SM_ERR`.
+    /// #2545: a whole sphere at 1e-8 with WR-472's error scale off did not converge (its
+    /// steps crossed the NURB sphere's double knots). Integrated between the surface's knots
+    /// (WR-494, #1435) it converges, both entries, and holds the closed forms: area and
+    /// volume 4 pi r^2 = 4/3 pi r^3 (r 3), inertia 2/5 m r^2. The typing of a failure that
+    /// does not converge is `integration_failures_are_typed_by_cause`'s.
     #[test]
-    fn a_sphere_that_does_not_converge_is_typed_not_converged() {
+    fn a_sphere_without_the_length_scale_converges_between_knots() {
         let mut k = Kernel::default();
         k.fixes.precise_properties_body_length_scale = false;
         let mut b =
             crate::primitive::api_primitives::create_sphere(&mut k, Point3::ZERO, 3.0).unwrap();
-        let typed = estimated(&k, &mut b, &MassPropertyRequest::centroidal());
-        assert!(
-            matches!(typed, Err(SolidError::NotConverged { .. })),
-            "{typed:?}"
-        );
+        let exact = 36.0 * PI;
+        let inertia = 0.4 * exact * 9.0;
+        let typed = estimated(&k, &mut b, &MassPropertyRequest::centroidal()).unwrap();
+        assert!(near(typed.area, exact, 1e-9), "{typed:?}");
+        assert!(near(typed.volume, exact, 1e-9), "{typed:?}");
+        for m in [typed.inertia.x, typed.inertia.y, typed.inertia.z] {
+            assert!(near(m, inertia, 1e-9), "{typed:?}");
+        }
         let store = no_attributes();
         let attrs = PropertyAttributes {
             store: &store,
             key_of: &|_| ObjectKey(0),
         };
-        let api = brep_mass_properties(&k, &mut b, 1e-8, 1.0, Point3::ZERO, &attrs);
-        assert!(
-            matches!(
-                api,
-                Err(SolidError::Upstream {
-                    code: crate::error::SM_ERR,
-                    ..
-                })
-            ),
-            "{api:?}"
-        );
+        let api = brep_mass_properties(&k, &mut b, 1e-8, 1.0, Point3::ZERO, &attrs).unwrap();
+        assert!(near(api.properties.area, exact, 1e-9), "{api:?}");
+        assert!(near(api.properties.volume, exact, 1e-9), "{api:?}");
     }
 
     /// The estimated entry types each integration failure by its cause, and only step
