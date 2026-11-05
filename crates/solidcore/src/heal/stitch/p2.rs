@@ -32,7 +32,8 @@
 //!   held when that vertex started (a split puts the vertex at both new edge ends).
 //!   Past a bound the port returns [`SolidError::InvalidInput`].
 //! - `DoStitching`'s edge gluing skips a lamina pair that crosses another lamina edge on
-//!   the same curve round it (`RadialGlue`; #2506, not upstream).
+//!   the same curve round it, where each face there meets that curve once (`RadialGlue`;
+//!   #2506, not upstream).
 //! - `DoStitching` collects the modified faces (`sModifiedFaces`) as upstream, though
 //!   only commented-out code reads them; its `dMinEdgeLength` is dropped for the same
 //!   reason (the lengths are still computed).
@@ -132,7 +133,12 @@ fn at<T: Copy>(list: &[T], i: usize) -> Result<T> {
 /// the line. Gluing two faces with another face between them on both sides makes the
 /// glued edge cross the edge the others are glued into: each face's outer side then
 /// carries on into the next face's inner side, and the closed shell bounds no region.
-/// Gluing faces next to each other round the line never crosses.
+/// Gluing faces next to each other round the line never crosses. The order holds only
+/// for faces that each meet the line once: a face meeting it twice (a periodic face's
+/// seam, or a sliver whose two sides lie within the tolerance) leaves it in two
+/// directions, and gluing its two edges closes or collapses that face rather than
+/// joining two faces across the line. Where any face there meets it twice, the radial
+/// order says nothing about the pairing, and the gluing is upstream's.
 struct RadialGlue {
     /// The point of the first edge where the pair was compared (its mid point).
     point: crate::math::Point3,
@@ -149,7 +155,8 @@ impl RadialGlue {
     /// [`Self::point`]) leaves one of the `others` lamina edges on the same curve
     /// between their faces on each side round the curve. Edges in `others` that are not
     /// coincident with `first` ([`Self::coincident`]) are not on it and are left out;
-    /// with none left the pair is the only one there and does not cross.
+    /// with none left the pair is the only one there and does not cross. Nor does it
+    /// when two of the edges on the curve belong to one face (see [`RadialGlue`]).
     fn crosses(
         &self,
         k: &mut Kernel,
@@ -166,6 +173,18 @@ impl RadialGlue {
         }
         if on_curve.is_empty() {
             return Ok(false);
+        }
+        let mut faces = Vec::new();
+        for e in [first.0, second.0]
+            .into_iter()
+            .chain(on_curve.iter().map(|&(o, _)| o))
+        {
+            for f in edge::faces(b, e, None)? {
+                if faces.contains(&f) {
+                    return Ok(false);
+                }
+                faces.push(f);
+            }
         }
         let axis = self.axis.unitize()?;
         let start = Self::leaving(k, b, first)?.project_to_plane(axis);
