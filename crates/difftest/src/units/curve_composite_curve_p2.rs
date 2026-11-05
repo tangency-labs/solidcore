@@ -3,9 +3,8 @@
 //! bow-tie check and repair, `MakeCompositeNurb`, `ReadFromDB` of composites and their
 //! segments, `SmOffsetMapAttribute::MakeCopy` and the segment constructor).
 //!
-//! C++: `solidcore_ffi::units::curve_composite_curve_p2` (upstream
-//! `source/SMLib/src/SmCompositeCurve.cpp`; the file-static `sm_CheckBowTies` through a
-//! verbatim shim copy). Rust: `solidcore::curve::composite_curve::p2`.
+//! Ported from upstream `source/SMLib/src/SmCompositeCurve.cpp`; checked against its golden.
+//! Rust: `solidcore::curve::composite_curve::p2`.
 //!
 //! A case is one `op` with its curves (`{"bspline": {dim, oob, cpts, p, u}}` with control
 //! points as stored `[x, y, z, w]`, `{"hermite": ..}`, `{"circle": ..}` (a quadratic
@@ -15,11 +14,12 @@
 //! of `base` over its natural interval); arcs, segments and canonical curves are built by
 //! the Rust B-spline constructors, bit-identical to upstream, and handed to both sides as
 //! inline B-spline data), composites (`{dim, curves, closed, senses?, gaps?}`) and
-//! parameters. Both sides produce the flat record documented in the ffi module; the
-//! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
-//! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
-//! produce) and the rest as the `out` values. Generated `read_db` cases carry the bytes
-//! upstream's `WriteToDB` makes of a random composite.
+//! parameters. The output is a flat record: the runner reports its first entry as the
+//! `status` int (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
+//! `InvalidInput`, `-1` for a Rust error upstream cannot produce) and the rest as the
+//! `out` values. The `read_db` cases of random composites read the bytes upstream's
+//! `WriteToDB` wrote, frozen in `fixtures/curve.composite_curve_p2/written_records.json`
+//! (solidcore has no composite writer, #2857).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,14 +42,12 @@ use solidcore::geom::object::ObjectRef;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
 use solidcore::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
-use solidcore::nurbs::math::NOW;
+use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_composite_curve_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
-use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -241,7 +239,7 @@ enum OpIn {
         text: Option<String>,
         #[serde(default)]
         bytes: Option<Vec<u8>>,
-        /// Generation only: the composite whose upstream `WriteToDB` bytes the case reads.
+        /// Generation only: the composite whose upstream `WriteToDB` record the case reads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         src: Option<CompIn>,
     },
@@ -322,214 +320,12 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
-    match &resolve(c)? {
-        CurveIn::Bspline(bs) => {
-            let n = bs.cpts.len().saturating_sub(1);
-            let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, bs.dim as f64, b(bs.oob)]);
-            v.extend([n as f64, bs.p as f64, m as f64]);
-            for c in &bs.cpts {
-                v.extend_from_slice(c);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        CurveIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                v.extend_from_slice(&p);
-            }
-        }
-        CurveIn::Line(l) => {
-            v.extend([2.0, 3.0]);
-            v.extend_from_slice(&l.p);
-            v.extend_from_slice(&l.v);
-            v.extend([l.domain[0], l.domain[1], l.scale, b(l.inside_out)]);
-        }
-        CurveIn::Offset(o) => {
-            v.extend([3.0, 3.0]);
-            curve_block(v, &o.base)?;
-            v.extend_from_slice(&o.n);
-            v.push(o.dist);
-        }
-        CurveIn::Circle(_) | CurveIn::Segment(_) | CurveIn::Canon(_) => {
-            return Err(harness("unresolved curve"))
-        }
-    }
-    Ok(())
-}
-
-fn curve_list(v: &mut Vec<f64>, cs: &[CurveIn]) -> Result<(), HarnessError> {
-    v.push(cs.len() as f64);
-    for c in cs {
-        curve_block(v, c)?;
-    }
-    Ok(())
-}
-
-fn comp_block(v: &mut Vec<f64>, c: &CompIn) -> Result<(), HarnessError> {
-    v.push(c.dim as f64);
-    curve_list(v, &c.curves)?;
-    v.push(b(c.closed));
-    // The shim reads one sense and one gap per curve: upstream ignores entries past
-    // the curve count and reads past a shorter array (undefined).
-    let n = c.curves.len();
-    match &c.senses {
-        Some(s) => {
-            let s = s.get(..n).ok_or_else(|| harness("fewer senses than curves"))?;
-            v.push(1.0);
-            v.extend(s.iter().map(|x| b(*x)));
-        }
-        None => v.push(0.0),
-    }
-    match &c.gaps {
-        Some(g) => {
-            let g = g.get(..n).ok_or_else(|| harness("fewer gaps than curves"))?;
-            v.push(1.0);
-            v.extend_from_slice(g);
-        }
-        None => v.push(0.0),
-    }
-    Ok(())
-}
-
-fn params_block(v: &mut Vec<f64>, p: &ParamsIn) {
-    v.extend([p.xtol, p.atol]);
-    v.extend_from_slice(&p.normal);
-    v.extend([f64::from(p.corner), b(p.trim), p.dist, b(p.match_pz)]);
-}
-
 fn db_bytes(text: Option<&String>, bytes: Option<&Vec<u8>>) -> Result<Vec<u8>, HarnessError> {
     match (text, bytes) {
         (Some(t), None) => Ok(t.clone().into_bytes()),
         (None, Some(b)) => Ok(b.clone()),
         _ => Err(harness("read_db needs exactly one of text, bytes")),
     }
-}
-
-fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    let code = match op {
-        OpIn::Offsets { comps, dirs, params } => {
-            v.push(comps.len() as f64);
-            for c in comps {
-                comp_block(&mut v, c)?;
-            }
-            if dirs.len() != comps.len() {
-                return Err(harness("offsets: one direction per composite"));
-            }
-            v.extend(dirs.iter().map(|d| *d as f64));
-            params_block(&mut v, params);
-            Op::Offsets
-        }
-        OpIn::Trimmed {
-            comp,
-            direction,
-            params,
-        } => {
-            comp_block(&mut v, comp)?;
-            v.push(f64::from(*direction));
-            params_block(&mut v, params);
-            Op::Trimmed
-        }
-        OpIn::Intersect {
-            raws,
-            attrs,
-            dist,
-            tol,
-            origs,
-        } => {
-            if attrs.len() != raws.len() {
-                return Err(harness("intersect: one attribute per raw curve"));
-            }
-            curve_list(&mut v, raws)?;
-            for a in attrs {
-                v.extend([
-                    b(a.has),
-                    b(a.corner),
-                    b(a.left),
-                    a.comp as f64,
-                    a.curve as f64,
-                    a.other as f64,
-                    a.orig as f64,
-                    a.err,
-                ]);
-            }
-            v.extend([*dist, *tol]);
-            curve_list(&mut v, origs)?;
-            Op::Intersect
-        }
-        OpIn::CheckBow {
-            offs,
-            dist,
-            tol,
-            origs,
-        } => {
-            curve_list(&mut v, offs)?;
-            v.extend([*dist, *tol]);
-            curve_list(&mut v, origs)?;
-            Op::CheckBow
-        }
-        OpIn::FixBow {
-            curve,
-            points,
-            dist,
-            breaks,
-        } => {
-            curve_block(&mut v, curve)?;
-            v.push(points.len() as f64);
-            for p in points {
-                v.extend_from_slice(p);
-            }
-            v.extend([*dist, breaks.len() as f64]);
-            v.extend_from_slice(breaks);
-            Op::FixBow
-        }
-        OpIn::Nurb { comp } => {
-            comp_block(&mut v, comp)?;
-            Op::Nurb
-        }
-        OpIn::ReadDb {
-            dim,
-            binary,
-            version,
-            text,
-            bytes,
-            ..
-        } => {
-            let data = db_bytes(text.as_ref(), bytes.as_ref())?;
-            v.extend([*dim as f64, b(*binary), *version as f64, data.len() as f64]);
-            v.extend(data.iter().map(|&x| f64::from(x)));
-            Op::ReadDb
-        }
-        OpIn::Misc {
-            id,
-            corner,
-            left,
-            comp,
-            curve,
-            other,
-            err,
-            seg,
-            sense,
-            g0,
-            g1,
-        } => {
-            v.extend([
-                *id as f64,
-                b(*corner),
-                b(*left),
-                *comp as f64,
-                *curve as f64,
-                *other as f64,
-                *err,
-            ]);
-            curve_block(&mut v, seg)?;
-            v.extend([b(*sense), *g0, *g1]);
-            Op::Misc
-        }
-    };
-    Ok((code, v))
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -540,24 +336,294 @@ fn to_output(flat: &[f64]) -> Output {
         .values("out", rest)
 }
 
-fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
-    let (code, input) = cpp_input(op)?;
-    match ffi::eval(code, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
+// ---- generated input contract -----------------------------------------------------
+//
+// The generator keeps a draw only inside the domain upstream's entry points are defined
+// on: bounded sizes and indices, finite coordinates, clamped well-formed B-splines,
+// positive tolerances. Generated cases exercise the working path; hostile inputs are
+// the fixtures' job.
+
+/// Largest control point index `n`.
+const MAX_INDEX: usize = 64;
+/// Largest degree.
+const MAX_DEGREE: usize = 9;
+/// Largest coordinate magnitude.
+const MAX_COORD: f64 = 1e6;
+/// Most curves in a composite or curve list, and most composites.
+const MAX_SEGMENTS: usize = 8;
+/// Most bytes of a database stream.
+const MAX_DB_BYTES: usize = 1 << 16;
+/// Most points or breaks of the bow-tie ops.
+const MAX_POINTS: usize = 64;
+/// Largest type, id or index value.
+const MAX_ID: u64 = 100_000;
+
+/// Which curve kinds a list accepts.
+#[derive(Debug, Clone, Copy)]
+struct Kinds {
+    hermite: bool,
+    offset: bool,
+}
+
+/// Curves that can be copied into a composite.
+const COPYABLE: Kinds = Kinds {
+    hermite: false,
+    offset: false,
+};
+/// Raw offsets: implicit offset curves too.
+const RAW: Kinds = Kinds {
+    hermite: false,
+    offset: true,
+};
+/// Any curve a database record or segment holds.
+const ANY: Kinds = Kinds {
+    hermite: true,
+    offset: false,
+};
+
+fn finite(v: f64) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+fn finite3(v: &[f64; 3]) -> bool {
+    v.iter().all(|&c| finite(c))
+}
+
+fn nonzero3(v: &[f64; 3]) -> bool {
+    finite3(v) && v.iter().map(|c| c * c).sum::<f64>() >= 1e-12
+}
+
+/// A positive finite tolerance.
+fn tol(v: f64) -> bool {
+    finite(v) && v > 0.0
+}
+
+fn dim_ok(dim: u64) -> bool {
+    (2..=3).contains(&dim)
+}
+
+/// A clamped B-spline with consistent counts, finite points, positive weights and
+/// knots whose multiplicities stay within the degree.
+fn bspline_ok(bs: &BSplineIn) -> bool {
+    let n = bs.cpts.len().saturating_sub(1);
+    let m = bs.u.len().saturating_sub(1);
+    let p = bs.p;
+    if !dim_ok(bs.dim) || n > MAX_INDEX || p > MAX_DEGREE || m > MAX_INDEX + MAX_DEGREE + 1 {
+        return false;
+    }
+    if p == 0 || p > n || m != n + p + 1 {
+        return false;
+    }
+    let Some(&[_, _, z0, w0]) = bs.cpts.first() else {
+        return false;
+    };
+    for &[x, y, z, w] in &bs.cpts {
+        if (z == NOZ) != (z0 == NOZ) || (w == NOW) != (w0 == NOW) {
+            return false;
+        }
+        let z_ok = z == NOZ || z.is_finite();
+        let w_ok = w == NOW || w.is_finite();
+        if !x.is_finite() || !y.is_finite() || !z_ok || !w_ok {
+            return false;
+        }
+        if w != NOW && w <= 1e-3 {
+            return false;
+        }
+        let z = if z == NOZ { 0.0 } else { z };
+        let e = if w == NOW { [x, y, z] } else { [x / w, y / w, z / w] };
+        if !finite3(&e) {
+            return false;
+        }
+    }
+    let knots = &bs.u;
+    if knots.iter().any(|&k| !finite(k)) || knots.windows(2).any(|w| w.first() > w.last()) {
+        return false;
+    }
+    let (Some(&a), Some(&b)) = (knots.first(), knots.last()) else {
+        return false;
+    };
+    let (Some(head), Some(tail), Some(inner)) =
+        (knots.get(..=p), knots.get(m - p..), knots.get(p + 1..m - p))
+    else {
+        return false;
+    };
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return false;
+    }
+    if b - a < 1e-6 * a.abs().max(b.abs()).max(1.0) {
+        return false;
+    }
+    if inner.iter().any(|&k| k == a || k == b) {
+        return false;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return false;
+        }
+    }
+    true
+}
+
+/// A line with a direction, a domain longer than `1e-6` and a positive scale.
+fn line_ok(l: &LineIn) -> bool {
+    finite3(&l.p)
+        && nonzero3(&l.v)
+        && finite(l.domain[0])
+        && finite(l.domain[1])
+        && (l.domain[1] - l.domain[0]).abs() >= 1e-6
+        && finite(l.scale)
+        && l.scale > 1e-6
+}
+
+/// A curve of `kinds` (arcs, segments and canonical curves as the B-splines the Rust
+/// constructors build of them).
+fn curve_ok(c: &CurveIn, kinds: Kinds) -> bool {
+    let Ok(c) = resolve(c) else {
+        return false;
+    };
+    match &c {
+        CurveIn::Bspline(bs) => bspline_ok(bs),
+        CurveIn::Hermite(h) => {
+            kinds.hermite && dim_ok(h.dim) && [h.p1, h.d1, h.p2, h.d2].iter().all(finite3)
+        }
+        CurveIn::Line(l) => line_ok(l),
+        CurveIn::Offset(o) => {
+            kinds.offset && curve_ok(&o.base, COPYABLE) && nonzero3(&o.n) && finite(o.dist)
+        }
+        CurveIn::Circle(_) | CurveIn::Segment(_) | CurveIn::Canon(_) => false,
     }
 }
 
-/// Upstream's `WriteToDB` bytes of `comp`.
-fn write_db(comp: &CompIn, binary: bool, version: u64) -> Option<Vec<u8>> {
-    let mut v = Vec::new();
-    comp_block(&mut v, comp).ok()?;
-    v.extend([b(binary), version as f64]);
-    let out = ffi::eval(Op::WriteDb, &v).ok()?;
-    if out.first().copied() != Some(0.0) {
-        return None;
+fn curves_ok(cs: &[CurveIn], kinds: Kinds) -> bool {
+    cs.len() <= MAX_SEGMENTS && cs.iter().all(|c| curve_ok(c, kinds))
+}
+
+/// A composite: one sense and one gap per curve when given, finite gaps, and no gaps on
+/// a closed composite without curves.
+fn composite_ok(c: &CompIn, kinds: Kinds) -> bool {
+    let n = c.curves.len();
+    if !dim_ok(c.dim) || !curves_ok(&c.curves, kinds) {
+        return false;
     }
-    Some(out.get(1..)?.iter().map(|&x| x as u8).collect())
+    if c.senses.as_ref().is_some_and(|s| s.len() < n) {
+        return false;
+    }
+    match &c.gaps {
+        Some(g) => g.len() >= n && !(c.closed && n == 0) && g.iter().take(n).all(|&x| finite(x)),
+        None => true,
+    }
+}
+
+/// Offset parameters: positive tolerances, a normal, no linear chamfer corner (upstream
+/// `sm_CreateCorner` reads the first solution of an empty array whenever the chamfer
+/// line misses an extension line) and a distance of at least `1e-6`.
+fn params_ok(p: &ParamsIn) -> bool {
+    tol(p.xtol)
+        && tol(p.atol)
+        && nonzero3(&p.normal)
+        && p.corner <= 1
+        && finite(p.dist)
+        && p.dist.abs() >= 1e-6
+}
+
+/// Whether a generated draw is inside the domain above. A `read_db` draw is judged on the
+/// composite whose record it reads.
+fn admits(op: &OpIn) -> bool {
+    match op {
+        OpIn::Offsets { comps, dirs, params } => {
+            comps.len() <= MAX_SEGMENTS
+                && comps.iter().all(|c| composite_ok(c, COPYABLE))
+                && dirs.len() == comps.len()
+                && dirs.iter().all(|&d| d <= 4)
+                && params_ok(params)
+        }
+        OpIn::Trimmed {
+            comp,
+            direction,
+            params,
+        } => composite_ok(comp, COPYABLE) && *direction <= 3 && params_ok(params),
+        OpIn::Intersect {
+            raws,
+            attrs,
+            dist,
+            tol: t,
+            origs,
+        } => {
+            // sm_CheckBowTies indexes both lists by the originator
+            let no = origs.len() as i64;
+            attrs.len() == raws.len()
+                && curves_ok(raws, RAW)
+                && attrs.iter().all(|a| {
+                    a.comp <= MAX_ID
+                        && a.curve <= MAX_ID
+                        && a.other <= MAX_ID
+                        && finite(a.err)
+                        && (-1..no).contains(&a.orig)
+                })
+                && tol(*dist)
+                && tol(*t)
+                && curves_ok(origs, COPYABLE)
+                && no > 0
+                && raws.len() >= origs.len()
+        }
+        OpIn::CheckBow {
+            offs,
+            dist,
+            tol: t,
+            origs,
+        } => curves_ok(offs, RAW) && tol(*dist) && tol(*t) && curves_ok(origs, COPYABLE),
+        OpIn::FixBow {
+            curve,
+            points,
+            dist,
+            breaks,
+        } => {
+            curve_ok(curve, RAW)
+                && points.len() <= MAX_POINTS
+                && points.iter().all(finite3)
+                && tol(*dist)
+                && breaks.len() <= MAX_POINTS
+                && breaks.iter().all(|&x| finite(x))
+        }
+        OpIn::Nurb { comp } => composite_ok(comp, COPYABLE) && !comp.curves.is_empty(),
+        OpIn::ReadDb {
+            dim,
+            version,
+            text,
+            bytes,
+            src,
+            ..
+        } => {
+            let record = match src {
+                Some(src) => composite_ok(src, ANY),
+                None => db_bytes(text.as_ref(), bytes.as_ref())
+                    .is_ok_and(|d| d.len() <= MAX_DB_BYTES),
+            };
+            dim_ok(*dim) && *version <= MAX_ID && record
+        }
+        OpIn::Misc {
+            id,
+            comp,
+            curve,
+            other,
+            err,
+            seg,
+            g0,
+            g1,
+            ..
+        } => {
+            *id <= MAX_ID
+                && *comp <= MAX_ID
+                && *curve <= MAX_ID
+                && *other <= MAX_ID
+                && finite(*err)
+                && curve_ok(seg, ANY)
+                && finite(*g0)
+                && finite(*g1)
+        }
+    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -661,7 +727,7 @@ fn ftry<T>(r: solidcore::Result<T>) -> Result<T, Fail> {
     r.map_err(Fail::from)
 }
 
-/// The curve record (see the ffi module docs).
+/// The curve record.
 fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: &Curve) -> Result<(), Fail> {
     o.push(c.type_code() as f64);
     let ivl = c.natural_interval();
@@ -1467,33 +1533,17 @@ fn gen_case(rng: &mut Rng) -> OpIn {
     }
 }
 
-/// Fills in a generated `read_db` case's bytes from upstream's writer.
-fn finish(op: OpIn) -> Option<OpIn> {
-    match op {
-        OpIn::ReadDb {
-            dim,
-            binary,
-            version,
-            src: Some(src),
-            ..
-        } => {
-            let data = write_db(&src, binary, version)?;
-            let (text, bytes) = if binary {
-                (None, Some(data))
-            } else {
-                (Some(String::from_utf8(data).ok()?), None)
-            };
-            Some(OpIn::ReadDb {
-                dim,
-                binary,
-                version,
-                text,
-                bytes,
-                src: None,
-            })
-        }
-        other => Some(other),
-    }
+/// A generated case's draw: the first [`gen_case`] inside the input contract.
+fn draw(rng: &mut Rng) -> Option<OpIn> {
+    (0..64).map(|_| gen_case(rng)).find(admits)
+}
+
+/// A generated `read_db` draw: its case reads the record upstream's `WriteToDB` wrote of
+/// `src`, which solidcore has no composite writer for (#2857), so those cases are frozen in
+/// `fixtures/curve.composite_curve_p2/written_records.json` under their generated names
+/// and the generated index is skipped.
+fn is_read_draw(op: &OpIn) -> bool {
+    matches!(op, OpIn::ReadDb { src: Some(_), .. })
 }
 
 impl UnitDiff for Runner {
@@ -1502,19 +1552,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let Some(op) = finish(gen_case(rng)) else {
-                continue;
-            };
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
-            return serde_json::to_value(op).ok();
-        }
-        None
+        draw(rng)
+            .filter(|op| !is_read_draw(op))
+            .and_then(|op| serde_json::to_value(op).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1522,20 +1562,22 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
+        let mut cases = ctx.fixture_cases(self.id())?;
+        // a skipped index (a `read_db` draw) is a fixture case of the same name
+        let generated = ctx.generated_cases(self.id(), |rng| {
+            let op = draw(rng)?;
+            Some(if is_read_draw(&op) {
+                Value::Null
+            } else {
+                serde_json::to_value(op).unwrap_or(Value::Null)
+            })
+        });
+        cases.extend(generated.into_iter().filter(|c| !c.inputs.is_null()));
+        Ok(cases)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        let op = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&op)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
-        rust(&op)
+        rust(&case.parse()?)
     }
 }
 
@@ -1552,16 +1594,10 @@ mod tests {
         let mut why: BTreeMap<String, usize> = BTreeMap::new();
         for _ in 0..400 {
             let op = gen_case(&mut rng);
+            if matches!(op, OpIn::ReadDb { .. }) || !admits(&op) {
+                continue;
+            }
             let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
-            if matches!(op, OpIn::ReadDb { .. }) {
-                continue;
-            }
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_err() {
-                continue;
-            }
             let out = rust(&op);
             let e = stats.entry(name.clone()).or_default();
             e[0] += 1;
@@ -1587,26 +1623,7 @@ mod tests {
         assert!(stats.len() >= 7);
     }
 
-    /// Generated database reads mostly succeed on both sides.
-    #[test]
-    fn generated_reads_succeed() {
-        let mut rng = Rng::new(5);
-        let mut ok = 0;
-        for _ in 0..40 {
-            let Some(op) = finish(gen_read_db(&mut rng)) else {
-                continue;
-            };
-            let r = rust(&op).unwrap();
-            let c = cpp(&op).unwrap();
-            assert_eq!(r.ints.get("status"), c.ints.get("status"));
-            if r.ints.get("status").is_some_and(|s| s == &vec![0]) {
-                ok += 1;
-            }
-        }
-        assert!(ok > 30, "{ok}");
-    }
-
-    /// Generated cases are well-formed for the shim.
+    /// Most generated draws are inside the input contract.
     #[test]
     fn generated_cases_validate() {
         let mut rng = Rng::new(11);
@@ -1616,10 +1633,7 @@ mod tests {
             if matches!(op, OpIn::ReadDb { .. }) {
                 continue;
             }
-            let Ok((code, input)) = cpp_input(&op) else {
-                continue;
-            };
-            if ffi::validate(code, &input).is_ok() {
+            if admits(&op) {
                 ok += 1;
             }
         }
