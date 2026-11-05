@@ -981,6 +981,30 @@ operation does not make them.
   (deferred), and the known mismatch gen0658 is among the deferred (its entry must go). Without the
   clip the same cases differ only by the status code (1006 vs the port invariant). Whether the
   clip applies when the extension is the surface itself (native stops at 1006) is a decision.
+- *Review fixes (findings 2, 4, low).* The clip split a closed curve at its own parameter
+  origin and gave duplicates (sphere r 5 and plane z = 2: two identical `[0, 1]`; over the quadrant
+  `[0, 10]^2`: two identical `[0, 0.25]`; plane x = 1: 3 pieces where 2 suffice). Two causes:
+  - the drop trace (`FindBoundaryStartPoints`): a break start on a seam drops to both seam points;
+    the first's iso curve covers the second only to rounding (`0.9999999999999998` for `1`) or
+    across the wrap, so the second was traced again. Now a solution whose image across the seam is
+    on the iso curve is taken off too (not upstream);
+  - a closed curve's pieces began at its own origin. A closed curve (an ellipse all the way round)
+    crossing a seam or domain boundary is now turned to start at its first crossing (the same
+    ellipse over the full turn from that angle) and dropped again; one crossing nothing stays one
+    closed piece. The pieces are the overlaps of a sweep over both surfaces' ordered drop pieces,
+    which must not overlap (else a port invariant).
+  Now: tilted plane 1 seam-to-seam piece; z = 2 one piece; quadrant one quarter; x = 1 two pieces
+  between the two seam crossings; y = 1 one closed piece; a full circular edge is one piece.
+  `mate_edges` types every failure of the cut as `OffsetFailure::ExactCurveUncut` (its cause
+  kept) and passes it on; the operation-string match and the redundant `PortInvariant` arm are
+  gone.
+- *What is checked.* `curve_lies_on` shows a piece's control points are on the implicit surface to
+  the rounding of evaluating its equation, not containment: it does not cover the knot insertion
+  of the Bezier decomposition or the trim that made the piece. The UV curves' drop distance is the
+  drop trace's sampled largest distance, not certified between samples.
+- *Probe (all 165, `notes-localop/sound-clipfix.tsv` vs `sound-fc0016.tsv`).* Sound 109 -> 109;
+  the only change is fc0000's volume, 1269.9675374355643 -> 1269.9675373393304 (1e-10 relative:
+  the turned circle's rounding).
 
 ### fc0000's volume: the probe integrated from the plane's unbounded domain (2026-11-05, volume item)
 
