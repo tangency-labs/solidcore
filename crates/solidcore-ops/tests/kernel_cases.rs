@@ -52,6 +52,7 @@ use serde_json::Value;
 use solidcore_ops::blend::{blend, Blend, Corners};
 use solidcore_ops::boolean::{boolean, BooleanOp};
 use solidcore_ops::sweep::{extrude, revolve, Curve, DraftCorner};
+use solidcore_ops::untrim::{untrim_face, Holes};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
 use solidcore_record::brep::Brep as Record;
 
@@ -69,6 +70,7 @@ const PORTED: &[&str] = &[
     "shell",
     "offset_faces",
     "thicken",
+    "untrim_face",
     "boolean",
     "extrude",
     "revolve",
@@ -338,6 +340,30 @@ fn call_with_copy(
             let sym = p["symmetric"].as_bool().ok_or_else(|| bad("symmetric"))?;
             let r = offset::thicken(&s.body, t, sym);
             in_place(Slot { order: None, ..s }, r)
+        }
+        "untrim_face" => {
+            let holes = p.get("holes").ok_or_else(|| bad("holes"))?;
+            if !holes.is_null() {
+                return Err(Stop::Unsupported(
+                    "untrim_face hole point picks have no recorded edge indices".to_owned(),
+                ));
+            }
+            let outer = p["outer"].as_bool().ok_or_else(|| bad("outer"))?;
+            let in_place = p["in_place"].as_bool().ok_or_else(|| bad("in_place"))?;
+            let mut s = first()?;
+            let (picked, order) = faces(&mut s, &p["face"])?;
+            let [face] = picked.as_slice() else {
+                return Err(bad("one face"));
+            };
+            // The public untrim operation copies its operand and maps the recorded IDs itself.
+            made(untrim_face(
+                &s.body,
+                &order,
+                *face,
+                Holes::All,
+                outer,
+                in_place,
+            ))
         }
         "boolean" => {
             let operation = match p["op"].as_str() {
@@ -832,6 +858,84 @@ fn a_copied_edit_preserves_the_supplied_face_pick_order() {
         .fold(f64::NEG_INFINITY, f64::max);
     assert!((max_z - 12.0).abs() <= 12.0 * 1e-9, "top is at {max_z}");
     assert!((body.volume(1e-9).unwrap() - 6000.0).abs() <= 6000.0 * 1e-9);
+}
+
+fn untrim_input(name: &str) -> (PathBuf, Value, Slot) {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join(format!("surfaces/{name}.json"));
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    let name = e["bodies"].as_object().unwrap().keys().next().unwrap();
+    let record: Record = serde_json::from_value(records(&entry, &e)[name].clone()).unwrap();
+    let (body, order) = Body::from_record(&record, true).unwrap();
+    (
+        entry,
+        e,
+        Slot {
+            body: Arc::new(body),
+            order: Some(order),
+        },
+    )
+}
+
+#[test]
+fn all_hole_untrim_restores_the_analytic_area_and_preserves_its_operand() {
+    for (name, area) in [
+        ("cov-untrim-sheet-hole-in-place", 400.0),
+        (
+            "cov-untrim-cylinder-sheet-hole-in-place",
+            100.0 * std::f64::consts::PI,
+        ),
+        ("cov-untrim-solid-top-face-copied-out", 400.0),
+    ] {
+        let (entry, e, mut input) = untrim_input(name);
+        let before = input.body.to_record().unwrap().0;
+        let before_area = input.body.area(1e-9).unwrap();
+        let mut step = e["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["op"] == "untrim_face")
+            .unwrap()
+            .clone();
+        // Reorder the solid's faces so this pick cannot accidentally use a kernel-list index.
+        if name.ends_with("copied-out") {
+            let order = input.order.as_mut().unwrap();
+            assert!(order.faces.len() > 1);
+            order.faces.rotate_left(1);
+            step["params"]["face"]["picked"][0]["index"] = serde_json::json!(order.faces.len() - 1);
+        }
+        let output = call(&step, &mut [input.clone()]).unwrap().unwrap();
+        let got_area = output.body.area(1e-9).unwrap();
+        assert!((got_area - area).abs() <= area * 1e-9, "{name}: {got_area}");
+        assert_eq!(output.body.counts().unwrap(), [1, 4, 4], "{name}");
+        assert_eq!(input.body.to_record().unwrap().0, before, "{name}");
+        assert_eq!(input.body.area(1e-9).unwrap(), before_area, "{name}");
+        run_case(&entry, &e).unwrap();
+    }
+}
+
+#[test]
+fn all_hole_untrim_rejects_missing_parameters_and_keeps_point_holes_unsupported() {
+    let (_, e, input) = untrim_input("cov-untrim-sheet-hole-in-place");
+    let step = e["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["op"] == "untrim_face")
+        .unwrap();
+    for parameter in ["holes", "outer", "in_place", "face"] {
+        let mut missing = step.clone();
+        missing["params"].as_object_mut().unwrap().remove(parameter);
+        assert!(
+            matches!(call(&missing, &mut [input.clone()]), Err(Stop::Fail(_))),
+            "{parameter}"
+        );
+    }
+    let mut named = step.clone();
+    named["params"]["holes"] = serde_json::json!([[6.0, 10.0, 0.0]]);
+    assert!(
+        matches!(call(&named, &mut [input]), Err(Stop::Unsupported(why)) if why.contains("hole"))
+    );
 }
 
 #[test]
