@@ -1813,12 +1813,13 @@ impl Curve {
     /// has length 0 exactly.
     ///
     /// The contract: each span's integral is within its share of `desired_accuracy`
-    /// by the step control's estimate, or the span is refused (`SM_ERR`, operation
-    /// `mass::integrator::step_control`) where a step's estimate is within its own
-    /// rounding but above that accuracy ([`crate::mass::integrator::OdeOptions::rounding`]):
-    /// the accuracy asks for less than the computed speed resolves. The refusal is
-    /// returned with [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] and
-    /// is a zero length without it, as every failed span integration (WR-94).
+    /// by the step control's estimates, the steps accepted at the rounding of the
+    /// computed speed included (their errors, together, within that share of the
+    /// span's length: [`crate::mass::integrator::OdeOptions::rounding`]), or the span is
+    /// refused (`SM_ERR`, operation `mass::integrator::step_control`): the accuracy asks
+    /// for less than the computed speed resolves. The refusal is returned with
+    /// [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] and is a zero
+    /// length without it, as every failed span integration (WR-94).
     ///
     /// # Errors
     ///
@@ -1924,7 +1925,7 @@ impl Curve {
             // Greater than degree 1 if make it to here
             // Do an integration to get the length of the
             // first derivatives integrated over the entire curve, refused where the
-            // accuracy asks for less than the computed speed's rounding resolves.
+            // accuracy asks for less than the computed speed resolves.
             total_length += crate::mass::integrator::integrate_rounded_with_kernel(
                 k,
                 seg_ivl.min(),
