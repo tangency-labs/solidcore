@@ -160,6 +160,7 @@ pub struct WorkCounters {
     band_face_solves: Cell<u64>,
     band_face_caches: Cell<u64>,
     band_brep_caches: Cell<u64>,
+    band_brep_boxes: Cell<u64>,
     band_edge_solves: Cell<u64>,
 }
 
@@ -212,6 +213,15 @@ impl WorkCounters {
         self.band_brep_caches.get()
     }
 
+    /// Not the fork's: the boxes of the whole body (`SmBrep::CalculateBoundingBox`, a walk
+    /// of every vertex, edge and face) the ray fires of the `band_cuts` checks'
+    /// classifications made, counted where a ray fire makes its box (a ray fire outside a
+    /// check counts too: read it around a check).
+    #[must_use]
+    pub fn band_brep_boxes(&self) -> u64 {
+        self.band_brep_boxes.get()
+    }
+
     /// Not the fork's (#2648): the intersections of an edge with a station's plane that the
     /// `band_cuts` checks ran.
     #[must_use]
@@ -227,6 +237,7 @@ impl WorkCounters {
         self.band_face_solves.set(0);
         self.band_face_caches.set(0);
         self.band_brep_caches.set(0);
+        self.band_brep_boxes.set(0);
         self.band_edge_solves.set(0);
     }
 
@@ -252,6 +263,12 @@ impl WorkCounters {
     pub(crate) fn add_band_brep_cache(&self) {
         self.band_brep_caches
             .set(self.band_brep_caches.get().saturating_add(1));
+    }
+
+    /// Counts one box of the whole body made for a ray fire.
+    pub(crate) fn add_band_brep_box(&self) {
+        self.band_brep_boxes
+            .set(self.band_brep_boxes.get().saturating_add(1));
     }
 
     /// Counts one edge–plane intersection of a `band_cuts` check.

@@ -1786,6 +1786,7 @@ pub(crate) fn ray_fire_with_solver(
 ) -> Result<RayFireResult> {
     // get Brep BoundingBox and BoundingSphere
     let bbox = qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?;
+    k.work_counters.add_band_brep_box();
     let sphere = bbox.sphere_bound();
     let radius = sphere.radius;
 

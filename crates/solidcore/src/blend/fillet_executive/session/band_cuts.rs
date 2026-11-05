@@ -1394,7 +1394,8 @@ mod tests {
     /// The section keeps the cube behind it, judged against the faces and edges within its
     /// reach only (#2648): the top and the front (the section meets them at its rails), no
     /// edge (the four crossing the plane lie farther than the ball's radius from its centre),
-    /// and each face's cache and the body's cache made once over two judgements.
+    /// and each face's cache, the body's cache and the body's box made once over two
+    /// judgements.
     #[test]
     fn a_section_is_judged_against_the_geometry_within_its_reach() {
         let mut k = Kernel::default();
@@ -1426,11 +1427,13 @@ mod tests {
         assert_eq!(k.work_counters.band_face_solves(), 4);
         assert_eq!(k.work_counters.band_face_caches(), 2);
         assert_eq!(k.work_counters.band_brep_caches(), 1);
+        assert_eq!(k.work_counters.band_brep_boxes(), 1);
     }
 
     /// A tolerance of the body grown between two judgements (as a UV trim curve made for a
     /// solve grows its edge's and vertices') makes the body's cache again for the second,
-    /// whose boxes carry the tolerances: the answer is that of a cache made for it.
+    /// whose boxes carry the tolerances, and the body's box again with it: the answer is
+    /// that of a cache made for it.
     #[test]
     fn a_tolerance_grown_between_judgements_makes_the_body_s_cache_again() {
         let mut k = Kernel::default();
@@ -1462,6 +1465,7 @@ mod tests {
             .unwrap());
         }
         assert_eq!(k.work_counters.band_brep_caches(), 2);
+        assert_eq!(k.work_counters.band_brep_boxes(), 2);
     }
 
     /// A token fired before a judgement stops it at the band check's own poll, with the
