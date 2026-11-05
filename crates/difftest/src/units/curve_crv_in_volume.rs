@@ -61,6 +61,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::util::assert_reports::put_assert_reports;
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
@@ -114,7 +115,10 @@ enum CurveIn {
 enum ExactCurveIn {
     Curve(CurveIn),
     /// `SmLine(p1, p2, 3)`.
-    Line { p1: [f64; 3], p2: [f64; 3] },
+    Line {
+        p1: [f64; 3],
+        p2: [f64; 3],
+    },
     /// `SmCircle(c, x, y, [a0, a1] (degrees), r, 3)`.
     Circle {
         c: [f64; 3],
@@ -272,6 +276,266 @@ fn to_output(flat: &[f64]) -> Output {
         .values("out", rest)
 }
 
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 512,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 4.0;
+/// The longest type, knot, break or continuity array.
+const MAX_ARRAY: usize = 1024;
+/// The longest database record.
+const MAX_DB_BYTES: usize = 1 << 16;
+/// The most maps of a volume.
+const MAX_MAPS: usize = 3;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+fn nonzero3(v: &[f64; 3]) -> bool {
+    contract::nonzero3(v, LIMITS.max_coord)
+}
+
+/// A curve in volume that keeps the contract: whether its curve is a B-spline, its domain,
+/// its owner flags (with the copy flags folded in) and, for a cache that does not need
+/// updating, its break and continuity counts.
+#[derive(Debug, Clone, Copy)]
+struct Object {
+    bspline: bool,
+    a: f64,
+    b: f64,
+    owner: u64,
+    cached: Option<(usize, usize)>,
+}
+
+/// The domain of a curve that keeps the contract, and whether it is a B-spline.
+fn curve(c: &CurveIn) -> Option<(bool, f64, f64)> {
+    match c {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some((true, s.a, s.b))
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], LIMITS.max_coord))
+        .then_some((false, 0.0, 1.0)),
+    }
+}
+
+/// Whether `t` is finite and at most [`MAX_REL_DIST`] domain lengths outside `(a, b)`.
+fn near(t: f64, a: f64, b: f64) -> bool {
+    let far = MAX_REL_DIST * (b - a);
+    fin(t) && t >= a - far && t <= b + far
+}
+
+/// A cache of at most [`MAX_ARRAY`] finite breaks (near the domain when `near_ab` is given)
+/// and continuity codes up to 13.
+fn cache_ok(k: &CacheIn, near_ab: Option<(f64, f64)>) -> bool {
+    k.breaks.len() <= MAX_ARRAY
+        && k.breaks
+            .iter()
+            .all(|&t| near_ab.map_or_else(|| fin(t), |(a, b)| near(t, a, b)))
+        && k.conts.len() <= MAX_ARRAY
+        && k.conts.iter().all(|c| (0..=13).contains(c))
+}
+
+fn object(c: &CivIn) -> Option<Object> {
+    let (bspline, a, b) = curve(&c.curve)?;
+    if c.copy > 3 || c.owner > 7 || !c.cache.as_ref().is_none_or(|k| cache_ok(k, Some((a, b)))) {
+        return None;
+    }
+    let mut owner = c.owner;
+    if c.copy == 1 || c.copy == 3 {
+        owner |= 1;
+    }
+    if c.copy == 2 || c.copy == 3 {
+        owner |= 2;
+    }
+    let cached = c
+        .cache
+        .as_ref()
+        .filter(|k| !k.need)
+        .map(|k| (k.breaks.len(), k.conts.len()));
+    Some(Object {
+        bspline,
+        a,
+        b,
+        owner,
+        cached,
+    })
+}
+
+/// Whether an op on curve in volume `c` keeps the contract.
+fn object_op(op: &OpIn, c: Object) -> bool {
+    let param = |t: f64| near(t, c.a, c.b);
+    match op {
+        OpIn::Info { types } => {
+            types.len() <= MAX_ARRAY && types.iter().all(|t| (-(1 << 30)..=1 << 30).contains(t))
+        }
+        OpIn::Eval { t, n, .. } => param(*t) && *n <= 5,
+        OpIn::EvalPoint { t } => param(*t),
+        OpIn::Knots { ivl, .. } => ivl.unwrap_or([0.0, 0.0]).iter().all(|&t| param(t)),
+        OpIn::Mults { knots } => {
+            knots.len() <= MAX_ARRAY
+                && knots.iter().all(|&t| param(t))
+                && c.cached.is_none_or(|(nb, _)| knots.len() <= nb)
+        }
+        OpIn::Nnk => c.cached.is_none_or(|(nb, nc)| nb == nc),
+        OpIn::Conts { angle } => {
+            fin(*angle) && (0.0..=90.0).contains(angle) && c.cached.is_none_or(|(nb, _)| nb != 0)
+        }
+        OpIn::Equal { other } => other.as_ref().is_none_or(|o| object(o).is_some()),
+        // an owned Hermite base curve cannot be copied
+        OpIn::Copy | OpIn::Clone => c.bspline || !(c.owner == 1 || c.owner == 3),
+        OpIn::Reverse { a, b } => param(*a) && param(*b),
+        OpIn::Trim { a, b, mode } => param(*a) && param(*b) && (0..=2).contains(mode),
+        OpIn::EditParam { a, b } => param(*a) && param(*b) && (b - a).abs() >= 1e-6 * (c.b - c.a),
+        OpIn::Transform {
+            origin,
+            x,
+            y,
+            scale,
+        } => [origin, x, y, &scale.unwrap_or([1.0; 3])]
+            .iter()
+            .all(|v| vec3(v)),
+        OpIn::ReadDb { .. } | OpIn::Exact { .. } | OpIn::AssertValid { .. } => false,
+    }
+}
+
+/// Whether an exact curve keeps the contract, and whether it is a Hermite curve and one
+/// with a 3D component above `1e16`. A raw-knot B-spline is not an exact curve (the
+/// wrapper reads its kind as a line).
+fn exact_curve(c: &ExactCurveIn) -> Option<(bool, bool)> {
+    match c {
+        ExactCurveIn::Curve(CurveIn::Bspline(bs)) if bs.raw_knots => None,
+        ExactCurveIn::Curve(CurveIn::Hermite(h)) => {
+            let big = h.dim == 3
+                && [h.p1, h.d1, h.p2, h.d2]
+                    .iter()
+                    .flatten()
+                    .any(|c| c.abs() > 1e16);
+            curve(&CurveIn::Hermite(h.clone())).map(|_| (true, big))
+        }
+        ExactCurveIn::Curve(c) => curve(c).map(|_| (false, false)),
+        ExactCurveIn::Line { p1, p2 } => (vec3(p1) && vec3(p2)).then_some((false, false)),
+        ExactCurveIn::Circle { c, x, y, a0, a1, r } => {
+            let cross = [
+                x[1] * y[2] - x[2] * y[1],
+                x[2] * y[0] - x[0] * y[2],
+                x[0] * y[1] - x[1] * y[0],
+            ];
+            let ok = vec3(c)
+                && nonzero3(x)
+                && nonzero3(y)
+                && contract::len_sq(cross) >= 1e-6 * contract::len_sq(*x) * contract::len_sq(*y)
+                && fin(*a0)
+                && fin(*a1)
+                && fin(*r)
+                && *r >= 1e-9
+                && *a0 >= -360.0
+                && *a1 <= a0 + 360.0
+                && a1 > a0
+                && *a1 <= 360.0;
+            ok.then_some((false, false))
+        }
+    }
+}
+
+/// Whether a volume keeps the contract, and whether its first map twists: one to
+/// [`MAX_MAPS`] maps of a kind up to 7, transform maps with finite rows, component maps
+/// (bend, unbend, twist) with a component of non-zero axes and no orient map.
+fn volume(maps: &[MapIn]) -> Option<bool> {
+    if !(1..=MAX_MAPS).contains(&maps.len()) {
+        return None;
+    }
+    let ok = maps.iter().all(|m| {
+        let component = m.kind >= 5;
+        m.kind <= 7
+            && (m.kind != 1 || m.t.unwrap_or_default().iter().all(vec3))
+            && (!component
+                || m.comp.as_ref().is_some_and(|c| {
+                    vec3(&c.p) && nonzero3(&c.axis) && nonzero3(&c.mid) && fin(c.a) && fin(c.b)
+                }))
+            && m.orient.is_none_or(|o| !component && o.iter().all(vec3))
+    });
+    ok.then(|| maps.first().is_some_and(|m| m.kind == 2 || m.kind == 5))
+}
+
+/// Whether ASCII `bytes` hold a run of digits naming a volume type (22000 to 22999).
+fn has_volume_type(bytes: &[u8]) -> bool {
+    let mut value: u64 = 0;
+    let mut in_run = false;
+    for &c in bytes.iter().chain(core::iter::once(&b' ')) {
+        if c.is_ascii_digit() {
+            value = value.saturating_mul(10).saturating_add(u64::from(c - b'0'));
+            in_run = true;
+        } else {
+            if in_run && (22000..=22999).contains(&value) {
+                return true;
+            }
+            value = 0;
+            in_run = false;
+        }
+    }
+    false
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_crv_in_volume.rs`, `validate`): a curve in volume
+/// for every object op as [`object`] takes it with the op's arguments ([`object_op`]: params
+/// within [`MAX_REL_DIST`] domain lengths, the cached break and continuity counts, no copy
+/// of an owned Hermite curve), a record that names no volume type, exact curves and volumes
+/// as [`exact_curve`] and [`volume`] take them, no twist head map for an exact Hermite curve
+/// (its copy fails), and no `AssertValid` test level 3.
+fn keeps_contract(i: &Inputs) -> bool {
+    match &i.op {
+        OpIn::ReadDb { version, text } => {
+            (0..=1 << 20).contains(version)
+                && text.len() <= MAX_DB_BYTES
+                && !has_volume_type(text.as_bytes())
+        }
+        OpIn::Exact {
+            curve: c,
+            volume: v,
+            ..
+        } => match (exact_curve(c), volume(v)) {
+            (Some((hermite, _)), Some(head_twist)) => !(hermite && head_twist),
+            _ => false,
+        },
+        OpIn::AssertValid {
+            curve: c,
+            copy,
+            owner,
+            cache,
+            volume: v,
+            level,
+            list,
+            ..
+        } => {
+            exact_curve(c).is_some_and(|(_, big)| !(*list && big))
+                && *copy <= 1
+                && *owner <= 3
+                && cache.as_ref().is_none_or(|k| cache_ok(k, None))
+                && volume(v).is_some()
+                && *level <= 4
+                && *level != 3
+        }
+        op => i
+            .civ
+            .as_ref()
+            .and_then(object)
+            .is_some_and(|c| object_op(op, c)),
+    }
+}
+
 // ---- Rust side --------------------------------------------------------------------
 
 fn v3(p: [f64; 3]) -> Vec3 {
@@ -368,8 +632,12 @@ fn put_curve(o: &mut Vec<f64>, c: &Curve) -> Result<(), HarnessError> {
         }
         CurveKind::Hermite(h) => {
             o.extend([1.0, h.dim() as f64]);
-            let a = h.evaluate(0.0, 1, false).map_err(|e| harness(e.to_string()))?;
-            let e = h.evaluate(1.0, 1, false).map_err(|e| harness(e.to_string()))?;
+            let a = h
+                .evaluate(0.0, 1, false)
+                .map_err(|e| harness(e.to_string()))?;
+            let e = h
+                .evaluate(1.0, 1, false)
+                .map_err(|e| harness(e.to_string()))?;
             for v in a.iter().take(2).chain(e.iter().take(2)) {
                 pv(o, *v);
             }
@@ -466,7 +734,10 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     if let OpIn::AssertValid { .. } = &i.op {
         return rust_assert_valid(&i.op);
     }
-    let civ_in = i.civ.as_ref().ok_or_else(|| harness("object op without civ"))?;
+    let civ_in = i
+        .civ
+        .as_ref()
+        .ok_or_else(|| harness("object op without civ"))?;
     let mut civ = build(civ_in)?;
     let k = Kernel::default();
     match &i.op {
@@ -623,7 +894,9 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             });
             put_state(&mut o, &civ)?;
         }
-        OpIn::ReadDb { .. } | OpIn::Exact { .. } | OpIn::AssertValid { .. } => return Err(harness("static op")),
+        OpIn::ReadDb { .. } | OpIn::Exact { .. } | OpIn::AssertValid { .. } => {
+            return Err(harness("static op"))
+        }
     }
     Ok(to_output(&o))
 }
@@ -965,14 +1238,7 @@ fn build_exact_curve(k: &Kernel, c: &ExactCurveIn) -> Result<Curve, HarnessError
     match c {
         ExactCurveIn::Curve(c) => build_curve(c),
         ExactCurveIn::Line { p1, p2 } => Ok(Curve::from(Line::from_points(v3(*p1), v3(*p2), 3))),
-        ExactCurveIn::Circle {
-            c,
-            x,
-            y,
-            a0,
-            a1,
-            r,
-        } => Ellipse::new_circle(
+        ExactCurveIn::Circle { c, x, y, a0, a1, r } => Ellipse::new_circle(
             k,
             v3(*c),
             v3(*x),
@@ -1052,7 +1318,11 @@ fn put_exact_curve(o: &mut Vec<f64>, k: &Kernel, c: &Curve) -> solidcore::Result
     Ok(())
 }
 
-fn rust_exact(curve: &ExactCurveIn, in_param: bool, volume: &[MapIn]) -> Result<Output, HarnessError> {
+fn rust_exact(
+    curve: &ExactCurveIn,
+    in_param: bool,
+    volume: &[MapIn],
+) -> Result<Output, HarnessError> {
     let k = Kernel::default();
     let mut o: Vec<f64> = Vec::new();
     let civ = CrvInVolume::new(
@@ -1157,7 +1427,11 @@ fn gen_assert_valid_case(rng: &mut Rng) -> OpIn {
     }
     let cache = rng.chance(0.4).then(|| {
         let nb = rng.below(4) as usize;
-        let nc = if rng.chance(0.6) { nb } else { rng.below(4) as usize };
+        let nc = if rng.chance(0.6) {
+            nb
+        } else {
+            rng.below(4) as usize
+        };
         CacheIn {
             need: rng.chance(0.5),
             breaks: (0..nb).map(|_| rng.unit()).collect(),
@@ -1180,9 +1454,17 @@ fn gen_assert_valid_case(rng: &mut Rng) -> OpIn {
 fn assert_valid_cases() -> Result<Vec<Case>, HarnessError> {
     const WANT: usize = 300;
     let mut rng = Rng::new(0x5eed_a55e);
-    (0..WANT)
-        .map(|n| exact_case(format!("assert_valid_{n}"), gen_assert_valid_case(&mut rng)))
-        .collect()
+    let mut cases = Vec::new();
+    for _ in 0..20_000 {
+        if cases.len() >= WANT {
+            break;
+        }
+        let op = gen_assert_valid_case(&mut rng);
+        if keeps_static_contract(&op) {
+            cases.push(exact_case(format!("assert_valid_{}", cases.len()), op)?);
+        }
+    }
+    Ok(cases)
 }
 
 fn add3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -1248,7 +1530,12 @@ fn gen_transform(rng: &mut Rng, s: f64) -> [[f64; 3]; 4] {
             // rotation about z by a random angle, translated
             let a = rng.uniform(-3.2, 3.2);
             let (sn, c) = a.sin_cos();
-            [scale3(s, rp(rng, 5.0)), [c, sn, 0.0], [-sn, c, 0.0], [0.0, 0.0, 1.0]]
+            [
+                scale3(s, rp(rng, 5.0)),
+                [c, sn, 0.0],
+                [-sn, c, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
         }
         3 => {
             let f = gen_frame(rng, s);
@@ -1257,9 +1544,19 @@ fn gen_transform(rng: &mut Rng, s: f64) -> [[f64; 3]; 4] {
         4 => {
             // scaled: not unit orthonormal (no exact image)
             let k = rng.uniform(0.1, 4.0);
-            [scale3(s, rp(rng, 5.0)), [k, 0.0, 0.0], [0.0, k, 0.0], [0.0, 0.0, k]]
+            [
+                scale3(s, rp(rng, 5.0)),
+                [k, 0.0, 0.0],
+                [0.0, k, 0.0],
+                [0.0, 0.0, k],
+            ]
         }
-        _ => [scale3(s, rp(rng, 5.0)), rp(rng, 2.0), rp(rng, 2.0), rp(rng, 2.0)],
+        _ => [
+            scale3(s, rp(rng, 5.0)),
+            rp(rng, 2.0),
+            rp(rng, 2.0),
+            rp(rng, 2.0),
+        ],
     }
 }
 
@@ -1416,7 +1713,11 @@ fn gen_exact_volume_case(rng: &mut Rng) -> OpIn {
         }
     };
     // the input frame: in-space is the volume's frame, parameter space the identity
-    let f = if in_param || kind < 5 { IDENTITY_FRAME } else { frame };
+    let f = if in_param || kind < 5 {
+        IDENTITY_FRAME
+    } else {
+        frame
+    };
     let f = if kind < 5 && !in_param {
         head.orient.unwrap_or(f)
     } else {
@@ -1427,7 +1728,11 @@ fn gen_exact_volume_case(rng: &mut Rng) -> OpIn {
     let curve = match (kind, rng.below(7)) {
         // twist: curves in planes normal to the axis (height 0 is the zero angle)
         (2 | 5, 0..=4) => {
-            let c = if rng.chance(0.2) { 0.0 } else { rng.uniform(-3.0, 3.0) * s };
+            let c = if rng.chance(0.2) {
+                0.0
+            } else {
+                rng.uniform(-3.0, 3.0) * s
+            };
             let (x, y) = (rng.uniform(-2.0, 2.0) * s, rng.uniform(-2.0, 2.0) * s);
             if rng.chance(0.15) {
                 // tilted out of the plane
@@ -1448,7 +1753,12 @@ fn gen_exact_volume_case(rng: &mut Rng) -> OpIn {
             let t: f64 = rng.uniform(-3.0, 3.0);
             let (z0, z1) = span(rng, -2.0 * s, 2.0 * s);
             let (x, y) = (r * t.cos(), r * t.sin());
-            aligned(rng, at_frame(&f, x, y, z0), at_frame(&f, x, y, z1 + 0.1 * s), f[1])
+            aligned(
+                rng,
+                at_frame(&f, x, y, z0),
+                at_frame(&f, x, y, z1 + 0.1 * s),
+                f[1],
+            )
         }
         // unbend: circles centred on the axis
         (3 | 6, 2 | 3) => {
@@ -1472,7 +1782,11 @@ fn gen_exact_volume_case(rng: &mut Rng) -> OpIn {
         }
         // unbend: lines radiating from the axis
         (3 | 6, 4 | 5) => {
-            let t: f64 = if rng.chance(0.2) { 0.0 } else { rng.uniform(-3.0, 3.0) };
+            let t: f64 = if rng.chance(0.2) {
+                0.0
+            } else {
+                rng.uniform(-3.0, 3.0)
+            };
             let (r0, r1) = span(rng, 0.2 * s, 3.0 * s);
             let z = rng.uniform(-2.0, 2.0) * s;
             let tilt = add3(scale3(-t.sin(), f[1]), scale3(t.cos(), f[2]));
@@ -1488,26 +1802,55 @@ fn gen_exact_volume_case(rng: &mut Rng) -> OpIn {
             let m = rng.uniform(0.2, 3.0) * s;
             let y = rng.uniform(-3.0, 3.0) * n;
             let (z0, z1) = span(rng, -2.0 * s, 2.0 * s);
-            aligned(rng, at_frame(&f, m, y, z0), at_frame(&f, m, y, z1 + 0.1 * s), f[1])
+            aligned(
+                rng,
+                at_frame(&f, m, y, z0),
+                at_frame(&f, m, y, z1 + 0.1 * s),
+                f[1],
+            )
         }
         // bend: lines parallel to the mid direction
         (4 | 7, 2 | 3) => {
-            let y = if rng.chance(0.2) { 0.0 } else { rng.uniform(-3.0, 3.0) * n };
+            let y = if rng.chance(0.2) {
+                0.0
+            } else {
+                rng.uniform(-3.0, 3.0) * n
+            };
             let (x0, x1) = span(rng, 0.2 * s, 3.0 * s);
             let z = rng.uniform(-2.0, 2.0) * s;
-            aligned(rng, at_frame(&f, x0, y, z), at_frame(&f, x1 + 0.1 * s, y, z), f[3])
+            aligned(
+                rng,
+                at_frame(&f, x0, y, z),
+                at_frame(&f, x1 + 0.1 * s, y, z),
+                f[3],
+            )
         }
         // bend: lines parallel to the binormal (circular arcs)
         (4 | 7, 4 | 5) => {
             let m = rng.uniform(0.2, 3.0) * s;
             let (y0, y1) = span(rng, -3.1 * n, 3.1 * n);
             let z = rng.uniform(-2.0, 2.0) * s;
-            aligned(rng, at_frame(&f, m, y0, z), at_frame(&f, m, y1 + 0.01 * n, z), f[3])
+            aligned(
+                rng,
+                at_frame(&f, m, y0, z),
+                at_frame(&f, m, y1 + 0.01 * n, z),
+                f[3],
+            )
         }
         // anything else: an unaligned segment (no exact image) or one leaving the domain
         _ => {
-            let p = at_frame(&f, rng.uniform(-1.0, 3.0) * s, rng.uniform(-2.0, 2.0) * s, 0.0);
-            let q = at_frame(&f, rng.uniform(-1.0, 3.0) * s, rng.uniform(-2.0, 2.0) * s, s);
+            let p = at_frame(
+                &f,
+                rng.uniform(-1.0, 3.0) * s,
+                rng.uniform(-2.0, 2.0) * s,
+                0.0,
+            );
+            let q = at_frame(
+                &f,
+                rng.uniform(-1.0, 3.0) * s,
+                rng.uniform(-2.0, 2.0) * s,
+                s,
+            );
             if rng.chance(0.3) {
                 ExactCurveIn::Curve(CurveIn::Hermite(HermiteIn {
                     dim: 3,
@@ -1537,6 +1880,14 @@ fn gen_exact_volume_case(rng: &mut Rng) -> OpIn {
         in_param,
         volume,
     }
+}
+
+/// Whether a static op (one without a curve in volume) keeps the input contract.
+fn keeps_static_contract(op: &OpIn) -> bool {
+    keeps_contract(&Inputs {
+        civ: None,
+        op: op.clone(),
+    })
 }
 
 fn exact_case(name: String, op: OpIn) -> Result<Case, HarnessError> {
@@ -1586,13 +1937,31 @@ fn exact_volume_cases() -> Result<Vec<Case>, HarnessError> {
         (comp(7, 1.0), line([1.5, -1.0, 0.5], [1.5, 1.0, 0.5])),
         (comp(7, 1.0), line([1.0, 0.3, -1.0], [1.0, 0.3, 1.0])),
         (comp(7, 1.0), line([0.5, 0.2, 0.5], [2.0, 0.2, 0.5])),
-        (comp(6, 1.0), circle([0.0, 0.0, 0.5], [0.0, 1.0, 0.0], -179.0, 179.0, 1.5)),
-        (comp(6, 1.0), circle([0.0, 0.0, 0.5], [0.0, -1.0, 0.0], -90.0, 45.0, 1.5)),
-        (comp(6, 1.0), line([0.5 * 0.7f64.cos(), 0.5 * 0.7f64.sin(), 0.2], [2.0 * 0.7f64.cos(), 2.0 * 0.7f64.sin(), 0.2])),
+        (
+            comp(6, 1.0),
+            circle([0.0, 0.0, 0.5], [0.0, 1.0, 0.0], -179.0, 179.0, 1.5),
+        ),
+        (
+            comp(6, 1.0),
+            circle([0.0, 0.0, 0.5], [0.0, -1.0, 0.0], -90.0, 45.0, 1.5),
+        ),
+        (
+            comp(6, 1.0),
+            line(
+                [0.5 * 0.7f64.cos(), 0.5 * 0.7f64.sin(), 0.2],
+                [2.0 * 0.7f64.cos(), 2.0 * 0.7f64.sin(), 0.2],
+            ),
+        ),
         (comp(6, 1.0), line([1.0, 0.5, -1.0], [1.0, 0.5, 1.0])),
         (comp(5, 2.0), line([-1.0, 0.5, 0.0], [1.0, -0.5, 0.0])),
-        (comp(5, -3.0), circle([0.3, 0.2, 0.75], [0.0, 1.0, 0.0], 0.0, 270.0, 1.0)),
-        (comp(5, 2.0), circle([0.3, 0.2, 1.25], [0.0, -1.0, 0.0], -45.0, 300.0, 0.5)),
+        (
+            comp(5, -3.0),
+            circle([0.3, 0.2, 0.75], [0.0, 1.0, 0.0], 0.0, 270.0, 1.0),
+        ),
+        (
+            comp(5, 2.0),
+            circle([0.3, 0.2, 1.25], [0.0, -1.0, 0.0], -45.0, 300.0, 0.5),
+        ),
     ];
     for (n, (map, curve)) in hand.into_iter().enumerate() {
         for in_param in [false, true] {
@@ -1605,10 +1974,19 @@ fn exact_volume_cases() -> Result<Vec<Case>, HarnessError> {
             cases.push(exact_case(name, op)?);
         }
     }
+    let hand_count = cases.len();
     let mut rng = Rng::new(0x5eed_c1e4);
-    for n in 0..WANT {
+    for _ in 0..20_000 {
+        if cases.len() >= hand_count + WANT {
+            break;
+        }
         let op = gen_exact_volume_case(&mut rng);
-        cases.push(exact_case(format!("exact_volume_{n}"), op)?);
+        if keeps_static_contract(&op) {
+            cases.push(exact_case(
+                format!("exact_volume_{}", cases.len() - hand_count),
+                op,
+            )?);
+        }
     }
     Ok(cases)
 }
@@ -1619,7 +1997,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        let i = (0..64).map(|_| gen_case(rng)).find(keeps_contract)?;
+        serde_json::to_value(i).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
