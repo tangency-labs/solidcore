@@ -41,7 +41,7 @@ use crate::offset::offset_executive::p1::{OffsetExecutive, OffsetOperation};
 use crate::offset::offset_executive::p2::OffsetNotifications;
 use crate::query::brep::{calculate_bounding_box, BoundingBoxOptions};
 use crate::surface::implicit::AnalyticSupport;
-use crate::surface::surface::{Surface, SurfaceKind};
+use crate::surface::surface::Surface;
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2;
 use crate::topology::brep::p5;
@@ -400,7 +400,7 @@ fn same_axis(p: &Axis2Placement, q: &Axis2Placement) -> bool {
 mod exact {
     use crate::math::Vec3;
 
-    /// `a + b` as `(s, e)`: `s = fl(a + b)` and its rounding error (Knuth's TwoSum).
+    /// `a + b` as `(s, e)`: `s = fl(a + b)` and its rounding error (Knuth's `TwoSum`).
     fn two_sum(a: f64, b: f64) -> (f64, f64) {
         let s = a + b;
         let bb = s - a;
@@ -521,6 +521,7 @@ mod tests {
     use crate::math::{Point3, Vec3};
     use crate::primitive::api_primitives::create_box;
     use crate::surface::plane::Plane;
+    use crate::surface::surface::SurfaceKind;
 
     use crate::geom::attribute::{AttributeStore, ObjectKey};
     use crate::geom::object::ObjectRef;

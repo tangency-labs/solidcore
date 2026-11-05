@@ -482,12 +482,19 @@ fn not_exact(distance: Option<f64>) -> SolidError {
 /// is not measured to the stop ([`Says::Unproved`]) bounds the bracket too, when a shorter
 /// ask measured to the stop reaches `d`; otherwise the extension is refused as not exact,
 /// naming the longest such ask's distance.
+///
+/// No ask is below the shortest extension the side's knot can carry
+/// ([`Local::least_natural_step`]; its new knot `b + e` past `b` serves every continuity's
+/// end knot, the mirror's `2 b - (b - e)` too): every halving and scaling stops there. At that
+/// step a length not proved short of `d` meets it (a rounding-sized distance, which no
+/// shorter extension can be built for), with its own measured enclosure and bound.
 fn solve(
     made: &dyn Fn(f64) -> Result<Option<Made>>,
     across: &dyn Fn(&Option<Surface>) -> Result<Option<Across>>,
     source: &Local,
     d: f64,
 ) -> Result<(Made, Across)> {
+    let least = source.least_natural_step()?;
     // the first ask: the parameter range times d over the source's length across it
     let range = source.range()?;
     let whole = made(range)?;
@@ -495,7 +502,7 @@ fn solve(
         Some(s) => {
             let l = across(&s.0)?.map_or(0.0, |b| b.enclosure.mid());
             if l > 0.0 && l.is_finite() {
-                range * d / l
+                (range * d / l).max(least)
             } else {
                 range
             }
@@ -509,7 +516,7 @@ fn solve(
         let (mut lo, mut hi) = (0.0_f64, e);
         let mut found: Option<(f64, f64, f64)> = None;
         for _ in 0..BISECTIONS {
-            let m = 0.5 * (lo + hi);
+            let m = (0.5 * (lo + hi)).max(least);
             if !(m > lo && m < hi) {
                 break;
             }
@@ -541,7 +548,8 @@ fn solve(
             0.5 * (good.get() + bad.get())
         } else {
             e
-        };
+        }
+        .max(least);
         if let Some(s) = made(e)? {
             good.set(good.get().max(e));
             let b = across(&s.0)?;
@@ -551,7 +559,7 @@ fn solve(
         // the longest positive ask, by halving between it and the last good one
         let (mut lo, mut hi) = (good.get(), e);
         for _ in 0..BISECTIONS {
-            let m = 0.5 * (lo + hi);
+            let m = (0.5 * (lo + hi)).max(least);
             if !(m > lo && m < hi) {
                 break;
             }
@@ -585,7 +593,7 @@ fn solve(
         let mut reaching: Option<Asked> = None;
         let mut back = 0.5;
         for _ in 0..BACK_OFFS {
-            let ask = lo * (1.0 - back);
+            let ask = (lo * (1.0 - back)).max(least);
             if let Some(s) = made(ask)? {
                 let b = across(&s.0)?;
                 if let Some(l) = workable(b.as_ref(), s.1) {
@@ -644,6 +652,9 @@ fn solve(
         ask = made_ask;
         let f = match says(b.as_ref(), s.1, d) {
             Says::Met => return finish(s, b),
+            Says::Past(_) | Says::Unproved if ask <= least && not_short(b.as_ref(), s.1, d) => {
+                return finish(s, b)
+            }
             Says::Short(f) => {
                 short = Some((ask, f));
                 if let Some(l) = workable(b.as_ref(), s.1) {
@@ -731,6 +742,13 @@ fn solve(
         operation: OP,
         iterations: u32::try_from(SOLVE_TRIES).unwrap_or(u32::MAX),
     })
+}
+
+/// Whether the across length `b` of an extension whose bound is `extension` is measured
+/// (every leaf converged, the bound finite) and not proved short of `d` (its enclosure
+/// reaches it).
+fn not_short(b: Option<&Across>, extension: f64, d: f64) -> bool {
+    b.is_some_and(|b| b.converged && extension.is_finite() && b.enclosure.upper >= d)
 }
 
 /// A met ask's extension and its length (met implies a length).
@@ -876,13 +894,27 @@ impl Local {
     /// span `[c, b]`): the step to the next double past `b`, so the new knot `b + e` is past
     /// `b` (an extension whose knot rounds onto `b` would be a span of no length), and no
     /// less than `(b - c) EPSILON`, so the de Casteljau parameter `1 + e / (b - c)` is past
-    /// 1 (any `x >= EPSILON (1 - u)` added to 1 rounds up to `1 + EPSILON`). A solver asks
-    /// nothing shorter: a rounding-sized target is met by this step.
+    /// 1 (any `x >= EPSILON (1 - u)` added to 1 rounds up to `1 + EPSILON`). The other
+    /// continuities' end knots (`b + e`, the mirror's `2 b - (b - e)`) are past `b` at it
+    /// too. A solver asks nothing shorter: a rounding-sized target is met by this step.
     pub(super) fn least_natural_step(&self) -> Result<f64> {
         let b = self.end()?;
         let c = self.before_end(0)?;
+        if !b.is_finite() {
+            return Err(op_err());
+        }
+        // the next double past a finite `b`: its bit pattern one further from 0 when b > 0,
+        // one nearer when b < 0 (a finite double's bits are below 0x7ff0..., and a negative
+        // one's above 0x8000..., so neither step wraps)
+        let up = if b > 0.0 {
+            f64::from_bits(b.to_bits() + 1)
+        } else if b < 0.0 {
+            f64::from_bits(b.to_bits() - 1)
+        } else {
+            f64::from_bits(1)
+        };
         // (two neighbouring doubles: their difference is exact)
-        Ok((b.next_up() - b).max((b - c) * f64::EPSILON))
+        Ok((up - b).max((b - c) * f64::EPSILON))
     }
 
     /// The knot `back` places before the end's `p + 1` copies (`u_n` for 0).
@@ -1023,6 +1055,14 @@ impl Local {
             return Err(SolidError::invalid_input(
                 OP,
                 "the extension is not positive",
+            ));
+        }
+        // a new end knot that rounds onto the side's is a span of no length, whatever the
+        // continuity
+        if e < self.least_natural_step()? {
+            return Err(SolidError::invalid_input(
+                OP,
+                "the extension is shorter than the side's knot can carry",
             ));
         }
         let grown = match how {

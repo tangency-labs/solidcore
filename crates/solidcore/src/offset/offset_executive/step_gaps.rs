@@ -194,7 +194,7 @@ impl OffsetExecutive {
                 let opposite = match orientation {
                     OrientType::Same => OrientType::Opposite,
                     OrientType::Opposite => OrientType::Same,
-                    other => other,
+                    OrientType::Unknown => OrientType::Unknown,
                 };
                 eu::set_orientation(b, offset_u, orientation)?;
                 eu::set_orientation(b, offset_mate, opposite)?;

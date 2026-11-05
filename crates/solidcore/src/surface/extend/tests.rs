@@ -1518,9 +1518,8 @@ fn a_cylinder_extends_by_a_rounding_sized_distance() {
         // step its knot carries (a few ulps of the parameter, unit speed along v)
         let mut extended = 0;
         for s in e.sides {
-            let a = match s {
-                SideExtension::Extended(a) | SideExtension::UpToLimit(a) => a,
-                _ => continue,
+            let (SideExtension::Extended(a) | SideExtension::UpToLimit(a)) = s else {
+                continue;
             };
             extended += 1;
             assert!(
@@ -1529,5 +1528,54 @@ fn a_cylinder_extends_by_a_rounding_sized_distance() {
             );
         }
         assert_eq!(extended, 2, "{d:e} {:?}", e.sides);
+    }
+}
+
+/// The B-spline path's own solve, at a rounding-sized distance: the parabola with its u
+/// knots at `[3, 4]`, where the first ask (the range times `d` over the length, about
+/// `1.6e-16`) puts the new knot `4 + e` back on 4 (a span of no length). Every continuity
+/// is built at the shortest step the knot carries: the knot past 4, the source kept, the
+/// length not proved short of `d` and no longer than a few ulps of the parameter (speed
+/// about 2.2 at x = 1).
+#[test]
+fn a_b_spline_extends_by_a_rounding_sized_distance() {
+    let row = |x: f64, y: f64| vec![[x, y, 0.0, 1.0], [x, y, 1.0, 1.0]];
+    let s = spline(
+        &[row(0.0, 0.0), row(0.5, 0.0), row(1.0, 1.0)],
+        2,
+        1,
+        &[3.0, 3.0, 3.0, 4.0, 4.0, 4.0],
+        &[0.0, 0.0, 1.0, 1.0],
+        false,
+    );
+    for how in [
+        Continuity::Natural,
+        Continuity::Tangent,
+        Continuity::Curvature,
+        Continuity::Ruled,
+    ] {
+        for d in [3.5691962659704166e-16, f64::MIN_POSITIVE] {
+            let e = s
+                .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, how, d)
+                .unwrap_or_else(|err| panic!("{how:?} {d:e}: {err:?}"));
+            let SurfaceKind::BSpline(b) = e.surface.kind() else {
+                panic!("{how:?} {d:e}: not a B-spline");
+            };
+            let end = dom(&e.surface).max().x;
+            assert!(
+                end > 4.0 && end - 4.0 <= 4.0 * f64::EPSILON,
+                "{how:?} {d:e} {end}"
+            );
+            let knots = b.gw_nurb().unwrap().u_knots().to_vec();
+            assert_eq!(knots.iter().filter(|&&x| x == 4.0).count(), 2, "{knots:?}");
+            let a = e.across;
+            assert!(a.converged, "{how:?} {d:e} {a:?}");
+            assert!(
+                a.enclosure.upper >= d && a.enclosure.lower <= 1e-14,
+                "{how:?} {d:e} {a:?}"
+            );
+            assert_eq!(e.source, 0.0);
+            assert!(e.extension.is_finite(), "{how:?} {d:e}");
+        }
     }
 }
