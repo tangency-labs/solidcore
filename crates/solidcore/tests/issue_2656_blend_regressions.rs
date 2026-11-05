@@ -469,11 +469,11 @@ fn outside_setback_with_solidcraft_s_calls_is_the_closed_form() {
 /// The rig's every-block-cylinder-tangent-concave-arc-r2-partial-chain input
 /// (block 40 x 20 x 15 joined to the cylinder R10 x 30): the concave
 /// arc where the block's top meets the cylinder is split at the cylinder's seam, and the
-/// pick (the rig's point) takes one piece. The round of that piece ends at the seam vertex,
-/// where the arc runs on between the same two faces: the End at the smooth vertex caps it
-/// there (#453's construction), so this case's 90 degree seam is not a run-on's.
+/// pick (the rig's point) takes one piece. The round of that piece would end at the seam
+/// vertex, where the arc runs on between the same two faces: a round does not end at a seam
+/// (#2864), so the blend refuses it instead of capping it there with #453's construction.
 #[test]
-fn block_cylinder_arc_piece_is_capped_at_the_seam() {
+fn block_cylinder_arc_piece_is_refused_at_the_seam() {
     let mut k = solidcraft_kernel();
     let bl = create_box(&mut k, Point3::new(0.0, -10.0, 0.0), 40.0, 20.0, 15.0).unwrap();
     let cy = create_cylinder(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 30.0).unwrap();
@@ -492,9 +492,8 @@ fn block_cylinder_arc_piece_is_capped_at_the_seam() {
         !at(Point3::new(0.0, 10.0, 15.0)),
         "the piece ends at the seam: {ends:?}"
     );
-    blend(&mut k, &mut b, Kind::Round, &[at_pick], 2.0).unwrap();
-    let ((faces, _, _), _) = measured(&mut k, &mut b);
-    assert_eq!(faces, 9, "the round and its cap");
+    let r = blend(&mut k, &mut b, Kind::Round, &[at_pick], 2.0);
+    assert!(r.is_err(), "the piece's round refused at the seam, not capped");
 }
 
 /// tangency-labs/solidcore#2679 (the blend corner): fillets/1207 with the r3 round's end
