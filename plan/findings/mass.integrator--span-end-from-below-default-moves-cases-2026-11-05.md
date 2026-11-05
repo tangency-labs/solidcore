@@ -38,7 +38,7 @@ Every move is far inside the requested accuracy; the C++ side is unchanged.
   by the orientation) -0.0685495243146485 -> -0.06854952431479716 (3.4e-11 absolute,
   2.5e-11 of the group's largest magnitude 1.343).
 - `issue1435_multispan_sub_*` (no closed reference here): moves of 3.2e-6 (eps 1e-3 flags1),
-  9.0e-10 (1e-3 flags63), 1.3e-9 (1e-6 flags1, query2, query4), 7.5e-13 (1e-6 flags63),
+  8.9e-10 (1e-3 flags63), 1.3e-9 (1e-6 flags1, query2, query4), 7.5e-13 (1e-6 flags63),
   2.7e-12 (1e-8 flags1), 1.5e-15 (1e-8 flags63), 1.2e-11 (query3), relative.
 - `issue1435_multispan_huge_*` 4.9e-9 (eps 1e-4), 2.2e-14 (1e-8); `tiny_*` 3.3e-10 (1e-4),
   6.1e-11 (1e-8), relative.
