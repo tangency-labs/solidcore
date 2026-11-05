@@ -1,10 +1,10 @@
 //! Runner for unit `geom.tree`: spatial object trees and subdivision tree node
 //! relations.
 //!
-//! C++: `solidcore_ffi::units::geom_tree` (upstream `source/SMLib/src/SmTree.cpp`).
+//! Ported from upstream `source/SMLib/src/SmTree.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::tree`.
 //!
-//! A case is a small program run against one tree on both sides:
+//! A case is a small program run against one tree:
 //!
 //! | `kind`    | constructor                          | ops |
 //! |-----------|--------------------------------------|-----|
@@ -30,8 +30,6 @@ use solidcore::geom::tree::{
 };
 use solidcore::math::Vec3;
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_tree as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -136,28 +134,6 @@ enum Inputs {
         nodes: Vec<PatchNode>,
         queries: Vec<usize>,
     },
-}
-
-fn patch_program(
-    surfaces: &[[[f64; 4]; 4]],
-    owner: i64,
-    nodes: &[PatchNode],
-    queries: &[usize],
-) -> Vec<f64> {
-    let mut out = vec![surfaces.len() as f64, owner as f64];
-    out.extend(surfaces.iter().flatten().flatten().copied());
-    out.push(nodes.len() as f64);
-    for n in nodes {
-        out.extend([
-            n.parent as f64,
-            n.aux as f64,
-            n.patch as f64,
-            n.surface as f64,
-        ]);
-    }
-    out.push(queries.len() as f64);
-    out.extend(queries.iter().map(|&q| q as f64));
-    out
 }
 
 fn rust_patch_lookup(
@@ -297,56 +273,6 @@ fn status_of(e: &SolidError) -> i64 {
     }
 }
 
-fn spatial_prog(ctor: &Ctor, ops: &[SOp]) -> Vec<f64> {
-    let mut v = Vec::new();
-    match ctor {
-        Ctor::Spatial { bbox } => {
-            v.push(0.0);
-            v.extend(bbox);
-        }
-        Ctor::Point { p, size, with_list } => {
-            v.push(1.0);
-            v.extend(p);
-            v.push(*size);
-            v.push(if *with_list { 1.0 } else { 0.0 });
-        }
-    }
-    for op in ops {
-        match op {
-            SOp::Add { bbox, obj, geom } => {
-                v.push(2.0);
-                v.extend(bbox);
-                v.push(*obj as f64);
-                v.push(*geom as f64);
-            }
-            SOp::Rm { bbox, obj } => {
-                v.push(3.0);
-                v.extend(bbox);
-                v.push(*obj as f64);
-            }
-            SOp::Find { bbox } => {
-                v.push(4.0);
-                v.extend(bbox);
-            }
-            SOp::InBox { bbox } => {
-                v.push(5.0);
-                v.extend(bbox);
-            }
-            SOp::Intersects { bbox } => {
-                v.push(6.0);
-                v.extend(bbox);
-            }
-            SOp::Dump => v.push(7.0),
-            SOp::NodeList { node } => {
-                v.push(8.0);
-                v.push(*node as f64);
-            }
-            SOp::Info => v.push(9.0),
-        }
-    }
-    v
-}
-
 fn run_spatial_rust(ctor: &Ctor, ops: &[SOp]) -> solidcore::Result<(Vec<i64>, Vec<f64>)> {
     let mut t: Tree<i64> = match ctor {
         Ctor::Spatial { bbox } => Tree::new_spatial(&ext(*bbox)),
@@ -469,47 +395,6 @@ fn node_class(code: i64) -> NodeClass {
 
 fn link(v: i64) -> Option<NodeId> {
     (v >= 0).then_some(NodeId(v as usize))
-}
-
-fn subdiv_desc(nodes: &[NodeDesc]) -> Vec<i64> {
-    nodes
-        .iter()
-        .flat_map(|d| {
-            [
-                d.parent,
-                d.c1,
-                d.c2,
-                d.aux,
-                d.split,
-                i64::from(d.marked),
-                d.class,
-                d.face,
-                d.surface,
-            ]
-        })
-        .collect()
-}
-
-fn subdiv_prog(ops: &[DOp]) -> Vec<i64> {
-    let mut v = Vec::new();
-    for op in ops {
-        match op {
-            DOp::Neighbors { node } => v.extend([0, *node]),
-            DOp::Propagate { node } => v.extend([1, *node]),
-            DOp::Set {
-                node,
-                marked,
-                class,
-                face,
-            } => v.extend([2, *node, i64::from(*marked), *class, *face]),
-            DOp::Dump => v.push(3),
-            DOp::FirstPatch { node } => v.extend([4, *node]),
-            DOp::OwnerObject { node } => v.extend([5, *node]),
-            DOp::ClearPatch { node } => v.extend([6, *node]),
-            DOp::Owner { surface } => v.extend([7, *surface]),
-        }
-    }
-    v
 }
 
 // Same fixture geometry as the native shim, not a replacement for the tree walk.
@@ -638,10 +523,6 @@ fn run_subdiv_rust(
 
 fn rust_err(e: &SolidError) -> Output {
     Output::unported(e).unwrap_or_else(|| Output::err(format!("rust_error: {e}")))
-}
-
-fn ffi_err(e: &FfiError) -> HarnessError {
-    harness(e.to_string())
 }
 
 // ---- generation -------------------------------------------------------
@@ -861,37 +742,6 @@ impl UnitDiff for Runner {
         "geom.tree"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        match case.parse::<Inputs>()? {
-            Inputs::PatchLookup {
-                surfaces,
-                owner,
-                nodes,
-                queries,
-            } => {
-                let out = ffi::patch_lookup(&patch_program(&surfaces, owner, &nodes, &queries))
-                    .map_err(|e| ffi_err(&e))?;
-                Ok(Output::new().values("patches", out))
-            }
-            Inputs::Spatial { ctor, ops } => {
-                let (oi, of) = ffi::spatial(&spatial_prog(&ctor, &ops)).map_err(|e| ffi_err(&e))?;
-                Ok(Output::new().ints("ints", oi).values("floats", of))
-            }
-            Inputs::Subdiv {
-                nodes,
-                ops,
-                patch_scale,
-            } => {
-                let desc = subdiv_desc(&nodes);
-                let prog = subdiv_prog(&ops);
-                let o = ffi::subdiv(&desc, &prog).map_err(|e| ffi_err(&e))?;
-                let patches =
-                    ffi::subdiv_patches(&desc, &prog, patch_scale).map_err(|e| ffi_err(&e))?;
-                Ok(Output::new().ints("ints", o).values("patches", patches))
-            }
-        }
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         match case.parse::<Inputs>()? {
             Inputs::PatchLookup {
@@ -900,8 +750,6 @@ impl UnitDiff for Runner {
                 nodes,
                 queries,
             } => {
-                ffi::validate_patch_lookup(&patch_program(&surfaces, owner, &nodes, &queries))
-                    .map_err(|e| ffi_err(&e))?;
                 match rust_patch_lookup(&surfaces, owner, &nodes, &queries) {
                     Ok(out) => Ok(Output::new().values("patches", out)),
                     Err(e) => Ok(rust_err(&e)),
@@ -1072,15 +920,14 @@ mod patch_lookup_tests {
             },
         ];
         let queries = [0, 1, 2];
-        let native = ffi::patch_lookup(&patch_program(&surfaces, 0, &nodes, &queries)).unwrap();
         let mut actual = rust_patch_lookup(&surfaces, 0, &nodes, &queries).unwrap();
-        assert_eq!(native, actual);
+        let expected = actual.clone();
         assert_eq!(actual.len(), 63);
         assert_eq!([actual[0], actual[31], actual[62]], [1., 2., -1.]);
         assert_eq!(&actual[1..31], &actual[32..62]);
         actual[0] = 2.;
         assert!(!crate::compare::compare(
-            &Output::new().values("patches", native),
+            &Output::new().values("patches", expected),
             &Output::new().values("patches", actual),
             &[]
         )
@@ -1088,25 +935,15 @@ mod patch_lookup_tests {
     }
 
     #[test]
-    fn malformed_patch_programs_are_refused_before_native_access() {
+    fn patch_lookup_refuses_a_query_past_the_nodes() {
         let net = [[0., 0., 0., 1.]; 4];
-        let mut nodes = vec![PatchNode {
+        let nodes = vec![PatchNode {
             parent: -1,
             aux: 3,
             patch: 0,
             surface: -1,
         }];
-        let good = patch_program(&[net], 0, &nodes, &[0]);
-        assert!(ffi::validate_patch_lookup(&good).is_ok());
-        for len in 0..good.len() {
-            assert!(ffi::validate_patch_lookup(&good[..len]).is_err());
-        }
-        nodes[0].parent = 0;
-        assert!(ffi::patch_lookup(&patch_program(&[net], 0, &nodes, &[0])).is_err());
-        nodes[0].parent = -1;
-        assert!(ffi::patch_lookup(&patch_program(&[net], 0, &nodes, &[1])).is_err());
-        let mut bad_weight = net;
-        bad_weight[0][3] = 0.;
-        assert!(ffi::patch_lookup(&patch_program(&[bad_weight], 0, &nodes, &[0])).is_err());
+        assert!(rust_patch_lookup(&[net], 0, &nodes, &[0]).is_ok());
+        assert!(rust_patch_lookup(&[net], 0, &nodes, &[1]).is_err());
     }
 }

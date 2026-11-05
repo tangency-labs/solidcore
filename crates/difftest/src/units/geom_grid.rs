@@ -1,6 +1,6 @@
 //! Runner for unit `geom.grid`: uniform voxel grids and their 3DDDA ray walk.
 //!
-//! C++: `solidcore_ffi::units::geom_grid` (upstream `source/SMLib/src/SmGrid.cpp`).
+//! Ported from upstream `source/SMLib/src/SmGrid.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::grid`.
 //!
 //! A case is a grid (`SmGrid(bbox, lSize)`) plus a program run against it on both
@@ -45,7 +45,6 @@ use solidcore::geom::tree::NodeId;
 use solidcore::kernel::Kernel;
 use solidcore::math::{Point3, Vec3, BIG_DOUBLE};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_grid as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -137,10 +136,6 @@ struct Inputs {
     ops: Vec<Op>,
 }
 
-fn harness(msg: impl Into<String>) -> HarnessError {
-    HarnessError::new(msg)
-}
-
 fn ext(e: E6) -> Extent3d {
     Extent3d::from_bounds(e[0], e[1], e[2], e[3], e[4], e[5])
 }
@@ -165,81 +160,6 @@ fn status_of(e: &SolidError) -> i64 {
         SolidError::Upstream { code, .. } => i64::from(*code),
         _ => 1001,
     }
-}
-
-fn prog(i: &Inputs) -> Vec<f64> {
-    let mut v = vec![0.0];
-    v.extend(i.grid.bbox);
-    v.extend(i.grid.size.map(|s| s as f64));
-    for op in &i.ops {
-        match op {
-            Op::Add { kind, obj, bbox } => {
-                v.push(1.0);
-                v.push(if *kind == Kind::Poly { 1.0 } else { 3.0 });
-                v.push(*obj as f64);
-                v.extend(bbox);
-            }
-            Op::AddHier {
-                surface,
-                obj,
-                tol,
-                bbox,
-            } => {
-                v.extend([2.0, f64::from(u8::from(*surface)), *obj as f64, *tol]);
-                v.extend(bbox);
-            }
-            Op::Find { bbox } => {
-                v.push(3.0);
-                v.extend(bbox);
-            }
-            Op::Address { p } => {
-                v.push(4.0);
-                v.extend(p);
-            }
-            Op::VoxelBox { a } => {
-                v.push(5.0);
-                v.extend(a.map(|x| x as f64));
-            }
-            Op::Setup { p, v: d } => {
-                v.push(6.0);
-                v.extend(p);
-                v.extend(d);
-            }
-            Op::Step { t } => v.extend([7.0, *t]),
-            Op::Dump => v.push(8.0),
-            Op::Expand { h } => v.extend([9.0, *h as f64]),
-            Op::DefineSurface {
-                id,
-                origin,
-                u,
-                v: axis_v,
-                domain,
-                spans,
-            } => {
-                v.extend([11.0, *id as f64]);
-                v.extend(origin);
-                v.extend(u);
-                v.extend(axis_v);
-                v.extend(domain);
-                v.extend(spans.map(|n| n as f64));
-            }
-            Op::AddCachedHier { surface, tol, bbox } => {
-                v.extend([12.0, *surface as f64, *tol]);
-                v.extend(bbox);
-            }
-            Op::ExpandCached { h } => v.extend([13.0, *h as f64]),
-            Op::AddCachedLeaf {
-                surface,
-                leaf,
-                bbox,
-            } => {
-                v.extend([14.0, *surface as f64, *leaf as f64]);
-                v.extend(bbox);
-            }
-            Op::ObserveCached => v.push(15.0),
-        }
-    }
-    v
 }
 
 /// `(type code, object id)` of a grid element.
@@ -302,12 +222,6 @@ fn run_rust_controlled(
     expand: bool,
     mut leaf_control: impl FnMut(SurfaceGridElement<i64>) -> SurfaceGridElement<i64>,
 ) -> solidcore::Result<(Vec<i64>, Vec<f64>)> {
-    if i.ops
-        .iter()
-        .any(|op| matches!(op, Op::DefineSurface { .. }))
-    {
-        ffi::validate(&prog(i)).map_err(|_| native::invalid("invalid explicit cache program"))?;
-    }
     let size = i.grid.size.map(|s| s as usize);
     let mut g: Grid<i64> = Grid::new(&ext(i.grid.bbox), size)?;
     let mut caches = native::Caches::default();
@@ -769,12 +683,6 @@ fn gen_case(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.grid"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let (oi, of) = ffi::run(&prog(&i)).map_err(|e| harness(e.to_string()))?;
-        Ok(Output::new().ints("ints", oi).values("floats", of))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

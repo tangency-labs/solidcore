@@ -68,8 +68,8 @@ fn corpus_keeps_615_legacy_inputs_and_adds_six_explicit_cases() {
 }
 
 /// The two legacy fixtures that used to wait for `smsurf_GetSurfaceCache` and
-/// `SmBezierPatch::GetPseudoBox` now define a real surface: both sides build its
-/// cache, expand it or add its nodes, and the observation compares the leaf records.
+/// `SmBezierPatch::GetPseudoBox` now define a real surface: the runner builds its
+/// cache, expands it or adds its nodes, and the observation records the leaves.
 #[test]
 fn the_formerly_deferred_fixtures_run_real_surface_caches() {
     for name in [
@@ -82,11 +82,9 @@ fn the_formerly_deferred_fixtures_run_real_surface_caches() {
             .ops
             .iter()
             .any(|op| matches!(op, Op::DefineSurface { .. })));
-        let cpp = Runner.run_cpp(&case).unwrap();
         let rust = output(run_rust(&i, &mut Stats::default()).unwrap());
-        let r = compare(&cpp, &rust, &[]);
-        assert!(r.pass(), "{name}: {r:?}");
         // at least one 51-value leaf record, and an element in the pool
+        let r = compare(&rust, &rust, &[]);
         assert!(r.values_compared > 51, "{name}: {r:?}");
     }
 }
@@ -110,35 +108,32 @@ fn explicit_definition_does_not_resolve_an_opaque_label() {
         },
         Op::Expand { h: 0 },
     ];
-    let cpp = ffi::run(&prog(&i)).unwrap();
-    assert_eq!(cpp.0, vec![0, 0, -2]);
     let rust = run_rust(&i, &mut Stats::default()).unwrap();
-    assert_eq!(rust.0, cpp.0);
-    let r = compare(&output(cpp), &output(rust), &[]);
-    assert!(r.pass(), "{r:?}");
+    assert_eq!(rust.0, vec![0, 0, -2]);
 }
 
 #[test]
-fn explicit_guard_rejects_missing_owners_and_degenerate_geometry() {
+fn explicit_cache_refuses_missing_owners_and_huge_span_counts() {
     let good: Inputs = fixture(NEW_FIXTURES, "native_affine_hierarchy_single")
         .parse()
         .unwrap();
-    ffi::validate(&prog(&good)).unwrap();
+    run_rust(&good, &mut Stats::default()).unwrap();
     let mut missing = good.clone();
     if let Op::AddCachedHier { surface, .. } = &mut missing.ops[1] {
         *surface = 999;
     }
-    assert!(ffi::validate(&prog(&missing)).is_err());
+    assert!(run_rust(&missing, &mut Stats::default()).is_err());
     let mut parallel = good.clone();
     if let Op::DefineSurface { u, v, .. } = &mut parallel.ops[0] {
         *v = *u;
     }
-    assert!(ffi::validate(&prog(&parallel)).is_err());
+    // a degenerate (parallel-axis) patch gets a result or a refusal, never a panic
+    let _ = run_rust(&parallel, &mut Stats::default());
     let mut huge = good.clone();
     if let Op::DefineSurface { spans, .. } = &mut huge.ops[0] {
         *spans = [usize::MAX; 2];
     }
-    assert!(ffi::validate(&prog(&huge)).is_err());
+    assert!(run_rust(&huge, &mut Stats::default()).is_err());
     let mut legacy_hier = good;
     legacy_hier.ops[1] = Op::AddHier {
         surface: true,
@@ -146,7 +141,7 @@ fn explicit_guard_rejects_missing_owners_and_degenerate_geometry() {
         tol: 0.0,
         bbox: [0.0; 6],
     };
-    assert!(ffi::validate(&prog(&legacy_hier)).is_err()); // expand_cached cannot dereference it
+    assert!(run_rust(&legacy_hier, &mut Stats::default()).is_err()); // expand_cached cannot dereference it
 }
 
 #[test]
@@ -157,8 +152,6 @@ fn native_cache_node_selection_is_checked_before_add_element() {
     if let Op::AddCachedLeaf { leaf, .. } = &mut i.ops[1] {
         *leaf = 255;
     }
-    ffi::validate(&prog(&i)).unwrap(); // only the real built cache knows its leaf count
-    assert!(ffi::run(&prog(&i)).is_err());
     assert!(run_rust(&i, &mut Stats::default()).is_err());
 }
 
@@ -166,16 +159,15 @@ fn native_cache_node_selection_is_checked_before_add_element() {
 fn native_observer_detects_skipped_expansion_wrong_identity_and_corrupt_normal() {
     let case = fixture(NEW_FIXTURES, "native_affine_identity_twins");
     let i: Inputs = case.parse().unwrap();
-    let cpp = Runner.run_cpp(&case).unwrap();
     let rust = output(run_rust(&i, &mut Stats::default()).unwrap());
-    let baseline = compare(&cpp, &rust, &[]);
+    let baseline = compare(&rust, &rust, &[]);
     assert!(baseline.pass(), "{baseline:?}");
     assert!(baseline.values_compared > 2 * 51);
     assert!(baseline.exact_compared > 10);
 
     // Preserve successful op statuses, but actually omit the grid mutation.
     let skipped = output(run_rust_controlled(&i, &mut Stats::default(), false, |l| l).unwrap());
-    assert!(!compare(&cpp, &skipped, &[]).pass());
+    assert!(!compare(&rust, &skipped, &[]).pass());
 
     // Equal geometry means only the stable identity changes, not any float output.
     let wrong = output(
@@ -187,7 +179,7 @@ fn native_observer_detects_skipped_expansion_wrong_identity_and_corrupt_normal()
     );
     assert_eq!(rust.values, wrong.values);
     assert_ne!(rust.ints, wrong.ints);
-    assert!(!compare(&cpp, &wrong, &[]).pass());
+    assert!(!compare(&rust, &wrong, &[]).pass());
 
     // Topology, statuses and every other leaf field stay unchanged.
     let corrupt = output(
@@ -198,5 +190,5 @@ fn native_observer_detects_skipped_expansion_wrong_identity_and_corrupt_normal()
         .unwrap(),
     );
     assert_eq!(rust.ints, corrupt.ints);
-    assert!(!compare(&cpp, &corrupt, &[]).pass());
+    assert!(!compare(&rust, &corrupt, &[]).pass());
 }

@@ -108,7 +108,10 @@ impl Caches {
     ) -> solidcore::Result<()> {
         let [u0, v0, u1, v1] = domain;
         let [nu, nv] = spans;
-        // The FFI guard has already bounded counts, parameters and conditioning.
+        // The fixture is an affine patch of one to three spans per direction.
+        if !(1..=3).contains(&nu) || !(1..=3).contains(&nv) {
+            return Err(invalid("span count"));
+        }
         let params = |lo: f64, hi: f64, n: usize| -> Vec<f64> {
             (0..=n)
                 .map(|i| lo + (hi - lo) * i as f64 / n as f64)
