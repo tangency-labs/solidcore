@@ -2,6 +2,11 @@
 # The exact surface extension replaces the fitted one (branch land-me/split-ext): passed on
 # main 4b10d7d6e (the old path), moves on the branch; plan/findings/surface.exact-extension--difftest-cases-moved-2026-11-05.md
 # names each case and its value.
+#
+# gen0658 is no longer listed: since the exact intersection curve of extended surfaces is clipped
+# to its pieces inside both domains (3ab3d7f11), the case gets past mate_edges, where the native
+# side stops at error 1006 (it seeds the extensions with the analytic surface itself, whose full
+# circle it cannot drop), and is deferred at the unported topology.face_p2 (deferred, not a mismatch).
 
 [[mismatch]]
 unit = "offset.offset_geometry_creation"
@@ -151,11 +156,6 @@ why = "the exact surface extension replaces the fitted one (rounding; plan/findi
 [[mismatch]]
 unit = "offset.offset_geometry_creation"
 case = "gen0650"
-why = "the exact surface extension replaces the fitted one (geometry; plan/findings/surface.exact-extension--difftest-cases-moved-2026-11-05.md names the case and its value)"
-
-[[mismatch]]
-unit = "offset.offset_geometry_creation"
-case = "gen0658"
 why = "the exact surface extension replaces the fitted one (geometry; plan/findings/surface.exact-extension--difftest-cases-moved-2026-11-05.md names the case and its value)"
 
 [[mismatch]]
