@@ -591,6 +591,10 @@ where
 /// unachievable accuracy, step underflow below `minimum_step`, or exceeding `max_steps`)
 /// is returned instead of being hidden as `Ok(0.0)`. [`SolidError::Unported`] always
 /// propagates regardless of `propagate_failure`.
+///
+/// Not upstream: each step is accepted on the larger of the embedded estimate and the
+/// fifth divided difference of its samples ([`OdeOptions::quadrature`]); upstream reads
+/// the embedded estimate alone, which vanishes where `g''''` changes sign.
 pub fn integrate_opt_in<F>(
     a: f64,
     b: f64,
@@ -611,7 +615,8 @@ where
         initial_step: (b - a) / 10.0,
         minimum_step: (b - a) / 100000000.0,
         scale: None,
-        quadrature: false,
+        // `evaluate` reads `t` alone: the steps are accepted on the quadrature estimate
+        quadrature: true,
     };
     match OdeIntegrator::default().integrate(&mut y, a, b, options, |t, _, dy| {
         let value = evaluate(t)?;

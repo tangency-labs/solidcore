@@ -1802,7 +1802,10 @@ impl Curve {
     /// (chord height `ApproximateLength(5) / 10`, 90 degrees) of the span chord for a
     /// degree 1 curve, else the Romberg integral of `|C'|`; the end point distance
     /// for an interval shorter than `SM_EFF_ZERO` or a curve that does not
-    /// tessellate (kinds not derived from `SmBSplineCurve`).
+    /// tessellate (kinds not derived from `SmBSplineCurve`). Not upstream: each span's
+    /// end is evaluated in its own knot span (upstream: the span above), and the
+    /// integral's steps are accepted on the quadrature estimate
+    /// ([`crate::mass::integrator::integrate_opt_in`]).
     ///
     /// # Errors
     ///
@@ -1903,7 +1906,13 @@ impl Curve {
                 crate::mass::integrator::IntegrationAlgorithm::Romberg,
                 span_accuracy,
                 |t| {
-                    let pv = bsp.evaluate(k, t, 1, true, false)?;
+                    // The span's end (a knot) is evaluated in the span's own knot span
+                    // (`bFromLeft = FALSE`, the span below), every other t as upstream
+                    // (`TRUE`, the span above): where the speed jumps at a C0 knot
+                    // (unequal rational arcs at a double knot) upstream's last sample was
+                    // the next span's value, and the steps shrank toward the knot until
+                    // they underflowed. As the iso-u pieces of the area integrals (WR-670).
+                    let pv = bsp.evaluate(k, t, 1, t != seg_ivl.max(), false)?;
                     pv.get(1)
                         .map(|v| v.length())
                         .ok_or_else(|| SolidError::sm_err("curve::length"))
