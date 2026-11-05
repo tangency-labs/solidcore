@@ -56,7 +56,7 @@ use super::surface_surface_cache_p3::{gen_surf, surf_domain, surface_in, SurfIn}
 use super::surface_surface_p7::{st, Fail};
 use super::topology_edgeuse_p1::{gen_brep, BrepIn};
 use crate::case::CaseContext;
-use crate::cases::curve_contract as contract;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};

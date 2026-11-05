@@ -61,7 +61,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
-use crate::cases::curve_contract::{self as contract, Limits};
+use crate::cases::contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::util::assert_reports::put_assert_reports;
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};

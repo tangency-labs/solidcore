@@ -41,7 +41,7 @@ use solidcore::surface::surface_cache::{BezierAux2d, SurfaceCacheOptions};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
-use crate::cases::curve_contract as contract;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};

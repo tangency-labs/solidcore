@@ -53,7 +53,7 @@ use solidcore::topology::{edge, Brep};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
-use crate::cases::curve_contract::{self as contract, Limits};
+use crate::cases::contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 

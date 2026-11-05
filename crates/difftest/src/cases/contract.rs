@@ -1,8 +1,9 @@
-//! The input contract of the curve blocks the curve runners generate: B-spline, Hermite
-//! and line data as upstream's constructors take them (ported from the C++ reference
-//! wrappers' `bspline` / `line` checks, `crates/solidcore-ffi/src/units/curve_*.rs`). The
-//! generators redraw until these hold, so their cases stay on the working path; hostile
-//! data is covered by the fixture and fuzz files.
+//! Input checks shared by several generators' ports of the C++ reference wrappers' input
+//! contracts: B-spline, Hermite and line curve data as upstream's constructors take them
+//! (the wrappers' `bspline` / `line` checks, `crates/solidcore-ffi/src/units/curve_*.rs`),
+//! clamped knots, transforms and bounded planes. The generators redraw until their
+//! contract holds, so their cases stay on the working path; hostile data is covered by the
+//! fixture and fuzz files.
 
 use solidcore::nurbs::math::{NOW, NOZ};
 
