@@ -83,6 +83,11 @@
 //!   passes a found curve's free end stops there, its last span shortened to that end
 //!   (`SurfaceIntersector::reaches_found_curve_end`); the SolidCraft fork's
 //!   tangency-labs/smlib@0ce09f2. Off by default (upstream behaviour).
+//! - **Empty trace (WR-80).** `FindInteriorCurves` traces a curve back the other way
+//!   only when `TraceCurve` produced points. Upstream also reverses the empty curve of
+//!   a trace whose start already lies on a found curve, and `ReverseCurveDirection`
+//!   fails the whole intersection with `SM_ERR_NULL_POINTER` (the fork's
+//!   tangency-labs/smlib@0dbe681).
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks (graphics, dumps), the
 //!   `SM_ASSERT`s and the point-count warnings (`MSG`).
 
@@ -746,10 +751,10 @@ impl SurfaceIntersector<'_> {
             self.trace_curve(k, start, &out.curves_3d)?;
 
             // an open curve from an unbounded point, not reversed by the trace: trace
-            // the other way too
-            // (opt-in, WR-80: nothing traced, nothing to reverse)
-            let traced = !k.fixes.ssi_no_reverse_of_empty_trace || !self.curve_points.is_empty();
-            if traced
+            // the other way too, when the trace produced points (WR-80: a trace whose
+            // start already lies on a found curve adds none, and there is nothing to
+            // trace back from)
+            if !self.curve_points.is_empty()
                 && !self.curve_is_closed
                 && !self.point(start)?.is_bounded()
                 && input_trace_direction == self.curve_trace_direction

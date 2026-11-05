@@ -61,6 +61,11 @@
 //!   the curves are split at the singular points they pass through after the tangent
 //!   nodes are added (`super::singular_splits`); the SolidCraft fork's
 //!   tangency-labs/smlib@3c9d1d3. Off by default (upstream behaviour).
+//! - **Empty trace (WR-80).** A curve is traced back the other way only when
+//!   `TraceCurve` produced points. Upstream also reverses the empty curve of a trace
+//!   whose start already lies on a found curve, and `ReverseCurveDirection` fails the
+//!   whole intersection with `SM_ERR_NULL_POINTER` (the fork's
+//!   tangency-labs/smlib@0dbe681).
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks (graphics, dumps, the start
 //!   point reordering experiment), `SmCacheCheckOutIn` (the caches are owned by the
 //!   caller), the unused context argument and the `SM_ASSERT`s.
@@ -718,12 +723,10 @@ impl<'t, O: SolutionObject + Copy + PartialEq + 't> AdvSurfaceIntersector<'_, 't
                         && (sp.v_param_type(srf) == ExtentPointType::Inside
                             || is_zero_to_tol(sp.uv_deriv(srf).y, EFF_ZERO))
                 };
-                // (opt-in, WR-80: a trace that added no point, its start already on a
-                // found curve, has nothing to trace back from; upstream reverses the empty
-                // list and fails with SM_ERR_NULL_POINTER)
-                let traced =
-                    !k.fixes.ssi_no_reverse_of_empty_trace || !self.base.curve_points.is_empty();
-                if traced
+                // only a trace that produced points is traced back (WR-80: a trace whose
+                // start already lies on a found curve adds none, and there is nothing to
+                // trace back from)
+                if !self.base.curve_points.is_empty()
                     && !self.base.curve_is_closed
                     && input_trace_direction == self.base.curve_trace_direction
                     && along(SrfIndex::First)
