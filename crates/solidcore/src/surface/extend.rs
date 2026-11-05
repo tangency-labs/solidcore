@@ -512,7 +512,7 @@ fn not_exact(op: &'static str, distance: Option<f64>) -> SolidError {
 fn solve<T>(
     op: &'static str,
     made: &dyn Fn(f64) -> Result<Option<Made<T>>>,
-    across: &dyn Fn(&Option<T>, f64) -> Result<Option<Across>>,
+    across: &Measure<'_, T>,
     source: &Local,
     d: f64,
 ) -> Result<(Made<T>, Across)> {
@@ -766,6 +766,9 @@ fn finish<T>(s: Made<T>, b: Option<Across>) -> Result<(Made<T>, Across)> {
     let b = b.ok_or_else(op_err)?;
     Ok((s, b))
 }
+
+/// An extension's across length to a relative stop (none: not measured).
+type Measure<'a, T> = dyn Fn(&Option<T>, f64) -> Result<Option<Across>> + 'a;
 
 /// An ask made: the ask, its extension and its across length (none: not measured).
 type Asked<T> = (f64, Made<T>, Option<Across>);
