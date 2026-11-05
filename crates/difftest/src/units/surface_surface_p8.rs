@@ -3,19 +3,17 @@
 //! local line intersection, the point inversion near a singularity and
 //! `SmSPGlobalSolver::LocalSolve`).
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p8` (upstream `source/SMLib/src/SmSurface.cpp`,
-//! called through `SmSurface*` on B-spline surfaces, planes and surfaces of revolution).
-//! Rust: `solidcore::surface::surface::p8`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp` (on B-spline surfaces, planes and
+//! surfaces of revolution); checked against its golden. Rust: `solidcore::surface::surface::p8`.
 //!
 //! A case is one `op` on a `surface` (`{"bspline": {oob, form, net, p, q, u, v}}` with control
 //! points as stored `[x, y, z, w]`, rows in u; `{"plane": {o, n}}`; or `{"revolution": {a, b, p,
-//! axis, swap}}`). Both sides produce the flat record documented in the ffi module (status
-//! first); the runner reports it as the `out` values. A Rust error maps to its `SmStatus`
+//! axis, swap}}`). The Rust side produces a flat record (status first); the runner reports it as the `out` values. A Rust error maps to its `SmStatus`
 //! (`1007` for `InvalidInput`, `-1` for one upstream cannot return); `Unported` defers the
 //! case.
 //!
-//! The statics `sm_ExtractIsoCurve` and `sm_IntersectSrfBndryCrv` are not reachable from C++
-//! (their callers are unported); the Rust unit tests cover them.
+//! The statics `sm_ExtractIsoCurve` and `sm_IntersectSrfBndryCrv` are not reachable from a
+//! case (their callers are unported); the Rust unit tests cover them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,7 +40,6 @@ use solidcore::surface::surface::p7::SpGlobalSolver;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::surface_cache::{SurfaceCache, SurfaceCacheOptions};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_p8::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -147,170 +144,9 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
-    match s {
-        SrfIn::Revolution {
-            a,
-            b: bb,
-            p,
-            axis,
-            swap,
-        } => {
-            o.push(3.0);
-            o.extend_from_slice(a);
-            o.extend_from_slice(bb);
-            o.extend_from_slice(p);
-            o.extend_from_slice(axis);
-            o.push(b(*swap));
-        }
-        SrfIn::Plane { o: org, n } => {
-            o.push(1.0);
-            o.extend_from_slice(org);
-            o.extend_from_slice(n);
-        }
-        SrfIn::Bspline(bs) => {
-            let (n, m) = shape(bs)?;
-            o.extend([0.0, b(bs.oob), f64::from(bs.form)]);
-            o.extend(
-                [
-                    n,
-                    m,
-                    bs.p,
-                    bs.q,
-                    bs.u.len().saturating_sub(1),
-                    bs.v.len().saturating_sub(1),
-                ]
-                .map(|x| x as f64),
-            );
-            for row in &bs.net {
-                for p in row {
-                    o.extend_from_slice(p);
-                }
-            }
-            o.extend_from_slice(&bs.u);
-            o.extend_from_slice(&bs.v);
-        }
-    }
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    push_srf(&mut v, &i.surface)?;
-    let op = match &i.op {
-        OpIn::Knots { cont, at } => {
-            v.extend([f64::from(*cont), b(*at)]);
-            Op::Knots
-        }
-        OpIn::Coinc {
-            same,
-            other,
-            tol,
-            whole,
-        } => {
-            v.push(b(*same));
-            push_srf(&mut v, other)?;
-            v.extend([*tol, b(*whole)]);
-            Op::Coinc
-        }
-        OpIn::Line {
-            dom,
-            p,
-            v: vec,
-            ivl,
-            ray,
-            tol,
-        } => {
-            v.extend(dom);
-            v.extend(p);
-            v.extend(vec);
-            v.push(b(ivl.is_some()));
-            v.extend(ivl.unwrap_or([0.0, 0.0]));
-            v.extend([b(*ray), *tol]);
-            Op::Line
-        }
-        OpIn::Curve {
-            dom,
-            curve,
-            ivl,
-            tol,
-        } => {
-            v.extend(dom);
-            push_crv(&mut v, curve);
-            v.extend(ivl);
-            v.push(*tol);
-            Op::Curve
-        }
-        OpIn::LocalLine {
-            dom,
-            p,
-            v: vec,
-            ivl,
-            dtol,
-            atol,
-            uv,
-        } => {
-            v.extend(dom);
-            v.extend(p);
-            v.extend(vec);
-            v.extend(ivl);
-            v.extend([*dtol, *atol]);
-            v.extend(uv);
-            Op::LocalLine
-        }
-        OpIn::Invert { p, dom, uv, tol } => {
-            v.extend(p);
-            v.extend(dom);
-            v.extend(uv);
-            v.push(*tol);
-            Op::Invert
-        }
-        OpIn::Blend {
-            curve1,
-            ivl1,
-            right,
-            other,
-            curve2,
-            ivl2,
-            left,
-            tol,
-        } => {
-            push_crv(&mut v, curve1);
-            v.extend(ivl1);
-            v.push(b(*right));
-            push_srf(&mut v, other)?;
-            push_crv(&mut v, curve2);
-            v.extend(ivl2);
-            v.extend([b(*left), *tol]);
-            Op::Blend
-        }
-        OpIn::SpLocal {
-            dom,
-            p,
-            sop,
-            tol,
-            best_sq,
-        } => {
-            v.extend(dom);
-            v.extend(p);
-            v.extend([f64::from(*sop), *tol, *best_sq]);
-            Op::SpLocal
-        }
-    };
-    Ok((op, v))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let out = ffi::eval(op, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
-}
-
 // ---- Rust side ----------------------------------------------------------------------
 
-/// The surface, `None` when its construction fails (the shim's `-3`).
+/// The surface, `None` when its construction fails (status `-3`).
 fn surface_of(k: &Kernel, s: &SrfIn) -> Result<Option<Surface>, HarnessError> {
     Ok(match s {
         SrfIn::Revolution {
@@ -394,7 +230,7 @@ fn curve_obj(c: &SmCurve) -> Obj {
     Obj::Curve([i.min(), i.max()])
 }
 
-/// The shim's solution records (objects `-1` NULL, `0` the curve, `1` the surface).
+/// The solution records (objects `-1` NULL, `0` the curve, `1` the surface).
 fn put_solutions(o: &mut Vec<f64>, sols: &SolutionArray<Obj>, curve: Option<Obj>, surface: Obj) {
     o.push(sols.len() as f64);
     for sol in sols.as_slice() {
@@ -507,8 +343,8 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
                 return Ok(vec![-3.0]);
             };
             // Once with handles that know their domains, once with opaque handles (as a
-            // B-rep's, which cannot reach their geometry): both must give the C++ result,
-            // so a difference reports both runs, which cannot match it.
+            // B-rep's, which cannot reach their geometry): both must give the same result,
+            // so a difference reports both runs.
             let mut runs = Vec::new();
             for (co, so) in [
                 (curve_obj(&c), surface_obj(&s)),
@@ -952,12 +788,6 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
             if let Err(Fail::Harness(_)) = rust_run(&i) {
                 continue;
             }
@@ -974,17 +804,8 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i = case.parse()?;
-        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
-        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
-        let (code, input) = cpp_input(&i)?;
-        ffi::validate(code, &input).map_err(|e| HarnessError::new(format!("c++: {e}")))?;
-        rust(&i)
+        rust(&case.parse()?)
     }
 }
 
@@ -1055,35 +876,6 @@ fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
 
-fn shape(s: &BssIn) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &CrvIn) {
-    match c {
-        CrvIn::Line { a, b } => {
-            o.push(1.0);
-            o.extend_from_slice(a);
-            o.extend_from_slice(b);
-        }
-        CrvIn::Bspline { dim, cpts, p, u } => {
-            let n = cpts.len().saturating_sub(1);
-            let m = u.len().saturating_sub(1);
-            o.extend([0.0, *dim as f64, n as f64, *p as f64, m as f64]);
-            for x in cpts {
-                o.extend_from_slice(x);
-            }
-            o.extend_from_slice(u);
-        }
-    }
-}
-
 fn dom_of(d: [f64; 4]) -> Extent2d {
     Extent2d::from_points(Point2::new(d[0], d[1]), Point2::new(d[2], d[3]))
 }
@@ -1092,7 +884,7 @@ fn ivl_of(d: [f64; 2]) -> Extent1d {
     Extent1d::from_min_max(d[0], d[1])
 }
 
-/// The curve, `None` when its construction fails (the shim's `-3`).
+/// The curve, `None` when its construction fails (status `-3`).
 fn curve_of(c: &CrvIn) -> Result<Option<SmCurve>, HarnessError> {
     Ok(match c {
         CrvIn::Line { a, b } => Line::create_line_segment(3, v3(*a), v3(*b), None)

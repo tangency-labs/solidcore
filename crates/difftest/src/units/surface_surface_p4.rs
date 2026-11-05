@@ -5,13 +5,11 @@
 //! and `SmSSNormalizeENFO` -- with the co-ported `smsurf_EvaluateNormalSection`,
 //! `smsurf_IsPointOnNormal` and `SmSurfaceEval::EvalNormal`.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p4` (upstream `source/SMLib/src/SmSurface.cpp`;
-//! the file-static functions and file-local classes are verbatim copies). Rust:
-//! `solidcore::surface::surface::p4`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden.
+//! Rust: `solidcore::surface::surface::p4`.
 //!
 //! A case is one `op` on a `surface` (the input forms of unit `surface.surface_p7`).
-//! Both sides produce the flat record documented in the ffi module (status first); the
-//! runner reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
+//! The Rust side produces a flat record (status first); the runner reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
 //! `InvalidInput`, `-1` for one upstream cannot return); `Unported` defers the case.
 //!
 //! `StepInv` runs only on planes (`SmBSplineSurface::STEPInversion` dispatching to the
@@ -50,11 +48,10 @@ use solidcore::surface::surface::p4::{
     NormalTestReason,
 };
 use solidcore::surface::surface::Surface;
-use solidcore_ffi::units::surface_surface_p4::{self as ffi, Op};
 
 use super::surface_surface_p7::{
     b, curve_of, dom_of, gen_boundary_uv, gen_curve, gen_dom, gen_param, gen_plane, gen_point_near,
-    gen_surface, gen_uv, harness, p2, param_of, push_crv, push_srf, push_vecs, pv,
+    gen_surface, gen_uv, harness, p2, param_of, pv,
     req_of, sop_of, st, surface_of, unit_scale, v3, BssIn, CrvIn, Fail, SrfIn,
 };
 use crate::case::CaseContext;
@@ -142,130 +139,6 @@ enum OpIn {
 struct Inputs {
     surface: SrfIn,
     op: OpIn,
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_pts(o: &mut Vec<f64>, pts: &[Vec<f64>]) {
-    o.push(pts.len() as f64);
-    for p in pts {
-        o.extend_from_slice(p);
-    }
-}
-
-fn push_opt(o: &mut Vec<f64>, x: Option<f64>) {
-    o.extend([b(x.is_some()), x.unwrap_or(0.0)]);
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    push_srf(&mut v, &i.surface)?;
-    let op = match &i.op {
-        OpIn::NormalEval { uv } => {
-            v.extend_from_slice(uv);
-            Op::NormalEval
-        }
-        OpIn::SectionFn { uv, dir } | OpIn::SectionEval { uv, dir } => {
-            v.extend_from_slice(uv);
-            v.extend_from_slice(dir);
-            if matches!(i.op, OpIn::SectionFn { .. }) {
-                Op::SectionFn
-            } else {
-                Op::SectionEval
-            }
-        }
-        OpIn::OnNormal { dom, uv, p, deriv, tol } => {
-            v.push(b(dom.is_some()));
-            v.extend_from_slice(&dom.unwrap_or([0.0; 4]));
-            v.extend_from_slice(uv);
-            v.extend_from_slice(p);
-            v.push(b(deriv.is_some()));
-            v.extend_from_slice(&deriv.unwrap_or([0.0; 3]));
-            v.push(*tol);
-            Op::OnNormal
-        }
-        OpIn::PassSp { uv, p, tol } => {
-            v.extend_from_slice(uv);
-            v.extend_from_slice(p);
-            v.push(*tol);
-            Op::PassSp
-        }
-        OpIn::Seam { param, known } => {
-            v.extend([f64::from(*param), b(*known)]);
-            Op::Seam
-        }
-        OpIn::IsOnSeam { uv, tol } => {
-            v.extend_from_slice(uv);
-            v.extend([b(tol.is_some()), tol.unwrap_or(1.0)]);
-            Op::IsOnSeam
-        }
-        OpIn::Gps { dom, sop, p, tol, target, req } => {
-            v.extend_from_slice(dom);
-            v.push(f64::from(*sop));
-            v.extend_from_slice(p);
-            v.push(*tol);
-            push_opt(&mut v, *target);
-            v.push(f64::from(*req));
-            Op::Gps
-        }
-        OpIn::CsIntersect { curve, pts } => {
-            push_crv(&mut v, curve);
-            push_pts(&mut v, pts);
-            Op::CsIntersect
-        }
-        OpIn::CsNormalize { curve, sop, vecs, pts } => {
-            push_crv(&mut v, curve);
-            v.push(f64::from(*sop));
-            push_vecs(&mut v, vecs);
-            push_pts(&mut v, pts);
-            Op::CsNormalize
-        }
-        OpIn::SspIntersect { other, steepest, plane, pts } => {
-            push_srf(&mut v, other)?;
-            let (o, n) = plane.unwrap_or(([0.0; 3], [0.0, 0.0, 1.0]));
-            v.extend([b(*steepest), b(plane.is_some())]);
-            v.extend_from_slice(&o);
-            v.extend_from_slice(&n);
-            push_pts(&mut v, pts);
-            Op::SspIntersect
-        }
-        OpIn::SsiNormalize { other, n, d, pts } => {
-            push_srf(&mut v, other)?;
-            v.extend_from_slice(n);
-            v.push(*d);
-            push_pts(&mut v, pts);
-            Op::SsiNormalize
-        }
-        OpIn::SsNormalize { other, sop, vecs, pts } => {
-            push_srf(&mut v, other)?;
-            v.push(f64::from(*sop));
-            push_vecs(&mut v, vecs);
-            push_pts(&mut v, pts);
-            Op::SsNormalize
-        }
-        OpIn::Classify { dom, curve, ivl, uv, t } => {
-            v.extend_from_slice(dom);
-            push_crv(&mut v, curve);
-            v.extend_from_slice(ivl);
-            v.extend_from_slice(uv);
-            v.push(*t);
-            Op::Classify
-        }
-        OpIn::StepInv { dom, p, tol, guess } => {
-            v.extend_from_slice(dom);
-            v.extend_from_slice(p);
-            v.extend([*tol, b(guess.is_some())]);
-            v.extend_from_slice(&guess.unwrap_or([0.0, 0.0]));
-            Op::StepInv
-        }
-    };
-    Ok((op, v))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let out = ffi::eval(op, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -896,7 +769,7 @@ fn gen_case(k: &Kernel, rng: &mut Rng) -> Inputs {
     Inputs { surface, op }
 }
 
-/// Whether the C++ global point solve can run on this input in reasonable time: only planes,
+/// Whether the global point solve can run on this input in reasonable time: only planes,
 /// unit-scale surfaces and thin patches of low degree.
 fn gps_ok(i: &Inputs) -> bool {
     !matches!(i.op, OpIn::Gps { .. })
@@ -1017,12 +890,6 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
             if let Err(Fail::Harness(_)) = rust_run(k, &i) {
                 continue;
             }
@@ -1045,10 +912,7 @@ impl UnitDiff for Runner {
             let seed = CaseContext::seed_for("surface.surface_p4.thin", n);
             let mut rng = Rng::new(seed);
             let Some(i) = (0..64).find_map(|_| {
-                let i = gen_thin(k, &mut rng)?;
-                let (op, input) = cpp_input(&i).ok()?;
-                ffi::validate(op, &input).ok()?;
-                Some(i)
+                gen_thin(k, &mut rng)
             }) else {
                 continue;
             };
@@ -1063,10 +927,6 @@ impl UnitDiff for Runner {
         Ok(cases)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &Kernel::default();
         rust(k, &case.parse()?)
@@ -1079,9 +939,9 @@ mod tests {
     use std::collections::BTreeMap;
 
 
-    /// Prints generated cases `P4_CASES` (comma separated indices) with both outputs (a
-    /// debugging aid: `P4_CASES=146,168 cargo test --profile difftest -p difftest --features
-    /// cpp --lib p4_dump_case -- --ignored --nocapture`).
+    /// Prints generated cases `P4_CASES` (comma separated indices) with their outputs (a
+    /// debugging aid: `P4_CASES=146,168 cargo test --profile difftest -p difftest --lib
+    /// p4_dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs P4_CASES"]
     fn p4_dump_case() {
@@ -1092,7 +952,6 @@ mod tests {
             let v = Runner.generate(&mut rng).unwrap();
             let inp: Inputs = serde_json::from_value(v.clone()).unwrap();
             println!("CASE {i}: {}", serde_json::to_string(&v).unwrap());
-            println!("  cpp : {:?}", cpp(&inp).map(|o| format!("{o:?}")));
             println!("  rust: {:?}", rust(k, &inp).map(|o| format!("{o:?}")));
         }
     }

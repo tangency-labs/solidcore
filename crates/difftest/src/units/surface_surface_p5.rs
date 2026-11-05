@@ -4,13 +4,12 @@
 //! the file-static `sm_FilterSolution` and `sm_SpLocalSolve`, and the `IdenticalSolutions`
 //! overrides of the surface global solvers).
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p5` (upstream `source/SMLib/src/SmSurface.cpp`,
-//! called through `SmSurface*` on B-spline surfaces, planes and curve-bounded surfaces; the
-//! static functions are verbatim copies). Rust: `solidcore::surface::surface::p5`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp` (on B-spline surfaces, planes and
+//! curve-bounded surfaces); checked against its golden. Rust: `solidcore::surface::surface::p5`.
 //!
 //! A case is one `op` on a `surface` (`{"bspline": {oob, form, net, p, q, u, v}}`, `{"plane":
-//! {o, n}}` or a curve-bounded surface over one of them). Both sides produce the flat record
-//! documented in the ffi module (status first). A Rust error maps to its `SmStatus` (`1007`
+//! {o, n}}` or a curve-bounded surface over one of them). The Rust side produces a flat
+//! record (status first). A Rust error maps to its `SmStatus` (`1007`
 //! for `InvalidInput`, `-1` for one upstream cannot return); `Unported` defers the case.
 //!
 //! `CoverOtherCoincidentSurface` also runs on planes and on real `SmCylinder` / `SmCone` /
@@ -18,7 +17,7 @@
 //! builds them; the Rust side with [`crate::ssi::kernel::rust_surface`]): the
 //! `cover_analytic.json` fixtures pair them with each other, planes and B-splines, so the
 //! plane, bilinear, `SM_CAST_PTR(SmBSplineSurface)` and fallback candidates are each
-//! reached. Each such C++ case runs in a fresh process.
+//! reached.
 //!
 //! Deferred cases: every `LocalPointSolve` of an operation but `SM_SO_INTERSECT`/`MAXIMIZE`
 //! (`LocalPointSolve_1`, `surface.surface_point_solve_p3`), the Newton solve of
@@ -60,7 +59,6 @@ use solidcore::surface::surface::p5::{
 use solidcore::surface::surface::p7::SpGlobalSolver;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_p5::{self as ffi, Op};
 
 use crate::ssi::case::SurfaceSpec;
 
@@ -120,7 +118,7 @@ enum SrfIn {
 }
 
 /// A real `SmCylinder` / `SmCone` / `SmSphere` / `SmTorus` (the `--ssi-corpus`
-/// construction, `harness/cpp/shim/sc_analytic_surface.h`; angles in degrees).
+/// construction; angles in degrees).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum AnalyticIn {
@@ -159,63 +157,6 @@ enum AnalyticIn {
 }
 
 impl AnalyticIn {
-    /// The shim's block: the kind `4..=7` and its values.
-    fn push(&self, o: &mut Vec<f64>) {
-        match self {
-            AnalyticIn::Cylinder {
-                origin,
-                x,
-                y,
-                radius,
-                angle,
-                height,
-            } => {
-                o.push(4.0);
-                o.extend(origin.iter().chain(x).chain(y));
-                o.push(*radius);
-                o.extend(angle.iter().chain(height));
-            }
-            AnalyticIn::Cone {
-                apex,
-                x,
-                y,
-                half_angle_deg,
-                height,
-            } => {
-                o.push(5.0);
-                o.extend(apex.iter().chain(x).chain(y));
-                o.push(*half_angle_deg);
-                o.extend(height);
-            }
-            AnalyticIn::Sphere {
-                center,
-                x,
-                y,
-                radius,
-                lon,
-                lat,
-            } => {
-                o.push(6.0);
-                o.extend(center.iter().chain(x).chain(y));
-                o.push(*radius);
-                o.extend(lon.iter().chain(lat));
-            }
-            AnalyticIn::Torus {
-                center,
-                x,
-                y,
-                major_radius,
-                minor_radius,
-                major,
-                minor,
-            } => {
-                o.push(7.0);
-                o.extend(center.iter().chain(x).chain(y));
-                o.extend([*major_radius, *minor_radius]);
-                o.extend(major.iter().chain(minor));
-            }
-        }
-    }
 
     /// The `--ssi-corpus` description.
     fn spec(&self) -> SurfaceSpec {
@@ -422,230 +363,8 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
-}
-
-fn shape(s: &BssIn) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn push_srf(o: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
-    match &resolve(s)? {
-        SrfIn::Sms(_) => return Err(harness("unresolved surface file")),
-        SrfIn::Analytic(a) => a.push(o),
-        SrfIn::Bounded { basis, implicit } => {
-            o.push(2.0);
-            push_srf(o, basis)?;
-            o.push(b(*implicit));
-        }
-        SrfIn::Plane { o: org, n } => {
-            o.push(1.0);
-            o.extend_from_slice(org);
-            o.extend_from_slice(n);
-        }
-        SrfIn::Bspline(bs) => {
-            let (n, m) = shape(bs)?;
-            o.extend([0.0, b(bs.oob), f64::from(bs.form)]);
-            o.extend(
-                [
-                    n,
-                    m,
-                    bs.p,
-                    bs.q,
-                    bs.u.len().saturating_sub(1),
-                    bs.v.len().saturating_sub(1),
-                ]
-                .map(|x| x as f64),
-            );
-            for row in &bs.net {
-                for p in row {
-                    o.extend_from_slice(p);
-                }
-            }
-            o.extend_from_slice(&bs.u);
-            o.extend_from_slice(&bs.v);
-        }
-    }
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &CrvIn) {
-    let n = c.cpts.len().saturating_sub(1);
-    let m = c.u.len().saturating_sub(1);
-    o.extend([c.dim as f64, n as f64, c.p as f64, m as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn push_sol(o: &mut Vec<f64>, s: &SolIn) {
-    o.extend([f64::from(s.ty), f64::from(s.nvars), s.value]);
-    o.extend_from_slice(&s.p);
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    push_srf(&mut o, &i.surface)?;
-    let op = match &i.op {
-        OpIn::IsSing { uv, tol, pt_only } => {
-            o.extend([uv[0], uv[1], *tol, b(*pt_only)]);
-            Op::IsSing
-        }
-        OpIn::NormalSing { uv, tol } => {
-            o.extend([uv[0], uv[1], *tol]);
-            Op::NormalSing
-        }
-        OpIn::Iso {
-            param,
-            iso,
-            tol,
-            dom,
-            want_uv,
-        } => {
-            o.extend([f64::from(*param), *iso, *tol, b(dom.is_some())]);
-            o.extend_from_slice(&dom.unwrap_or_else(|| natural(&i.surface)));
-            o.push(b(*want_uv));
-            Op::Iso
-        }
-        OpIn::Lps { dom, sop, p, guess } | OpIn::Lps0 { dom, sop, p, guess } => {
-            o.extend_from_slice(dom);
-            o.push(f64::from(*sop));
-            o.extend_from_slice(p);
-            o.extend_from_slice(guess);
-            if matches!(i.op, OpIn::Lps { .. }) {
-                Op::Lps
-            } else {
-                Op::Lps0
-            }
-        }
-        OpIn::Drop {
-            dom,
-            p,
-            guess,
-            sop,
-            tgt,
-            want,
-        } => {
-            o.extend_from_slice(dom);
-            o.extend_from_slice(p);
-            o.push(b(guess.is_some()));
-            o.extend_from_slice(&guess.unwrap_or([0.0, 0.0]));
-            o.push(f64::from(*sop));
-            o.push(b(tgt.is_some()));
-            o.extend_from_slice(&tgt.unwrap_or([0.0, 0.0, 0.0]));
-            o.push(b(*want));
-            Op::Drop
-        }
-        OpIn::Lssi {
-            dom,
-            s2,
-            dom2,
-            s3,
-            dom3,
-            p,
-            p2,
-        } => {
-            o.extend_from_slice(dom);
-            push_srf(&mut o, s2)?;
-            o.extend_from_slice(dom2);
-            push_srf(&mut o, s3)?;
-            o.extend_from_slice(dom3);
-            o.extend_from_slice(p);
-            o.push(b(p2.is_some()));
-            o.extend_from_slice(&p2.unwrap_or([0.0, 0.0, 0.0]));
-            Op::Lssi
-        }
-        OpIn::Cover { other, tol, merged } => {
-            push_srf(&mut o, other)?;
-            o.extend([*tol, b(*merged)]);
-            Op::Cover
-        }
-        OpIn::Filter {
-            dom,
-            curve,
-            ivl,
-            uc,
-            vc,
-            tc,
-            value,
-            t,
-            uv,
-        } => {
-            o.extend_from_slice(dom);
-            push_crv(&mut o, curve);
-            o.extend_from_slice(ivl);
-            for c in uc.iter().chain(vc).chain(tc) {
-                o.push(f64::from(*c));
-            }
-            o.extend([*value, *t, uv[0], uv[1]]);
-            Op::Filter
-        }
-        OpIn::SpLocal {
-            dom,
-            uc,
-            vc,
-            p,
-            tol,
-            sop,
-            solve_surf,
-            proc_bnd,
-        } => {
-            o.extend_from_slice(dom);
-            for c in uc.iter().chain(vc) {
-                o.push(f64::from(*c));
-            }
-            o.extend_from_slice(p);
-            o.extend([*tol, f64::from(*sop), b(*solve_surf), b(*proc_bnd)]);
-            Op::SpLocal
-        }
-        OpIn::MaxDist {
-            dom,
-            curve,
-            ivl,
-            n,
-            needed,
-        } => {
-            o.extend_from_slice(dom);
-            push_crv(&mut o, curve);
-            o.extend_from_slice(ivl);
-            o.extend([*n as f64, b(needed.is_some()), needed.unwrap_or(0.0)]);
-            Op::MaxDist
-        }
-        OpIn::Ident {
-            kind,
-            tol,
-            a,
-            b: sb,
-        } => {
-            o.extend([f64::from(*kind), *tol]);
-            push_sol(&mut o, a);
-            push_sol(&mut o, sb);
-            Op::Ident
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let out = ffi::eval(op, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -665,7 +384,7 @@ fn dom_of(d: [f64; 4]) -> Extent2d {
 fn surface_of(s: &SrfIn) -> Result<Surface, HarnessError> {
     match &resolve(s)? {
         SrfIn::Sms(_) => Err(harness("unresolved surface file")),
-        // the shim's construction, its NURB made as its GetNaturalUVDomain() makes it (a
+        // the `--ssi-corpus` construction, its NURB made as its GetNaturalUVDomain() makes it (a
         // default kernel: the construction reads only the default tolerances)
         SrfIn::Analytic(a) => match crate::ssi::kernel::rust_surface(&Kernel::default(), &a.spec()) {
             Ok(Ok(srf)) => Ok(srf),
@@ -1762,7 +1481,7 @@ fn gen_case(k: &Kernel, rng: &mut Rng) -> Inputs {
     Inputs { surface, op }
 }
 
-/// Ops whose C++ side builds a surface cache decomposition: keep them at modest scales.
+/// Ops that build a surface cache decomposition: keep them at modest scales.
 fn is_heavy(op: &OpIn) -> bool {
     matches!(
         op,
@@ -1784,12 +1503,6 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
             // the generator's acceptance before planes and analytic surfaces reached
             // Cover (fixtures only): B-spline surfaces on both sides
             if let OpIn::Cover { other, .. } = &i.op {
@@ -1816,10 +1529,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1831,7 +1540,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     /// Prints generated case `P5_CASE` as JSON (a debugging aid:
-    /// `P5_CASE=6 cargo test -p difftest --features cpp --lib p5_dump_case -- --ignored --nocapture`).
+    /// `P5_CASE=6 cargo test -p difftest --lib p5_dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs P5_CASE"]
     fn p5_dump_case() {
@@ -1855,7 +1564,6 @@ mod tests {
             Err(Fail::Deferred(_)) => println!("deferred"),
             Err(Fail::Harness(e)) => println!("harness: {e}"),
         }
-        println!("cpp: {:?}", cpp(&i).map(|o| format!("{o:?}")));
     }
 
     /// Generated cases cover every op, and most of the comparable ones are not deferred.

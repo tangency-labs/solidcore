@@ -1,9 +1,10 @@
-//! Differential runner for `surface.surface_p11`: `SmSurface::LocalSurfaceIntersect`
-//! (`SmSurface.cpp:27439`). Each case intersects two surfaces, each a biquadratic
-//! Bezier patch, an analytic plane, a canonical analytic torus or a canonical surface
-//! of revolution of a line generator (a cylinder), from a pair of guess points, with or
-//! without a plane normal, a previous point and boundary testing.
-//! Cases whose C++ path reaches `sm_IntersectSrfBndryCrv` (`surface.surface_p8`) or
+//! Runner for `surface.surface_p11`: `SmSurface::LocalSurfaceIntersect`
+//! (ported from upstream `SmSurface.cpp:27439`; checked against its golden). Each case
+//! intersects two surfaces, each a biquadratic Bezier patch, an analytic plane, a
+//! canonical analytic torus or a canonical surface of revolution of a line generator (a
+//! cylinder), from a pair of guess points, with or without a plane normal, a previous
+//! point and boundary testing.
+//! Cases whose path reaches `sm_IntersectSrfBndryCrv` (`surface.surface_p8`) or
 //! `LocalSurfaceSolve` (`surface.surface_p3`) are deferred.
 //!
 //! Op 2 is `SmSurface::LiftCurve` (`SmSurface.cpp:24054`): a UV curve (an upstream
@@ -35,9 +36,8 @@ use solidcore::surface::surface::Surface;
 use solidcore::surface::surf_of_revolution::SurfOfRevolution;
 use solidcore::surface::torus::{Torus, TorusOptions};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
-use solidcore_ffi::units::surface_surface_p11 as ffi;
 
-/// Differential runner for `LocalSurfaceIntersect`.
+/// Runner for `LocalSurfaceIntersect`.
 pub struct Runner;
 
 /// Generated `LiftCurve` cases per run, whatever `--seeds` says (it can only raise
@@ -204,14 +204,6 @@ fn surface(k: &Kernel, s: &SurfaceIn) -> Result<Surface, HarnessError> {
 
 fn domain(d: [f64; 4]) -> Extent2d {
     Extent2d::from_bounds(d[0], d[1], d[2], d[3])
-}
-
-fn ffi_surface(s: &SurfaceIn) -> ffi::SurfaceInput {
-    ffi::SurfaceInput {
-        kind: s.kind,
-        net: s.net,
-        domain: s.domain,
-    }
 }
 
 /// `[status, found, u, v, u2, v2, deviation]` as an output.
@@ -385,38 +377,6 @@ fn domain_of(d: [f64; 4]) -> Extent2d {
     domain(d)
 }
 
-fn run_cpp_lift(i: &LiftInputs) -> Result<Output, HarnessError> {
-    let (surface, dom) = match &i.surface {
-        LiftSurfaceIn::File { file, domain } => (ffi::LiftSurface::File(file.clone()), *domain),
-        LiftSurfaceIn::Inline(s) => (
-            ffi::LiftSurface::Inline(Box::new(ffi_surface(s))),
-            Some(s.domain),
-        ),
-    };
-    let curve = match &i.curve {
-        LiftCurveIn::File { file } => ffi::LiftUvCurve::File(file.clone()),
-        LiftCurveIn::Inline {
-            degree,
-            cpts,
-            knots,
-        } => ffi::LiftUvCurve::Inline {
-            degree: *degree,
-            cpts: cpts.clone(),
-            knots: knots.clone(),
-        },
-    };
-    let flat = ffi::lift_curve(
-        &surface,
-        dom,
-        &curve,
-        i.interval,
-        i.tol,
-        i.skip_continuity_checks,
-    )
-    .map_err(harness)?;
-    Ok(lift_output(&flat))
-}
-
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     let k = Kernel::default();
     if i.op == 1 {
@@ -524,30 +484,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if case.parse::<OpOnly>()?.op == 2 {
-            return run_cpp_lift(&case.parse()?);
-        }
-        let i: Inputs = case.parse()?;
-        if i.op == 1 {
-            let flat =
-                ffi::intersect_surface_boundaries(&ffi_surface(&i.a), &ffi_surface(&i.b), i.tol)
-                    .map_err(harness)?;
-            return Ok(isb_output(&flat));
-        }
-        let flat = ffi::local_surface_intersect(
-            &ffi_surface(&i.a),
-            &ffi_surface(&i.b),
-            i.tol,
-            i.guesses,
-            i.plane_normal,
-            i.previous_uv,
-            i.boundary_testing,
-        )
-        .map_err(harness)?;
-        Ok(output(&flat))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

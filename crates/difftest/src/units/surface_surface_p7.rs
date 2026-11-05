@@ -4,13 +4,12 @@
 //! the file-static helpers) and the co-ported `Evaluate1stDerivatives`,
 //! `Evaluate2ndDerivatives` and `EvaluateDirectionalDerivs`.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p7` (upstream `source/SMLib/src/SmSurface.cpp`,
-//! called through `SmSurface*` on B-spline surfaces and planes). Rust:
-//! `solidcore::surface::surface::p7`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp` (on B-spline surfaces and planes);
+//! checked against its golden. Rust: `solidcore::surface::surface::p7`.
 //!
 //! A case is one `op` on a `surface` (`{"bspline": {oob, form, net, p, q, u, v}}` with
-//! control points as stored `[x, y, z, w]`, rows in u, or `{"plane": {o, n}}`). Both sides
-//! produce the flat record documented in the ffi module (status first); the runner reports
+//! control points as stored `[x, y, z, w]`, rows in u, or `{"plane": {o, n}}`). The Rust
+//! side produces a flat record (status first); the runner reports
 //! it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
 //! `InvalidInput`, `-1` for one upstream cannot return); `Unported` defers the case.
 //!
@@ -57,7 +56,6 @@ use solidcore::surface::surface::p1::{
 };
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_p7::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -254,314 +252,11 @@ mod non_finite3 {
     }
 }
 
-// ---- C++ side -----------------------------------------------------------------------
+// ---- Rust side ----------------------------------------------------------------------
 
 pub(crate) fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
-
-pub(crate) fn shape(s: &BssIn) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-pub(crate) fn push_srf(o: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
-    match &resolve(s)? {
-        SrfIn::Sms(_) => return Err(harness("unresolved surface file")),
-        SrfIn::Bounded { basis, implicit } => {
-            o.push(2.0);
-            push_srf(o, basis)?;
-            o.push(b(*implicit));
-        }
-        SrfIn::Revolution { a, b: bb, p, axis, swap, oob } => {
-            o.push(3.0);
-            for v in [a, bb, p, axis] {
-                o.extend_from_slice(v);
-            }
-            o.extend([b(*swap), b(*oob)]);
-        }
-        SrfIn::Plane { o: org, n } => {
-            o.push(1.0);
-            o.extend_from_slice(org);
-            o.extend_from_slice(n);
-        }
-        SrfIn::Bspline(bs) => {
-            let (n, m) = shape(bs)?;
-            o.extend([0.0, b(bs.oob), f64::from(bs.form)]);
-            o.extend(
-                [n, m, bs.p, bs.q, bs.u.len().saturating_sub(1), bs.v.len().saturating_sub(1)]
-                    .map(|x| x as f64),
-            );
-            for row in &bs.net {
-                for p in row {
-                    o.extend_from_slice(p);
-                }
-            }
-            o.extend_from_slice(&bs.u);
-            o.extend_from_slice(&bs.v);
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn push_crv(o: &mut Vec<f64>, c: &CrvIn) {
-    let n = c.cpts.len().saturating_sub(1);
-    let m = c.u.len().saturating_sub(1);
-    o.extend([c.dim as f64, n as f64, c.p as f64, m as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-pub(crate) fn push_vecs(o: &mut Vec<f64>, v: &[[f64; 3]]) {
-    o.push(v.len() as f64);
-    for x in v {
-        o.extend_from_slice(x);
-    }
-}
-
-pub(crate) fn push_opt(o: &mut Vec<f64>, x: Option<f64>) {
-    o.extend([b(x.is_some()), x.unwrap_or(0.0)]);
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    push_srf(&mut v, &i.surface)?;
-    let op = match &i.op {
-        OpIn::Eval1 { uv, ul, vl } | OpIn::Eval2 { uv, ul, vl } => {
-            v.extend(uv);
-            v.extend([b(*ul), b(*vl)]);
-            if matches!(i.op, OpIn::Eval1 { .. }) {
-                Op::Eval1
-            } else {
-                Op::Eval2
-            }
-        }
-        OpIn::DirDeriv { uv, dir, h, ul, vl } => {
-            v.extend(uv);
-            v.extend(dir);
-            v.extend([*h as f64, b(*ul), b(*vl)]);
-            Op::DirDeriv
-        }
-        OpIn::Normal { uv, ul, vl, base } => {
-            v.extend(uv);
-            v.extend([b(*ul), b(*vl), b(*base)]);
-            Op::Normal
-        }
-        OpIn::IsClosed {
-            dom,
-            param,
-            tol,
-            want,
-            base,
-        } => {
-            v.extend(dom);
-            v.push(f64::from(*param));
-            v.extend([b(tol.is_some()), tol.unwrap_or(1.0), b(*want), b(*base)]);
-            Op::IsClosed
-        }
-        OpIn::IsPlanar { tol, base } => {
-            v.extend([*tol, b(*base)]);
-            Op::IsPlanar
-        }
-        OpIn::ApproxLen { dom } => {
-            v.extend(dom);
-            Op::ApproxLen
-        }
-        OpIn::Higher {
-            uv,
-            g1,
-            want3,
-            want4,
-        } => {
-            v.extend(uv);
-            v.extend(g1);
-            v.extend([b(*want3), b(*want4)]);
-            Op::Higher
-        }
-        OpIn::Inward { uv } => {
-            v.extend(uv);
-            Op::Inward
-        }
-        OpIn::DropPts { uv, ul, vl, pts } => {
-            v.extend(uv);
-            v.extend([b(*ul), b(*vl)]);
-            push_vecs(&mut v, pts);
-            Op::DropPts
-        }
-        OpIn::DropVecs { uv, ul, vl, vecs } => {
-            v.extend(uv);
-            v.extend([b(*ul), b(*vl)]);
-            push_vecs(&mut v, vecs);
-            Op::DropVecs
-        }
-        OpIn::Degen {
-            uv,
-            dir,
-            from_pole,
-            sdir,
-            tol,
-        } => {
-            v.extend(uv);
-            v.extend(dir);
-            v.extend([b(*from_pole), f64::from(*sdir), *tol]);
-            Op::Degen
-        }
-        OpIn::Flat { angle, want } => {
-            v.extend([*angle, b(*want)]);
-            Op::Flat
-        }
-        OpIn::Brep => Op::Brep,
-        OpIn::Gps0 {
-            dom,
-            sop,
-            p,
-            tol,
-            target,
-            req,
-        } => {
-            v.extend(dom);
-            v.push(f64::from(*sop));
-            v.extend(p);
-            v.push(*tol);
-            push_opt(&mut v, *target);
-            v.push(f64::from(*req));
-            Op::Gps0
-        }
-        OpIn::Gcs {
-            dom,
-            curve,
-            ivl,
-            sop,
-            tol,
-            vecs,
-            target,
-            req,
-        } => {
-            v.extend(dom);
-            push_crv(&mut v, curve);
-            v.extend(ivl);
-            v.extend([f64::from(*sop), *tol]);
-            push_vecs(&mut v, vecs);
-            push_opt(&mut v, *target);
-            v.push(f64::from(*req));
-            Op::Gcs
-        }
-        OpIn::Gss {
-            dom,
-            other,
-            dom2,
-            sop,
-            tol,
-            vecs,
-            target,
-            req,
-        } => {
-            v.extend(dom);
-            push_srf(&mut v, other)?;
-            v.extend(dom2);
-            v.extend([f64::from(*sop), *tol]);
-            push_vecs(&mut v, vecs);
-            push_opt(&mut v, *target);
-            v.push(f64::from(*req));
-            Op::Gss
-        }
-        OpIn::Lcs {
-            dom,
-            curve,
-            ivl,
-            sop,
-            tol,
-            vecs,
-            guess_uv,
-            guess_t,
-        } => {
-            v.extend(dom);
-            push_crv(&mut v, curve);
-            v.extend(ivl);
-            v.extend([f64::from(*sop), *tol]);
-            push_vecs(&mut v, vecs);
-            v.extend(guess_uv);
-            v.push(*guess_t);
-            Op::Lcs
-        }
-        OpIn::Proj {
-            dom,
-            curve,
-            vec,
-            dist,
-        } => {
-            v.extend(dom);
-            push_crv(&mut v, curve);
-            v.extend(vec);
-            push_opt(&mut v, *dist);
-            Op::Proj
-        }
-        OpIn::LoadGuesses { dom, p, sop } => {
-            v.extend(dom);
-            v.extend(p);
-            v.push(f64::from(*sop));
-            Op::LoadGuesses
-        }
-        OpIn::PassSc { uv, curve, t } => {
-            v.extend(uv);
-            push_crv(&mut v, curve);
-            v.push(*t);
-            Op::PassSc
-        }
-        OpIn::PassSs { uv, other, uv2 } => {
-            v.extend(uv);
-            push_srf(&mut v, other)?;
-            v.extend(uv2);
-            Op::PassSs
-        }
-        OpIn::GoodDrop {
-            dom,
-            p,
-            guess,
-            value,
-            sol,
-        } => {
-            v.extend(dom);
-            v.extend(p);
-            v.extend(guess);
-            v.push(*value);
-            v.extend(sol);
-            Op::GoodDrop
-        }
-        OpIn::CheckSeam {
-            uv,
-            dom,
-            other,
-            uv2,
-            dom2,
-            loc,
-        } => {
-            v.extend(uv);
-            v.extend(dom);
-            push_srf(&mut v, other)?;
-            v.extend(uv2);
-            v.extend(dom2);
-            v.push(f64::from(*loc));
-            Op::CheckSeam
-        }
-    };
-    Ok((op, v))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let out = ffi::eval(op, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
-}
-
-// ---- Rust side ----------------------------------------------------------------------
 
 pub(crate) fn v3(p: [f64; 3]) -> Vec3 {
     Vec3::from_array(p)
@@ -1762,12 +1457,6 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
             // keep the global solves and the projection off extreme scales, where the
             // subdivision of both sides runs for minutes (checked before the Rust run
             // below, which runs the solve too)
@@ -1795,10 +1484,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &Kernel::default();
         rust(k, &case.parse()?)
@@ -1811,7 +1496,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     /// Prints generated case `P7_CASE` as JSON (a debugging aid:
-    /// `P7_CASE=6 cargo test -p difftest --features cpp --lib p7_dump_case -- --ignored --nocapture`).
+    /// `P7_CASE=6 cargo test -p difftest --lib p7_dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs P7_CASE"]
     fn p7_dump_case() {

@@ -1,8 +1,8 @@
 //! Runner for unit `surface.surface_p10`: `SmLSIGlobalSolver::LocalSolve` and
 //! `sm_GlobalCurveIntersectCombineSolutions`.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p10` (the library's `SmLSIGlobalSolver` on a
-//! hand-built surface cache tree; a verbatim copy of the static combination, see the shim).
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp` (`SmLSIGlobalSolver` on a
+//! hand-built surface cache tree, and the static combination); checked against its golden.
 //! Rust: `solidcore::surface::surface::p10`.
 //!
 //! A case is a surface (a real `SmBSplineSurface` or `SmPlane`) and one op:
@@ -61,7 +61,6 @@ use solidcore::surface::surface_cache::p1::{
     BezierAux2d, BezierPatch, SurfaceCache, SurfaceCacheOptions,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_p10 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -236,135 +235,6 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn ffi_surface(s: &SurfIn) -> ffi::SurfaceIn {
-    match s {
-        SurfIn::Bspline(d) => ffi::SurfaceIn::BSpline(ffi::SurfaceData {
-            p: d.p,
-            q: d.q,
-            net: d.net.clone(),
-            u: d.u.clone(),
-            v: d.v.clone(),
-        }),
-        SurfIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-    }
-}
-
-fn ffi_node(n: &NodeIn) -> ffi::NodeIn {
-    ffi::NodeIn {
-        parent: n.parent,
-        child1: n.c1,
-        child2: n.c2,
-        aux: n.aux,
-        domain: n.dom,
-        class: n.class,
-        bbox: n.bbox,
-        u_conts: n.u_conts,
-        v_conts: n.v_conts,
-        polar: n.polar.clone(),
-        pseudo: n.pseudo.as_ref().map(|p| ffi::PseudoIn {
-            basis: p.basis,
-            points: p.pts.clone(),
-        }),
-    }
-}
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    let op = match &i.op {
-        OpIn::Lsi {
-            flags,
-            nodes,
-            node,
-            dom,
-            point,
-            vector,
-            ivl,
-            ray,
-            dist_tol,
-            tol3d,
-        } => ffi::Op::Lsi(ffi::LsiIn {
-            flags: ffi::CacheFlags {
-                point_test: flags.point_test,
-                have_t_surface_cache: flags.have_t,
-                face_was_modified: flags.modified,
-                process_boundary_curves: flags.boundary,
-            },
-            nodes: nodes.iter().map(ffi_node).collect(),
-            node: *node,
-            uv_domain: *dom,
-            point: *point,
-            vector: *vector,
-            interval: *ivl,
-            ray_fire: *ray,
-            distance_tolerance: *dist_tol,
-            tolerance_3d: *tol3d,
-        }),
-        OpIn::Combine {
-            curve,
-            dom,
-            ivl,
-            tol,
-            curve_nodes,
-            nodes,
-            sols,
-        } => ffi::Op::Combine(ffi::CombineIn {
-            curve: ffi::CurveData {
-                p: curve.p,
-                cpts: curve.cpts.clone(),
-                knots: curve.knots.clone(),
-            },
-            uv_domain: *dom,
-            interval: *ivl,
-            tolerance: *tol,
-            curve_nodes: curve_nodes
-                .iter()
-                .map(|n| ffi::CurveNodeIn {
-                    aux: n.aux,
-                    interval: n.ivl,
-                })
-                .collect(),
-            surface_nodes: nodes.iter().map(ffi_node).collect(),
-            solutions: sols
-                .iter()
-                .map(|s| ffi::SolutionIn {
-                    kind: s.kind,
-                    num_variables: s.nvars,
-                    start_value: s.sv,
-                    start: s.s,
-                    end_value: s.ev,
-                    end: s.e,
-                    node0: s.n0,
-                    node1: s.n1,
-                })
-                .collect(),
-        }),
-    };
-    ffi::Program {
-        surface: ffi_surface(&i.surface),
-        op,
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_program(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
-}
-
 // ---- Rust side ----------------------------------------------------------------------
 
 fn v3(p: [f64; 3]) -> Vec3 {
@@ -458,7 +328,7 @@ fn node_class(code: u8) -> Result<NodeClass, HarnessError> {
     })
 }
 
-/// The shim's `read_tree` in a cache of `surface` over its natural domain.
+/// The case's tree nodes in a cache of `surface` over its natural domain.
 fn build_cache(surface: &Surface, nodes: &[NodeIn]) -> Result<SurfaceCache<H>, HarnessError> {
     let handle = H(1);
     let mut cache = SurfaceCache::new(
@@ -490,7 +360,7 @@ fn build_cache(surface: &Surface, nodes: &[NodeIn]) -> Result<SurfaceCache<H>, H
             let mut pseudo = PseudoBox::new();
             if let Some(ps) = &n.pseudo {
                 let [b1, b2, b3] = ps.basis;
-                // the shim ignores the status (the basis stays as it was)
+                // the status is ignored (the basis stays as it was)
                 let _ = pseudo.set_basis(v3(b1), v3(b2), v3(b3));
                 for &p in &ps.pts {
                     pseudo.add_point(v3(p));
@@ -543,7 +413,7 @@ fn status(e: &SolidError) -> f64 {
     }
 }
 
-/// The shim's `put_sol`.
+/// One solution of the record.
 fn put_sol(o: &mut Vec<f64>, s: &Solution<H>) {
     o.extend([
         f64::from(s.solution_type.code()),
@@ -1278,10 +1148,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -3,19 +3,18 @@
 //! curve intersection, the simple coincidence check, the range-solution classification,
 //! the surface/surface identical-solution test and `sm_SCLocalSolve`).
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p6` (upstream `source/SMLib/src/SmSurface.cpp`,
-//! called through `SmSurface*` on B-spline surfaces, planes, curve-bounded surfaces and
-//! surfaces of revolution and canonical spheres). Rust: `solidcore::surface::surface::p6`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp` (on B-spline surfaces, planes,
+//! curve-bounded surfaces, surfaces of revolution and canonical spheres); checked against
+//! its golden. Rust: `solidcore::surface::surface::p6`.
 //!
 //! A case is one `op` on a `surface` (`{"bspline": {oob, form, net, p, q, u, v}}` with
 //! control points as stored `[x, y, z, w]`, rows in u; `{"plane": {o, n}}`; `{"bounded":
 //! {basis, implicit}}`; `{"revolution": {a, b, p, axis, swap}}`; `{"sphere": {}}` (fixed
-//! canonical radius 2, origin/X/Y frame); or `{"sms": file}`). Both
-//! sides produce the flat record documented in the ffi module (status first); the runner
-//! reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
+//! canonical radius 2, origin/X/Y frame); or `{"sms": file}`). The
+//! Rust side produces a flat record (status first); the runner reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
 //! `InvalidInput`, `-1` for one upstream cannot return); `Unported` defers the case.
 //!
-//! The p4/p5 back-edges call the real implementations in both Rust and C++.
+//! The p4/p5 back-edges call the real implementations.
 //! Missing downstream callees (for example `surface_p3` singularity discovery and
 //! `surface_p8` global point solves) defer under their own unit identifiers.
 
@@ -49,7 +48,6 @@ use solidcore::surface::surface::p6::{sc_local_solve, SampleOptions, ScLocalSolv
 use solidcore::surface::surface::p7::SsGlobalSolver;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_p6::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -65,8 +63,12 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
-/// The value the shim writes to an unwritten `rSolPoint`.
+/// The value recorded for an unwritten `rSolPoint`.
 const UNWRITTEN: f64 = 12345.0;
+
+/// Largest sample count of `GetSampleValues` a case may ask for (it sizes the sampling
+/// loop).
+const MAX_SAMPLES: u64 = 64;
 
 // ---- inputs -----------------------------------------------------------------------
 
@@ -243,214 +245,8 @@ fn resolve(s: &SrfIn) -> Result<SrfIn, HarnessError> {
     }
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
-}
-
-fn shape(s: &BssIn) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn push_srf(o: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
-    match &resolve(s)? {
-        SrfIn::Sphere {} => o.push(4.0),
-        SrfIn::Sms(_) => return Err(harness("unresolved surface file")),
-        SrfIn::Revolution {
-            a,
-            b: bb,
-            p,
-            axis,
-            swap,
-        } => {
-            o.push(3.0);
-            o.extend_from_slice(a);
-            o.extend_from_slice(bb);
-            o.extend_from_slice(p);
-            o.extend_from_slice(axis);
-            o.push(b(*swap));
-        }
-        SrfIn::Bounded { basis, implicit } => {
-            o.push(2.0);
-            push_srf(o, basis)?;
-            o.push(b(*implicit));
-        }
-        SrfIn::Plane { o: org, n } => {
-            o.push(1.0);
-            o.extend_from_slice(org);
-            o.extend_from_slice(n);
-        }
-        SrfIn::Bspline(bs) => {
-            let (n, m) = shape(bs)?;
-            o.extend([0.0, b(bs.oob), f64::from(bs.form)]);
-            o.extend(
-                [n, m, bs.p, bs.q, bs.u.len().saturating_sub(1), bs.v.len().saturating_sub(1)]
-                    .map(|x| x as f64),
-            );
-            for row in &bs.net {
-                for p in row {
-                    o.extend_from_slice(p);
-                }
-            }
-            o.extend_from_slice(&bs.u);
-            o.extend_from_slice(&bs.v);
-        }
-    }
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &CrvIn) {
-    match c {
-        CrvIn::Line { a, b } => {
-            o.push(1.0);
-            o.extend_from_slice(a);
-            o.extend_from_slice(b);
-        }
-        CrvIn::Bspline { dim, cpts, p, u } => {
-            let n = cpts.len().saturating_sub(1);
-            let m = u.len().saturating_sub(1);
-            o.extend([0.0, *dim as f64, n as f64, *p as f64, m as f64]);
-            for x in cpts {
-                o.extend_from_slice(x);
-            }
-            o.extend_from_slice(u);
-        }
-    }
-}
-
-fn push_sol(o: &mut Vec<f64>, s: &SolIn) {
-    o.extend([f64::from(s.ty), s.nvars as f64, s.value, s.end_value]);
-    o.extend_from_slice(&s.start);
-    o.extend_from_slice(&s.end);
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    push_srf(&mut v, &i.surface)?;
-    let op = match &i.op {
-        OpIn::Cont { param } => {
-            v.push(f64::from(*param));
-            Op::Cont
-        }
-        OpIn::Trim { dom, side, remove } => {
-            v.extend(dom);
-            v.extend([f64::from(*side), b(*remove)]);
-            Op::Trim
-        }
-        OpIn::Sample {
-            n,
-            tt,
-            vals,
-            reference,
-            curve,
-            ivl,
-            right,
-            start,
-            want2,
-            want3,
-        } => {
-            v.extend([*n as f64, f64::from(*tt)]);
-            v.extend(vals);
-            v.push(b(reference.is_some()));
-            if let Some(r) = reference {
-                push_crv(&mut v, r);
-            }
-            push_crv(&mut v, curve);
-            v.extend(ivl);
-            v.extend([b(*right), b(*start), b(*want2), b(*want3)]);
-            Op::Sample
-        }
-        OpIn::Lci {
-            dom,
-            curve,
-            ivl,
-            tol,
-            guess_uv,
-            guess_t,
-        } => {
-            v.extend(dom);
-            push_crv(&mut v, curve);
-            v.extend(ivl);
-            v.push(*tol);
-            v.extend(guess_uv);
-            v.push(*guess_t);
-            Op::Lci
-        }
-        OpIn::Scc {
-            dom,
-            curve,
-            ivl,
-            tol,
-            partial,
-        } => {
-            v.extend(dom);
-            push_crv(&mut v, curve);
-            v.extend(ivl);
-            v.extend([*tol, b(*partial)]);
-            Op::Scc
-        }
-        OpIn::Classify { curve, sol } => {
-            push_crv(&mut v, curve);
-            push_sol(&mut v, sol);
-            Op::Classify
-        }
-        OpIn::Ssid {
-            other,
-            tol,
-            sol1,
-            sol2,
-        } => {
-            push_srf(&mut v, other)?;
-            v.push(*tol);
-            push_sol(&mut v, sol1);
-            push_sol(&mut v, sol2);
-            Op::Ssid
-        }
-        OpIn::Scls {
-            dom,
-            uc,
-            vc,
-            sbox,
-            cbox,
-            curve,
-            ivl,
-            tc,
-            tol,
-            vec,
-            sop,
-            skip,
-            process,
-        } => {
-            v.extend(dom);
-            v.extend(uc.map(f64::from));
-            v.extend(vc.map(f64::from));
-            v.extend(sbox);
-            v.push(b(cbox.is_some()));
-            v.extend(cbox.unwrap_or([0.0; 6]));
-            push_crv(&mut v, curve);
-            v.extend(ivl);
-            v.extend(tc.map(f64::from));
-            v.push(*tol);
-            v.push(b(vec.is_some()));
-            v.extend(vec.unwrap_or([0.0; 3]));
-            v.extend([f64::from(*sop), b(*skip), b(*process)]);
-            Op::Scls
-        }
-    };
-    Ok((op, v))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let out = ffi::eval(op, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -475,7 +271,7 @@ fn box_of(d: [f64; 6]) -> Extent3d {
     Extent3d::from_points(Vec3::new(d[0], d[1], d[2]), Vec3::new(d[3], d[4], d[5]))
 }
 
-/// The surface, `None` when its construction fails (the shim's `-3`).
+/// The surface, `None` when its construction fails (status `-3`).
 fn surface_of(k: &Kernel, s: &SrfIn) -> Result<Option<Surface>, HarnessError> {
     Ok(match &resolve(s)? {
         SrfIn::Sphere {} => Sphere::create_canonical(
@@ -529,7 +325,7 @@ fn surface_of(k: &Kernel, s: &SrfIn) -> Result<Option<Surface>, HarnessError> {
     })
 }
 
-/// The curve, `None` when its construction fails (the shim's `-3`).
+/// The curve, `None` when its construction fails (status `-3`).
 fn curve_of(c: &CrvIn) -> Result<Option<SmCurve>, HarnessError> {
     Ok(match c {
         CrvIn::Line { a, b } => Line::create_line_segment(3, v3(*a), v3(*b), None)
@@ -618,7 +414,7 @@ fn pv(o: &mut Vec<f64>, v: Vec3) {
     o.extend([v.x, v.y, v.z]);
 }
 
-/// The shim's curve record.
+/// The curve record.
 fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: &SmCurve) -> Result<(), Fail> {
     let ivl = c.natural_interval();
     o.extend([ivl.min(), ivl.max()]);
@@ -737,9 +533,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             want2,
             want3,
         } => {
-            // the FFI rejects more than `ffi::MAX_SAMPLES` samples; a larger count only
-            // sizes the Rust side's sampling loop
-            if *n > ffi::MAX_SAMPLES as u64 {
+            if *n > MAX_SAMPLES {
                 return Err(HarnessError::new(format!("{n} samples")).into());
             }
             let reference = match reference {
@@ -1480,12 +1274,6 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
             let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
             if let Err(Fail::Harness(_)) = rust_run(&i) {
                 continue;
             }
@@ -1500,10 +1288,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1564,13 +1348,9 @@ mod tests {
     }
 
     #[test]
-    fn sphere_natural_trim_fixture_and_protocol_are_exact() {
+    fn sphere_natural_trim_fixture_is_exact() {
         let i = sphere_natural_trim_fixture();
         assert!(matches!(i.surface, SrfIn::Sphere {}));
-        let (op, wire) = cpp_input(&i).unwrap();
-        assert_eq!(op, Op::Trim);
-        assert_eq!(wire, [4.0, 0.125, 0.25, 0.375, 0.75, 0.0, 0.0]);
-        ffi::validate(op, &wire).unwrap();
         let ctx = CaseContext {
             root: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
             seeds: 0,
@@ -1632,28 +1412,8 @@ mod tests {
         assert_sphere_trim_record(&record, dom);
     }
 
-    #[cfg(feature = "cpp")]
-    #[test]
-    fn sphere_natural_trim_cpp_full_records_and_interior_sensitivity() {
-        let i = sphere_natural_trim_fixture();
-        let (op, wire) = cpp_input(&i).unwrap();
-        let native = ffi::eval(op, &wire).unwrap();
-        let mut rust = rust_run(&i).unwrap_or_else(|_| panic!("Rust trim must succeed"));
-        for record in [&native, &rust] {
-            assert_sphere_trim_record(record, [0.125, 0.25, 0.375, 0.75]);
-        }
-        let cpp = Output::new().values("out", native);
-        let comparison =
-            crate::compare::compare(&cpp, &Output::new().values("out", rust.clone()), &[]);
-        assert!(comparison.pass(), "{comparison:?}");
-        assert_eq!(comparison.values_compared, 146);
-        assert_ne!(rust[12], 0.0);
-        rust[12] += 1e-4;
-        assert!(!crate::compare::compare(&cpp, &Output::new().values("out", rust), &[]).pass());
-    }
-
     /// Prints generated case `P6_CASE` as JSON (a debugging aid:
-    /// `P6_CASE=6 cargo test -p difftest --features cpp --lib p6_dump_case -- --ignored --nocapture`).
+    /// `P6_CASE=6 cargo test -p difftest --lib p6_dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs P6_CASE"]
     fn p6_dump_case() {

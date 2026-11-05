@@ -5,12 +5,11 @@
 //! `SmSSSIntersectENFO` (`SmSurfaceEval::EvalNormal` and `smsurf_IsPointOnNormal`, also owned
 //! by the unit, were co-ported and are compared by the runner of unit `surface.surface_p4`).
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p3` (upstream `source/SMLib/src/SmSurface.cpp`;
-//! the file-local classes are verbatim copies). Rust: `solidcore::surface::surface::p3`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden.
+//! Rust: `solidcore::surface::surface::p3`.
 //!
-//! A case is one `op` on a `surface` (the input forms of unit `surface.surface_p7`). Both
-//! sides produce the flat record documented in the ffi module (status first); the runner
-//! reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
+//! A case is one `op` on a `surface` (the input forms of unit `surface.surface_p7`). The
+//! Rust side produces a flat record (status first); the runner reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
 //! `InvalidInput`, `-1` for one upstream cannot return); `Unported` defers the case.
 //!
 //! Deferred cases: those that evaluate a curve-bounded surface (`SmSurface::Evaluate`), a
@@ -34,11 +33,10 @@ use solidcore::geom::global_solver::SolverOperation;
 use solidcore::surface::surface::p1::{FindPsNormalEnfo, SssIntersectEnfo};
 use solidcore::surface::surface::p3::check_shape_match;
 use solidcore::surface::surface::Surface;
-use solidcore_ffi::units::surface_surface_p3::{self as ffi, Op};
 
 use super::surface_surface_p7::{
     b, dom_of, gen_boundary_uv, gen_dom, gen_plane, gen_point_near, gen_surface, gen_uv, harness,
-    p2, push_srf, push_vecs, pv, side, sop_of, st, surface_of, v3, Fail, SrfIn,
+    p2, pv, side, sop_of, st, surface_of, v3, Fail, SrfIn,
 };
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -142,19 +140,6 @@ fn no_raw_knots(r: &[bool; 3]) -> bool {
     !r.iter().any(|&x| x)
 }
 
-/// [`push_srf`], as surface kind `4` (knots kept as given) when `raw`.
-fn push_srf_raw(v: &mut Vec<f64>, s: &SrfIn, raw: bool) -> Result<(), HarnessError> {
-    let at = v.len();
-    push_srf(v, s)?;
-    if raw {
-        match v.get_mut(at) {
-            Some(code) if *code == 0.0 => *code = 4.0,
-            _ => return Err(harness("raw knots need an inline B-spline surface")),
-        }
-    }
-    Ok(())
-}
-
 /// [`surface_of`], over a borrowed NURB (knots kept as given) when `raw`.
 fn surface_raw(s: &SrfIn, raw: bool) -> Result<Surface, HarnessError> {
     if !raw {
@@ -176,105 +161,6 @@ fn surface_raw(s: &SrfIn, raw: bool) -> Result<Surface, HarnessError> {
         .ok_or_else(|| harness(format!("bad form {}", bs.form)))?;
     b.set_b_spline_surface_form(form);
     Ok(Surface::from(b))
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_pts(o: &mut Vec<f64>, pts: &[Vec<f64>]) {
-    o.push(pts.len() as f64);
-    for p in pts {
-        o.extend_from_slice(p);
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    push_srf_raw(&mut v, &i.surface, i.raw_knots[0])?;
-    if (i.raw_knots[1] || i.raw_knots[2]) && !matches!(i.op, OpIn::LocalSss { .. }) {
-        return Err(harness("raw knots for s2/s3 are only read by local_sss"));
-    }
-    let op = match &i.op {
-        OpIn::EvalGeometric { uv, fu, fv } => {
-            v.extend_from_slice(uv);
-            v.extend([b(*fu), b(*fv)]);
-            Op::EvalGeometric
-        }
-        OpIn::NormalSection { uv, fu, fv, dir } => {
-            v.extend_from_slice(uv);
-            v.extend([b(*fu), b(*fv)]);
-            v.extend_from_slice(dir);
-            Op::NormalSection
-        }
-        OpIn::Singularities { pts, nrm } => {
-            v.extend([b(*pts), b(*nrm)]);
-            Op::Singularities
-        }
-        OpIn::Cover { other, tol, dom } => {
-            push_srf(&mut v, other)?;
-            v.push(*tol);
-            v.push(b(dom.is_some()));
-            v.extend_from_slice(&dom.unwrap_or([0.0, 0.0, 1.0, 1.0]));
-            Op::Cover
-        }
-        OpIn::ShapeMatch { other, uv0, uv1, tol, ang } => {
-            push_srf(&mut v, other)?;
-            v.extend_from_slice(uv0);
-            v.extend_from_slice(uv1);
-            v.extend([*tol, *ang]);
-            Op::ShapeMatch
-        }
-        OpIn::FindPsNormal { p, sq_tol, pts } => {
-            v.extend_from_slice(p);
-            v.push(*sq_tol);
-            push_pts(&mut v, pts);
-            Op::FindPsNormal
-        }
-        OpIn::SssIntersect { s2, s3, pts } => {
-            push_srf(&mut v, s2)?;
-            push_srf(&mut v, s3)?;
-            push_pts(&mut v, pts);
-            Op::SssIntersect
-        }
-        OpIn::LocalPlane { other, dom1, dom2, tol, g1, g2, po, pn } => {
-            push_srf(&mut v, other)?;
-            v.extend_from_slice(dom1);
-            v.extend_from_slice(dom2);
-            v.push(*tol);
-            v.extend_from_slice(g1);
-            v.extend_from_slice(g2);
-            v.extend_from_slice(po);
-            v.extend_from_slice(pn);
-            Op::LocalPlane
-        }
-        OpIn::LocalSolve { other, dom1, dom2, sop, vecs, g1, g2 } => {
-            push_srf(&mut v, other)?;
-            v.extend_from_slice(dom1);
-            v.extend_from_slice(dom2);
-            v.push(f64::from(*sop));
-            push_vecs(&mut v, vecs);
-            v.extend_from_slice(g1);
-            v.extend_from_slice(g2);
-            Op::LocalSolve
-        }
-        OpIn::LocalSss { s2, s3, doms, g1, g2, g3 } => {
-            push_srf_raw(&mut v, s2, i.raw_knots[1])?;
-            push_srf_raw(&mut v, s3, i.raw_knots[2])?;
-            for d in doms {
-                v.extend_from_slice(d);
-            }
-            v.extend_from_slice(g1);
-            v.extend_from_slice(g2);
-            v.extend_from_slice(g3);
-            Op::LocalSss
-        }
-    };
-    Ok((op, v))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let out = ffi::eval(op, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -790,12 +676,6 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
             if let Err(Fail::Harness(_)) = rust_run(k, &i) {
                 continue;
             }
@@ -812,10 +692,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &Kernel::default();
         rust(k, &case.parse()?)
@@ -827,9 +703,9 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// Prints generated cases `P3_CASES` (comma separated indices) with both outputs (a
-    /// debugging aid: `P3_CASES=146,168 cargo test --profile difftest -p difftest --features
-    /// cpp --lib p3_dump_case -- --ignored --nocapture`).
+    /// Prints generated cases `P3_CASES` (comma separated indices) with their outputs (a
+    /// debugging aid: `P3_CASES=146,168 cargo test --profile difftest -p difftest --lib
+    /// p3_dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs P3_CASES"]
     fn p3_dump_case() {
@@ -840,7 +716,6 @@ mod tests {
             let v = Runner.generate(&mut rng).unwrap();
             let inp: Inputs = serde_json::from_value(v.clone()).unwrap();
             println!("CASE {i}: {}", serde_json::to_string(&v).unwrap());
-            println!("  cpp : {:?}", cpp(&inp).map(|o| format!("{o:?}")));
             println!("  rust: {:?}", rust(k, &inp).map(|o| format!("{o:?}")));
         }
     }

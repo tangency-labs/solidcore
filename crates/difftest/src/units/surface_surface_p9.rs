@@ -1,5 +1,5 @@
-//! Differential runner for `surface.surface_p9`. Reference: SmSurface.cpp:11644,
-//! 13887, 14877. A quadratic Bezier patch is used on both sides. CSI fixtures use
+//! Runner for `surface.surface_p9`. Ported from upstream SmSurface.cpp:11644, 13887,
+//! 14877; checked against its golden. A quadratic Bezier patch is used. CSI fixtures use
 //! one planar patch and one line span, so both subdivision trees have one leaf.
 //! Cylinder and cone cases (`analytic_cone` 1 and 2) take the domain as fractions
 //! of the surface's natural domain.
@@ -28,13 +28,11 @@ use solidcore::surface::surface::Surface;
 use solidcore::surface::surface_cache::{
     BezierAux2d, BezierPatch, SurfaceCache, SurfaceCacheOptions,
 };
-use solidcore_ffi::units::surface_surface_p9 as ffi;
 
 use solidcore::geom::solution_array::{ObjectKind, SolutionObject};
 
 /// A solution object: `0` the curve, `1` the surface, which carries the natural UV
-/// domain of the real surface (`SmSurface::GetNaturalUVDomain`, as the shim's
-/// surface pointer reaches it).
+/// domain of the real surface (`SmSurface::GetNaturalUVDomain`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Handle(u8, Option<Extent2d>);
 impl SolutionObject for Handle {
@@ -62,7 +60,7 @@ struct Inputs {
     #[serde(default)]
     analytic_revolution: bool,
     /// 1: the corpus cylinder, 2: a canonical cone, 3: a canonical sphere, 4: a
-    /// canonical torus (shim kinds 3 to 6).
+    /// canonical torus.
     #[serde(default)]
     analytic_cone: u8,
     net: [[f64; 3]; 9],
@@ -386,32 +384,6 @@ impl UnitDiff for Runner {
         };
         crate::runner::default_cases(self, &ctx)
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        ffi::eval_surface_kind(
-            i.op,
-            if i.analytic_cone != 0 {
-                2 + i32::from(i.analytic_cone)
-            } else if i.analytic_revolution {
-                2
-            } else {
-                i32::from(i.analytic_plane)
-            },
-            &i.net,
-            i.domain,
-            i.direction,
-            i.controls,
-            i.diagonals,
-            i.line,
-        )
-        .map_err(harness)
-        .and_then(|v| {
-            if i.op == 2 && v.first().copied() != Some(0.0) {
-                return Err(harness("CSI reference fixture must solve successfully"));
-            }
-            Ok(output(v))
-        })
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse()?)
     }
@@ -502,7 +474,7 @@ impl UnitDiff for Runner {
     }
 }
 
-#[cfg(all(test, feature = "cpp"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -621,35 +593,6 @@ mod tests {
             assert_splits(&pair[0], &disabled).unwrap();
             assert_splits(&pair[1], &enabled).unwrap();
             assert_ne!(disabled.values["out"], enabled.values["out"]);
-        }
-    }
-
-    #[test]
-    fn analytic_diagonal_native_outputs_match_complete_arrays() {
-        assert!(Runner.abs_floors().is_empty());
-        for pair in fixtures().unwrap().as_chunks::<2>().0 {
-            let mut native = Vec::new();
-            let mut rust = Vec::new();
-            for case in pair {
-                let cpp = Runner.run_cpp(case).unwrap();
-                let rs = Runner.run_rust(case).unwrap();
-                assert_splits(case, &cpp).unwrap();
-                assert_splits(case, &rs).unwrap();
-                let diff = crate::compare(&cpp, &rs, Runner.abs_floors());
-                assert!(diff.pass(), "{}: {diff:?}", case.name);
-                assert_eq!(diff.values_compared, cpp.values["out"].len() + 1);
-                if case.parse::<Inputs>().unwrap().diagonals {
-                    let mut perturbed = rs.clone();
-                    perturbed.values.get_mut("out").unwrap()[1] *= 1.01;
-                    let negative = crate::compare(&cpp, &perturbed, Runner.abs_floors());
-                    assert!(!negative.pass(), "{}: interior change missed", case.name);
-                    assert_eq!(negative.mismatch_count, 1);
-                }
-                native.push(cpp);
-                rust.push(rs);
-            }
-            assert_ne!(native[0].values["out"], native[1].values["out"]);
-            assert_ne!(rust[0].values["out"], rust[1].values["out"]);
         }
     }
 }

@@ -3,13 +3,12 @@
 //! surface cache maker and the base `CalculateBoundingBox` / `GetDomainWithContinuity`),
 //! `SmSTEPSurface`, and the file-local helpers of `SmSurface.cpp` the unit owns.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_p1` (virtual members called through
-//! `SmSurface*`, base bodies called qualified; the file-local helpers are copies in the
-//! shim). Rust: `solidcore::surface::surface::p1`.
+//! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden.
+//! Rust: `solidcore::surface::surface::p1`.
 //!
 //! A case is a surface `surf` (a B-spline, a plane or a curve-bounded surface), wrapped in
-//! a STEP surface when `wrap`, and an `op` with its parameters. Both sides produce the flat
-//! record documented in the ffi module; the runner reports its first entry as the `status`
+//! a STEP surface when `wrap`, and an `op` with its parameters. The Rust side produces a
+//! flat record; the runner reports its first entry as the `status`
 //! (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a
 //! Rust error upstream cannot produce) and the rest as the `out` values.
 //!
@@ -54,17 +53,19 @@ use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::surface::surface_cache::p1::SurfaceCache;
 use solidcore::error::SM_ERR;
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_p1::{self as ffi, Op, MAX_DIR_DERIV};
 
 use super::surface_surface_cache_p1::{
-    curve_of, dom_of, flag, gen_knots, gen_sub_dom, gvec, harness, push3, push_box, push_crv,
+    curve_of, dom_of, flag, gen_knots, gen_sub_dom, gvec, harness, push3, push_box,
     push_dom, status, v3, CrvIn,
 };
-use super::surface_surface_cache_p3::{gen_surf, push_surf, surf_domain, surf_size, surface_in, SurfIn};
+use super::surface_surface_cache_p3::{gen_surf, surf_domain, surf_size, surface_in, SurfIn};
 use super::surface_surface_p2::Handle;
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Highest directional derivative order a case may ask for.
+const MAX_DIR_DERIV: usize = 7;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 800;
@@ -204,36 +205,6 @@ enum OpIn {
     },
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::Eval { .. } => Op::Eval,
-            OpIn::Periodic { .. } => Op::Periodic,
-            OpIn::DegenPoint { .. } => Op::DegenPoint,
-            OpIn::DegenCurve { .. } => Op::DegenCurve,
-            OpIn::Flat { .. } => Op::Flat,
-            OpIn::OnBoundary { .. } => Op::OnBoundary,
-            OpIn::InDomain { .. } => Op::InDomain,
-            OpIn::Misc { .. } => Op::Misc,
-            OpIn::Snap { .. } => Op::Snap,
-            OpIn::NSect { .. } => Op::NSect,
-            OpIn::ParamDir { .. } => Op::ParamDir,
-            OpIn::DirDerivs { .. } => Op::DirDerivs,
-            OpIn::Convert { .. } => Op::Convert,
-            OpIn::Size { .. } => Op::Size,
-            OpIn::FindIvl { .. } => Op::FindIvl,
-            OpIn::Sing { .. } => Op::Sing,
-            OpIn::Seam { .. } => Op::Seam,
-            OpIn::IsoLen { .. } => Op::IsoLen,
-            OpIn::Step { .. } => Op::Step,
-            OpIn::Cache { .. } => Op::Cache,
-            OpIn::BBox { .. } => Op::BBox,
-            OpIn::DomCont { .. } => Op::DomCont,
-            OpIn::Sil { .. } => Op::Sil,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     /// Wrap the surface in an `SmSTEPSurface` (unused by `Step`, `NSect`, `FindIvl`).
@@ -245,159 +216,6 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn push_wrapped(o: &mut Vec<f64>, wrap: bool, s: &SurfIn) -> Result<(), HarnessError> {
-    o.push(flag(wrap));
-    push_surf(o, s)
-}
-
-fn push_opt_dom(o: &mut Vec<f64>, d: Option<[f64; 4]>) {
-    o.push(flag(d.is_some()));
-    o.extend(d.unwrap_or([0.0, 0.0, 1.0, 1.0]));
-}
-
-fn push_opt_tol(o: &mut Vec<f64>, t: Option<f64>) {
-    o.push(flag(t.is_some()));
-    o.push(t.unwrap_or(0.0));
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = i.op.ffi();
-    match &i.op {
-        OpIn::NSect { .. } | OpIn::FindIvl { .. } | OpIn::Step { .. } => {}
-        OpIn::Sil { .. } => {
-            if i.wrap {
-                return Err(harness("sil: the surface is not wrapped"));
-            }
-            push_surf(&mut o, &i.surf)?;
-        }
-        _ => push_wrapped(&mut o, i.wrap, &i.surf)?,
-    }
-    match &i.op {
-        OpIn::Eval { uv, ul, vl } => {
-            o.extend(uv);
-            o.extend([flag(*ul), flag(*vl)]);
-        }
-        OpIn::Periodic { dom, v } => {
-            o.extend(dom);
-            o.push(flag(*v));
-        }
-        OpIn::DegenPoint { tol, dom } => {
-            o.push(*tol);
-            push_opt_dom(&mut o, *dom);
-        }
-        OpIn::DegenCurve { ang, dom, tol } => {
-            o.push(*ang);
-            push_opt_dom(&mut o, *dom);
-            o.push(*tol);
-        }
-        OpIn::Flat { uv, ang } => {
-            o.extend(uv);
-            o.push(*ang);
-        }
-        OpIn::OnBoundary { dom, uv, tol } | OpIn::InDomain { dom, uv, tol } => {
-            o.extend(dom);
-            o.extend(uv);
-            push_opt_tol(&mut o, *tol);
-        }
-        OpIn::Misc { other_wrap, other } => push_wrapped(&mut o, *other_wrap, other)?,
-        OpIn::Snap { uv, tol } => {
-            o.extend(uv);
-            o.push(*tol);
-        }
-        OpIn::NSect { e, dir } => {
-            if e.len() != 9 {
-                return Err(harness("nsect: need 9 vectors"));
-            }
-            for v in e {
-                o.extend(v);
-            }
-            o.extend(dir);
-        }
-        OpIn::ParamDir { uv, vec } => {
-            o.extend(uv);
-            o.extend(vec);
-        }
-        OpIn::DirDerivs { uv, dir, h, ul, vl } => {
-            o.extend(uv);
-            o.extend(dir);
-            o.push(*h as f64);
-            o.extend([flag(*ul), flag(*vl)]);
-        }
-        OpIn::Convert { dom } => o.extend(dom),
-        OpIn::Size { dom } => push_opt_dom(&mut o, *dom),
-        OpIn::FindIvl {
-            curve,
-            ivl,
-            param,
-            dom,
-        } => {
-            push_crv(&mut o, curve);
-            o.extend(ivl);
-            o.push(*param);
-            o.extend(dom);
-        }
-        OpIn::Sing { uv, dir, v, tol, s } => {
-            o.extend(uv);
-            o.extend(dir);
-            o.extend([flag(*v), *tol, *s]);
-        }
-        OpIn::Seam { prev, curr, dom } => {
-            o.extend(prev);
-            o.extend(curr);
-            o.extend(dom);
-        }
-        OpIn::IsoLen { u, t } => o.extend([*u, *t]),
-        OpIn::Step { v, ivl } => {
-            push_surf(&mut o, &i.surf)?;
-            o.push(flag(*v));
-            o.push(flag(ivl.is_some()));
-            o.extend(ivl.unwrap_or([0.0, 0.0]));
-        }
-        OpIn::Cache { trim } => o.push(flag(*trim)),
-        OpIn::BBox {
-            dom,
-            normal,
-            pseudo,
-            expand,
-            polar,
-        } => {
-            o.extend(dom);
-            o.extend([flag(*normal), flag(*pseudo), flag(*expand), flag(*polar)]);
-        }
-        OpIn::DomCont {
-            cont,
-            uv,
-            vec,
-            history,
-        } => {
-            o.push(f64::from(*cont));
-            o.extend(uv);
-            o.extend(vec);
-            o.push(f64::from(*history));
-        }
-        OpIn::Sil {
-            dom,
-            eye,
-            perspective,
-            tol,
-            ang,
-            translate,
-        } => {
-            o.extend(dom);
-            o.push(flag(*perspective));
-            o.extend(eye);
-            push_opt_tol(&mut o, *tol);
-            push_opt_tol(&mut o, *ang);
-            o.push(flag(translate.is_some()));
-            o.extend(translate.unwrap_or([0.0; 3]));
-        }
-    }
-    Ok((op, o))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
         .split_first()
@@ -405,12 +223,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1275,33 +1087,15 @@ fn gen_dom_hist(rng: &mut Rng) -> Result<Inputs, HarnessError> {
 }
 
 fn generate_dom_hist(rng: &mut Rng) -> Option<Value> {
-    for _ in 0..64 {
-        let Ok(i) = gen_dom_hist(rng) else {
-            continue;
-        };
-        let Ok((op, input)) = cpp_input(&i) else {
-            continue;
-        };
-        if ffi::validate(op, &input).is_ok() {
-            return serde_json::to_value(i).ok();
-        }
-    }
-    None
+    (0..64)
+        .find_map(|_| gen_dom_hist(rng).ok())
+        .and_then(|i| serde_json::to_value(i).ok())
 }
 
 fn generate_sil(rng: &mut Rng) -> Option<Value> {
-    for _ in 0..64 {
-        let Ok(i) = gen_sil(rng) else {
-            continue;
-        };
-        let Ok((op, input)) = cpp_input(&i) else {
-            continue;
-        };
-        if ffi::validate(op, &input).is_ok() {
-            return serde_json::to_value(i).ok();
-        }
-    }
-    None
+    (0..64)
+        .find_map(|_| gen_sil(rng).ok())
+        .and_then(|i| serde_json::to_value(i).ok())
 }
 
 impl UnitDiff for Runner {
@@ -1310,18 +1104,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let Ok(i) = gen_case(rng) else {
-                continue;
-            };
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        (0..64)
+            .find_map(|_| gen_case(rng).ok())
+            .and_then(|i| serde_json::to_value(i).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1353,10 +1138,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

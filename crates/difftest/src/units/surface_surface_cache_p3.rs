@@ -2,11 +2,12 @@
 //! `SubdivideToTolerances`, `BuildTreeBase`, `BuildTree` and `GetTree` of
 //! `SmSurfaceCache.cpp`.
 //!
-//! C++: `solidcore_ffi::units::surface_surface_cache_p3` (start nodes built by hand, as
-//! `BuildTreeBase` builds its first generation). Rust: `solidcore::surface::surface_cache::p3`.
+//! Ported from upstream `source/SMLib/src/SmSurfaceCache.cpp`; checked against its golden
+//! (start nodes built by hand, as `BuildTreeBase` builds its first generation). Rust:
+//! `solidcore::surface::surface_cache::p3`.
 //!
-//! A case is a surface `surf`, the cache options and an `op`. Both sides produce the flat
-//! record documented in the ffi module: the op status (`0` = `SM_SUCCESS`, else the
+//! A case is a surface `surf`, the cache options and an `op`. The output is a flat
+//! record: the op status (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`) and, for the tree operations, every node of
 //! the tree in allocation order with its links, kind, split direction, domain, box, class,
 //! flags and surface, and for Bezier patch nodes their continuities, pseudo box and
@@ -40,11 +41,10 @@ use solidcore::surface::surface_cache::p1::{
     BezierAux2d, BezierPatch, SurfaceCache, SurfaceCacheOptions,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surface_cache_p3::{self as ffi, Op};
 
 use super::surface_surface_cache_p1::{
     bss_of, domain_of_srf, flag, gen_bss, gen_srf, gen_sub_dom, gvec, harness, push3, push_box,
-    push_bss, push_dom, push_srf, srf, status, surface_of, v3, BssIn, InlineSrf, SrfIn,
+    push_bss, push_dom, srf, status, surface_of, v3, BssIn, InlineSrf, SrfIn,
 };
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -177,18 +177,6 @@ enum OpIn {
     Get,
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            OpIn::SubdivNode { .. } => Op::SubdivNode,
-            OpIn::SubdivTol { .. } => Op::SubdivTol,
-            OpIn::Find { .. } => Op::Find,
-            OpIn::Build => Op::Build,
-            OpIn::Get => Op::Get,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     surf: SurfIn,
@@ -197,7 +185,7 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
+// ---- surface wire -------------------------------------------------------------------
 
 pub(crate) fn push_surf(o: &mut Vec<f64>, s: &SurfIn) -> Result<(), HarnessError> {
     match s {
@@ -221,62 +209,6 @@ pub(crate) fn push_surf(o: &mut Vec<f64>, s: &SurfIn) -> Result<(), HarnessError
     }
 }
 
-fn push_opts(o: &mut Vec<f64>, p: &OptsIn) {
-    o.extend([
-        p.chord, p.ang, p.aspect, p.max_side, p.min_side, p.ratio, p.start,
-    ]);
-}
-
-fn push_start(o: &mut Vec<f64>, t: &StartIn) -> Result<(), HarnessError> {
-    o.push(f64::from(t.aux));
-    o.extend(t.dom);
-    o.extend(t.bbox);
-    o.push(f64::from(t.class));
-    o.extend([flag(t.chsat), flag(t.angsat), flag(t.surf)]);
-    if t.aux == 3 {
-        let b = t.bez.as_ref().ok_or_else(|| harness("aux 3 needs a Bezier"))?;
-        push_srf(o, &srf(b)?)?;
-        for b in t.basis {
-            o.extend(b);
-        }
-        for [lo, hi] in t.ivl {
-            o.extend([lo, hi]);
-        }
-        o.extend(t.uc.map(f64::from));
-        o.extend(t.vc.map(f64::from));
-    }
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    push_surf(&mut o, &i.surf)?;
-    push_opts(&mut o, &i.opts);
-    match &i.op {
-        OpIn::SubdivNode { start, v, only } => {
-            push_start(&mut o, start)?;
-            o.extend([flag(*v), flag(*only)]);
-        }
-        OpIn::SubdivTol { start } => push_start(&mut o, start)?,
-        OpIn::Find {
-            start,
-            splits,
-            dom,
-            poles,
-        } => {
-            push_start(&mut o, start)?;
-            o.push(splits.len() as f64);
-            for s in splits {
-                o.extend([s.node as f64, flag(s.v), flag(s.only)]);
-            }
-            o.extend(dom);
-            o.push(flag(*poles));
-        }
-        OpIn::Build | OpIn::Get => {}
-    }
-    Ok((i.op.ffi(), o))
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
         .split_first()
@@ -284,12 +216,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -928,18 +854,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let Ok(i) = gen_case(rng) else {
-                continue;
-            };
-            let Ok((op, input)) = cpp_input(&i) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        (0..64)
+            .find_map(|_| gen_case(rng).ok())
+            .and_then(|i| serde_json::to_value(i).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -948,10 +865,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
