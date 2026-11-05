@@ -97,7 +97,7 @@ pub fn write_curve_at(
         CurveKind::CrvOnSurf(c) => write_crv_on_surf(c, db, version, depth),
         CurveKind::TangentField(t) => write_tangent_field(t, db, version, depth),
         CurveKind::Parabola(_) => Err(unported("SmParabola::WriteToDB")),
-        CurveKind::Composite(_) => Err(unported("SmCompositeCurve::WriteToDB")),
+        CurveKind::Composite(c) => c.write_to_db(db, version, depth),
     }
 }
 
