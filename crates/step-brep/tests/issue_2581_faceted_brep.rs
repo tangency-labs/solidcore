@@ -28,11 +28,7 @@
 //!     --test issue_2581_faceted_brep -- --ignored --nocapture
 //! ```
 
-#![allow(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)] // test helpers
+#![allow(clippy::expect_used, clippy::indexing_slicing, clippy::panic)] // test helpers
 
 use std::path::{Path, PathBuf};
 
