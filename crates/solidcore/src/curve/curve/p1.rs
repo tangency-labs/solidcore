@@ -2800,7 +2800,7 @@ mod tests {
         ));
         assert!(!exact_parallel_difference(
             [0.0; 3],
-            [f64::MAX, f64::MAX.next_down(), 0.0],
+            [f64::MAX, next_parameter_down(f64::MAX), 0.0],
             Vec3::new(f64::MAX, f64::MAX, 0.0)
         ));
         assert!(!exact_parallel_difference(
