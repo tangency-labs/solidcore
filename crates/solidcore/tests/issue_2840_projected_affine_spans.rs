@@ -193,3 +193,43 @@ fn affine_boundary_minimum_and_maximum_remain_candidates() {
         4.49_f64.sqrt(),
     );
 }
+
+#[test]
+fn rotated_constant_projection_retains_its_range_at_zero_tolerance() {
+    let nurb = NurbCurve::new(
+        vec![
+            CPoint::new(0.0, 0.0, 0.0, 1.0),
+            CPoint::new(1.0, 1.0, 0.0, 1.0),
+        ],
+        1,
+        vec![0.0, 0.0, 1.0, 1.0],
+    )
+    .unwrap();
+    let curve = Curve::from(BSplineCurve::from_nurb(nurb, 3, true));
+    for operation in [
+        SolverOperation::ProjectedMinimize,
+        SolverOperation::ProjectedMaximize,
+    ] {
+        let answers = curve
+            .global_point_solve::<Object>(
+                &Kernel::default(),
+                &Extent1d::from_min_max(0.0, 1.0),
+                operation,
+                Vec3::Z,
+                0.0,
+                SolutionRequested::All,
+                &GlobalPointSolveOptions {
+                    opt_vectors: Some(&[Vec3::new(1.0, 1.0, 0.0)]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(answers.len(), 1);
+        let answer = &answers.as_slice()[0];
+        assert_eq!(answer.solution_type, SolutionType::RangeOfValues);
+        assert_eq!(answer.start.parameters[0], 0.0);
+        assert_eq!(answer.end.parameters[0], 1.0);
+        assert_eq!(answer.start.solution_value, 2.0);
+        assert_eq!(answer.end.solution_value, 2.0);
+    }
+}
