@@ -196,3 +196,18 @@ unit = "sweep.api_brep"
 check = "ratchet"
 case = "wr471_rot_half_circle_whole_sphere_off_0"
 reason = "#2890 follow-on: precise properties integrate from the trims' base, split at the surface's knots and step on the fifth-order estimate; 3 passes whose volumes move are known mismatches, each with both sides' errors against an independent reference (plan/findings/sweep.api_brep--precise-properties-2890-moves-cases-2026-11-05.md). Remove once this branch has merged."
+
+[[waiver]]
+unit = "blend.fillet_corner_p1"
+check = "ratchet"
+reason = "closed Turn, #2349: a closed edge meeting itself at an angle is the blend corner's Turn and SmFilletNx1ClosedCorner is deleted; its 16 cases that build that class directly are retired (no Rust class is left to compare) (plan/findings/blend.fillet_corner_p3--issue-2349-closed-turn-diverges-from-cpp.md). Remove once #2349's closed Turn has merged."
+
+[[waiver]]
+unit = "blend.fillet_corner_p2"
+check = "ratchet"
+reason = "closed Turn, #2349: a closed edge meeting itself at an angle is the blend corner's Turn and SmFilletNx1ClosedCorner is deleted; its 44 cases that build that class directly are retired (no Rust class is left to compare) (it runs part 1's cases), among them the 2 #2400 known mismatches on the closed Nx1 corner's GetTangentFilletSolver (plan/findings/blend.fillet_corner_p3--issue-2349-closed-turn-diverges-from-cpp.md). Remove once #2349's closed Turn has merged."
+
+[[waiver]]
+unit = "blend.fillet_corner_p3"
+check = "ratchet"
+reason = "closed Turn, #2349: a closed edge meeting itself at an angle is the blend corner's Turn and SmFilletNx1ClosedCorner is deleted; its 5 cases that build that class directly are retired (no Rust class is left to compare); 2 passes are known mismatches (the corner type) (plan/findings/blend.fillet_corner_p3--issue-2349-closed-turn-diverges-from-cpp.md). Remove once #2349's closed Turn has merged."

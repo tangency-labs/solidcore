@@ -33,11 +33,11 @@ use crate::blend::fillet_geom::p1::{
     CornerLookup, FilletCornerId, FilletEdgeType, FilletVertexType,
 };
 use crate::error::{EntityRef, Result, SolidError};
-use crate::kernel::Kernel;
 use crate::intersect::point_class::PointClassType;
+use crate::kernel::Kernel;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use crate::topology::{edge, Brep};
 use crate::topology::edgeuse::{p1 as eu1, p3 as eu3};
+use crate::topology::{edge, Brep};
 
 const OP: &str = "blend::fillet_corner::topology::make_closed_turn_topology";
 

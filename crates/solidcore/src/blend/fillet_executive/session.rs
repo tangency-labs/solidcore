@@ -2360,6 +2360,18 @@ impl<'target> FilletSession<'target> {
             .make_nx1_corner_topology(k, id, &mut self.executive)
     }
 
+    /// Build one corner's pseudo-topology by its class (`SmFilletCorner::MakeCornerTopology`,
+    /// virtual): the dispatch the executive's corner-vertex loop runs per corner, so an
+    /// `NByOne` corner builds as [`FilletSession::make_nx1_corner_topology`] and a blend
+    /// corner (the closed Turn among them, #2349) by its event.
+    ///
+    /// # Errors
+    /// Unresolved corner/solver identities or the corner's topology producer's errors.
+    pub fn make_corner_topology(&mut self, k: &mut Kernel, id: FilletCornerId) -> Result<()> {
+        self.objects
+            .vertices_make_topology(k, FilletObject::Corner(id), &mut self.executive)
+    }
+
     /// Calculate one ordinary `NByOne` corner's vertices using its retained solver.
     ///
     /// This follows the shared corner loop, actual derived solver operations and
