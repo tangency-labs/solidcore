@@ -29,12 +29,12 @@ use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::boolean::api_brep::boolean_union;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::kernel::{Kernel, KernelOptions};
-use solidcore::mass::integrator::properties::{PropertyAttributes, brep_volume};
+use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point3, Vec3};
 use solidcore::primitive::api_primitives::create_cylinder;
 use solidcore::topology::brep::mirror::transform_matrix;
 use solidcore::topology::brep::p2::is_manifold_solid;
-use solidcore::topology::brep::validation::{CheckLevel, check_brep};
+use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::{Brep, EdgeId};
 
 /// A's radius.
