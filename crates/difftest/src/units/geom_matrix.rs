@@ -495,7 +495,7 @@ fn gen_case(rng: &mut Rng) -> Inputs {
 
 /// An `SVDecompose` input: mostly `m >= n` (sometimes `m < n`, `SM_ERR`), with the
 /// shapes of [`square`], 3x3 transform blocks (rotation, shear, mirror, scale,
-/// near-singular) and huge / tiny scales. Entries the FFI guard refuses become zero.
+/// near-singular) and huge / tiny scales. Entries outside [`svd_element_ok`] become zero.
 fn gen_svd(rng: &mut Rng) -> Inputs {
     let (rows, cols, mut m) = if rng.chance(0.3) {
         (3, 3, transform_block(rng))
@@ -522,6 +522,11 @@ fn gen_svd(rng: &mut Rng) -> Inputs {
             *x *= k;
         }
     }
+    for x in &mut m {
+        if !svd_element_ok(*x) {
+            *x = 0.0;
+        }
+    }
     Inputs {
         op: "svd".into(),
         rows,
@@ -532,6 +537,18 @@ fn gen_svd(rng: &mut Rng) -> Inputs {
         j: 0,
         s: 0.0,
     }
+}
+
+/// Smallest non-zero element magnitude of a generated SVD input.
+const SVD_MIN_ABS: f64 = 1e-100;
+/// Largest element magnitude of a generated SVD input.
+const SVD_MAX_ABS: f64 = 1e100;
+
+/// The SVD input contract: every element zero or a finite magnitude in
+/// [`SVD_MIN_ABS`, `SVD_MAX_ABS`], so the norm stays finite (upstream's splitting test
+/// reads `rW[-1]` on a NaN or infinite norm; such inputs are fixtures).
+fn svd_element_ok(x: f64) -> bool {
+    x == 0.0 || (SVD_MIN_ABS..=SVD_MAX_ABS).contains(&x.abs())
 }
 
 /// A 3x3 block of the kinds `SmBrep::Transform(double[4][4])` decomposes.
