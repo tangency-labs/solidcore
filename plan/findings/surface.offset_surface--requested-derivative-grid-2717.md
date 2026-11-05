@@ -80,13 +80,37 @@ A separate Rust-only diagnostic replays the original prefix before every
 unequal upper evaluation in the 79 newly failing scripts. It runs that
 request and an otherwise identical `(3,3,true)` control from the same prefix,
 then compares only the named coordinates requested by the original call.
-All 95 requests complete successfully; all 1146 compared components agree
-within relative `1e-9`, without an absolute floor. Neither C++ output nor
-C++ process state is used by this check. Script prefixes preserve prior
-operations and extension state rather than evaluating on a fresh replacement
-surface. This is request-shape consistency evidence, not an independent
-mathematical oracle for those generated surfaces, and it does not justify
-parking their C++ mismatches or releasing either draft hold.
+All 95 requests return success. Corrected accounting finds **1143 finite named
+components** agreeing within relative `1e-9`, without an absolute floor. The other
+three components are nonfinite in `gen0881` (`Duu`, step 2) and are not numeric
+agreement. The first diagnostic used a comparison that silently skipped NaNs;
+its original claim of 1146 agreeing components was incorrect. The saved JSON
+uses null for nonfinite values and cannot distinguish NaN from infinity. The
+ordinary difftest report explicitly records NaN for this Rust output.
+Neither C++ output nor C++ process state is used by the Rust-only check.
+Request-shape consistency is not an independent mathematical oracle and does
+not justify parking a mismatch or releasing either draft hold.
+
+A separate C++-only probe runs the same prefixes and request pairs through the
+existing FFI runner. It explicitly detects nonfinite values before applying the
+relative comparison. Across all 95 requests, **81 requests in all 79 cases**
+change at least one named coordinate when the requested grid is enlarged.
+For `gen0094`, upper `(2,0)` gives `Duu.x=-0.18310631981091818`, while the
+same-prefix upper `(3,3)` gives `-4.104584168595843`. The latter matches the
+corrected Rust requested coordinate. All 1143 finite requested coordinates in
+the larger C++ controls agree with the corresponding Rust controls and requests.
+Only the requested coordinates are compared here: other, newly requested mixed
+coordinates still expose inherited formula divergences.
+
+The extreme-scale nested offset `gen0881` has control points around `1e150`.
+Its C++ `(2,0)` returns finite `Duu` components near `1e133`, while `(3,3)`
+returns NaNs for those coordinates, matching the nonfinite Rust output. This
+is C++ request-shape inconsistency, not evidence of a finite correct derivative.
+The three nonfinite components are excluded from numeric agreement. These
+controls expose C++ inconsistency but do not independently prove which request
+shape is mathematically correct for every generated surface, explain the
+parent's other 236 failures, or authorize any mismatch parking. All 315 ordinary
+failures remain visible.
 
 The fixed report retains 276 mismatch samples across all 79 newly failing
 cases. Mapping their `values.out[index]` fields through each original
