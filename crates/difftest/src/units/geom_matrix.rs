@@ -1,14 +1,14 @@
 //! Runner for unit `geom.matrix`: dense matrices, LU solves, Jacobi eigen solver.
 //!
-//! C++: `solidcore_ffi::units::geom_matrix` (upstream `SmMatrix`,
-//! `source/SMLib/inc/SmMatrix.h`, `source/SMLib/src/SmMatrix.cpp`).
+//! Ported from upstream `SmMatrix` (`source/SMLib/inc/SmMatrix.h`,
+//! `source/SMLib/src/SmMatrix.cpp`); checked against its golden.
 //! Rust: `solidcore::geom::matrix::Matrix`.
 //!
 //! Every case is one operation `op` on the row-major `rows x cols` matrix `m` with
 //! right-hand side `v` and operands `i`, `j`, `s`. Matrix entries may be the strings
 //! `"NaN"`, `"inf"`, `"-inf"` (JSON has no non-finite numbers). Outputs: `values`
 //! (floats), `ints`, `warning` (`SM_ERR_WARNING` from a near-zero pivot); failures
-//! are normalised to `status_<SmStatus>` on both sides (`SM_ERR_INVALID_INPUT` =
+//! are normalised to `status_<SmStatus>` (`SM_ERR_INVALID_INPUT` =
 //! 1007, `SM_ERR` = 1001). Every run uses at least [`MIN_GENERATED`] generated
 //! inputs (more with `--seeds`).
 
@@ -17,18 +17,52 @@ use serde_json::Value;
 
 use solidcore::geom::matrix::Matrix;
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_matrix::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::json::num;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
+/// One `SmMatrix` operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Op {
+    /// Copy constructor: values = elements, ints = `[rows, cols]`.
+    Copy = 0,
+    /// `SetSize(i, j)`, then (new size only) `MakeIdentity()` or `Clear()` when not
+    /// square: values = elements, ints = `[rows, cols]`.
+    Resize = 1,
+    /// `AddTo(i, j, s)`; `GetAt`; const `operator[]`; `SetAt(i, j, -s)`; non-const
+    /// `operator[]`: values = the three reads, then the elements.
+    Access = 2,
+    /// `IsSymmetric()`: ints = `[flag]`.
+    IsSymmetric = 3,
+    /// `Clear()`: values = elements.
+    Clear = 4,
+    /// `MakeIdentity()`: values = elements.
+    Identity = 5,
+    /// `LUDecompose(idx)`: values = elements, ints = `idx` (on success / warning).
+    Lu = 6,
+    /// `LUDecompose` then `SolveWithLUMatrix(idx, v)`: values = `x`, ints =
+    /// `[warning]`.
+    SolveLu = 7,
+    /// `SolveLinearSystem(v)`: values = `x`, ints = `[warning]`.
+    Solve = 8,
+    /// `EigenSystemJacobiSolver`: values = eigenvalues, eigenvectors (row-major),
+    /// matrix after; ints = `[iterations]`.
+    Eigen = 9,
+    /// `Compute3x3EigenVectors`: values = 3 eigenvalues, 3 vectors (xyz each),
+    /// matrix after. `SM_ERR` for a non-symmetric matrix (upstream output undefined).
+    Eigen3 = 10,
+    /// `SVDecompose(W, V)`: values = `W` (`cols`), `V` (`cols x cols`, row-major),
+    /// matrix after (`U`). (Upstream reads `rW[-1]` in its splitting test when the
+    /// norm is NaN or infinite.)
+    Svd = 11,
+}
+
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 4000;
 
-use solidcore::error::SM_ERR_WARNING;
 
 /// `geom.matrix` runner.
 pub struct Runner;
@@ -107,31 +141,6 @@ fn result(values: Vec<f64>, ints: Vec<i64>, warning: Option<bool>) -> Output {
         Some(w) => o.int("warning", i64::from(w)),
         None => o,
     }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&i.op)?;
-    let m = floats(&i.m)?;
-    let v = floats(&i.v)?;
-    let r = match ffi::op(op, i.rows, i.cols, &m, &v, i.i, i.j, i.s) {
-        Ok(r) => r,
-        Err(e @ (FfiError::InvalidArgument(_) | FfiError::Status(_))) => {
-            return Err(HarnessError::new(e.to_string()))
-        }
-    };
-    let warn_ops = matches!(op, Op::Lu | Op::SolveLu | Op::Solve);
-    if r.status != 0 && !(op == Op::Lu && r.status == SM_ERR_WARNING) {
-        return Ok(Output::err(format!("status_{}", r.status)));
-    }
-    let (ints, warning) = match op {
-        Op::Lu => (r.ints, Some(r.status == SM_ERR_WARNING)),
-        Op::SolveLu | Op::Solve => (Vec::new(), r.ints.first().map(|&w| w != 0)),
-        _ => (r.ints, None),
-    };
-    if warn_ops && warning.is_none() {
-        return Err(HarnessError::new("shim returned no warning flag"));
-    }
-    Ok(result(r.values, ints, warning))
 }
 
 fn idx(x: i64) -> usize {
@@ -513,11 +522,6 @@ fn gen_svd(rng: &mut Rng) -> Inputs {
             *x *= k;
         }
     }
-    for x in &mut m {
-        if !ffi::svd_element_ok(*x) {
-            *x = 0.0;
-        }
-    }
     Inputs {
         op: "svd".into(),
         rows,
@@ -587,10 +591,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
