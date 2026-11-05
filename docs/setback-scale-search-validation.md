@@ -69,8 +69,8 @@ then link the overlay before the existing static libraries:
 
 ```sh
 bash harness/cpp/tests/build_setback_executive.sh \
-  bin/reference-2344 /home/karlvonrichter/github/smlib-fork \
-  /home/karlvonrichter/github/fork-cpp/lib bin/reference-2344/executive
+  bin/reference-2344 "$SMLIB_FORK" \
+  "$SMLIB_FORK_LIB" bin/reference-2344/executive
 nice -n 10 bash harness/cpp/tests/run_setback_executive.sh \
   bin/reference-2344/executive > /tmp/native-executive.log
 CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=2 nice -n 10 cargo test \
@@ -302,8 +302,8 @@ Workspace formatting, workspace/all-target clippy with `-D warnings`, and
 Windows run passed 21 tests. Full-workspace kernel tests, the full diagnostic
 `--green` sweep and the two ignored curved-growth cases were not run. No unit is
 promoted and no CI-green result is claimed. Raw logs and native source manifests
-are retained under `/home/chris/bigboy/solidcore-worktrees/2344-native`; the final
-Rust comparisons are `rust-refreshed-exact-comparison.log` and
+are retained as local validation artifacts. The final Rust comparisons are
+`rust-refreshed-exact-comparison.log` and
 `rust-refreshed-native-comparison.log`.
 
 ### CI permission boundary
