@@ -1,7 +1,7 @@
 //! Runner for unit `geom.periodic_extent1d`: intervals on a periodic domain.
 //!
-//! C++: `solidcore_ffi::units::geom_periodic_extent1d` (upstream `SmPeriodicExtent1d`,
-//! `source/SMLib/inc/SmPeriodicExtent1d.h`, `source/SMLib/src/SmPeriodicExtent1d.cpp`).
+//! Ported from upstream `SmPeriodicExtent1d` (`source/SMLib/inc/SmPeriodicExtent1d.h`,
+//! `source/SMLib/src/SmPeriodicExtent1d.cpp`); checked against its golden.
 //! Rust: `solidcore::geom::periodic_extent1d::PeriodicExtent1d`.
 //!
 //! Every case is one operation `op` on extents `a`, `b` (raw members
@@ -18,12 +18,49 @@ use serde_json::Value;
 use solidcore::geom::periodic_extent1d::PeriodicExtent1d;
 use solidcore::math::{BIG_DOUBLE, EFF_ZERO, PI};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_periodic_extent1d::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// One `SmPeriodicExtent1d` operation on extents `a`, `b` and scalars `s`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Op {
+    /// `SmPeriodicExtent1d(s[0])`.
+    NewFull = 0,
+    /// Copy constructor of `a`.
+    Copy = 1,
+    /// `a.GetPeriod()`.
+    GetPeriod = 2,
+    /// `a.SetFullPeriod(flag)`.
+    SetFullPeriod = 3,
+    /// `a.IsEmpty()`.
+    IsEmpty = 4,
+    /// `a.IsFullPeriod()`.
+    IsFullPeriod = 5,
+    /// `a.CrossesSeam()`.
+    CrossesSeam = 6,
+    /// `a.MapValue(s[0])`.
+    MapValue = 7,
+    /// `a.NormalizeValue(s[0])`.
+    NormalizeValue = 8,
+    /// `a.Compliment()`.
+    Compliment = 9,
+    /// `a.AddInterval(s[0], s[1], flag)`.
+    AddInterval = 10,
+    /// `a.ContainsValue(s[0])`.
+    ContainsValue = 11,
+    /// `a.SetMinMax(s[0], s[1], has_period ? &s[2] : NULL, flag)`.
+    SetMinMax = 12,
+    /// `a.IsContainedBy(b)`.
+    IsContainedBy = 13,
+    /// `a.AreDisjoint(b)`.
+    AreDisjoint = 14,
+    /// `a.GetMid()`.
+    GetMid = 15,
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 4000;
@@ -99,13 +136,6 @@ fn output(op: Op, state: [f64; 4], r: f64, status: i64) -> Output {
         o = o.int("status", status);
     }
     o
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&i.op)?;
-    let res = ffi::op(op, i.a, i.b, i.s, i.flag, i.has_period)
-        .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(output(op, res.state, res.r, i64::from(res.status)))
 }
 
 fn extent(v: [f64; 4]) -> Result<PeriodicExtent1d, HarnessError> {
@@ -309,10 +339,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

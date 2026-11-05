@@ -1,7 +1,7 @@
 //! Runner for unit `geom.transform`: 4x4 linear transforms (the simplest volume map).
 //!
-//! C++: `solidcore_ffi::units::geom_transform` (upstream `SmTransform`,
-//! `source/SMLib/inc/SmTransform.h`, `source/SMLib/src/SmTransform.cpp`).
+//! Ported from upstream `SmTransform` (`source/SMLib/inc/SmTransform.h`,
+//! `source/SMLib/src/SmTransform.cpp`); checked against its golden.
 //! Rust: `solidcore::geom::transform`.
 //!
 //! Every case builds transform `a` (and `b` for binary operations) by a construction
@@ -26,8 +26,6 @@ use solidcore::surface::volume::{Discontinuities3d, Volume, VolumeKind};
 use solidcore::math::{EFF_ZERO, PI};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_transform::{self as ffi, Built, Kind, Op, Operands};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -41,6 +39,82 @@ use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `geom.transform` runner.
 pub struct Runner;
+
+/// How a transform is built from eight vectors `v0..v7` and the flag `zf`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Kind {
+    /// `SmTransform()`.
+    Identity = 0,
+    /// `SmTransform(NULL, v0, v1, v2, zf ? &v3 : NULL)`.
+    Canonical = 1,
+    /// `SmTransform()` then `SetToXAxis(v1)`, `SetToYAxis(v2)`, `SetToZAxis(v3)`,
+    /// `SetToDisp(v0)` (three-double forms).
+    Setters = 2,
+    /// `SmTransform().SetAxis2Placement(SmAxis2Placement(v0, v1, v2))`.
+    Axis2 = 3,
+    /// Copy constructor of [`Kind::Canonical`].
+    Copy = 4,
+    /// `Copy(ctx, pNew)` of [`Kind::Canonical`].
+    CopyVirtual = 5,
+    /// [`Kind::Canonical`], then `ConcatTransform(SmTransform(NULL, v4, v5, v6, zf ? &v7 : NULL))`.
+    Concat = 6,
+    /// [`Kind::Setters`], then `SetCanonical(v4, v5, v6, zf ? &v7 : NULL)`.
+    Reset = 7,
+}
+
+/// One `SmTransform` operation on transform A (and B for the binary ones).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Op {
+    /// Matrix (16), `GetToOrigin/X/Y/Z/Disp` (15), natural domain (6),
+    /// `IsBoundedSimple`, `IsCurveInParamDomainSimple`, `HasDiscontinuitiesSimple(NULL)`,
+    /// `GetType`.
+    State = 0,
+    /// `TransformVector(w0)` (3).
+    TransformVector = 1,
+    /// `InvTransformPoint(w0)`: status, then 3 on success.
+    InvPoint = 2,
+    /// `InvTransformVector(w0)`: status, then 3 on success.
+    InvVector = 3,
+    /// B matrix, `ConcatTransform(B)` status, A matrix.
+    Concat = 4,
+    /// `ScaleSimple(w0, flag ? &w1 : NULL)`: status, matrix.
+    Scale = 5,
+    /// `TransformSimple(SmAxis2Placement(w0, w1, w2), flag ? &w3 : NULL)`: status, matrix.
+    TransformSimple = 6,
+    /// `InvertSimple`: status, matrix.
+    Invert = 7,
+    /// `EvaluateSimple(w0, n)`: status, then `(n+1)^3` vectors on success.
+    Evaluate = 8,
+    /// `InvEvaluateGuessPointSimple(w0)`: status, then size and the point on success.
+    Guess = 9,
+    /// `GlobalPointSolveSimple(w0)` on an array pre-filled with `n` solutions:
+    /// status, found, size, then 11 values per solution.
+    GlobalSolve = 10,
+    /// `LocalPointSolveSimple(w0, w1)`: status, then found and 9 solution values.
+    LocalSolve = 11,
+    /// B matrix, `A == B`.
+    Eq = 12,
+    /// `A == copy of A`.
+    EqSelf = 13,
+    /// `IsKindOf(n)`.
+    IsKindOf = 14,
+    /// `EvaluateBoundingBoxSimple` of the box `w0..w1`; `n` selects the outputs.
+    Bbox = 15,
+    /// `SmTransform::ReadFromDB` of `data`: status, matrix of the read transform.
+    ReadDb = 16,
+    /// `HasDiscontinuitiesSimple(&disc, flag)`.
+    HasDisconts = 17,
+    /// `GetType`, `GetTypeString` characters, `-1`, `GetClassString` characters.
+    TypeStrings = 18,
+    /// `Init`, matrix.
+    Init = 19,
+    /// `SetAxis2Placement(SmAxis2Placement(w0, w1, w2))`, matrix.
+    SetA2p = 20,
+    /// `SetCanonical(w0, w1, w2, flag ? &w3 : NULL)`, matrix.
+    SetCanonical = 21,
+}
 
 /// Construction names used in `inputs.a.kind` / `inputs.b.kind`.
 const KINDS: [(&str, Kind); 8] = [
@@ -164,33 +238,7 @@ fn db_bytes(i: &Inputs) -> Result<Vec<u8>, HarnessError> {
     Ok(out)
 }
 
-fn ffi_built(t: &TransformIn) -> Result<Built, HarnessError> {
-    Ok(Built {
-        kind: lookup(&KINDS, &t.kind)?,
-        v: t.v,
-        zf: t.zf,
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&OPS, &i.op)?;
-    let a = ffi_built(&i.a)?;
-    let b = ffi_built(&i.b)?;
-    let x = Operands {
-        w: i.w,
-        flag: i.flag,
-        n: i.n,
-        data: db_bytes(i)?,
-        file_type: i32::from(i.binary),
-    };
-    match ffi::op(op, &a, &b, &x) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(FfiError::Status(s)) if s > 0 => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
-/// Build a transform as the shim does.
+/// Build a transform by its construction `kind`.
 fn build(t: &TransformIn) -> Result<Transform, HarnessError> {
     let kind = lookup(&KINDS, &t.kind)?;
     let [v0, v1, v2, v3, v4, v5, v6, v7] = t.v.map(Vec3::from);
@@ -629,10 +677,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

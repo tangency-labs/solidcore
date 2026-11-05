@@ -1,6 +1,7 @@
-//! Differential coverage of the real upstream scalar and Cash–Karp integrators.
-//! Compares values, adaptive step sizes, mutated scales and accepted/reduced counts.
-//! Includes coupled-to-state equations to detect stage/array adaptation errors.
+//! Coverage of the scalar and Cash–Karp integrators, ported from upstream; checked
+//! against its golden. Records values, adaptive step sizes, mutated scales and
+//! accepted/reduced counts. Includes coupled-to-state equations to detect stage/array
+//! adaptation errors.
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -8,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solidcore::mass::integrator::{integrate, OdeIntegrator, OdeOptions};
 use solidcore::SolidError;
-use solidcore_ffi::units::mass_integrator as ffi;
 
 /// Runner for `mass.integrator`.
 pub struct Runner;
@@ -66,26 +66,6 @@ impl UnitDiff for Runner {
                 ..ctx.clone()
             },
         )
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if let Some(g) = case.inputs.get("geometry") {
-            let g =
-                serde_json::from_value(g.clone()).map_err(|e| HarnessError::new(e.to_string()))?;
-            return geometry_cpp(&g);
-        }
-        let i: Input = case.parse()?;
-        let flat: Vec<f64> = i.coefficients.iter().flatten().copied().collect();
-        ffi::eval(
-            i.op,
-            i.kind,
-            &flat,
-            &i.initial,
-            &i.scale,
-            &i.controls,
-            i.max_steps,
-        )
-        .map(output)
-        .map_err(|e| HarnessError::new(e.to_string()))
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         if let Some(g) = case.inputs.get("geometry") {
@@ -271,25 +251,6 @@ enum Geometry {
         parameters: [f64; 16],
         query: i32,
     },
-}
-fn geometry_cpp(g: &Geometry) -> Result<Output, HarnessError> {
-    let result = match g {
-        Geometry::Edge {
-            kind,
-            p,
-            weights,
-            controls,
-            query,
-        } => ffi::edge(*query, *kind, p, weights, controls),
-        Geometry::Face {
-            kind,
-            parameters,
-            query,
-        } => ffi::face(*query, *kind, parameters),
-    };
-    result
-        .map(output)
-        .map_err(|e| HarnessError::new(e.to_string()))
 }
 /// The shim's face surface: kind 3 is a quadratic B-spline patch, kind 5 a multi-span
 /// rational quadratic patch (u knot 0.4, double v knot 0.5; #1435), every other kind an
@@ -792,20 +753,13 @@ mod tests {
         assert!(result.values["out"].is_empty());
     }
 
+    /// Non-finite inputs the integrator never reads: a NaN initial state integrates
+    /// `y' = 1` over [0, 1] to exactly 1 under an infinite scale floor or an infinite
+    /// accuracy, and an empty interval leaves an infinite state untouched without a
+    /// step, whatever its (NaN) step controls.
     #[test]
     fn nonfinite_values_unused_or_supported_by_upstream() {
         for (accuracy, floor) in [(1e-6, f64::INFINITY), (f64::INFINITY, 1.0)] {
-            let controls = [0.0, 1.0, accuracy, 0.1, 0.0, 1e-24, 0.0];
-            let cpp = ffi::eval(
-                1,
-                0,
-                &[1.0, 0.0, 0.0, 0.0],
-                &[f64::NAN],
-                &[floor],
-                &controls,
-                10000,
-            )
-            .unwrap();
             let mut y = [f64::NAN];
             let count = OdeIntegrator::default()
                 .integrate(
@@ -826,30 +780,37 @@ mod tests {
                     },
                 )
                 .unwrap();
-            assert_eq!(
-                cpp,
-                vec![0.0, y[0], f64::from(count.good), f64::from(count.reduced)]
-            );
+            assert_eq!(y, [1.0], "accuracy {accuracy} floor {floor}");
+            assert!(count.good >= 1, "accuracy {accuracy} floor {floor}");
         }
-        let controls = [2.0, 2.0, f64::NAN, f64::NAN, f64::NAN, 1e-24, 0.0];
-        let cpp = ffi::eval(
-            1,
-            0,
-            &[f64::NAN; 4],
-            &[f64::INFINITY],
-            &[f64::NAN],
-            &controls,
-            10000,
-        )
-        .unwrap();
-        assert_eq!(cpp, vec![0.0, f64::INFINITY, 0.0, 0.0]);
+        let mut y = [f64::INFINITY];
+        let count = OdeIntegrator::new(10000, 1e-24)
+            .unwrap()
+            .integrate(
+                &mut y,
+                2.0,
+                2.0,
+                OdeOptions {
+                    accuracy: f64::NAN,
+                    initial_step: f64::NAN,
+                    minimum_step: f64::NAN,
+                    scale: Some(&[f64::NAN]),
+                    quadrature: false,
+                    rounding: None,
+                },
+                |_, _, dy| {
+                    dy[0] = f64::NAN;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(y, [f64::INFINITY]);
+        assert_eq!((count.good, count.reduced), (0, 0));
     }
 
-    /// The disk / annulus aggregate fixtures build a real face on both sides:
-    /// both engines agree on the values the report compares, the areas and
+    /// The disk / annulus aggregate fixtures build a real face: the areas and
     /// centroids match their closed forms, a sheet's B-rep volume is zero, and the
-    /// B-rep mass-properties query refuses a sheet with the same status.
-    #[cfg(feature = "cpp")]
+    /// B-rep mass-properties query refuses a sheet.
     #[test]
     fn circular_aggregate_queries_have_substantive_values() {
         use core::f64::consts::PI;
@@ -873,16 +834,9 @@ mod tests {
             else {
                 panic!("{name}: not a face case");
             };
-            let cpp = geometry_cpp(&g).unwrap();
             let rust = geometry_rust(&g);
             assert!(rust.deferred.is_none(), "{name}: {:?}", rust.deferred);
             assert!(rust.rejected.is_none(), "{name}: {:?}", rust.rejected);
-            let d = crate::compare::compare(&cpp, &rust, &[]);
-            assert!(d.pass(), "{name}: {:?}", d.mismatches);
-            assert!(
-                d.values_compared + d.exact_compared > 0,
-                "{name}: nothing compared"
-            );
             let area = if *kind == 2 {
                 PI * (0.25 - 0.04)
             } else {
@@ -915,7 +869,7 @@ mod tests {
                     );
                 }
                 5 => {
-                    // one sheet face bounds no volume: both engines return zero
+                    // one sheet face bounds no volume: zero
                     assert_eq!(rust.ints["status"], [0], "{name}");
                     assert_eq!(rust.values["out"], [0.0], "{name}");
                 }

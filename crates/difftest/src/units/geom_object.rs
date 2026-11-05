@@ -2,8 +2,8 @@
 //! `AssertValid`, `SmObject::Notify` through the context callbacks,
 //! `SmTemporaryChangeValue<TYPE>` scripts and `SmShape` construction.
 //!
-//! C++: `solidcore_ffi::units::geom_object` (upstream `SmObject.h`, `SmObject.cpp`,
-//! `SmShape.h`, `SmShape.cpp`). Rust: `solidcore::geom::object`.
+//! Ported from upstream `SmObject.h`, `SmObject.cpp`, `SmShape.h`, `SmShape.cpp`;
+//! checked against its golden. Rust: `solidcore::geom::object`.
 //!
 //! Case kinds (`inputs.kind`):
 //! - `types`: `IsKindOf` of an object and of an (empty) shape for each code in `ts`,
@@ -15,12 +15,11 @@
 //!   type double (`ty` 0), `SmBoolean` (1) or `ULONG` (2); output is the variable
 //!   after every step and after each remaining guard is destroyed.
 //! - `shape`: `SmShape` from a B-rep (none, the `SmApiCreateBox` solid, or an ASCII
-//!   `.smb` file, both built by the shared topology fixture; the Rust side builds the box
-//!   with the Rust kernel and reads the file with the Rust reader, renumbered into the
+//!   `.smb` file; the runner builds the box with the Rust kernel and reads the file with
+//!   the Rust reader, renumbered into the
 //!   fixture walk's order, `query_face_p1::own_model`, its face, edge and vertex lists
 //!   the build's own) and a selection of the whole B-rep / faces / edges / vertices, by
-//!   index into the fixture walk's lists (the Rust B-rep's arena order). No C++ state
-//!   reaches the Rust side.
+//!   index into the fixture walk's lists (the Rust B-rep's arena order).
 
 use std::sync::{Arc, Mutex};
 
@@ -36,16 +35,38 @@ use solidcore::geom::tree::Tree;
 use solidcore::kernel::Kernel;
 use solidcore::topology::Brep;
 use solidcore::{BrepId, EdgeId, FaceId, SolidError, VertexId};
-use solidcore_ffi::units::geom_object::{
-    self as ffi, tcv_op, NotifyStep, ShapeSelection, ShapeSource, MAX_NOTIFY_OP, NUM_OBJECTS,
-};
 
 use super::query_face_p1::own_model;
-use super::topology_edgeuse_p1::fixture_input;
 use crate::case::CaseContext;
 use crate::json::num;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Number of objects in a notify script's object pool.
+const NUM_OBJECTS: i64 = 6;
+
+/// Largest `SmNotifyOperation` value (`SM_NO_UNKNOWN`).
+const MAX_NOTIFY_OP: i64 = 16;
+
+/// `SmTemporaryChangeValue` script operation codes.
+mod tcv_op {
+    /// Push `SmTemporaryChangeValue(var, x)`.
+    pub(super) const OPEN: i64 = 0;
+    /// Push `SmTemporaryChangeValue()` then `Set(var, x)`.
+    pub(super) const OPEN_SET: i64 = 1;
+    /// Pop the innermost guard (destructor).
+    pub(super) const CLOSE: i64 = 2;
+    /// `Clear()` on the innermost guard.
+    pub(super) const CLEAR: i64 = 3;
+    /// `UseOrigValue()` on the innermost guard.
+    pub(super) const USE_ORIG: i64 = 4;
+    /// `UseTempValue()` on the innermost guard.
+    pub(super) const USE_TEMP: i64 = 5;
+    /// `SetNewValue(x)` on the innermost guard.
+    pub(super) const SET_NEW: i64 = 6;
+    /// `var = x`.
+    pub(super) const WRITE: i64 = 7;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 600;
@@ -150,54 +171,6 @@ fn fixture_brep(source: &SourceIn) -> Result<Option<Value>, HarnessError> {
         SourceIn::File(path, true) => Some(json!({"kind": "file", "file": path, "rebuild": false})),
         SourceIn::File(_, false) => return Err(harness("the shared fixture reads ASCII files only")),
     })
-}
-
-// ---- C++ side ----------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match i {
-        Inputs::Types { ts } => Ok(Output::new().ints("i", ffi::types(ts).map_err(harness)?)),
-        Inputs::Notify { steps } => {
-            let s: Vec<NotifyStep> = steps
-                .iter()
-                .map(|n| NotifyStep {
-                    has_context: n.has_context,
-                    user_callback: n.user,
-                    sys_callback: n.sys,
-                    op: n.op,
-                    caller: n.caller,
-                    data: n.data,
-                })
-                .collect();
-            Ok(Output::new().ints("i", ffi::notify(&s).map_err(harness)?))
-        }
-        Inputs::Tcv { ty, init, steps } => {
-            let (init, steps) = tcv_inputs(init, steps)?;
-            Ok(Output::new().values("v", ffi::tcv(*ty, init, &steps).map_err(harness)?))
-        }
-        Inputs::Shape {
-            source,
-            whole_brep,
-            faces,
-            edges,
-            vertices,
-        } => {
-            let src = match fixture_brep(source)? {
-                None => ShapeSource::None,
-                Some(brep) => {
-                    let (path, block) = fixture_input(brep)?;
-                    ShapeSource::Fixture { path, block }
-                }
-            };
-            let sel = ShapeSelection {
-                whole_brep: *whole_brep,
-                faces: faces.clone(),
-                edges: edges.clone(),
-                vertices: vertices.clone(),
-            };
-            Ok(Output::new().values("v", ffi::shape(&src, &sel).map_err(harness)?))
-        }
-    }
 }
 
 // ---- Rust side ---------------------------------------------------------------------
@@ -692,10 +665,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

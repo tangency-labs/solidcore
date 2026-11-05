@@ -1,7 +1,7 @@
 //! Runner for unit `geom.point_set`: point sets and point sequences with cached
 //! centroid, axes, bounding boxes, area and point containment.
 //!
-//! C++: `solidcore_ffi::units::geom_point_set` (upstream `source/SMLib/src/SmPointSet.cpp`).
+//! Ported from upstream `source/SMLib/src/SmPointSet.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::point_set`.
 //!
 //! A case builds one point sequence (`pts`, `tol`, `closed`, optional `normal`) and
@@ -28,11 +28,45 @@ use serde_json::Value;
 
 use solidcore::geom::point_set::PointSequence;
 use solidcore::geom::vector3d::Vec3;
-use solidcore_ffi::units::geom_point_set::{self as ffi, Cmd as FCmd};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// One command of a point-sequence program, lowered (output layout).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FCmd {
+    /// `GetCentroid()`; output 3.
+    Centroid,
+    /// `GetNormal()`; output 3.
+    Normal,
+    /// `GetBBox(z)`; output min 3, max 3, `z` after the call 3.
+    BBox(Option<[f64; 3]>),
+    /// `GetTightPBox(z)`; output basis 9, intervals 6, `z` after the call 3.
+    TightPBox(Option<[f64; 3]>),
+    /// `GetArea()`; output 1.
+    Area,
+    /// `PointContainment(p)`; output the enum value.
+    Containment([f64; 3]),
+    /// `SmPointSet3d::ClearCache()`; no output.
+    ClearCache,
+    /// `GetPoints().GetSize()`; output 1.
+    Size,
+}
+
+impl FCmd {
+    /// Number of output values.
+    #[must_use]
+    pub const fn output_len(self) -> usize {
+        match self {
+            FCmd::Centroid | FCmd::Normal => 3,
+            FCmd::BBox(_) => 9,
+            FCmd::TightPBox(_) => 18,
+            FCmd::Area | FCmd::Containment(_) | FCmd::Size => 1,
+            FCmd::ClearCache => 0,
+        }
+    }
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
@@ -444,14 +478,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.point_set"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let prog = lower(&i);
-        let flat = ffi::run(&i.pts, i.tol, i.closed, i.normal, &prog)
-            .map_err(|e| harness(e.to_string()))?;
-        split(&i, &prog, &flat)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

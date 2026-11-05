@@ -1,9 +1,9 @@
 //! Runner for unit `geom.tol`: tolerance values and the `SmTol` tolerance policy, and
 //! the `SmRelation` pair container.
 //!
-//! C++: `solidcore_ffi::units::geom_tol` (upstream `SmTol`, `SmTol3d` classes,
-//! `SmRelation`; `source/SMLib/inc/SmTol.h`, `source/SMLib/src/SmTol.cpp`,
-//! `source/SMLib/inc/SmRelation.h`). Rust: `solidcore::geom::tol`.
+//! Ported from upstream `SmTol`, `SmTol3d` classes, `SmRelation`
+//! (`source/SMLib/inc/SmTol.h`, `source/SMLib/src/SmTol.cpp`,
+//! `source/SMLib/inc/SmRelation.h`); checked against its golden. Rust: `solidcore::geom::tol`.
 //!
 //! A tolerance case is one operation `op` with the system tolerances set from
 //! `model` (`SmTol::SetModelSizeEstimate`) and `ratio`
@@ -14,7 +14,7 @@
 //! `RelateToMany` / `RemoveAll` / `RemovePair` steps on objects identified by index and reports, as
 //! integers `r`, every step's `SmStatus` (`SM_SUCCESS` = 1000; `RemoveAll` reports 0) and then every query (`GetSecond`,
 //! `GetSeconds`, `GetFirsts`, `GetAllFirsts`, `GetAllSeconds`). Upstream returns the sets in
-//! hash (address) order, which is unspecified, so both sides report them sorted
+//! hash (address) order, which is unspecified, so the runner reports them sorted
 //! (see `plan/findings.md`).
 //!
 //! A curve case (`op = "curve"`) runs the `SmCurve` overloads of `GetScaledZero`,
@@ -31,8 +31,8 @@
 //! `CalcVertexZoneTol3d` with `a = [gap1, gap2, max]` (`flag`: pass `max`) and
 //! `GetScaledZero`) on the `query.brep` fixture B-rep `brep` (a box solid or points and
 //! wire segments), moved into a fresh context, with the system tolerances from `model`
-//! and `ratio`; the Rust side imports the B-rep's export and uses a fresh kernel with
-//! the same system tolerances. The result is `r` (10 values, the first 0 without
+//! and `ratio`; the runner builds the B-rep with the Rust builders and uses a fresh
+//! kernel with the same system tolerances. The result is `r` (10 values, the first 0 without
 //! `set_est`). They are generated under their own seeds (`brep` cases).
 //!
 //! Every run uses at least [`MIN_GENERATED`] generated inputs (more with `--seeds`).
@@ -52,17 +52,89 @@ use solidcore::nurbs::spiral::allocate_nurb_volume;
 use solidcore::surface::b_spline_volume::BSplineVolume;
 use solidcore::surface::volume::{Volume, VolumeKind};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_tol::{self as ffi, Op, OpArgs, RelationStep};
 
 use super::intersect_surface_drop_lib_p2::{
-    add3, ffi_curve, gen_knots, gen_scale, pick, rust_curve, scale3, unit_dir, CurveIn,
+    add3, gen_knots, gen_scale, pick, rust_curve, scale3, unit_dir, CurveIn,
 };
 use super::query_brep::{gen_box_solid, gen_points_brep};
 use super::query_face_p1::own_model;
-use super::topology_edgeuse_p1::fixture_input;
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// One `SmTol` operation (see the shim for the operand layout).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Op {
+    /// `SizeEstimateToZoneTol3d(a0)`.
+    SizeEstimate = 0,
+    /// `InTol(a0, SmScaledZero(a1))`.
+    InTol = 1,
+    /// `CalcFaceZoneTol3d()`.
+    CalcFaceZone = 2,
+    /// `CalcEdgeZoneTol3d(a0, a1, flag ? &SmZoneTol3d(a2) : NULL)`.
+    CalcEdgeZone = 3,
+    /// `CalcVertexZoneTol3d(a0, a1, flag ? &SmZoneTol3d(a2) : NULL)`.
+    CalcVertexZone = 4,
+    /// `GetEffZero`, `GetEffZeroSq`, `GetEffZeroParam`, `GetEffZeroAngRad`.
+    EffZeros = 5,
+    /// `GetXSectTol3d(SmZoneTol3d(a0), SmZoneTol3d(a1))`.
+    XSectFromZones = 6,
+    /// `GetAngTolRad()`.
+    AngTolRad = 7,
+    /// `GetModelSizeEstimate()`.
+    ModelSize = 8,
+    /// `AreParallel(&v(a0..3), &v(a3..6), flag ? &a6 : NULL)`.
+    AreParallel = 9,
+    /// `ArePerpendicular(&v(a0..3), &v(a3..6), flag ? &a6 : NULL)`.
+    ArePerpendicular = 10,
+    /// `IsZeroSpeed(a0, a1, flag ? &SmScaledZero(a2) : NULL)`.
+    IsZeroSpeed = 11,
+    /// `IsDegenerate(SmVector3d(a0..3), flag ? &SmXSectTol3d(a3) : NULL)`.
+    IsDegenerateVec3 = 12,
+    /// `GetGapGain()`.
+    GapGain = 13,
+    /// `GetZoneTol3d(small)`.
+    ZoneSys = 14,
+    /// `GetZoneTol3d((const SmContext*)NULL, small)`.
+    ZoneCtx = 15,
+    /// `GetApproxTol3d(small)`.
+    ApproxSys = 16,
+    /// `GetApproxTol3d((const SmContext*)NULL, small)`.
+    ApproxCtx = 17,
+    /// `GetXSectTol3d(small)`.
+    XSectSys = 18,
+    /// `GetXSectTol3d((const SmContext*)NULL, small)`.
+    XSectCtx = 19,
+    /// `GetScaledZero()`, `GetScaledZeroSq()`, `GetScaledZeroSqrt()`.
+    ScaledZeroSys = 20,
+    /// `GetScaledZero`, `GetScaledZeroSq`, `GetScaledZeroSqrt` of `small` (1..=4)
+    /// objects.
+    ScaledZeroN = 21,
+    /// Every tolerance constructor and `operator=` applied to `a0`.
+    TolCtors = 22,
+    /// `SmTol3d t(a0); t *= a1`.
+    TolMul = 23,
+    /// `MapTo1d(SmTol3d(a0), SmVector3d(a1, a2, a3), SmExtent1d(a4, a5))`.
+    MapTo1d = 24,
+}
+
+/// The operands of [`brep_tols`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct BrepTolArgs {
+    /// Call `SmTol::SetModelSizeEstimate(SmBrep&, est)` first.
+    pub set_estimate: Option<f64>,
+    /// Call `SmTol::SetLargeSmallSizeRatio(SmBrep&, ratio)` first.
+    pub set_ratio: Option<f64>,
+    /// `SmSmallTopoType` (`0..=4`).
+    pub small: i32,
+    /// The first gap of `CalcEdgeZoneTol3d` / `CalcVertexZoneTol3d`.
+    pub gap1: f64,
+    /// The second gap.
+    pub gap2: f64,
+    /// The optional maximum face / edge zone tolerance.
+    pub max: Option<f64>,
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -197,77 +269,6 @@ fn coord(o: &Obj, k: usize) -> f64 {
     o.d.get(k).copied().unwrap_or(0.0)
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
-fn cpp_tol(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&i.op)?;
-    if i.a.len() > 8 || i.objs.len() > 4 {
-        return Err(HarnessError::new("too many operands"));
-    }
-    let mut args = OpArgs {
-        model_size: i.model,
-        ratio: i.ratio,
-        flag: i.flag,
-        small: i.small,
-        ..OpArgs::default()
-    };
-    for (dst, src) in args.a.iter_mut().zip(&i.a) {
-        *dst = *src;
-    }
-    if op == Op::ScaledZeroN {
-        args.small = i32::try_from(i.objs.len()).unwrap_or(0);
-        for (j, o) in i.objs.iter().enumerate() {
-            if let Some(k) = args.kinds.get_mut(j) {
-                *k = o.kind;
-            }
-            for c in 0..6 {
-                if let Some(dst) = args.objs.get_mut(j * 6 + c) {
-                    *dst = coord(o, c);
-                }
-            }
-        }
-    }
-    match ffi::op(op, &args) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
-fn steps_ffi(i: &Inputs) -> Vec<RelationStep> {
-    i.steps
-        .iter()
-        .map(|s| match s {
-            Step::Pair(f, s) => RelationStep::Pair(*f, *s),
-            Step::Many(f, ss) => RelationStep::Many(*f, ss.clone()),
-            Step::RemoveAll => RelationStep::RemoveAll,
-            Step::RemovePair(f, s) => RelationStep::RemovePair(*f, *s),
-        })
-        .collect()
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if i.op == RELATION {
-        return match ffi::relation(i.card, i.n1, i.n2, &steps_ffi(i)) {
-            Ok(v) => Ok(Output::new().ints("r", v)),
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        };
-    }
-    if i.op == CURVE {
-        return cpp_curve(i);
-    }
-    if i.op == BREP {
-        return cpp_brep(i);
-    }
-    if i.op == VOLUME {
-        let p = volume_ffi_poles(i)?;
-        return match ffi::volume_scaled_zero(&p) {
-            Ok(v) => Ok(Output::new().values("scaled_zero_of_volume", v)),
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        };
-    }
-    cpp_tol(i)
-}
-
 fn curve_operands(i: &Inputs) -> Result<(&CurveIn, [f64; 5]), HarnessError> {
     let c = i
         .curve
@@ -280,27 +281,10 @@ fn curve_operands(i: &Inputs) -> Result<(&CurveIn, [f64; 5]), HarnessError> {
     Ok((c, a))
 }
 
-fn cpp_curve(i: &Inputs) -> Result<Output, HarnessError> {
-    let (c, a) = curve_operands(i)?;
-    let xsect = i.flag.then_some(a[4]);
-    match ffi::curve_tols(&ffi_curve(c), a[0], a[1], [a[2], a[3]], xsect) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
 fn volume_operands(i: &Inputs) -> Result<&[[f64; 3]; 8], HarnessError> {
     i.poles
         .as_ref()
         .ok_or_else(|| HarnessError::new("volume case without poles"))
-}
-
-fn volume_ffi_poles(i: &Inputs) -> Result<[f64; 24], HarnessError> {
-    let mut flat = [0.0; 24];
-    for (dst, src) in flat.iter_mut().zip(volume_operands(i)?.iter().flatten()) {
-        *dst = *src;
-    }
-    Ok(flat)
 }
 
 fn rust_volume(i: &Inputs) -> Result<Volume, HarnessError> {
@@ -332,8 +316,8 @@ fn rust_volume_case(i: &Inputs) -> Result<Output, HarnessError> {
 
 // ---- Rust side ----------------------------------------------------------------------
 
-fn brep_args(i: &Inputs) -> ffi::BrepTolArgs {
-    ffi::BrepTolArgs {
+fn brep_args(i: &Inputs) -> BrepTolArgs {
+    BrepTolArgs {
         set_estimate: i.set_est,
         set_ratio: i.set_ratio,
         small: i.small,
@@ -349,16 +333,7 @@ fn brep_value(i: &Inputs) -> Result<&Value, HarnessError> {
         .ok_or_else(|| HarnessError::new("brep case without brep"))
 }
 
-fn cpp_brep(i: &Inputs) -> Result<Output, HarnessError> {
-    let (path, block) = fixture_input(brep_value(i)?.clone())?;
-    match ffi::brep_tols(&path, &block, i.model, i.ratio, &brep_args(i)) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
 fn rust_brep(i: &Inputs) -> Result<Output, HarnessError> {
-    // the Rust-built B-rep (no C++ export reaches the Rust side)
     let m = match own_model(brep_value(i)?)? {
         Ok(m) => m,
         Err(o) => return Ok(o),
@@ -1103,10 +1078,6 @@ impl UnitDiff for Runner {
         Ok(v)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1199,7 +1170,7 @@ mod tests {
     }
 
     #[test]
-    fn parsed_poles_reach_both_backends_in_k_fastest_order() {
+    fn parsed_poles_reach_the_volume_in_k_fastest_order() {
         // Distinct coordinates expose swapped axes, omitted poles and constant cubes.
         let poles: [[f64; 3]; 8] = std::array::from_fn(|n| {
             [n as f64 + 0.25, -(n as f64) - 10.5, n as f64 + 100.75]
@@ -1211,11 +1182,6 @@ mod tests {
             inputs: serde_json::json!({"op": "volume", "poles": poles}),
         };
         let input: Inputs = case.parse().unwrap();
-        let flat = volume_ffi_poles(&input).unwrap();
-        assert_eq!(
-            flat.to_vec(),
-            poles.into_iter().flatten().collect::<Vec<_>>()
-        );
         let volume = rust_volume(&input).unwrap();
         let VolumeKind::BSpline(bspline) = volume.kind() else {
             panic!("expected B-spline volume");
@@ -1235,9 +1201,7 @@ mod tests {
     #[test]
     fn volume_requires_explicit_poles() {
         let input: Inputs = serde_json::from_value(serde_json::json!({"op": "volume"})).unwrap();
-        assert!(volume_ffi_poles(&input).is_err());
         assert!(rust(&input).is_err());
-        assert!(cpp(&input).is_err());
     }
 
     #[test]

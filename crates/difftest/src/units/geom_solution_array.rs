@@ -1,11 +1,10 @@
 //! Runner for unit `geom.solution_array`: `SmSolutionEnd`, `SmSolution` queries and
 //! `SmSolutionArray` editing and sorted insertion.
 //!
-//! C++: `solidcore_ffi::units::geom_solution_array` (upstream
-//! `source/SMLib/src/SmSolutionArray.cpp`). Rust: `solidcore::geom::solution_array`.
+//! Ported from upstream `source/SMLib/src/SmSolutionArray.cpp`; checked against its
+//! golden. Rust: `solidcore::geom::solution_array`.
 //!
-//! A case is a program of ops run against one solution array on both sides (the
-//! op list and the solution encoding are documented in the shim). Objects are
+//! A case is a program of ops run against one solution array. Objects are
 //! codes `kind*100 + id` (`-1` = null): curve, surface, vertex, edge and face
 //! objects are real upstream objects, the others stand-ins that only answer
 //! `IsKindOf`. The Rust handles reach the same geometry through the
@@ -41,7 +40,6 @@ use solidcore::topology::face::p2 as topo_face;
 use solidcore::topology::vertex as topo_vertex;
 use solidcore::topology::{Brep, Edge, EdgeId, Face, FaceId, Vertex, VertexId};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_solution_array as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -310,100 +308,6 @@ struct Inputs {
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
-}
-
-fn b(v: bool) -> f64 {
-    if v {
-        1.0
-    } else {
-        0.0
-    }
-}
-
-fn enc_sol(v: &mut Vec<f64>, s: &Sol) {
-    v.extend([s.t as f64, s.nv as f64, s.no as f64, s.sv]);
-    v.extend(s.sp);
-    v.push(s.ev);
-    v.extend(s.ep);
-    v.extend(s.objs.iter().map(|&o| o as f64));
-    v.extend(s.nodes.iter().map(|&n| n as f64));
-}
-
-fn prog(ops: &[Op]) -> Vec<f64> {
-    let mut v = Vec::new();
-    for op in ops {
-        match op {
-            Op::New { cap } => v.extend([1.0, *cap as f64]),
-            Op::Add { s } => {
-                v.push(2.0);
-                enc_sol(&mut v, s);
-            }
-            Op::AddSorted { key, s } => {
-                v.extend([3.0, *key as f64]);
-                enc_sol(&mut v, s);
-            }
-            Op::InsertAt { idx, count, s } => {
-                v.extend([4.0, *idx as f64, *count as f64]);
-                enc_sol(&mut v, s);
-            }
-            Op::RemoveAt { idx, count } => v.extend([5.0, *idx as f64, *count as f64]),
-            Op::Swap { i, j } => v.extend([6.0, *i as f64, *j as f64]),
-            Op::SetSize { n } => v.extend([7.0, *n as f64]),
-            Op::SetAt { idx, s } => {
-                v.extend([8.0, *idx as f64]);
-                enc_sol(&mut v, s);
-            }
-            Op::GetAt { idx } => v.extend([9.0, *idx as f64]),
-            Op::Reset => v.push(10.0),
-            Op::Append { sols } => {
-                v.extend([11.0, sols.len() as f64]);
-                for s in sols {
-                    enc_sol(&mut v, s);
-                }
-            }
-            Op::Dump => v.push(12.0),
-            Op::Info => v.push(13.0),
-            Op::Classify { start, a, b: o } => {
-                v.extend([20.0, b(*start)]);
-                enc_sol(&mut v, a);
-                enc_sol(&mut v, o);
-            }
-            Op::IsEqual { a, b: o } => {
-                v.push(21.0);
-                enc_sol(&mut v, a);
-                enc_sol(&mut v, o);
-            }
-            Op::GetIndex { obj, flag, s } => {
-                v.extend([22.0, *obj as f64, b(*flag)]);
-                enc_sol(&mut v, s);
-            }
-            Op::PointAt { idx, end, s } => {
-                v.extend([23.0, *idx as f64, b(*end)]);
-                enc_sol(&mut v, s);
-            }
-            Op::PointOf { obj, flag, end, s } => {
-                v.extend([24.0, *obj as f64, b(*flag), b(*end)]);
-                enc_sol(&mut v, s);
-            }
-            Op::ObjIndexForParam { pidx, s } => {
-                v.extend([25.0, *pidx as f64]);
-                enc_sol(&mut v, s);
-            }
-            Op::ParamInterval { pidx, s } => {
-                v.extend([26.0, *pidx as f64]);
-                enc_sol(&mut v, s);
-            }
-            Op::ObjTol { idx, s } => {
-                v.extend([27.0, *idx as f64]);
-                enc_sol(&mut v, s);
-            }
-            Op::Copy { s } => {
-                v.push(28.0);
-                enc_sol(&mut v, s);
-            }
-        }
-    }
-    v
 }
 
 // ---- Rust side ------------------------------------------------------------
@@ -1023,12 +927,6 @@ fn gen_queries(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.solution_array"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let (oi, of) = ffi::run(&prog(&i.ops)).map_err(|e| harness(e.to_string()))?;
-        Ok(Output::new().ints("ints", oi).values("floats", of))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

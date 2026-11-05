@@ -1,7 +1,7 @@
 //! Runner for unit `geom.polynomial`: closed-form real roots of polynomials.
 //!
-//! C++: `solidcore_ffi::units::geom_polynomial` (upstream `SmPolynomial::Solve*Eqn`,
-//! `source/SMLib/src/SmPolynomial.cpp`).
+//! Ported from upstream `SmPolynomial::Solve*Eqn` (`source/SMLib/src/SmPolynomial.cpp`);
+//! checked against its golden.
 //! Rust: `solidcore::geom::polynomial::{solve_quadratic, solve_cubic, solve_quartic}`.
 //!
 //! A case is `c` (3, 4 or 5 coefficients, ascending powers, selecting the quadratic,
@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use solidcore::geom::polynomial::{solve_cubic, solve_quadratic, solve_quartic, Roots};
-use solidcore_ffi::units::geom_polynomial as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -39,11 +38,6 @@ fn output(n: usize, roots: Vec<f64>, status: i64) -> Output {
         .int("n", n as i64)
         .values("roots", roots)
         .int("status", status)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let s = ffi::solve(&i.c, i.tol).map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(output(s.roots.len(), s.roots, i64::from(s.status)))
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
@@ -196,10 +190,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

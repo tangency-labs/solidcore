@@ -1,10 +1,10 @@
 //! Runner for unit `geom.polar_box`: polar boxes bounding sets of directions.
 //!
-//! C++: `solidcore_ffi::units::geom_polar_box` (upstream `source/SMLib/src/SmPolarBox.cpp`).
+//! Ported from upstream `source/SMLib/src/SmPolarBox.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::polar_box`.
 //!
 //! A case is a program of commands on four box registers (all start as
-//! `SmPolarBox()` / [`PolarBox::new`]); both sides run it and every command's
+//! `SmPolarBox()` / [`PolarBox::new`]); the runner runs it and every command's
 //! output becomes its own key `cNNN_<name>`.
 //!
 //! | `cmd`               | Rust                                              | upstream |
@@ -39,12 +39,147 @@ use serde_json::Value;
 use solidcore::geom::polar_box::PolarBox;
 use solidcore::geom::vector2d::Vec2;
 use solidcore::geom::vector3d::Vec3;
-use solidcore_ffi::units::geom_polar_box::{self as ffi, Cmd as FCmd, SM_ERR_INVALID_INPUT};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::util::{flag, v3};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Number of box registers.
+const REGISTERS: usize = 4;
+
+/// Upstream `SM_ERR_INVALID_INPUT`, written by [`FCmd::BoundaryVectors`],
+/// [`FCmd::Union`] and [`FCmd::UnionSelf`] for their error cases.
+const SM_ERR_INVALID_INPUT: f64 = 1007.0;
+
+/// One polar-box command. `r`, `s`, `t` are register indices below [`REGISTERS`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FCmd {
+    /// `reg[r].ReSet()`.
+    Reset {
+        /// Register.
+        r: usize,
+    },
+    /// `reg[r] = SmPolarBox(v)`.
+    FromVector {
+        /// Register.
+        r: usize,
+        /// Initial vector.
+        v: [f64; 3],
+    },
+    /// `reg[r].AddVector3d(v, b2.as_ref())`.
+    Add {
+        /// Register.
+        r: usize,
+        /// Vector to add.
+        v: [f64; 3],
+        /// Optional `pOptBasis2`.
+        b2: Option<[f64; 3]>,
+    },
+    /// Output: state, basis 0..2 (9 values), domain `[min.x, min.y, max.x, max.y]`.
+    Dump {
+        /// Register.
+        r: usize,
+    },
+    /// `ComputePolarCoord(v)`; output 2 values.
+    PolarCoord {
+        /// Register.
+        r: usize,
+        /// Vector.
+        v: [f64; 3],
+    },
+    /// `GetPolarArea()`; output 1 value.
+    Area {
+        /// Register.
+        r: usize,
+    },
+    /// `EvaluateNormalized(a, b)`; output 3 values.
+    Evaluate {
+        /// Register.
+        r: usize,
+        /// Normalised first angle.
+        a: f64,
+        /// Normalised second angle.
+        b: f64,
+    },
+    /// `GetBoundaryVectors`; output status, then (if 0) count and vectors.
+    BoundaryVectors {
+        /// Register.
+        r: usize,
+    },
+    /// `IsDisjointWithCone(v, ang)`; output flag.
+    DisjointCone {
+        /// Register.
+        r: usize,
+        /// Cone axis.
+        v: [f64; 3],
+        /// Cone half-angle (radians).
+        ang: f64,
+    },
+    /// `IsPerpendicularDisjointWithCone(v, ang)`; output flag.
+    PerpDisjointCone {
+        /// Register.
+        r: usize,
+        /// Cone reference vector.
+        v: [f64; 3],
+        /// Cone half-angle (radians).
+        ang: f64,
+    },
+    /// `reg[r].AreDisjoint(reg[s])`; output flag.
+    AreDisjoint {
+        /// Register.
+        r: usize,
+        /// Other register.
+        s: usize,
+    },
+    /// `reg[r].Cross(reg[s], x); reg[t] = x` (fresh `x`); output status.
+    Cross {
+        /// Register.
+        r: usize,
+        /// Other register.
+        s: usize,
+        /// Result register.
+        t: usize,
+    },
+    /// `reg[r].Union(reg[s], x); reg[t] = x` (fresh `x`); output status
+    /// ([`SM_ERR_INVALID_INPUT`] for upstream's undefined-behaviour case, skipped).
+    Union {
+        /// Register.
+        r: usize,
+        /// Other register.
+        s: usize,
+        /// Result register.
+        t: usize,
+    },
+    /// `reg[r].Union(reg[s], reg[r])` with `r != s`; output status (as [`FCmd::Union`]).
+    UnionSelf {
+        /// Register (also the result).
+        r: usize,
+        /// Other register.
+        s: usize,
+    },
+    /// `HasPerpendicularToVector(v)`; output flag.
+    HasPerpendicular {
+        /// Register.
+        r: usize,
+        /// Test vector.
+        v: [f64; 3],
+    },
+    /// `ExpandAbsolute(d)`.
+    Expand {
+        /// Register.
+        r: usize,
+        /// Expansion angle (radians).
+        d: f64,
+    },
+    /// `reg[t] = reg[r]` (`operator=`).
+    Assign {
+        /// Destination register.
+        t: usize,
+        /// Source register.
+        r: usize,
+    },
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -127,7 +262,7 @@ fn lower(prog: &[Cmd]) -> Result<Vec<FCmd>, HarnessError> {
             Cmd::Assign { t, r } => &[*t, *r],
             Cmd::Cross { r, s, t } | Cmd::Union { r, s, t } => &[*r, *s, *t],
         };
-        if regs.iter().any(|&r| r >= ffi::REGISTERS) {
+        if regs.iter().any(|&r| r >= REGISTERS) {
             return Err(harness(format!("register out of range in {c:?}")));
         }
         if let Cmd::UnionSelf { r, s } = c {
@@ -263,7 +398,7 @@ fn reg_get(reg: &[PolarBox], r: usize) -> Result<PolarBox, HarnessError> {
 
 /// Runs the program on the Rust port, producing the shim's flat layout.
 fn rust_flat(prog: &[FCmd]) -> Result<Vec<f64>, HarnessError> {
-    let mut reg = [PolarBox::new(); ffi::REGISTERS];
+    let mut reg = [PolarBox::new(); REGISTERS];
     let mut o = Vec::new();
     for c in prog {
         match *c {
@@ -524,13 +659,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.polar_box"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let prog = lower(&i.prog)?;
-        let flat = ffi::run(&prog).map_err(|e| harness(e.to_string()))?;
-        split(&prog, &flat)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

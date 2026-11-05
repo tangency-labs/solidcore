@@ -1,12 +1,12 @@
 //! Runner for unit `geom.vector2d`: 2D vector arithmetic, lengths, angles.
 //!
-//! C++: `solidcore_ffi::units::geom_vector2d` (upstream `SmVector2d`,
-//! `source/SMLib/inc/SmVector2d.h`, `source/SMLib/src/SmVector2d.cpp`).
+//! Ported from upstream `SmVector2d` (`source/SMLib/inc/SmVector2d.h`,
+//! `source/SMLib/src/SmVector2d.cpp`); checked against its golden.
 //! Rust: `solidcore::geom::vector2d::Vec2`.
 //!
 //! Every case is one operation `op` on vectors `a`, `b`, scalar `s` and index `idx`;
 //! the result is `r` (1 or 2 floats; booleans as `1.0`/`0.0`). Errors are normalised
-//! to `invalid_input` (`SM_ERR_INVALID_INPUT`) or `status_<code>` on both sides.
+//! to `invalid_input` (`SM_ERR_INVALID_INPUT`) or `status_<code>`.
 //! Every run uses at least [`MIN_GENERATED`] generated inputs (more with `--seeds`).
 
 use serde::{Deserialize, Serialize};
@@ -15,8 +15,6 @@ use serde_json::Value;
 use solidcore::geom::vector2d::Vec2;
 use solidcore::math::{Vec3, EFF_ZERO, PI, UNDEF_DOUBLE};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_vector2d::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -26,10 +24,75 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 4000;
 
-use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `geom.vector2d` runner.
 pub struct Runner;
+
+/// One `SmVector2d` operation on operands `a`, `b` (vectors), `s` (scalar), `idx` (index).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Op {
+    /// `a.LengthSquared()`.
+    LengthSquared = 0,
+    /// `a.Length()`.
+    Length = 1,
+    /// `a.Dot(b)`.
+    Dot = 2,
+    /// `-a`.
+    Neg = 3,
+    /// `a + b`.
+    Add = 4,
+    /// `a - b`.
+    Sub = 5,
+    /// `a * s`.
+    Mul = 6,
+    /// `s * a`.
+    LMul = 7,
+    /// `a / s`.
+    Div = 8,
+    /// `a.Unitize()`.
+    Unitize = 9,
+    /// `a.DistanceBetween(b)`.
+    Distance = 10,
+    /// `a.DistanceBetweenSquared(b)`.
+    DistanceSquared = 11,
+    /// `a.CloserThan(s, b)` (1 or 0).
+    CloserThan = 12,
+    /// `a.GetMaxDimension()`.
+    MaxDimension = 13,
+    /// `a.SwapXY()`.
+    SwapXy = 14,
+    /// `a.Rotate(s)`.
+    Rotate = 15,
+    /// `a == b` (1 or 0).
+    Eq = 16,
+    /// `a != b` (1 or 0).
+    Ne = 17,
+    /// `a[idx]` (const).
+    Index = 18,
+    /// `a[idx] = s` (non-const).
+    IndexSet = 19,
+    /// `a += b`.
+    AddAssign = 20,
+    /// `a -= b`.
+    SubAssign = 21,
+    /// `a *= s`.
+    MulAssign = 22,
+    /// `a.AngleBetween(b, ang)`.
+    Angle = 23,
+    /// `a.CCWAngleBetween(b, ang)`.
+    CcwAngle = 24,
+    /// `a.IsZero(s)` (1 or 0).
+    IsZero = 25,
+    /// `a.IsInitialized()` (1 or 0).
+    IsInitialized = 26,
+    /// `v2 = SmVector3d(a.x, a.y, s)`.
+    FromVec3 = 27,
+    /// `a.SetUninitialized()`.
+    Uninitialized = 28,
+    /// `SmVector2d(double*)`, copy constructor, `operator=`, `Copy`, `Set` chained.
+    Copy = 29,
+}
 
 /// Operation names used in `inputs.op`.
 const OPS: [(&str, Op); 30] = [
@@ -90,16 +153,6 @@ fn normalise(e: &SolidError) -> String {
         SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => "invalid_input".into(),
         SolidError::Upstream { code, .. } => format!("status_{code}"),
         other => format!("rust_error: {other}"),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&i.op)?;
-    match ffi::op(op, i.a, i.b, i.s, i.idx) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(FfiError::Status(SM_ERR_INVALID_INPUT)) => Ok(Output::err("invalid_input")),
-        Err(FfiError::Status(s)) if s > 0 => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
     }
 }
 
@@ -307,10 +360,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

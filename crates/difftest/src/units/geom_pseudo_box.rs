@@ -1,10 +1,10 @@
 //! Runner for unit `geom.pseudo_box`: non-orthogonal bounding boxes.
 //!
-//! C++: `solidcore_ffi::units::geom_pseudo_box` (upstream `source/SMLib/src/SmPseudoBox.cpp`).
+//! Ported from upstream `source/SMLib/src/SmPseudoBox.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::pseudo_box`.
 //!
 //! A case is a program of commands on four box registers (all start as
-//! `SmPseudoBox()` / [`PseudoBox::new`]); both sides run it and every command's
+//! `SmPseudoBox()` / [`PseudoBox::new`]); the runner runs it and every command's
 //! output becomes its own key `cNNN_<name>`.
 //!
 //! | `cmd`                  | Rust                                   | upstream |
@@ -57,12 +57,143 @@ use solidcore::geom::tol::ScaledZero;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::math::INFINITE_PARAMETER;
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_pseudo_box::{self as ffi, Cmd as FCmd, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Number of box registers.
+const REGISTERS: usize = 4;
+
+/// Shim op codes (the table in `harness/cpp/shim/geom_pseudo_box.cpp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Op {
+    /// `Init()`.
+    Init = 0,
+    /// `InitBasis()`.
+    InitBasis = 1,
+    /// `reg = SmPseudoBox(SmExtent3d(6))`.
+    FromExtent = 2,
+    /// `reg = SmExtent3d(6)` (`operator=`).
+    AssignExtent = 3,
+    /// `SetBasis(b0, b1, b2)`; output status.
+    SetBasis = 4,
+    /// `SetIntervals(SmExtent1d(a, b) x3)`.
+    SetIntervals = 5,
+    /// `SetInterval(idx, SmExtent1d(a, b))`; floats `idx, a, b`.
+    SetInterval = 6,
+    /// `SetUnbounded()`.
+    SetUnbounded = 7,
+    /// `AddPoint3d(p)`.
+    AddPoint = 8,
+    /// `ExpandAbsolute(d)`.
+    Expand = 9,
+    /// Basis (9) and intervals (6).
+    Dump = 10,
+    /// `ContainsPoint3d(p, tol)`; output flag.
+    Contains = 11,
+    /// `Evaluate(x, y, z)`; output 3.
+    Evaluate = 12,
+    /// `InvertAbsolute(p)`; output status [, 3].
+    InvertAbsolute = 13,
+    /// `reg[r].Union(reg[s], basis, reg[t])`.
+    Union = 14,
+    /// `DistanceToPoint(p)`; output 1.
+    Distance = 15,
+    /// `IntersectLine(p, v)`; output status [, n, t0, t1].
+    IntersectLine = 16,
+    /// `HasNegativeVolume()`; output flag.
+    NegativeVolume = 17,
+    /// `GetMaxDimension`, `GetXYArea`, `GetVolume`; output 3.
+    Measures = 18,
+    /// `IsPointSized(tol)`; output flag, centre 3, deviation.
+    PointSized = 19,
+    /// `IsLinear(tol)`; output flag, point 3, tangent 3, deviation.
+    Linear = 20,
+    /// `IsPlanar(tol)`; output flag, point 3, normal 3, deviation.
+    Planar = 21,
+    /// `AreDisjoint(reg[s], has ? v : NULL)`; floats `has, v`; output flag.
+    AreDisjoint = 22,
+    /// `AreProjectDisjoint(reg[s], type, pt, vec, aux)`; output flag.
+    ProjectDisjoint = 23,
+    /// `IsContainedBy(reg[s], tol)`; output flag.
+    ContainedBy = 24,
+    /// `ClassifyPoint3d(p, tol)`; output 3 enum values.
+    Classify = 25,
+    /// `CalcPlanes`; output 6 points then 6 vectors.
+    Planes = 26,
+    /// `IsBounded(types)`; output flag, 3 enum values.
+    Bounded = 27,
+    /// `IsAxisAligned(map)`; output flag [, 3].
+    AxisAligned = 28,
+    /// `AreAligned(reg[s], map)`; output flag [, 3].
+    AreAligned = 29,
+    /// `GetCorners`; output 24.
+    Corners = 30,
+    /// `GetEdges`; output 72.
+    Edges = 31,
+    /// `AssertDefined()`; output flag.
+    AssertDefined = 32,
+    /// `reg[r].ProjectToPlane(reg[t], type, pt, vec, aux)`; output status.
+    Project = 33,
+    /// `reg[t] = reg[r]` (registers `t, r`).
+    Assign = 34,
+    /// `reg = SmPseudoBox(b0, b1, b2, SmExtent1d(a, b) x3)`.
+    FromBasisIntervals = 35,
+    /// `SmExtent3d(reg)` (`Circumscribe`); output min 3, max 3.
+    Circumscribe = 36,
+    /// `SmTol::GetScaledZero(reg)`; output 1.
+    ScaledZero = 37,
+}
+
+impl Op {
+    /// Register operands and float arguments of the op.
+    #[must_use]
+    pub const fn arity(self) -> (usize, usize) {
+        match self {
+            Op::Init
+            | Op::InitBasis
+            | Op::SetUnbounded
+            | Op::Dump
+            | Op::NegativeVolume
+            | Op::Measures
+            | Op::Planes
+            | Op::Bounded
+            | Op::AxisAligned
+            | Op::Corners
+            | Op::Edges
+            | Op::AssertDefined
+            | Op::Circumscribe
+            | Op::ScaledZero => (1, 0),
+            Op::FromExtent | Op::AssignExtent | Op::SetIntervals | Op::IntersectLine => (1, 6),
+            Op::SetBasis => (1, 9),
+            Op::SetInterval | Op::AddPoint | Op::Evaluate | Op::InvertAbsolute | Op::Distance => {
+                (1, 3)
+            }
+            Op::Expand | Op::PointSized | Op::Linear | Op::Planar => (1, 1),
+            Op::Contains | Op::Classify => (1, 4),
+            Op::Union => (3, 9),
+            Op::AreDisjoint => (2, 4),
+            Op::ProjectDisjoint | Op::Project => (2, 10),
+            Op::ContainedBy => (2, 1),
+            Op::AreAligned | Op::Assign => (2, 0),
+            Op::FromBasisIntervals => (1, 15),
+        }
+    }
+}
+
+/// One command: an op, its register operands and its float arguments.
+#[derive(Debug, Clone, PartialEq)]
+struct FCmd {
+    /// The op.
+    pub op: Op,
+    /// Register operands (each below [`REGISTERS`]).
+    pub regs: Vec<usize>,
+    /// Float arguments.
+    pub args: Vec<f64>,
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -248,7 +379,7 @@ fn lower(prog: &[Cmd]) -> Result<Vec<FCmd>, HarnessError> {
         if f.regs.len() != n_regs || f.args.len() != n_args {
             return Err(harness(format!("command {i}: bad operand count")));
         }
-        if f.regs.iter().any(|&r| r >= ffi::REGISTERS) {
+        if f.regs.iter().any(|&r| r >= REGISTERS) {
             return Err(harness(format!("command {i}: register out of range")));
         }
         if f.op == Op::SetInterval && f.args.first().is_none_or(|&x| x > 2.0) {
@@ -472,7 +603,7 @@ fn put_map(o: &mut Vec<f64>, m: Option<[i32; 3]>) {
 
 /// Runs the program on the Rust port, producing the shim's flat layout.
 fn rust_flat(prog: &[FCmd]) -> Result<Vec<f64>, HarnessError> {
-    let mut reg = [PseudoBox::new(); ffi::REGISTERS];
+    let mut reg = [PseudoBox::new(); REGISTERS];
     let mut o = Vec::new();
     for cmd in prog {
         let a = cmd.args.as_slice();
@@ -979,13 +1110,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.pseudo_box"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let prog = lower(&i.prog)?;
-        let flat = ffi::run(&prog).map_err(|e| harness(e.to_string()))?;
-        split(&prog, &flat)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

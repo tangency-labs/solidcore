@@ -1,7 +1,7 @@
 //! Runner for unit `geom.tools`: point / vertex / coincident-edge / edge / face lookups.
 //!
-//! C++: `solidcore_ffi::units::geom_tools` (upstream `SmTools::*`,
-//! `source/SMLib/src/SmTools.cpp`).
+//! Ported from upstream `SmTools::*` (`source/SMLib/src/SmTools.cpp`); checked against
+//! its golden.
 //! Rust: `solidcore::geom::tools`.
 //!
 //! A case is one call, tagged by `op`:
@@ -17,7 +17,7 @@
 //! `coincident` uses the curve, interval and end vertices of edge `edge` of the B-rep
 //! (`SmBrep::GetEdges` order) as the target and searches every edge from `start`; with
 //! `copy_curve` the target is a copy of the curve (no owner), else the edge's own curve
-//! (the edge owning it is skipped). The Rust side reads the file's B-rep with the Rust
+//! (the edge owning it is skipped). The runner reads the file's B-rep with the Rust
 //! reader (`file_brep`, `crate::own_reader`), as for `edge` / `face`.
 
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,6 @@ use solidcore::error::SolidError;
 use solidcore::geom::tools::{self, CoincidentEdgeQuery};
 use solidcore::math::{Point3, BIG_DOUBLE};
 use solidcore::topology::{Brep, VertexId};
-use solidcore_ffi::units::geom_tools as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -93,66 +92,6 @@ fn coincident_out(found: bool, same: bool, index: i64, max_dev: f64) -> Output {
         .int("same_orient", i64::from(same))
         .int("index", index)
         .scalar("max_dev", max_dev)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match i {
-        Inputs::Point { pts, target, tol } => {
-            let c = ffi::find_point(pts, *target, *tol).map_err(|e| harness(&e))?;
-            if c.status != 0 {
-                return Ok(status_only(c.status));
-            }
-            let ([found, index], dist) = c.out;
-            Ok(point_out(found != 0, index, dist.to_vec()))
-        }
-        Inputs::Vertex { vertices, pnt, tol } => {
-            let v: Vec<([f64; 3], f64)> = vertices
-                .iter()
-                .map(|&[x, y, z, t]| ([x, y, z], t))
-                .collect();
-            let c = ffi::find_vertex(&v, *pnt, *tol).map_err(|e| harness(&e))?;
-            if c.status != 0 {
-                return Ok(status_only(c.status));
-            }
-            let ([found, index], d) = c.out;
-            Ok(point_out(found != 0, index, vec![d]))
-        }
-        Inputs::Coincident {
-            file,
-            n_edges,
-            edge,
-            copy_curve,
-            swap,
-            tol,
-            start,
-        } => {
-            let c = ffi::find_coincident_edge(file, *edge, *copy_curve, *swap, *tol, *start)
-                .map_err(|e| harness(&e))?;
-            let ([n, found, same, index], dev) = c.out;
-            if usize::try_from(n).ok() != Some(*n_edges) {
-                return Err(harness(&format!("file has {n} edges, case says {n_edges}")));
-            }
-            if c.status != 0 {
-                return Ok(status_only(c.status));
-            }
-            Ok(coincident_out(found != 0, same != 0, index, dev))
-        }
-        Inputs::Edge { file, pnt } => {
-            let c = ffi::find_edge(file, *pnt).map_err(|e| harness(&e))?;
-            if c.status != 0 {
-                return Ok(status_only(c.status));
-            }
-            let ([_, index], param) = c.out;
-            Ok(status_only(0).int("index", index).scalar("param", param))
-        }
-        Inputs::Face { file, pnt } => {
-            let c = ffi::find_face(file, *pnt).map_err(|e| harness(&e))?;
-            if c.status != 0 {
-                return Ok(status_only(c.status));
-            }
-            Ok(status_only(0).int("face", c.out[1]))
-        }
-    }
 }
 
 fn p3([x, y, z]: [f64; 3]) -> Point3 {
@@ -285,10 +224,9 @@ fn rust(k: &mut solidcore::kernel::Kernel, i: &Inputs) -> Result<Output, Harness
     }
 }
 
-/// The file's B-rep on the Rust side, read by the Rust reader
-/// ([`crate::own_reader::read_file`]) as the shim reads it (`SmBrep::ReadFromFile`):
-/// its edge and face lists are in upstream's list order (`FindEdge` / `FindFace`
-/// report indices into them). No C++ export reaches the Rust side.
+/// The file's B-rep, read by the Rust reader ([`crate::own_reader::read_file`]) as
+/// upstream's `SmBrep::ReadFromFile` reads it: its edge and face lists are in upstream's
+/// list order (`FindEdge` / `FindFace` report indices into them).
 fn file_brep(k: &mut solidcore::kernel::Kernel, file: &str) -> Result<Brep, HarnessError> {
     crate::own_reader::read_file_or_fail(k, file)
 }
@@ -399,10 +337,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
