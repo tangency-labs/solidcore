@@ -37,7 +37,7 @@ is open before starting anything new.
 4. **Blends:** the certificate's root cause (#2690) and the G2 setback corner (#2697).
 5. **The shell, offset and thicken rebuild** (#2350).
 
-Issues and pull requests for these carry `priority: high` or `urgent`.
+Issues and pull requests for these carry the `urgent` label (the only priority label for now).
 
 **What not to work on.**
 - **Defects you think you found** in code no user reaches: an overflow from an impossible input,
