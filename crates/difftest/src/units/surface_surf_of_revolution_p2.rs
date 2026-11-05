@@ -4,13 +4,13 @@
 //! `IsNurbSurfaceSurfOfRevolution`; `CreateCanonical` and `MakeNurb` are built by the
 //! surface block of unit `surface.surf_of_revolution_p1`, which co-ports them).
 //!
-//! C++: `solidcore_ffi::units::surface_surf_of_revolution_p2` (upstream
-//! `source/SMLib/src/SmSurfOfRevolution.cpp`). Rust:
+//! Ported from upstream `source/SMLib/src/SmSurfOfRevolution.cpp`; checked against its
+//! golden. Rust:
 //! `solidcore::surface::surf_of_revolution::p2`.
 //!
 //! A case is `surf` (the surface block of the `p1` runner) plus `op` and its
-//! parameters, or the static `is_nurb` op on a B-spline (or revolution) surface. Both
-//! sides produce the same flat record (layout in the FFI module docs), split into
+//! parameters, or the static `is_nurb` op on a B-spline (or revolution) surface. The
+//! Rust side produces a flat record, split into
 //! `build` (the construction status), `other_build` (the other surface's, for
 //! `gssi`), `status` and `out`. Statuses are `0` (`SM_SUCCESS`) or the `SmStatus`; `-1`
 //! on the Rust side for an error upstream cannot produce.
@@ -37,10 +37,9 @@ use solidcore::nurbs::srf_basic::Surface as NurbSurface;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surf_of_revolution::SurfOfRevolution;
 use solidcore::surface::surface::Surface;
-use solidcore_ffi::units::surface_surf_of_revolution_p2 as ffi;
 
 use super::surface_surf_of_revolution_p1::{
-    add, cross3, ffi_surf, flag, frame, gen_generator, gen_surf, normalize, put_curve, put_state,
+    add, cross3, flag, frame, gen_generator, gen_surf, normalize, put_curve, put_state,
     rust_surf, unit_vec, v3, GenIn, InlineCrv, SurfIn,
 };
 use super::surface_surf_of_revolution_p3::{crossing_surf, other_surf, scale_surf, sub_dom};
@@ -150,71 +149,7 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -------------------------------------------------------------------------
-
-fn ffi_dom(d: Option<[f64; 4]>) -> ffi::Dom {
-    d.map_or(ffi::Dom::Natural, ffi::Dom::Explicit)
-}
-
-fn ffi_data(s: &InlineSrf) -> solidcore_ffi::units::surface_surf_of_revolution_p1::SurfaceData {
-    solidcore_ffi::units::surface_surf_of_revolution_p1::SurfaceData {
-        net: s.net.clone(),
-        p: s.p,
-        q: s.q,
-        u: s.u.clone(),
-        v: s.v.clone(),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let flat = if let OpIn::IsNurb { test, scale } = &i.op {
-        let t = match test {
-            TestIn::BSpline(s) => ffi::Test::BSpline(ffi_data(s)),
-            TestIn::Revolution { surf } => ffi::Test::Revolution(Box::new(ffi_surf(surf)?)),
-        };
-        ffi::is_nurb_surface_surf_of_revolution(&t, *scale)
-    } else {
-        let s = i.surf.as_ref().ok_or_else(|| harness("missing surf"))?;
-        let op = match &i.op {
-            OpIn::Build {} => ffi::Op::Build,
-            OpIn::Adjust { dom } => ffi::Op::Adjust { dom: *dom },
-            OpIn::StepInv { dom, p, tol, guess } => ffi::Op::StepInv {
-                dom: ffi_dom(*dom),
-                point: *p,
-                tol: *tol,
-                guess: *guess,
-            },
-            OpIn::Offset { dist, tol } => ffi::Op::Offset {
-                dist: *dist,
-                tol: *tol,
-            },
-            OpIn::Gssi {
-                other,
-                dom,
-                other_dom,
-                tol,
-            } => ffi::Op::Gssi {
-                other: match other {
-                    OtherIn::Revolution { surf } => ffi::Other::Revolution(match surf {
-                        Some(o) => Some(Box::new(ffi_surf(o)?)),
-                        None => None,
-                    }),
-                    OtherIn::Plane { frame } => ffi::Other::Plane { frame: *frame },
-                },
-                dom: ffi_dom(*dom),
-                other_dom: ffi_dom(*other_dom),
-                tol: *tol,
-            },
-            OpIn::Trim { dom } => ffi::Op::Trim {
-                dom: ffi_dom(*dom),
-            },
-            OpIn::IsNurb { .. } => return Err(harness("unreachable")),
-        };
-        ffi::surface_op(&ffi_surf(s)?, &op)
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
-}
+// ---- records --------------------------------------------------------------------------
 
 /// Whether the record starts with the construction status of a surface block.
 fn has_build(op: &OpIn) -> bool {
@@ -741,10 +676,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
