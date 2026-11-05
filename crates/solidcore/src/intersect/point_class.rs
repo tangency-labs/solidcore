@@ -1943,7 +1943,10 @@ pub fn object_zone_tol_3d<O: ClassObject>(
 /// Not upstream (#2621, WR-751): where `MergeIntoObject` splits the edge `e` for the
 /// classified point `src_point`: the parameter where the edge's curve passes nearest the
 /// point, from the classification's own `t` (the parameter upstream splits at), when that
-/// is nearer than `t`'s point and inside the edge's interval; else `t`.
+/// is nearer than `t`'s point, inside the edge's interval and within the edge's tolerance
+/// of the point (the point is on the edge); else `t`. A point off the edge (an offset's
+/// vertex 6.3e-2 from the edge it was classified to, at the edge's end) keeps `t`: moved,
+/// the split left a sliver 1.2e-3 long in place of the end vertex.
 ///
 /// Upstream assumes the point is the edge's at `t` (`dParam = GetTParam(); // note:
 /// sSrcPoint expected to = Edge->Evaluate(TParam)`, `SmPointClass.cpp:951`). It is not
@@ -1969,7 +1972,9 @@ fn split_parameter(k: &Kernel, b: &Brep, e: EdgeId, t: f64, src_point: Point3) -
         Some(t),
         SolverOperation::Minimize,
     )?;
-    Ok(if nearest.success && nearest.distance < at_t {
+    // the point must lie on the edge (within its tolerance) for the edge to pass it
+    let on_edge = nearest.distance <= edge::tolerance(b, e)?;
+    Ok(if nearest.success && on_edge && nearest.distance < at_t {
         nearest.parameter
     } else {
         t
