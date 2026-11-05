@@ -70,9 +70,10 @@ pub struct OdeOptions<'a> {
     /// the step is accepted on the larger.
     pub quadrature: bool,
     /// Optional bounds, one per component, on the absolute rounding error of each
-    /// derivative sample (the evaluator's, from its data). With them each step's error
-    /// scale is floored at the rounding of its error estimates ([`estimate_rounding`]);
-    /// `None` (the rounding is not known) leaves the scale as upstream's.
+    /// derivative sample (the evaluator's, from its data). With them a step whose
+    /// estimate is above the accuracy but within its own rounding ([`estimate_rounding`])
+    /// is refused as unachievable, not shrunk toward underflow; the acceptance is
+    /// unchanged. `None` (the rounding is not known): upstream's step control.
     pub rounding: Option<&'a [f64]>,
 }
 
@@ -187,14 +188,19 @@ impl OdeIntegrator {
                     *s = s.max(at(lower, i)?);
                 }
             }
-            if (x + h - x2) * (x + h - x1) > 0.0 {
+            // the step's end: `x2` itself for the final step, so the last node is the
+            // interval's end exactly (`x + (x2 - x)` can round past it)
+            let mut end = x + h;
+            if (end - x2) * (end - x1) > 0.0 {
                 h = x2 - x;
+                end = x2;
             }
             let step = Self::step_in(
                 &y,
                 &dydx,
                 x,
                 h,
+                end,
                 options.accuracy,
                 &mut scale,
                 &mut evaluate,
@@ -254,6 +260,7 @@ impl OdeIntegrator {
             dydx,
             x,
             htry,
+            x + htry,
             accuracy,
             scale,
             &mut evaluate,
@@ -270,14 +277,18 @@ impl OdeIntegrator {
     }
 
     /// [`OdeIntegrator::step`] into `scratch`: the new values are left in
-    /// `scratch.temp`, so the steps of one integration allocate nothing. `quadrature`
-    /// and `rounding` as [`OdeOptions::quadrature`] and [`OdeOptions::rounding`].
+    /// `scratch.temp`, so the steps of one integration allocate nothing. `end` is the
+    /// end of a step of `htry` (the step's last node, exactly; a smaller retry ends at
+    /// `x + h`). `quadrature` and `rounding` as [`OdeOptions::quadrature`] and
+    /// [`OdeOptions::rounding`]: a step whose estimate is above the accuracy but within
+    /// its own rounding is refused as unachievable.
     #[allow(clippy::too_many_arguments)] // `step`'s arguments plus the scratch arrays
     fn step_in<F>(
         y: &[f64],
         dydx: &[f64],
         x: f64,
         htry: f64,
+        end: f64,
         accuracy: f64,
         scale: &mut [f64],
         evaluate: &mut F,
@@ -293,7 +304,7 @@ impl OdeIntegrator {
         validate_scale(scale)?;
         if y.len() != dydx.len()
             || y.len() != scale.len()
-            || ![x, htry].iter().all(|v| v.is_finite())
+            || ![x, htry, end].iter().all(|v| v.is_finite())
             || accuracy.is_nan()
         {
             return Err(SolidError::invalid_input(
@@ -305,8 +316,12 @@ impl OdeIntegrator {
         scratch.resize(y.len());
         let mut h = htry;
         for _ in 0..MAX_RETRIES {
-            cash_karp(y, dydx, x, h, evaluate, scratch)?;
+            let step_end = if h == htry { end } else { x + h };
+            cash_karp(y, dydx, x, h, step_end, evaluate, scratch)?;
+            // the largest estimate relative to its error scale, and to the scale floored
+            // at the estimate's rounding
             let mut errmax: f64 = 0.0;
+            let mut within_rounding: f64 = 0.0;
             for (i, (error, s)) in scratch.errors.iter().zip(scale.iter_mut()).enumerate() {
                 if s.abs() < EFF_ZERO {
                     *s = EFF_ZERO;
@@ -320,7 +335,8 @@ impl OdeIntegrator {
                     scratch,
                     i,
                 )?;
-                errmax = errmax.max((error / floored(*s, floor)).abs());
+                errmax = errmax.max((error / *s).abs());
+                within_rounding = within_rounding.max((error / floored(*s, floor)).abs());
             }
             if accuracy <= errmax * EFF_ZERO {
                 return Err(SolidError::invalid_input(OP, UNACHIEVABLE));
@@ -328,11 +344,17 @@ impl OdeIntegrator {
             // (the guard above reads the embedded estimate alone: a coarse step's larger
             // fifth-order estimate asks for a smaller step, not for a lower accuracy)
             if quadrature {
-                errmax = errmax.max(quadrature_error(
-                    dydx, h, accuracy, scale, rounding, scratch,
-                )?);
+                let (raw, floored) = quadrature_error(dydx, h, accuracy, scale, rounding, scratch)?;
+                errmax = errmax.max(raw);
+                within_rounding = within_rounding.max(floored);
             }
             errmax /= accuracy;
+            within_rounding /= accuracy;
+            if errmax > 1.0 && within_rounding <= 1.0 {
+                // the estimate is above the accuracy but cannot be told from zero
+                // (`estimate_rounding`): the accuracy is below what the integrand resolves
+                return Err(SolidError::invalid_input(OP, UNACHIEVABLE));
+            }
             if errmax <= 1.0 {
                 let next = if errmax > 1.89e-4 {
                     0.9 * h * errmax.powf(-0.2)
@@ -340,7 +362,7 @@ impl OdeIntegrator {
                     5.0 * h
                 };
                 return Ok(StepEnd {
-                    x: x + h,
+                    x: step_end,
                     taken: h,
                     next,
                 });
@@ -433,12 +455,16 @@ impl CashKarpScratch {
 }
 
 /// One Cash–Karp step into `s`: the fifth-order values in `s.temp`, the error
-/// estimates in `s.errors`. `s` is sized to `y.len()`.
+/// estimates in `s.errors`. `s` is sized to `y.len()`. The step's last node (`c = 1`)
+/// is `end`, exactly, and every node lies between `x` and `end`: `x + c h` rounded can
+/// land an ulp past the end (`-0.1 + 0.4` is `0.30000000000000004`), where an integrand
+/// whose end is a knot would read the span beyond it.
 fn cash_karp<F>(
     y: &[f64],
     dydx: &[f64],
     x: f64,
     h: f64,
+    end: f64,
     evaluate: &mut F,
     s: &mut CashKarpScratch,
 ) -> Result<()>
@@ -454,6 +480,15 @@ where
         ak6,
         errors,
     } = s;
+    // (`max` then `min`: no panic; `x` and `end` are ordered as the step's direction)
+    let node = |c: f64| {
+        let t = x + c * h;
+        if h >= 0.0 {
+            t.max(x).min(end)
+        } else {
+            t.min(x).max(end)
+        }
+    };
     // (zeroed for each evaluation, as the fresh arrays upstream's step allocates; an
     // evaluator may leave components unwritten)
     for ak in [&mut *ak2, &mut *ak3, &mut *ak4, &mut *ak5, &mut *ak6] {
@@ -462,17 +497,17 @@ where
     for (i, t) in temp.iter_mut().enumerate() {
         *t = at(y, i)? + 0.2 * h * at(dydx, i)?;
     }
-    evaluate(x + 0.2 * h, temp, ak2)?;
+    evaluate(node(0.2), temp, ak2)?;
     finite(ak2)?;
     for (i, t) in temp.iter_mut().enumerate() {
         *t = at(y, i)? + h * ((3.0 / 40.0) * at(dydx, i)? + (9.0 / 40.0) * at(ak2, i)?);
     }
-    evaluate(x + 0.3 * h, temp, ak3)?;
+    evaluate(node(0.3), temp, ak3)?;
     finite(ak3)?;
     for (i, t) in temp.iter_mut().enumerate() {
         *t = at(y, i)? + h * (0.3 * at(dydx, i)? - 0.9 * at(ak2, i)? + 1.2 * at(ak3, i)?);
     }
-    evaluate(x + 0.6 * h, temp, ak4)?;
+    evaluate(node(0.6), temp, ak4)?;
     finite(ak4)?;
     for (i, t) in temp.iter_mut().enumerate() {
         *t = at(y, i)?
@@ -481,7 +516,7 @@ where
                 + (-70.0 / 27.0) * at(ak3, i)?
                 + (35.0 / 27.0) * at(ak4, i)?);
     }
-    evaluate(x + 1.0 * h, temp, ak5)?;
+    evaluate(end, temp, ak5)?;
     finite(ak5)?;
     for (i, t) in temp.iter_mut().enumerate() {
         *t = at(y, i)?
@@ -491,7 +526,7 @@ where
                 + (44275.0 / 110592.0) * at(ak4, i)?
                 + (253.0 / 4096.0) * at(ak5, i)?);
     }
-    evaluate(x + 0.875 * h, temp, ak6)?;
+    evaluate(node(0.875), temp, ak6)?;
     finite(ak6)?;
     for (i, t) in temp.iter_mut().enumerate() {
         *t = at(y, i)?
@@ -560,14 +595,14 @@ pub fn gamma(n: u32) -> f64 {
 /// The computed estimate is then within `E` of the estimate of the exact samples:
 /// an estimate at or below `E` cannot be told from zero.
 ///
-/// A step's error scale `s` is therefore floored at `E / accuracy`: the step is
-/// accepted when its estimate is within `accuracy * s` or within its own rounding `E`,
-/// whichever is larger. This does not loosen the accuracy: a requested accuracy below
-/// the integrand's rounding cannot be resolved by any step size (a smaller step's
-/// samples carry the same rounding), and such a step's value is already exact to that
-/// rounding. Without the floor the step control shrinks the step to underflow and fails
-/// (on a curve whose control points are all equal, `|C'|` is rounding noise around
-/// zero, and every step was refused at `1e-9`).
+/// The step control reads this as a refusal, never as an acceptance: a step whose
+/// estimate is above `accuracy * s` but within `max(accuracy * s, E)` (its error scale
+/// `s` floored at `E / accuracy`) has an estimate that cannot be told from zero while
+/// the accuracy asks for less than it: the accuracy is below what the integrand's
+/// samples resolve, and the step is refused as unachievable (`SM_ERR`,
+/// [`OP_STEP_CONTROL`]) instead of shrinking toward underflow. A step is accepted only
+/// on its estimate within `accuracy * s`, as without the bound, so the bound never
+/// loosens the accuracy.
 fn estimate_rounding(
     weights: [f64; 6],
     dydx: &[f64],
@@ -655,7 +690,8 @@ const FIFTH_ORDER_ERROR_ON_S5: f64 = -1.0 / 960.0;
 /// misses only where both vanish together. (A pair of null rules of consecutive
 /// degrees: Berntsen and Espelid, "Error estimation in automatic quadrature routines",
 /// ACM TOMS 17 (1991).) `scale` is the step's error scale, floored as the embedded
-/// estimate's and at the estimate's rounding ([`estimate_rounding`]).
+/// estimate's; the second value is relative to it floored at the estimate's rounding
+/// ([`estimate_rounding`]).
 fn quadrature_error(
     dydx: &[f64],
     h: f64,
@@ -663,9 +699,10 @@ fn quadrature_error(
     scale: &[f64],
     rounding: Option<&[f64]>,
     s: &CashKarpScratch,
-) -> Result<f64> {
+) -> Result<(f64, f64)> {
     let [w0, w2, w3, w4, w5, w6] = DIVIDED_DIFFERENCE_5;
     let mut errmax: f64 = 0.0;
+    let mut within_rounding: f64 = 0.0;
     for (i, sc) in scale.iter().enumerate() {
         let difference = w0 * at(dydx, i)?
             + w2 * at(&s.ak2, i)?
@@ -673,11 +710,13 @@ fn quadrature_error(
             + w4 * at(&s.ak4, i)?
             + w5 * at(&s.ak5, i)?
             + w6 * at(&s.ak6, i)?;
+        let error = h * FIFTH_ORDER_ERROR_ON_S5 * difference;
         let floor = rounding_floor(QUADRATURE_ERROR_WEIGHTS, dydx, h, accuracy, rounding, s, i)?;
-        errmax = errmax.max((h * FIFTH_ORDER_ERROR_ON_S5 * difference / floored(*sc, floor)).abs());
+        errmax = errmax.max((error / *sc).abs());
+        within_rounding = within_rounding.max((error / floored(*sc, floor)).abs());
     }
     if errmax.is_finite() {
-        Ok(errmax)
+        Ok((errmax, within_rounding))
     } else {
         Err(SolidError::sm_err(OP_INTEGRAND))
     }
@@ -718,9 +757,10 @@ where
 }
 
 /// [`integrate_with_kernel`] for an integrand whose samples are each within `rounding`
-/// of its exact value, when that is known ([`OdeOptions::rounding`]): a step is accepted
-/// at its estimates' rounding when the accuracy asks for less than the integrand can
-/// resolve.
+/// of its exact value, when that is known ([`OdeOptions::rounding`]): where the accuracy
+/// asks for less than the integrand resolves (a step's estimate within its own rounding
+/// but above the accuracy) the integration is refused as unachievable (`SM_ERR`,
+/// [`OP_STEP_CONTROL`]; a zero without failure propagation, as every failure).
 pub fn integrate_rounded_with_kernel<F>(
     k: &Kernel,
     a: f64,
@@ -1364,5 +1404,47 @@ mod tests {
         assert!((blind + 1.0 / 960.0).abs() < 1e-12, "{blind}");
         let error = run(true);
         assert!(error.abs() <= 1e-6, "{error}");
+    }
+
+    /// The final step's last node is the interval's end itself: `-0.1 + (0.3 - -0.1)`
+    /// rounds to `0.30000000000000004`, past the end, where an integrand whose end is a
+    /// knot (a curve's span, a face's iso-u piece) would read the span beyond it. Every
+    /// node lies within `[x1, x2]`, and the step that ends the integration ends at `x2`.
+    #[test]
+    fn the_final_step_ends_at_the_interval_end_exactly() {
+        let (x1, x2) = (-0.1_f64, 0.3_f64);
+        assert!(x1 + (x2 - x1) > x2);
+        for (a, b) in [(x1, x2), (x2, x1)] {
+            let mut y = [0.0];
+            let mut outside = Vec::new();
+            let mut at_end = false;
+            OdeIntegrator::default()
+                .integrate(
+                    &mut y,
+                    a,
+                    b,
+                    OdeOptions {
+                        accuracy: 1e-9,
+                        // one step over the whole interval: its h is clamped to b - a
+                        initial_step: 1.0,
+                        minimum_step: 0.0,
+                        scale: None,
+                        quadrature: true,
+                        rounding: None,
+                    },
+                    |t, _, dy| {
+                        if !(x1 <= t && t <= x2) {
+                            outside.push(t);
+                        }
+                        at_end |= t == b;
+                        dy[0] = 1.0;
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            assert!(outside.is_empty(), "nodes outside [{x1}, {x2}]: {outside:?}");
+            assert!(at_end, "no node at the end {b}");
+            assert!((y[0] - (b - a)).abs() <= 1e-15, "{}", y[0]);
+        }
     }
 }
