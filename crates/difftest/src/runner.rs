@@ -1504,27 +1504,33 @@ mod tests {
     struct SkipsOne;
 
     impl UnitDiff for SkipsOne {
+        /// The fake unit's id.
         fn id(&self) -> &'static str {
             "fake.skips_one"
         }
+        /// Echoes `i`; must not be reached for the skipped case.
         fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
             let i: i64 = case.get("i")?;
             assert_ne!(i, 1, "a platform-skipped case must not run C++");
             Ok(Output::new().int("i", i))
         }
+        /// Echoes `i`; must not be reached for the skipped case.
         fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
             let i: i64 = case.get("i")?;
             assert_ne!(i, 1, "a platform-skipped case must not run Rust");
             Ok(Output::new().int("i", i))
         }
+        /// The four cases of [`Fake`].
         fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
             Fake.cases(ctx)
         }
+        /// Skips `c1` unconditionally, as a hook that checks its own platform condition.
         fn skipped_platform(&self, case: &Case) -> Option<String> {
             (case.name == "c1").then(|| "allocator-dependent C++ reference".into())
         }
     }
 
+    /// The runner skips what the hook names on a libstdc++ build too.
     #[test]
     fn skipped_platform_is_consulted_on_every_standard_library() {
         // The hook decides the platform condition itself: the runner must not run the

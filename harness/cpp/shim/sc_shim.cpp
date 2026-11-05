@@ -24,6 +24,7 @@ std::recursive_mutex& sc_native_mutex()
 static double (*volatile sc_sin)(double) = sin;
 static double (*volatile sc_cos)(double) = cos;
 
+// LLVM's fused sin/cos pair: separate sin and cos.
 extern "C" struct __double2 __sincos_stret(double x)
 {
     struct __double2 r;
@@ -32,6 +33,7 @@ extern "C" struct __double2 __sincos_stret(double x)
     return r;
 }
 
+// GCC's fused sin/cos pair, cexp(0 + x*i), and any other cexp: exp times separate cos and sin.
 extern "C" double _Complex cexp(double _Complex z)
 {
     const double m = exp(__real__ z);

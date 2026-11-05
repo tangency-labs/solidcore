@@ -2123,6 +2123,7 @@ impl UnitDiff for Runner {
         rust(&case.parse()?)
     }
 
+    /// The `read_db` cases on a non-libstdc++ build (libstdc++ `istream` extraction).
     fn skipped_platform(&self, case: &Case) -> Option<String> {
         if solidcore_ffi::cpp_stdlib_is_libstdcxx() {
             return None;

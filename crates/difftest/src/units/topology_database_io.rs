@@ -622,6 +622,7 @@ impl UnitDiff for Runner {
         run_rust_script(&case.parse()?)
     }
 
+    /// Every case on a non-libstdc++ build: the ASCII reader follows libstdc++ `istream`.
     fn skipped_platform(&self, _case: &Case) -> Option<String> {
         if solidcore_ffi::cpp_stdlib_is_libstdcxx() {
             return None;

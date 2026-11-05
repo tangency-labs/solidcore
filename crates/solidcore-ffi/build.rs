@@ -50,6 +50,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Compiles the shims and links the C++ reference described by `ffi.env`.
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let root = manifest
@@ -293,6 +294,7 @@ fn abs(root: &Path, p: &str) -> PathBuf {
     }
 }
 
+/// Reads `ffi.env` (format above) into a [`Config`]; relative paths resolve against `root`.
 fn parse_env_file(path: &Path, root: &Path) -> Config {
     let text = fs::read_to_string(path).expect("read ffi.env");
     let mut kv: BTreeMap<String, Vec<String>> = BTreeMap::new();

@@ -597,6 +597,7 @@ impl UnitDiff for Runner {
         }
     }
 
+    /// On a non-libstdc++ build, the cases [`libcxx_skip_reason`] names.
     fn skipped_platform(&self, case: &Case) -> Option<String> {
         if solidcore_ffi::cpp_stdlib_is_libstdcxx() {
             return None;
@@ -1547,6 +1548,7 @@ mod tests {
         }
     }
 
+    /// Only streams with a token libc++ extracts differently are skipped, by token and format.
     #[test]
     fn file_stream_classification_is_token_and_format_based() {
         let out_of_range = "Version 33\n4.595e-321 0 0 - Color\n1 1 - Manifold\n";
