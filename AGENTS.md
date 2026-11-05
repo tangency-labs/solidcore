@@ -58,6 +58,8 @@ request that names it. Check all three, and build on the existing work rather th
 - [docs/procedural-sweep.md](docs/procedural-sweep.md): swept surfaces, their frames, threads.
 - [docs/ssi.md](docs/ssi.md): surface-surface intersection, and what the boolean takes from it.
 - [docs/layers.md](docs/layers.md): which layer each job lives in.
+- [docs/coordinating.md](docs/coordinating.md): if you lead other agents: how to understand the
+  problem, search for related work, split it into briefs and inspect what comes back.
 
 Each reference ends with "If you're stuck". If the docs and the code don't answer your question,
 ask the maintainers on the area's hub issue before you build.
