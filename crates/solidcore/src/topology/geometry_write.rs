@@ -88,7 +88,7 @@ pub fn write_curve_at(
         CurveKind::Line(l) => l.write_to_db(db, version),
         CurveKind::Ellipse(e) => e.write_to_db(db, version),
         CurveKind::Hermite(h) => h.write_to_db(db, version),
-        CurveKind::Hyperbola(_) => Err(unported("SmHyperbola::WriteToDB")),
+        CurveKind::Hyperbola(h) => h.write_to_db(db, version),
         CurveKind::Projected(_) => Err(unported("SmProjectedCurve::WriteToDB")),
         CurveKind::Iso(_) => Err(unported("SmIsoCurve::WriteToDB")),
         CurveKind::Offset(_) => Err(unported("SmOffsetCurve::WriteToDB")),
