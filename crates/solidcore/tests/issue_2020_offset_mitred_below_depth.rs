@@ -359,7 +359,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.shell_inner_shell_of_statuses = true;
     k.fixes.simple_coincidence_crossing_is_point = true;
     k.fixes.slice_coincident_faces_sheet_side = true;
-    k.fixes.sphere_small_circle_not_touching = true;
     k.fixes.ssi_low_angle_start_on_probation = true;
     k.fixes.ssi_no_reverse_of_empty_trace = true;
     k.fixes.ssi_pole_point_keeps_its_tangent = true;
