@@ -66,7 +66,8 @@ pub struct OdeOptions<'a> {
     pub scale: Option<&'a [f64]>,
     /// The derivative reads only `x`, never `y`: the integration is a quadrature. Each
     /// step's error is then also estimated from the fifth divided difference of its six
-    /// samples ([`quadrature_error`]), not only from the embedded fourth-order solution.
+    /// samples ([`quadrature_error`]), not only from the embedded fourth-order solution;
+    /// the step is accepted on the larger.
     pub quadrature: bool,
 }
 
@@ -294,9 +295,6 @@ impl OdeIntegrator {
         let mut h = htry;
         for _ in 0..MAX_RETRIES {
             cash_karp(y, dydx, x, h, evaluate, scratch)?;
-            if quadrature {
-                quadrature_error(dydx, h, scratch)?;
-            }
             let mut errmax: f64 = 0.0;
             for (error, s) in scratch.errors.iter().zip(scale.iter_mut()) {
                 if s.abs() < EFF_ZERO {
@@ -306,6 +304,11 @@ impl OdeIntegrator {
             }
             if accuracy <= errmax * EFF_ZERO {
                 return Err(SolidError::invalid_input(OP, UNACHIEVABLE));
+            }
+            // (the guard above reads the embedded estimate alone: a coarse step's larger
+            // fifth-order estimate asks for a smaller step, not for a lower accuracy)
+            if quadrature {
+                errmax = errmax.max(quadrature_error(dydx, h, scale, scratch)?);
             }
             errmax /= accuracy;
             if errmax <= 1.0 {
@@ -496,8 +499,8 @@ const DIVIDED_DIFFERENCE_5: [f64; 6] = [
 /// `37/378 (3/10)^5 + 250/621 (3/5)^5 + 125/594 + 512/1771 (7/8)^5 - 1/6`.
 const FIFTH_ORDER_ERROR_ON_S5: f64 = -1.0 / 960.0;
 
-/// Not upstream: the error of a quadrature step's fifth-order value, where it exceeds
-/// the embedded estimate, replaces it in `s.errors`.
+/// Not upstream: the largest error of a quadrature step's fifth-order value over its
+/// components, each relative to its error scale.
 ///
 /// For a derivative of `x` alone, a Cash–Karp step is a quadrature rule on six samples
 /// of `g(s) = f(x + s h)`: the fifth-order value integrates polynomials of degree 4
@@ -507,24 +510,28 @@ const FIFTH_ORDER_ERROR_ON_S5: f64 = -1.0 / 960.0;
 /// zero on cubics and so measures `g^(4)` only: where `g^(4)` changes sign within the
 /// step it can vanish while the step's error does not. On a step of half a quarter
 /// circle's trim it read 3.1e-5 where the step was off by 3.5e-3. The divided
-/// difference measures `g^(5)`, and both vanishing together is what the larger of the
-/// two misses. (A pair of null rules of consecutive degrees: Berntsen and Espelid,
-/// "Error estimation in automatic quadrature routines", ACM TOMS 17 (1991).)
-fn quadrature_error(dydx: &[f64], h: f64, s: &mut CashKarpScratch) -> Result<()> {
+/// difference measures `g^(5)`; the step is accepted on the larger of the two, which
+/// misses only where both vanish together. (A pair of null rules of consecutive
+/// degrees: Berntsen and Espelid, "Error estimation in automatic quadrature routines",
+/// ACM TOMS 17 (1991).) `scale` is the step's error scale, floored as the embedded
+/// estimate's.
+fn quadrature_error(dydx: &[f64], h: f64, scale: &[f64], s: &CashKarpScratch) -> Result<f64> {
     let [w0, w2, w3, w4, w5, w6] = DIVIDED_DIFFERENCE_5;
-    for (i, e) in s.errors.iter_mut().enumerate() {
+    let mut errmax: f64 = 0.0;
+    for (i, sc) in scale.iter().enumerate() {
         let difference = w0 * at(dydx, i)?
             + w2 * at(&s.ak2, i)?
             + w3 * at(&s.ak3, i)?
             + w4 * at(&s.ak4, i)?
             + w5 * at(&s.ak5, i)?
             + w6 * at(&s.ak6, i)?;
-        let fifth = h * FIFTH_ORDER_ERROR_ON_S5 * difference;
-        if fifth.abs() > e.abs() {
-            *e = fifth;
-        }
+        errmax = errmax.max((h * FIFTH_ORDER_ERROR_ON_S5 * difference / sc).abs());
     }
-    finite(&s.errors)
+    if errmax.is_finite() {
+        Ok(errmax)
+    } else {
+        Err(SolidError::sm_err(OP_INTEGRAND))
+    }
 }
 
 /// `SmIntegrator::IntegrateIt`. Numerical/evaluator failure yields `Ok(0.0)` as
