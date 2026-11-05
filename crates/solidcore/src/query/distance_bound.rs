@@ -530,7 +530,378 @@ mod tests {
     use super::*;
     use crate::primitive::api_primitives::{create_box, create_cylinder, create_sphere};
     use crate::query::api_queries::face_bounding_box;
+    use crate::query::exact::{distance2, le, Exact, Samples};
     use crate::topology::brep::p1 as brep_p1;
+
+    /// Point-to-rectangle distance with exact clamped differences, including corners.
+    fn rectangle_distance2(p: Point3, lo: Point3, hi: Point3) -> Exact {
+        let nearest = Point3::new(
+            p.x.clamp(lo.x, hi.x),
+            p.y.clamp(lo.y, hi.y),
+            p.z.clamp(lo.z, hi.z),
+        );
+        distance2(p, nearest)
+    }
+
+    /// The first binary64 `want` above `sqrt(norm2)-radius`, without taking a root.
+    /// Every fixture's distance is positive and below 8; 64 is only a bisection
+    /// bracket. A huge target could stop immediately at a non-nearest patch centre.
+    fn want_above_exact_distance(norm2: &Exact, radius: f64) -> f64 {
+        let above = |want| {
+            Exact::of(want)
+                .add(&Exact::of(radius))
+                .square()
+                .sub(norm2)
+                .sign()
+                == Ordering::Greater
+        };
+        let (mut lo, mut hi) = (0.0_f64, 64.0_f64);
+        assert!(!above(lo) && above(hi));
+        while lo.next_up() < hi {
+            let mid = lo + (hi - lo) * 0.5;
+            if above(mid) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        hi
+    }
+
+    /// Axis-aligned box faces: `bound^2 <= distance^2` exactly, before and after
+    /// refinement, at the origin and at coordinate scale `2^20`.
+    #[test]
+    fn rectangle_bounds_stay_below_exact_distances() {
+        let mut rng = Samples::new();
+        let mut k = Kernel::default();
+        // Two scales isolate ordinary and far analytic constants;
+        // eight points per scale cover face interiors, edges and corners.
+        // Coordinate scale 2^29 is covered by the nonanalytic bilinear sheet in
+        // extracted_and_restricted_bounds_stay_below_the_exact_plane below.
+        for scale in [0.0, 2.0_f64.powi(20)] {
+            // Dyadic origins with short mantissas ensure adding 16 is exact. A
+            // full-mantissa origin alone would not guarantee this across a binade.
+            let c = Point3::new(1.5 * scale, -scale, scale * 0.5);
+            // api_primitives::xy_frame is the identity frame translated to c;
+            // box_faces uses the Y,Z axes on the x side, domains [0,16]^2, and
+            // translates the opposite plane by X*16. No rotated-frame rounding.
+            let side = 16.0;
+            let b = create_box(&mut k, c, side, side, side).unwrap();
+            let x = c.x + side;
+            assert_eq!(
+                Exact::of(c.x)
+                    .add(&Exact::of(side))
+                    .sub(&Exact::of(x))
+                    .sign(),
+                Ordering::Equal
+            );
+            let f = faces(&b)
+                .into_iter()
+                .min_by(|&a, &bface| {
+                    let cost = |f| {
+                        let bx = face_bounding_box(&k, &b, f, true).unwrap();
+                        (bx.min().x - x).abs() + (bx.max().x - x).abs()
+                    };
+                    cost(a).total_cmp(&cost(bface))
+                })
+                .unwrap();
+            let face = b.face(f).unwrap();
+            let surf = face.surface.as_ref().unwrap();
+            let lo = Point3::new(x, c.y, c.z);
+            let hi = Point3::new(x, c.y + side, c.z + side);
+            for i in 0..8 {
+                let p = Point3::new(
+                    if i == 0 {
+                        x.next_up()
+                    } else {
+                        x + rng.mantissa()
+                    },
+                    c.y + if i % 2 == 0 { 8.0 } else { -rng.mantissa() },
+                    c.z + if i % 3 == 0 { 18.0 } else { rng.mantissa() },
+                );
+                let exact2 = rectangle_distance2(p, lo, hi);
+                // The second target is only one float beyond the exact distance,
+                // so an off-centre projection requires subdivision, up to the cap.
+                for want in [0.0, want_above_exact_distance(&exact2, 0.0)] {
+                    for bound in [
+                        face_distance_lower_bound(&k, &b, f, p, want).unwrap(),
+                        surface_distance_lower_bound(&k, surf, Some(&face.uv_domain), p, want)
+                            .unwrap(),
+                    ] {
+                        assert!(bound >= 0.0);
+                        le(&Exact::of(bound).square(), &exact2);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Outside a sphere, `bound <= |p-c|-r` iff `(bound+r)^2 <= |p-c|^2`;
+    /// both the addition and each coordinate difference are exact expansions.
+    #[test]
+    fn sphere_bounds_stay_below_exact_distances() {
+        let mut rng = Samples::new();
+        let mut k = Kernel::default();
+        // Coordinate scale 2^29 is covered by the nonanalytic bilinear sheet below;
+        // these analytic sphere fixtures exercise scales through 2^20.
+        for scale in [0.0, 2.0_f64.powi(20)] {
+            let c = Point3::new(scale * rng.mantissa(), -scale, scale * 0.5);
+            let radius = rng.mantissa();
+            let b = create_sphere(&mut k, c, radius).unwrap();
+            for _ in 0..16 {
+                let p = c + Point3::new(
+                    2.0 * rng.mantissa(),
+                    -2.0 * rng.mantissa(),
+                    2.0 * rng.mantissa(),
+                );
+                let exact2 = distance2(p, c);
+                assert_eq!(
+                    exact2.sub(&Exact::of(radius).square()).sign(),
+                    Ordering::Greater,
+                    "the outside-sphere inequality requires |p-c| > radius"
+                );
+                // Taking the minimum covers the complete sphere, rather than claiming
+                // that every trimmed face has the whole sphere's distance.
+                for want in [0.0, want_above_exact_distance(&exact2, radius)] {
+                    let bound = faces(&b)
+                        .into_iter()
+                        .map(|f| face_distance_lower_bound(&k, &b, f, p, want).unwrap())
+                        .fold(f64::INFINITY, f64::min);
+                    assert!(bound >= 0.0);
+                    le(&Exact::of(bound).add(&Exact::of(radius)).square(), &exact2);
+                }
+            }
+        }
+    }
+
+    /// Exact de Casteljau evaluation on expansions; convex weights are formed exactly.
+    fn exact_eval(h: &Bernstein2, u: f64, v: f64) -> Exact {
+        fn curve(mut c: Vec<Exact>, t: f64) -> Exact {
+            let complement = Exact::of(1.0).sub(&Exact::of(t));
+            while c.len() > 1 {
+                c = c
+                    .windows(2)
+                    .map(|w| w[0].mul(&complement).add(&w[1].scale(t)))
+                    .collect();
+            }
+            c.pop().unwrap()
+        }
+        curve(
+            h.coefficients()
+                .chunks_exact(h.degrees().1 + 1)
+                .map(|r| curve(r.iter().copied().map(Exact::of).collect(), v))
+                .collect(),
+            u,
+        )
+    }
+
+    /// A rational point `(X,Y,Z)/W`: `bound^2 W^2 <= X^2+Y^2+Z^2`,
+    /// so neither projection nor the reference norm is rounded.
+    fn below_homogeneous_point(bound: f64, p: &[Exact; 4]) {
+        assert_eq!(p[3].sign(), Ordering::Greater);
+        let norm2 = p[..3]
+            .iter()
+            .fold(Exact::of(0.0), |s, x| s.add(&x.square()));
+        le(&Exact::of(bound).square().mul(&p[3].square()), &norm2);
+    }
+
+    /// Constant and bicubic positive-weight nets: the hull bound is no larger than
+    /// every exactly projected control point or exactly evaluated patch sample.
+    #[test]
+    fn hull_bounds_stay_below_exact_rational_points() {
+        let mut rng = Samples::new();
+        // 128 nets of each degree. Constant nets make the box tight; almost-constant
+        // bicubics make the tilted support tight and also exercise summation of u.
+        for degree in [0, 1, 3] {
+            for _ in 0..128 {
+                let base = [rng.mantissa(), -rng.mantissa(), rng.mantissa()];
+                let count = (degree + 1) * (degree + 1);
+                let weights: Vec<_> = (0..count).map(|_| rng.mantissa()).collect();
+                let h = std::array::from_fn(|axis| {
+                    Bernstein2::new(
+                        degree,
+                        degree,
+                        weights
+                            .iter()
+                            .map(|&w| {
+                                if axis == 3 {
+                                    w
+                                } else {
+                                    // 2^-40 is above ulps but keeps the support nearly
+                                    // attained, rather than testing a loose hull only.
+                                    base[axis] * w + rng.mantissa() * 2.0_f64.powi(-40)
+                                }
+                            })
+                            .collect(),
+                    )
+                    .unwrap()
+                });
+                for err in [0.0, gamma(2)] {
+                    let bound = hull_bound(&h, err).unwrap();
+                    assert!(bound >= 0.0);
+                    for i in 0..count {
+                        let point =
+                            std::array::from_fn(|axis| Exact::of(h[axis].coefficients()[i]));
+                        below_homogeneous_point(bound, &point);
+                        // An allowed coefficient perturbation towards the origin,
+                        // with increased weight: directly exercises quotient widening.
+                        let perturbed = std::array::from_fn(|axis| {
+                            let x = h[axis].coefficients()[i];
+                            Exact::of(x).add(&Exact::of(if axis == 3 {
+                                err
+                            } else {
+                                -err.copysign(x)
+                            }))
+                        });
+                        below_homogeneous_point(bound, &perturbed);
+                    }
+                    // Dyadic corners, centre and off-centre samples; exact evaluation
+                    // also checks the interior where the hull support is attained.
+                    for (u, v) in [(0.0, 0.0), (1.0, 1.0), (0.5, 0.5), (0.25, 0.75)] {
+                        below_homogeneous_point(
+                            bound,
+                            &std::array::from_fn(|axis| exact_eval(&h[axis], u, v)),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Interior-knot extraction and non-dyadic UV restriction of a planar spline:
+    /// `bound^2 <= (p.z-height)^2` exactly, with the projection inside the rectangle.
+    #[test]
+    fn extracted_and_restricted_bounds_stay_below_the_exact_plane() {
+        let k = Kernel::default();
+        let mut rng = Samples::new();
+        // Two extraction scales and one very far bilinear scale, each with 16
+        // full-mantissa heights. The extraction charge carried through translation
+        // would leave weights unproved at the largest scale, so the bilinear case
+        // isolates translation/restriction there without an extraction charge.
+        for scale in [1.0, 2.0_f64.powi(20), 2.0_f64.powi(29)] {
+            for _ in 0..16 {
+                let height = rng.mantissa() * scale;
+                let points: Vec<_> = [0.0, 1.0, 3.0, 4.0]
+                    .into_iter()
+                    .flat_map(|x| [Point3::new(x, 0.0, height), Point3::new(x, 2.0, height)])
+                    .collect();
+                let net = if scale == 2.0_f64.powi(29) {
+                    BSplineSurface::create_bilinear_surface(
+                        Point3::new(0.0, 0.0, height),
+                        Point3::new(4.0, 0.0, height),
+                        Point3::new(0.0, 2.0, height),
+                        Point3::new(4.0, 2.0, height),
+                    )
+                    .unwrap()
+                } else {
+                    // Interior multiplicity 1 is below degree 2: extraction inserts.
+                    BSplineSurface::create_canonical(&CanonicalSurfaceData {
+                        u_degree: 2,
+                        v_degree: 1,
+                        control_points: &points,
+                        form: BSplineSurfaceForm::Unspecified,
+                        u_multiplicities: &[3, 1, 3],
+                        v_multiplicities: &[2, 2],
+                        u_knots: &[0.0, 0.5, 1.0],
+                        v_knots: &[0.0, 1.0],
+                        knot_type: KnotType::Unspecified,
+                        weights: None,
+                        uv_domain: None,
+                    })
+                    .unwrap()
+                };
+                let surf = Surface::from(net);
+                let mut restricted = Extent2d::default();
+                // 0.1 and 0.9 force rounded restriction ratios; symmetry retains
+                // the point (2,1,height), whose distance is the exact normal gap.
+                restricted.set_min_max_coords(0.1, 0.1, 0.9, 0.9).unwrap();
+                let p = Point3::new(2.0, 1.0, height + rng.mantissa());
+                let exact2 = Exact::of(p.z).sub(&Exact::of(height)).square();
+                for uv in [None, Some(&restricted)] {
+                    // Zero asks for the initial bound; the first float above the
+                    // exact gap exercises refinement on the two-span net.
+                    for want in [0.0, want_above_exact_distance(&exact2, 0.0)] {
+                        let bound = surface_distance_lower_bound(&k, &surf, uv, p, want).unwrap();
+                        le(&Exact::of(bound).square(), &exact2);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Each quarter's coefficient error encloses exact midpoint de Casteljau,
+    /// independently of the other hull charges which could hide this rounding.
+    #[test]
+    fn quarters_enclose_exact_subdivision_coefficients() {
+        // Bernstein2::rows chunks by dv+1, so (i,j) lives at i*(dv+1)+j.
+        // Piece::quarters splits u, then v and returns [ll,lr,rl,rr].
+        // split_1d computes (1-t)*a+t*b, hence at t=1/2 both products
+        // are exact in this normal-range corpus; its sum has the same rounding
+        // as (a+b)*1/2. The oracle computes that sum exactly before scaling.
+        fn split(c: &[Exact]) -> (Vec<Exact>, Vec<Exact>) {
+            let mut c = c.to_vec();
+            let (mut l, mut r) = (Vec::new(), Vec::new());
+            while !c.is_empty() {
+                l.push(c.first().unwrap().clone());
+                r.push(c.last().unwrap().clone());
+                c = c.windows(2).map(|w| w[0].add(&w[1]).scale(0.5)).collect();
+            }
+            r.reverse();
+            (l, r)
+        }
+        fn exact_quarters(h: &Bernstein2) -> [Vec<Exact>; 4] {
+            let (du, dv) = h.degrees();
+            let mut halves = [Vec::new(), Vec::new()];
+            for j in 0..=dv {
+                let column: Vec<_> = (0..=du)
+                    .map(|i| Exact::of(h.coefficients()[i * (dv + 1) + j]))
+                    .collect();
+                let (l, r) = split(&column);
+                halves[0].push(l);
+                halves[1].push(r);
+            }
+            let mut out = std::array::from_fn(|_| Vec::new());
+            for (side, columns) in halves.iter().enumerate() {
+                for i in 0..=du {
+                    let row: Vec<_> = columns.iter().map(|c| c[i].clone()).collect();
+                    let (l, r) = split(&row);
+                    out[2 * side].extend(l);
+                    out[2 * side + 1].extend(r);
+                }
+            }
+            out
+        }
+        let mut rng = Samples::new();
+        // 32 nets of each degree through 4: repeated averaging builds residuals
+        // across multiple levels while leaving the exact oracle small.
+        for degree in 1..=4 {
+            for _ in 0..32 {
+                let h = std::array::from_fn(|_| {
+                    Bernstein2::new(
+                        degree,
+                        degree,
+                        (0..(degree + 1) * (degree + 1))
+                            .map(|_| rng.mantissa())
+                            .collect(),
+                    )
+                    .unwrap()
+                });
+                let exact = h.each_ref().map(exact_quarters);
+                let quarters = Piece::new(h, 0.0, 0).unwrap().quarters().unwrap();
+                for (q, quarter) in quarters.iter().enumerate() {
+                    for (axis, component) in quarter.h.iter().enumerate() {
+                        for (rounded, reference) in
+                            component.coefficients().iter().zip(&exact[axis][q])
+                        {
+                            let error = Exact::of(*rounded).sub(reference);
+                            le(&error, &Exact::of(quarter.err));
+                            le(&Exact::of(-quarter.err), &error);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     fn faces(b: &Brep) -> Vec<FaceId> {
         brep_p1::faces(b, None).unwrap()
