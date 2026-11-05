@@ -41,6 +41,7 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -88,18 +89,6 @@ struct CircleIn {
     /// `SM_CO_QUINTIC` (degree 5) instead of `SM_CO_QUADRATIC`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     quintic: bool,
-}
-
-impl CircleIn {
-    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
-    /// arc that would end past 360 degrees starts one turn back.
-    fn turned_back(mut self) -> Self {
-        if self.a1 > 360.0 {
-            self.a0 -= 360.0;
-            self.a1 -= 360.0;
-        }
-        self
-    }
 }
 
 /// A transform applied to a curve before the op, `repeat` times
@@ -164,7 +153,9 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         },
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
-    let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
+    let cur = arc
+        .gw_nurb()
+        .ok_or_else(|| harness("circle without NURB"))?;
     Ok(CurveIn::Bspline(BSplineIn {
         dim: 3,
         oob: false,
@@ -174,13 +165,92 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
     }))
 }
 
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
+}
+
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 128,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 2.0;
+/// The most transforms applied to a curve.
+const MAX_TRANSFORMS: u64 = 16;
+
+/// The domain a curve's parameters are bounded by, and whether it is a B-spline, if the
+/// curve keeps the contract (analytic lines evaluate anywhere: only their parameters are
+/// bounded).
+fn domain(c: &CurveIn) -> Option<((f64, f64), bool)> {
+    let max = LIMITS.max_coord;
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some(((s.a, s.b), true))
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+        .then_some(((0.0, 1.0), false)),
+        CurveIn::Line(l) => contract::line(&l.p, &l.v, l.domain, l.scale, max)
+            .map(|_| ((-max / 8.0, max / 8.0), false)),
+        CurveIn::Circle(_) => None,
+    }
+}
+
+/// An increasing interval whose ends are finite and at most [`MAX_REL_DIST`] domain
+/// lengths outside `(a, b)`.
+fn interval((a, b): (f64, f64), ivl: [f64; 2]) -> bool {
+    let far = MAX_REL_DIST * (b - a);
+    let param = |t: f64| contract::finite(t, LIMITS.max_coord) && t >= a - far && t <= b + far;
+    param(ivl[0]) && param(ivl[1]) && ivl[0] < ivl[1]
+}
+
+/// Transforms of a B-spline only, at most [`MAX_TRANSFORMS`], each as
+/// [`contract::transform`] takes it.
+fn transforms(xf: &[XformIn], bspline: bool) -> bool {
+    let nt: u64 = xf.iter().map(|t| t.repeat).sum();
+    (nt == 0 || bspline)
+        && nt <= MAX_TRANSFORMS
+        && xf.iter().filter(|t| t.repeat > 0).all(|t| {
+            contract::transform(&t.o, &t.x, &t.y, t.scale, LIMITS.max_coord, MAX_TRANSFORMS)
+        })
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_curve_p8.rs`, `validate`): curves as [`domain`]
+/// takes them (arcs within the arc constructor's `[-360, 360]` degrees) with their
+/// transforms, increasing intervals near each curve's domain, and a positive tolerance.
+fn keeps_contract(op: &OpIn) -> bool {
+    let OpIn::Gci {
+        c1,
+        xf1,
+        ivl1,
+        c2,
+        xf2,
+        ivl2,
+        tol,
+        ..
+    } = op;
+    let Some((d1, b1)) = domain(c1) else {
+        return false;
+    };
+    let d2 = match c2 {
+        None => Some(d1),
+        Some(c2) => domain(c2).and_then(|(d2, b2)| transforms(xf2, b2).then_some(d2)),
+    };
+    transforms(xf1, b1)
+        && interval(d1, *ivl1)
+        && d2.is_some_and(|d2| interval(d2, *ivl2))
+        && contract::finite(*tol, LIMITS.max_coord)
+        && *tol > 0.0
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -223,7 +293,10 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
                 .len()
                 .checked_sub(1)
                 .ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -332,11 +405,7 @@ fn put_sol<O: Copy>(o: &mut Vec<f64>, s: &Solution<O>, id: impl Fn(Option<O>) ->
         second(&s.start),
     ]);
     if s.solution_type == SolutionType::RangeOfValues {
-        o.extend([
-            s.end.solution_value,
-            s.end.parameters[0],
-            second(&s.end),
-        ]);
+        o.extend([s.end.solution_value, s.end.parameters[0], second(&s.end)]);
     }
 }
 
@@ -421,7 +490,11 @@ fn gen_hermite(rng: &mut Rng) -> HermiteIn {
         p1,
         d1,
         p2,
-        d2: if rng.chance(0.08) { [0.0; 3] } else { rp(rng, s) },
+        d2: if rng.chance(0.08) {
+            [0.0; 3]
+        } else {
+            rp(rng, s)
+        },
     };
     if h.dim == 2 {
         for v in [&mut h.p1, &mut h.d1, &mut h.p2, &mut h.d2] {
@@ -452,7 +525,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
         quintic: false,
-    }.turned_back())
+    })
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
@@ -478,7 +551,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 a0,
                 a1: a0 + 360.0,
                 quintic: false,
-            }.turned_back());
+            });
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -745,7 +818,10 @@ fn gen_crossing(k: &Kernel, rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
     let p = point_at(k, c, t);
     let q = point_at(k, &other, s);
     let off = *rng.choose(&[0.0, 0.0, 1e-9, 1e-7, 1e-5]).unwrap_or(&0.0);
-    let d = add([p[0] - q[0], p[1] - q[1], p[2] - q[2]], scale3(gen_dir(rng), off));
+    let d = add(
+        [p[0] - q[0], p[1] - q[1], p[2] - q[2]],
+        scale3(gen_dir(rng), off),
+    );
     translated(&other, d)
 }
 
@@ -853,7 +929,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(&Kernel::default(), rng)).ok()
+        let k = &Kernel::default();
+        let op = (0..64).map(|_| gen_case(k, rng)).find(keeps_contract)?;
+        serde_json::to_value(op).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -880,10 +958,9 @@ mod tests {
         // `1e300` control points, so the runner never hands it to the port; run
         // directly, `GlobalCoincidenceChecker` split in three about 17 levels deep and
         // ran for minutes (issue #504). It now fails past `MAX_COINCIDENCE_CALLS`.
-        let corpus: Value = serde_json::from_str(include_str!(
-            "../../tests/fuzz_corpus/curve.curve_p8.json"
-        ))
-        .unwrap();
+        let corpus: Value =
+            serde_json::from_str(include_str!("../../tests/fuzz_corpus/curve.curve_p8.json"))
+                .unwrap();
         let case = corpus["cases"]
             .as_array()
             .unwrap()
@@ -894,7 +971,6 @@ mod tests {
         let out = rust(&op).unwrap();
         assert_eq!(out.ints["status"], vec![1007], "{out:?}");
     }
-
 
     #[test]
     fn range_end_refinement_keeps_the_noncollapsed_tail() {
