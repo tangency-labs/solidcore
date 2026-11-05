@@ -1,9 +1,8 @@
 //! Runner for unit `geom.a_object`: attributed objects, their notification and
 //! caches, the stand-alone-with-graphics base and the `NLI_Math.h` helpers.
 //!
-//! C++: `solidcore_ffi::units::geom_a_object` (upstream `SmAObject`, `SmCacheMgr`,
-//! `SmCacheCheckOutIn`, `SmSAGObject`, `NI_*_specialized`). Rust:
-//! `solidcore::geom::a_object`.
+//! Ported from upstream `SmAObject`, `SmCacheMgr`, `SmCacheCheckOutIn`, `SmSAGObject`,
+//! `NI_*_specialized`; checked against its golden. Rust: `solidcore::geom::a_object`.
 //!
 //! Three case kinds (`inputs.kind`):
 //! - `"types"`: `IsKindOf` of both classes for a list of type codes, the type codes,
@@ -57,13 +56,66 @@ use solidcore::geom::context::{Context, NotifyCallback};
 use solidcore::geom::object::{NotifyOperation, ObjectRef};
 use solidcore::nurbs::math::CPoint;
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::geom_a_object::{self as ffi, op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::output::Topology;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Script op codes (the case encoding). Arguments are `a..g` of the
+/// 8-wide record `[op, a, b, c, d, e, f, g]`; `ref` is an attribute reference.
+mod op {
+    /// `new SmAttribute` `[id, beh]`.
+    pub(super) const NEW_PLAIN: i64 = 0;
+    /// `new SmLongAttribute` `[id, value, beh]`.
+    pub(super) const NEW_LONG: i64 = 1;
+    /// `new SmVector3dAttribute` `[id, beh]` (3 payload doubles).
+    pub(super) const NEW_VECTOR3D: i64 = 2;
+    /// `new SmColorAttribute` `[id, beh]` (3 payload doubles).
+    pub(super) const NEW_COLOR: i64 = 3;
+    /// `new SmMergeRegionAttribute` `[this_obj, this_type, other_obj, other_type]`.
+    pub(super) const NEW_MERGE_REGION: i64 = 4;
+    /// `SetOperation` `[ref, operation]`.
+    pub(super) const MR_SET_OPERATION: i64 = 5;
+    /// `AddAttribute` `[obj, ref]`.
+    pub(super) const ADD: i64 = 6;
+    /// `RemoveAttribute` `[obj, ref, do_not_delete]`.
+    pub(super) const REMOVE: i64 = 7;
+    /// `ClearAttributes` `[obj]`.
+    pub(super) const CLEAR: i64 = 8;
+    /// `FindAttribute` `[obj, id]`.
+    pub(super) const FIND: i64 = 9;
+    /// `SmAObject::Notify` `[op, caller, d1, d2, d3]` (data `-1` = NULL).
+    pub(super) const NOTIFY: i64 = 10;
+    /// `new SmAObject(src)` `[src]`.
+    pub(super) const COPY_CONSTRUCT: i64 = 11;
+    /// `SmAObject::AssertValid` `[obj, level_given]`.
+    pub(super) const ASSERT_VALID: i64 = 12;
+    /// `new ShimCache` `[]`.
+    pub(super) const NEW_CACHE: i64 = 13;
+    /// `SetCacheObj` `[obj, cache]` (`-1` = NULL).
+    pub(super) const SET_CACHE: i64 = 14;
+    /// `SmCacheMgr::GetObjectCache` `[obj, type]` (`obj -1` = NULL).
+    pub(super) const GET_CACHE: i64 = 15;
+    /// `SmCacheMgr::CheckOutCache` `[cache]`.
+    pub(super) const CHECK_OUT: i64 = 16;
+    /// `SmCacheMgr::CheckInCache` `[cache]`.
+    pub(super) const CHECK_IN: i64 = 17;
+    /// `SmCacheMgr::SoftDelete` `[cache]`.
+    pub(super) const SOFT_DELETE: i64 = 18;
+    /// `SmCacheMgr::DeleteObjectsCache` `[obj, overload, type]`.
+    pub(super) const DELETE_OBJECTS_CACHE: i64 = 19;
+    /// `SmCacheMgr::GetOrCreateObjectCache` `[obj, type]`.
+    pub(super) const GET_OR_CREATE: i64 = 20;
+    /// `SmCacheCheckOutIn(cache)` `[cache]`.
+    pub(super) const GUARD_OPEN: i64 = 21;
+    /// `~SmCacheCheckOutIn` of the newest guard `[]`.
+    pub(super) const GUARD_CLOSE: i64 = 22;
+    /// `SmSAGObject::CacheMakeOrValidate` `[this_brep, target, old_cache, type]`.
+    pub(super) const SAG_MAKE: i64 = 23;
+    /// `SmSAGObject::Notify` `[op, caller_brep, -1, -1, -1]`.
+    pub(super) const SAG_NOTIFY: i64 = 24;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
@@ -372,15 +424,6 @@ fn to_output(n_ops: usize, ints: &[i64], dbls: &[f64]) -> Result<Output, Harness
         .int("open_guards", guards)
         .ints("attr_dbl_bits", bits)
         .values("attr_dbls", dbls.to_vec()))
-}
-
-fn run_cpp_script(v: &Value) -> Result<Output, HarnessError> {
-    let s = decode(v)?;
-    match ffi::run(&s.objects, s.user_cb, s.sys_cb, &s.ops, &s.payload_d) {
-        Ok(raw) => to_output(s.ops.len(), &raw.ints, &raw.dbls),
-        Err(e @ FfiError::InvalidArgument(_)) => Err(h(format!("ffi rejected: {e}"))),
-        Err(e) => Err(h(format!("shim failed: {e}"))),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -1472,25 +1515,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let v = &case.inputs;
-        match kind_str(v)? {
-            "types" => {
-                let ts = type_list(v)?;
-                let r = ffi::types(&ts).map_err(|e| h(e.to_string()))?;
-                Ok(Output::new().ints("types", r))
-            }
-            "nli" => {
-                let n = nli_inputs(v)?;
-                let r = ffi::nli(n.noz, n.now, n.pw, n.alpha, n.aw, n.bw)
-                    .map_err(|e| h(e.to_string()))?;
-                Ok(nli_output(r))
-            }
-            "script" => run_cpp_script(v),
-            k => Err(h(format!("unknown case kind {k}"))),
-        }
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -1,8 +1,8 @@
 //! Runner for unit `geom.axis2_placement`: right-handed coordinate systems used as
 //! rotate-and-translate transformations.
 //!
-//! C++: `solidcore_ffi::units::geom_axis2_placement` (upstream `SmAxis2Placement`,
-//! `source/SMLib/inc/SmAxis2Placement.h`, `source/SMLib/src/SmAxis2Placement.cpp`).
+//! Ported from upstream `SmAxis2Placement` (`source/SMLib/inc/SmAxis2Placement.h`,
+//! `source/SMLib/src/SmAxis2Placement.cpp`); checked against its golden.
 //! Rust: `solidcore::geom::axis2_placement`.
 //!
 //! Every case builds placement `a` (and `b` for binary operations) by a construction
@@ -20,8 +20,6 @@ use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::math::{EFF_ZERO, PI, UNDEF_DOUBLE};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_axis2_placement::{self as ffi, Kind, Op, Placement};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -37,6 +35,71 @@ use solidcore::error::SM_ERR_INVALID_INPUT;
 pub struct Runner;
 
 /// Construction names used in `inputs.a.kind` / `inputs.b.kind`.
+/// How a placement is built from six vectors `v0..v5` and a scalar `d`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Kind {
+    /// `SmAxis2Placement()`.
+    Identity = 0,
+    /// `SmAxis2Placement(v0, v1, v2)` (orient constructor).
+    Orient = 1,
+    /// `SmAxis2Placement().SetCanonical(v0, v1, v2)` (status reported).
+    Canonical = 2,
+    /// `SmAxis2Placement().SetSTEPCanonical(v0, v1, v2)` (status reported).
+    Step = 3,
+    /// `SmAxis2Placement(v0, d)` (plane constructor).
+    Plane = 4,
+    /// `SmAxis2Placement(v0, v1, v2, v3, v4, v5)` (from/to constructor).
+    FromTo = 5,
+    /// Copy constructor of `SmAxis2Placement(v0, v1, v2)`.
+    Copy = 6,
+    /// `SmAxis2Placement(v0, v1, v2)` then `RotateAboutAxisAtPoint(d, v3, v4)`.
+    Rotated = 7,
+}
+
+/// One `SmAxis2Placement` operation on placement A (and B for the binary ones).
+///
+/// Every result starts with `[status_a, A origin, A x, A y, A z]` (13 values); binary
+/// operations then give B the same way, followed by the operation's values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Op {
+    /// `GetOrigin`, `GetXAxis`, `GetYAxis`, then `GetCanonical` (18 values).
+    State = 0,
+    /// `GetMatrix` (16, row-major `padMat[i][j]`).
+    Matrix = 1,
+    /// `GetMirrorMatrix` (16).
+    Mirror = 2,
+    /// `Translate(w0)`, then the state (12).
+    Translate = 3,
+    /// `RotateAboutAxis(s, w0)`, then the state.
+    Rotate = 4,
+    /// `RotateAboutAxisAtPoint(s, w0, w1)`, then the state.
+    RotateAt = 5,
+    /// `TransformPoint(w0)` (3).
+    TransformPoint = 6,
+    /// `TransformVector(w0)` (3).
+    TransformVector = 7,
+    /// `A.TransformAxis2Placement(B)` (B, then the result's state).
+    TransformA2p = 8,
+    /// `Invert` (the result's state).
+    Invert = 9,
+    /// `A == B` (B, then 0/1).
+    Eq = 10,
+    /// `A == A` (0/1).
+    EqSelf = 11,
+    /// `IsIdentity(s)` (0/1).
+    IsIdentity = 12,
+    /// `AreCoaxial(B, SmApproxTol3d(s), t)` (B, then 0/1).
+    Coaxial = 13,
+    /// `RotateAboutAxis(s, w0)`, `Translate(w1)`, `RotateAboutAxis(t, w2)`, then the state.
+    Chain = 14,
+    /// `Init`, then the state.
+    Init = 15,
+    /// `A.TransformAxis2Placement(A, A)` (aliased output), then the state.
+    TransformSelf = 16,
+}
+
 const KINDS: [(&str, Kind); 8] = [
     ("identity", Kind::Identity),
     ("orient", Kind::Orient),
@@ -121,25 +184,6 @@ fn status_code(e: &SolidError) -> f64 {
 
 fn normalise(e: &SolidError) -> String {
     format!("rust_error: {e}")
-}
-
-fn ffi_placement(p: &PlacementIn) -> Result<Placement, HarnessError> {
-    Ok(Placement {
-        kind: lookup(&KINDS, &p.kind)?,
-        v: p.v,
-        d: p.d,
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&OPS, &i.op)?;
-    let a = ffi_placement(&i.a)?;
-    let b = ffi_placement(&i.b)?;
-    match ffi::op(op, &a, &b, i.w, i.s, i.t) {
-        Ok(v) => Ok(Output::new().values("r", v)),
-        Err(FfiError::Status(s)) if s > 0 => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
 }
 
 /// Build a placement as the shim does: `(status, placement)`.
@@ -457,10 +501,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

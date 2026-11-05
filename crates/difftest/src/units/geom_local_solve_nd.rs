@@ -1,11 +1,11 @@
 //! Runner for unit `geom.local_solve_nd`: the N-dimensional Newton-Raphson solver and
 //! the finite-difference Jacobian.
 //!
-//! C++: `solidcore_ffi::units::geom_local_solve_nd` (upstream `SmLocalSolveNd::SolveIt`,
-//! `SmEvalNFunctionsObject::ComputeJacobian`). Rust: `solidcore::geom::local_solve_nd`.
+//! Ported from upstream `SmLocalSolveNd::SolveIt` and
+//! `SmEvalNFunctionsObject::ComputeJacobian`; checked against its golden. Rust: `solidcore::geom::local_solve_nd`.
 //!
-//! Both sides solve the same test equation set (the shim's `ScTestENFO`, mirrored by
-//! [`TestEquations`] operation for operation):
+//! The test equation set (upstream's `ScTestENFO`, mirrored by [`TestEquations`]
+//! operation for operation):
 //!
 //! `F_i = -b_i + sum_j a_ij x_j + c_i x_i^3 + d_i x_i x_k + e_i |x_i|`, `k = (i+1) % n`,
 //!
@@ -26,13 +26,20 @@ use solidcore::geom::local_solve_nd::{
 use solidcore::geom::matrix::Matrix;
 use solidcore::math::{EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_local_solve_nd::{self as ffi, Op, Problem};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::json::num;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Largest problem size a case may have.
+const MAX_N: usize = 8;
+
+/// Largest number of failing call indices.
+const MAX_FAIL: usize = 64;
+
+/// Largest iteration limit a case may set.
+const MAX_ITER: i64 = 1000;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -151,7 +158,7 @@ fn floats(v: &[Value], len: usize, what: &str) -> Result<Vec<f64>, HarnessError>
     v.iter().map(float).collect()
 }
 
-/// Parsed, validated inputs shared by both sides.
+/// Parsed, validated inputs.
 struct Parsed {
     solve: bool,
     n: usize,
@@ -175,7 +182,7 @@ fn handler_code(h: &str) -> Result<i64, HarnessError> {
 
 fn parse(i: &Inputs) -> Result<Parsed, HarnessError> {
     let n = i.n;
-    if n == 0 || n > ffi::MAX_N {
+    if n == 0 || n > MAX_N {
         return Err(HarnessError::new(format!("n = {n}")));
     }
     let solve = match i.op.as_str() {
@@ -199,7 +206,7 @@ fn parse(i: &Inputs) -> Result<Parsed, HarnessError> {
         float(&i.acceptable)?,
     ];
     let max_iter = i.max_iter.unwrap_or(-1);
-    if max_iter > ffi::MAX_ITER || !(0..=2).contains(&i.jac_mode) {
+    if max_iter > MAX_ITER || !(0..=2).contains(&i.jac_mode) {
         return Err(HarnessError::new("max_iter / jac_mode out of range"));
     }
     let icfg = [
@@ -233,7 +240,7 @@ fn parse(i: &Inputs) -> Result<Parsed, HarnessError> {
         }
         (v, f)
     };
-    if i.fail_calls.len() > ffi::MAX_FAIL {
+    if i.fail_calls.len() > MAX_FAIL {
         return Err(HarnessError::new("too many fail_calls"));
     }
     Ok(Parsed {
@@ -276,49 +283,6 @@ fn jacobian_output(
         .int("calls", calls)
         .ints("flags", flags)
         .int("status", i64::from(status))
-}
-
-fn cpp(p: &Parsed) -> Result<Output, HarnessError> {
-    let n = p.n;
-    let problem = Problem {
-        n,
-        coef: &p.coef,
-        cfg: p.cfg,
-        icfg: p.icfg,
-        guess: &p.guess,
-        ivl: &p.ivl,
-        ivl_flags: &p.ivl_flags,
-        fail_calls: &p.fail_calls,
-    };
-    let op = if p.solve { Op::Solve } else { Op::Jacobian };
-    let r = match ffi::run(op, &problem) {
-        Ok(r) => r,
-        Err(e @ (FfiError::InvalidArgument(_) | FfiError::Status(_))) => {
-            return Err(HarnessError::new(e.to_string()))
-        }
-    };
-    let short = || HarnessError::new("shim returned too few items");
-    if p.solve {
-        if r.status != 0 {
-            return Ok(Output::err(format!("status_{}", r.status)));
-        }
-        let x = r.values.get(..n).ok_or_else(short)?.to_vec();
-        let trace = r.values.get(n..).ok_or_else(short)?.to_vec();
-        let head: [i64; 5] = r
-            .ints
-            .get(..5)
-            .and_then(|h| h.try_into().ok())
-            .ok_or_else(short)?;
-        let flags = r.ints.get(5..).ok_or_else(short)?.to_vec();
-        Ok(solve_output(x, trace, head, flags))
-    } else {
-        let j = r.values.get(..n * n).ok_or_else(short)?.to_vec();
-        let x = r.values.get(n * n..n * n + n).ok_or_else(short)?.to_vec();
-        let trace = r.values.get(n * n + n..).ok_or_else(short)?.to_vec();
-        let calls = *r.ints.first().ok_or_else(short)?;
-        let flags = r.ints.get(1..).ok_or_else(short)?.to_vec();
-        Ok(jacobian_output(j, x, trace, calls, flags, r.status))
-    }
 }
 
 // ---- Rust side ------------------------------------------------------------------
@@ -885,10 +849,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&parse(&case.parse()?)?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

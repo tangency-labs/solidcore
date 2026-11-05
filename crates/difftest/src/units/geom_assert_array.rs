@@ -1,8 +1,8 @@
 //! Runner for unit `geom.assert_array`: assert reports, their label tables and the
 //! duplicate-free report array.
 //!
-//! C++: `solidcore_ffi::units::geom_assert_array` (upstream `SmAssertReport`,
-//! `SmAssertArray`, `SM_GetAssertLabelList`; `source/SMLib/src/SmAssertArray.cpp`).
+//! Ported from upstream `SmAssertReport`, `SmAssertArray`, `SM_GetAssertLabelList`
+//! (`source/SMLib/src/SmAssertArray.cpp`); checked against its golden.
 //! Rust: `solidcore::geom::assert_array`.
 //!
 //! Two operations:
@@ -29,7 +29,6 @@ use solidcore::geom::tol::{tol3d, USE_DEFAULT};
 use solidcore::geom::vector2d::Point2;
 use solidcore::math::UNDEF_DOUBLE;
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_assert_array::{self as ffi, SeqOp, Spec};
 
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -141,71 +140,6 @@ fn normalise(e: &SolidError) -> String {
 }
 
 // ---- C++ side -------------------------------------------------------------------
-
-fn ffi_spec(s: &SpecIn) -> Spec {
-    Spec {
-        reporter: s.reporter,
-        test_index: s.test_index,
-        test_class: s.test_class,
-        owner: s.owner,
-        owner_type: s.owner_type,
-        other: s.other,
-        other_type: s.other_type,
-        list_index: s.list_index,
-        tol: s.tol,
-        value: s.value,
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let herr = |e: solidcore_ffi::FfiError| HarnessError::new(e.to_string());
-    match i {
-        Inputs::Report {
-            spec,
-            set_value,
-            owner_param,
-        } => {
-            let r = ffi::report(
-                &ffi_spec(spec),
-                type_string(spec.owner_ts)?,
-                type_string(spec.other_ts)?,
-                spec.message.as_deref(),
-                *set_value,
-                *owner_param,
-            )
-            .map_err(herr)?;
-            let [name, message, mff, owner_ts, other_ts] = &r.strings;
-            Ok(Output::new()
-                .int(
-                    "list_len",
-                    ffi::label_list_len(spec.test_class, spec.list_index) as i64,
-                )
-                .ints("r", r.ints.to_vec())
-                .values("d", r.doubles.to_vec())
-                .ints("name", str_ints(name.as_deref()))
-                .ints("message", str_ints(message.as_deref()))
-                .ints("message_for_file", str_ints(mff.as_deref()))
-                .ints("owner_type_string", str_ints(owner_ts.as_deref()))
-                .ints("other_type_string", str_ints(other_ts.as_deref())))
-        }
-        Inputs::Sequence { ops } => {
-            let ops: Vec<SeqOp> = ops
-                .iter()
-                .map(|o| match o {
-                    SeqIn::Add(s) => SeqOp::Add(ffi_spec(s)),
-                    SeqIn::SetLastAdd(f) => SeqOp::SetLastAdd(*f),
-                    SeqIn::Contains(s) => SeqOp::Contains(ffi_spec(s)),
-                })
-                .collect();
-            let r = ffi::sequence(&ops).map_err(herr)?;
-            Ok(Output::new()
-                .int("n_results", r.results.len() as i64)
-                .ints("results", r.results)
-                .ints("last_add", r.last_add)
-                .ints("elems", r.elems))
-        }
-    }
-}
 
 // ---- Rust side ------------------------------------------------------------------
 
@@ -555,10 +489,6 @@ impl UnitDiff for Runner {
         let mut v = default_cases(self, &ctx)?;
         v.extend(table_cases());
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

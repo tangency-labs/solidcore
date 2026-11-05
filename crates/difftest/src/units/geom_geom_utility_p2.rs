@@ -2,11 +2,11 @@
 //! best-fit, 4x4 matrix, Frenet and continuity functions of `SmGeomUtility.cpp`
 //! owned by the unit.
 //!
-//! C++: `solidcore_ffi::units::geom_geom_utility_p2`. Rust:
+//! Ported from upstream `SmGeomUtility.cpp`; checked against its golden. Rust:
 //! `solidcore::geom::geom_utility::p2`.
 //!
 //! Every case is one function `op` on the flat input array `x` (layouts in
-//! [`ffi::Op`]) with integer argument `n` (Frenet order, continuity third-derivative
+//! [`Op`]) with integer argument `n` (Frenet order, continuity third-derivative
 //! flags). Failures are normalised to `status_<SmStatus>` on both sides
 //! (`SM_ERR` = 1001, `SM_ERR_INVALID_INPUT` = 1007). Entries upstream leaves unset
 //! are never compared: hit arrays are cut to `count`, and the distance of a
@@ -19,16 +19,54 @@ use serde_json::Value;
 use solidcore::geom::geom_utility::p2 as gu;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_geom_utility_p2::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
+/// One upstream function. Input layouts (flat `f64`, points/vectors as xyz):
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+enum Op {
+    /// `p0, p1, p2, test` -> `[dist, closest(3), u, v]`.
+    TrianglePointDistance = 0,
+    /// `lp1, lv1, lp2, lv2, at` -> `[params1(4), params2(4)]`.
+    LineLineAtDistance = 1,
+    /// `start, end, test, tol` -> `[on, dist, param]`.
+    IsPointOnSegment = 2,
+    /// `s1, e1, s2, e2, normal, tol` -> hits.
+    SegSegProjected = 3,
+    /// `s1, e1, s2, e2, plane point, plane unit normal, eye, tol` -> hits.
+    SegSegPerspective = 4,
+    /// `s, e, os, oe, tol` -> `[count, points(3 each)]`.
+    SegSegIntersect = 5,
+    /// `s, e, os, oe, tol` -> hits.
+    SegSegClosest = 6,
+    /// `tol, radius, origin, circle normal, plane point, plane normal` ->
+    /// `[count, points]`.
+    CirclePlane = 7,
+    /// `line pnt, line vec, center, x axis, y axis, rx, ry, tol` -> `[count, params]`.
+    LineEllipse = 8,
+    /// `sphere center, radius, c1, n1, c2, n2, tol` -> `[count, points]`.
+    SphereCircles = 9,
+    /// `p1, v1, p2, v2` -> `[coincident (-1 untouched), line point, line vec]`.
+    TwoPlanes = 10,
+    /// `points..., tol` -> `[type, point, normal, max gap, max centroid gap]`.
+    BestFitPlane = 11,
+    /// `a(16), b(16)` row-major -> `a*b (16)`.
+    Mult4x4 = 12,
+    /// `a(16)` -> `inverse (16)`.
+    Inverse4x4 = 13,
+    /// `vals(4 vectors)`, `ival = n` -> `n + 1` vectors.
+    Frenet = 14,
+    /// `pos1, vec1, 2nd1, pos2, vec2, 2nd2, angle, 3rd1, 3rd2`, `ival` bit 0/1 = 3rd1/3rd2
+    /// given -> `[continuity type]`.
+    Continuity = 15,
+}
+
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3200;
 
-use solidcore::error::SM_ERR;
 
 /// `geom.geom_utility_p2` runner.
 pub struct Runner;
@@ -66,10 +104,6 @@ fn lookup(name: &str) -> Result<Op, HarnessError> {
         .find(|(n, _)| *n == name)
         .map(|(_, op)| *op)
         .ok_or_else(|| HarnessError::new(format!("unknown op {name}")))
-}
-
-fn status(code: i32) -> Output {
-    Output::err(format!("status_{code}"))
 }
 
 fn normalise(e: &SolidError) -> String {
@@ -126,77 +160,6 @@ fn hits_out(count: usize, p1: &[f64], p2: &[f64], d: Option<&[f64]>) -> Output {
 fn closest_degenerate(x: &In<'_>) -> bool {
     (x.v(3) - x.v(0)).length_squared() < solidcore::math::EFF_ZERO_SQ
         || (x.v(9) - x.v(6)).length_squared() < solidcore::math::EFF_ZERO_SQ
-}
-
-/// `intersect_two_planes` returns `SM_ERR` for parallel planes (the case with a
-/// meaningful coincidence flag) or when the three-plane intersection fails.
-fn planes_parallel(x: &In<'_>) -> bool {
-    x.v(3).cross(x.v(9)).length_squared() < solidcore::math::EFF_ZERO_SQ
-}
-
-fn count_of(v: &[f64]) -> usize {
-    v.first().map_or(0, |&c| c as usize)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&i.op)?;
-    let r = ffi::op(op, &i.x, i.n).map_err(|e| HarnessError::new(e.to_string()))?;
-    let x = In(&i.x);
-    let v = &r.values;
-    if op == Op::TwoPlanes && r.status == SM_ERR && planes_parallel(&x) {
-        let coincident = v.first().copied().unwrap_or(-1.0);
-        return Ok(Output::new()
-            .int("parallel", 1)
-            .int("coincident", coincident as i64));
-    }
-    if r.status != 0 {
-        return Ok(status(r.status));
-    }
-    Ok(match op {
-        Op::TrianglePointDistance => Output::new()
-            .values("dist", take(v, 0, 1))
-            .values("closest", take(v, 1, 3))
-            .values("uv", take(v, 4, 2)),
-        Op::LineLineAtDistance => Output::new()
-            .values("params1", take(v, 0, 4))
-            .values("params2", take(v, 4, 4)),
-        Op::IsPointOnSegment => Output::new()
-            .int("on", v.first().copied().unwrap_or(-1.0) as i64)
-            .values("dist_param", take(v, 1, 2)),
-        Op::SegSegProjected | Op::SegSegPerspective | Op::SegSegClosest => {
-            let n = count_of(v);
-            let d = take(v, 5, 2);
-            let skip_d = op == Op::SegSegClosest && closest_degenerate(&x);
-            hits_out(
-                n,
-                &take(v, 1, 2),
-                &take(v, 3, 2),
-                (!skip_d).then_some(d.as_slice()),
-            )
-        }
-        Op::SegSegIntersect | Op::CirclePlane | Op::SphereCircles => {
-            let n = count_of(v);
-            let pts = if n <= 2 { 3 * n } else { 0 };
-            Output::new()
-                .int("count", n as i64)
-                .values("points", take(v, 1, pts))
-        }
-        Op::LineEllipse => {
-            let n = count_of(v);
-            Output::new()
-                .int("count", n as i64)
-                .values("params", take(v, 1, n.min(2)))
-        }
-        Op::TwoPlanes => Output::new()
-            .int("parallel", 0)
-            .values("line", take(v, 1, 6)),
-        Op::BestFitPlane => Output::new()
-            .int("type", v.first().copied().unwrap_or(-1.0) as i64)
-            .values("plane", take(v, 1, 8)),
-        Op::Mult4x4 | Op::Inverse4x4 => Output::new().values("m", take(v, 0, 16)),
-        Op::Frenet => Output::new().values("frame", v.clone()),
-        Op::Continuity => Output::new().int("type", v.first().copied().unwrap_or(-1.0) as i64),
-    })
 }
 
 fn rust_run(op: Op, i: &Inputs) -> solidcore::Result<Output> {
@@ -732,10 +695,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

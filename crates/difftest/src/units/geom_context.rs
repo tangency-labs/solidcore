@@ -2,8 +2,8 @@
 //! notify callbacks, the context model size estimate / zone tolerance and the
 //! `SmTol` context overloads, `SmMassPropertyBehavior`, the `SM_API` context.
 //!
-//! C++: `solidcore_ffi::units::geom_context` (upstream `SmContext`,
-//! `SmNewMarkAndLock`, `source/SMLib/{inc,src}/SmContext.*`).
+//! Ported from upstream `SmContext`, `SmNewMarkAndLock`
+//! (`source/SMLib/{inc,src}/SmContext.*`); checked against its golden.
 //! Rust: `solidcore::geom::context`, `solidcore::geom::tol`.
 //!
 //! Every case is a script of [`Step`]s run on `contexts` (model size, ratio) with the
@@ -21,11 +21,85 @@ use solidcore::geom::context::{
 };
 use solidcore::geom::tol::{self, SmallTopoType};
 use solidcore::{Kernel, KernelOptions};
-use solidcore_ffi::units::geom_context::{self as ffi, op, Item, Step};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Script operation codes (field use in brackets; see the shim for details).
+mod op {
+    /// `GetCurrentMark(m)` [ctx, m].
+    pub(super) const CUR_MARK: i64 = 0;
+    /// `IsMarkLocked(m)` [ctx, m].
+    pub(super) const IS_LOCKED: i64 = 1;
+    /// `slot = new SmNewMarkAndLock(ctx, mask m)` [slot, ctx, m].
+    pub(super) const LOCK_NEW: i64 = 2;
+    /// `slot = new SmNewMarkAndLock(ctx, ctx2)` [slot, ctx, ctx2].
+    pub(super) const LOCK_PAIR: i64 = 3;
+    /// `slot = new SmNewMarkAndLock()` [slot].
+    pub(super) const LOCK_DEFAULT: i64 = 4;
+    /// `slot->NewMark()` when bound [slot].
+    pub(super) const LOCK_NEWMARK: i64 = 5;
+    /// `slot->SetContext(ctx, m)` [slot, ctx, m].
+    pub(super) const LOCK_SETCTX: i64 = 6;
+    /// `slot->SetContext(ctx, ctx2)` [slot, ctx, ctx2].
+    pub(super) const LOCK_SETCTX_PAIR: i64 = 7;
+    /// `delete slot` [slot].
+    pub(super) const LOCK_DROP: i64 = 8;
+    /// `GetMarkType*`, `GetContext*` [slot].
+    pub(super) const LOCK_INFO: i64 = 9;
+    /// `SetDoingBoolean(m)` or `GetDoingBooleanRef() = m` [ctx, m, flag].
+    pub(super) const DOING_BOOL: i64 = 10;
+    /// `GetThisModelSizeEstimate()`, `SmTol::GetModelSizeEstimate(ctx)` [ctx].
+    pub(super) const GET_MODEL: i64 = 11;
+    /// `SetThisModelSizeEstimate(x0)` or `SmTol::SetModelSizeEstimate(ctx, x0)` [ctx, flag].
+    pub(super) const SET_MODEL: i64 = 12;
+    /// `SetThisLargeSmallSizeRatio(x0)` [ctx].
+    pub(super) const SET_RATIO: i64 = 13;
+    /// `SmTol::GetZoneTol3d/GetApproxTol3d/GetXSectTol3d(ctx, m)`, `CalcFaceZoneTol3d(ctx)` [ctx|-1, m].
+    pub(super) const TOL_CTX: i64 = 14;
+    /// `SmTol::CalcEdgeZoneTol3d(x0, x1, flag ? &x2 : NULL, ctx)` [ctx|-1, flag].
+    pub(super) const CALC_EDGE: i64 = 15;
+    /// `SmTol::CalcVertexZoneTol3d(x0, x1, flag ? &x2 : NULL, ctx)` [ctx|-1, flag].
+    pub(super) const CALC_VERTEX: i64 = 16;
+    /// `SetSysNotifyCallback` (flag 0) / `SetUserNotifyCallback` (flag 1), non-null if m [ctx, m, flag].
+    pub(super) const CALLBACK: i64 = 17;
+    /// `SmMassPropertyBehavior(x0..x3, m, flag)`, or the default one if slot != 0.
+    pub(super) const MASS: i64 = 18;
+    /// `SmApiCreateContext(); SmApiGetOrCreateContext()`.
+    pub(super) const API: i64 = 19;
+}
+
+/// The `SmMarkType` values.
+const MARK_TYPES: [i64; 7] = [0, 1, 2, 4, 8, 16, 31];
+
+/// One script operation.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Step {
+    /// Operation code ([`op`]).
+    pub op: i64,
+    /// Lock slot (or the "default" switch of [`op::MASS`]).
+    pub slot: i64,
+    /// Context index (`-1` = null where allowed).
+    pub ctx: i64,
+    /// Second context index.
+    pub ctx2: i64,
+    /// Mark type / mask / small-topology type / boolean / count operand.
+    pub m: i64,
+    /// Variant switch.
+    pub flag: i64,
+    /// Float operands.
+    pub x: [f64; 4],
+}
+
+/// One output item.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Item {
+    /// An integer result.
+    Int(i64),
+    /// A floating-point result.
+    Float(f64),
+}
 
 /// Generated scripts per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
@@ -106,15 +180,6 @@ fn output(items: &[Item]) -> Output {
 
 fn harness(e: impl std::fmt::Display) -> HarnessError {
     HarnessError::new(e.to_string())
-}
-
-// ---- C++ side ----------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let contexts: Vec<(f64, f64)> = i.contexts.iter().map(|c| (c[0], c[1])).collect();
-    let items =
-        ffi::script(i.sys_model, i.sys_ratio, &contexts, i.slots, &i.steps()).map_err(harness)?;
-    Ok(output(&items))
 }
 
 // ---- Rust side ---------------------------------------------------------------------
@@ -399,8 +464,6 @@ impl Sim {
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let steps = i.steps();
-    // reject what the C++ wrapper rejects, so both sides fail alike
-    ffi::validate(i.contexts.len(), i.slots, &steps).map_err(harness)?;
     let mut sim = Sim {
         k: kernel(i.sys_model, i.sys_ratio),
         ctxs: i
@@ -484,7 +547,7 @@ fn gen_step(rng: &mut Rng, n_ctx: i64, n_slots: i64) -> StepIn {
         ctx2: rng.range_i64(0, n_ctx - 1),
         ..StepIn::default()
     };
-    let mark_type = |rng: &mut Rng| rng.choose(&ffi::MARK_TYPES).copied().unwrap_or(0);
+    let mark_type = |rng: &mut Rng| rng.choose(&MARK_TYPES).copied().unwrap_or(0);
     match code {
         op::CUR_MARK | op::IS_LOCKED | op::LOCK_SETCTX => s.m = mark_type(rng),
         op::LOCK_NEW => {
@@ -545,10 +608,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

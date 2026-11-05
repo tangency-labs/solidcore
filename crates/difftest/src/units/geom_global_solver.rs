@@ -2,11 +2,10 @@
 //! (`SolveIt` over hand-built trees with every solver operation), its culling and
 //! subdivision hooks, and `AddSortedSolution` / `IdenticalSolutions`.
 //!
-//! C++: `solidcore_ffi::units::geom_global_solver` (upstream
-//! `source/SMLib/src/SmGlobalSolver.cpp`). Rust: `solidcore::geom::global_solver`.
+//! Ported from upstream `source/SMLib/src/SmGlobalSolver.cpp`; checked against its
+//! golden. Rust: `solidcore::geom::global_solver`.
 //!
-//! A case is a program of ops run on both sides (the op list and encodings are
-//! documented in the shim): up to three trees of boxes, one solver, then solves,
+//! A case is a program of ops: up to three trees of boxes, one solver, then solves,
 //! setter calls, sorted insertions and direct `BranchMayContainAnswers` /
 //! `FindBestSubdivisionNode` / `IdenticalSolutions` queries. The base
 //! `LocalSolve` records the visited leaf combinations, so a solve's output is
@@ -33,11 +32,9 @@ use solidcore::geom::solution_array::{
 use solidcore::geom::tree::{AuxDataType, NodeId, Tree, TreeNode};
 use solidcore::math::Vec3;
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_global_solver as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
-use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -147,73 +144,6 @@ struct Inputs {
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
-}
-
-fn enc_sol(v: &mut Vec<f64>, s: &Sol) {
-    v.extend([s.t as f64, s.nv as f64, s.no as f64, s.sv]);
-    v.extend(s.sp);
-    v.push(s.ev);
-    v.extend(s.ep);
-    v.extend(s.objs.iter().map(|&o| o as f64));
-    v.extend([-1.0; MAX_TREES]);
-}
-
-fn enc_vecs(v: &mut Vec<f64>, vecs: &[[f64; 3]; 3]) {
-    for x in vecs {
-        v.extend(x);
-    }
-}
-
-fn prog(ops: &[Op]) -> Vec<f64> {
-    let mut v = Vec::new();
-    for op in ops {
-        match op {
-            Op::Tree { nodes } => {
-                v.extend([1.0, nodes.len() as f64]);
-                for n in nodes {
-                    v.extend([n.p as f64, n.c1 as f64, n.c2 as f64, n.aux as f64]);
-                    v.extend(n.bbox);
-                }
-            }
-            Op::Solver { kind, nvars } => v.extend([2.0, *kind as f64, *nvars as f64]),
-            Op::Set {
-                sop,
-                req,
-                tol,
-                best,
-                cat,
-                at,
-                v: vecs,
-            } => {
-                v.extend([3.0, *sop as f64, *req as f64, *tol, *best, *cat as f64, *at]);
-                enc_vecs(&mut v, vecs);
-            }
-            Op::Solve {
-                sop,
-                req,
-                tol,
-                best,
-                v: vecs,
-            } => {
-                v.extend([4.0, *sop as f64, *req as f64, *tol, *best]);
-                enc_vecs(&mut v, vecs);
-            }
-            Op::AddSorted { key, combine, s } => {
-                v.extend([5.0, *key as f64, flag(*combine)]);
-                enc_sol(&mut v, s);
-            }
-            Op::Dump => v.push(6.0),
-            Op::May { b } => v.extend([7.0, b[0] as f64, b[1] as f64, b[2] as f64]),
-            Op::Best { b } => v.extend([8.0, b[0] as f64, b[1] as f64, b[2] as f64]),
-            Op::Identical { a, b } => {
-                v.push(9.0);
-                enc_sol(&mut v, a);
-                enc_sol(&mut v, b);
-            }
-            Op::Reset => v.push(10.0),
-        }
-    }
-    v
 }
 
 // ---- Rust side ------------------------------------------------------------
@@ -957,12 +887,6 @@ fn rayfire_best_safe(ops: &[Op], b: [i64; 3]) -> bool {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.global_solver"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let (oi, of) = ffi::run(&prog(&i.ops)).map_err(|e| harness(e.to_string()))?;
-        Ok(Output::new().ints("ints", oi).values("floats", of))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

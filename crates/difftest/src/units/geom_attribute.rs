@@ -1,7 +1,7 @@
 //! Runner for unit `geom.attribute`: attributes, their user lists and propagation.
 //!
-//! C++: `solidcore_ffi::units::geom_attribute` (upstream `SmAttribute` and derived
-//! classes, driven through `SmAObject` attribute lists on bare `SmRegion` objects).
+//! Ported from upstream `SmAttribute` and derived classes, driven through `SmAObject`
+//! attribute lists on bare `SmRegion` objects; checked against its golden.
 //! Rust: `solidcore::geom::attribute`.
 //!
 //! Each case is a *script* over `n_objects` attributed objects and a table of
@@ -50,13 +50,87 @@ use solidcore::geom::attribute::{
 };
 use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::{SolidError, Vec3};
-use solidcore_ffi::units::geom_attribute::{self as ffi, op, Stream};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::output::Topology;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Script op codes (must match the shim's `enum Op`). Arguments in brackets are
+/// `a..f` of the 7-wide op record `[op, a, b, c, d, e, f]`; `ref` is an attribute
+/// reference (see the shim header).
+mod op {
+    /// `new SmAttribute(id, beh)` `[id, beh]`.
+    pub(super) const NEW_PLAIN: i64 = 0;
+    /// `new SmGenericAttribute` `[id, beh, n_longs, n_doubles, n_chars]` (payload).
+    pub(super) const NEW_GENERIC: i64 = 1;
+    /// `new SmLongAttribute` `[id, value, beh]`.
+    pub(super) const NEW_LONG: i64 = 2;
+    /// `new SmPointerAttribute` `[id, pointer, beh]`.
+    pub(super) const NEW_POINTER: i64 = 3;
+    /// `new SmPointerListAttribute` `[id, beh, n, null_list]` (payload).
+    pub(super) const NEW_POINTER_LIST: i64 = 4;
+    /// `new SmVector3dAttribute` `[id, beh]` (3 payload doubles).
+    pub(super) const NEW_VECTOR3D: i64 = 5;
+    /// `new SmColorAttribute` `[id, beh]` (3 payload doubles).
+    pub(super) const NEW_COLOR: i64 = 6;
+    /// `new SmTagAttribute` `[id, beh]` (8 payload longs).
+    pub(super) const NEW_TAG: i64 = 7;
+    /// `new SmMergeRegionAttribute` `[this_obj, this_type, other_obj, other_type]`.
+    pub(super) const NEW_MERGE_REGION: i64 = 8;
+    /// `MakeCopy` `[ref]`.
+    pub(super) const MAKE_COPY: i64 = 9;
+    /// `obj->AddAttribute` `[obj, ref]`.
+    pub(super) const ADD_ATTRIBUTE: i64 = 10;
+    /// `obj->RemoveAttribute` `[obj, ref, do_not_delete]`.
+    pub(super) const REMOVE_ATTRIBUTE: i64 = 11;
+    /// `obj->ClearAttributes` `[obj]`.
+    pub(super) const CLEAR_ATTRIBUTES: i64 = 12;
+    /// `Split` `[ref, split, child1, child2]`.
+    pub(super) const SPLIT: i64 = 13;
+    /// `Copy` `[ref, from, to]`.
+    pub(super) const COPY: i64 = 14;
+    /// `Merge` `[ref, orig1, orig2, merged]`.
+    pub(super) const MERGE: i64 = 15;
+    /// `Coincident` `[ref, from, to]`.
+    pub(super) const COINCIDENT: i64 = 16;
+    /// `Edit` `[ref, obj]`.
+    pub(super) const EDIT: i64 = 17;
+    /// `Destruction` `[ref, obj]`.
+    pub(super) const DESTRUCTION: i64 = 18;
+    /// `PropagateRegionsThroughBooleans` `[ref, orig1, orig2, merged]`.
+    pub(super) const PROPAGATE: i64 = 19;
+    /// `AddUser` `[ref, obj]`.
+    pub(super) const ADD_USER: i64 = 20;
+    /// `RemoveUser` `[ref, obj, do_not_delete]`.
+    pub(super) const REMOVE_USER: i64 = 21;
+    /// `GetUsers` `[ref]`.
+    pub(super) const GET_USERS: i64 = 22;
+    /// `GetType`, `IsKindOf`, `IsPropagatedThroughBooleans`, id, behaviour,
+    /// `GetTypeString` `[ref]`.
+    pub(super) const QUERY: i64 = 23;
+    /// Merge-region predicates and accessors `[ref, solid_flag]`.
+    pub(super) const MR_QUERY: i64 = 24;
+    /// `SetRegions` `[ref, index, this_obj, this_type, other_obj, other_type]`.
+    pub(super) const MR_SET_REGIONS: i64 = 25;
+    /// `SetOperation` `[ref, operation]`.
+    pub(super) const MR_SET_OPERATION: i64 = 26;
+    /// `SmVector3dAttribute::SetValue` `[ref]` (3 payload doubles).
+    pub(super) const SET_VECTOR: i64 = 27;
+    /// `delete` `[ref]`.
+    pub(super) const DESTROY: i64 = 28;
+    /// `SmAttributeData::ReadIndexedAttributesFromDB` `[]`.
+    pub(super) const READ_INDEXED: i64 = 29;
+    /// `obj->FindAttribute` `[obj, id]` (position in the object's list or -1).
+    pub(super) const FIND: i64 = 30;
+    /// `fromClearAttributes` `[ref, obj]`.
+    pub(super) const FROM_CLEAR: i64 = 31;
+    /// `SmRegion::SetIsVoid` `[obj, value]` (value 0 FALSE, 1 TRUE, 2 UNSURE).
+    pub(super) const SET_IS_VOID: i64 = 32;
+    /// Makes the object the infinite region of a fresh `SmBrep` `[obj]`; skipped
+    /// (status -2) once any attribute exists.
+    pub(super) const MAKE_INFINITE: i64 = 33;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
@@ -348,32 +422,6 @@ fn to_output(
         .ints("stream", stream)
         .ints("attr_dbl_bits", bits)
         .values("attr_dbls", dbls.to_vec()))
-}
-
-// ---- C++ side -------------------------------------------------------------------
-
-fn run_cpp_case(v: &Value) -> Result<Output, HarnessError> {
-    let s = decode(v)?;
-    let stream = s.stream.as_ref().map(|(d, ft, swap)| Stream {
-        data: d,
-        file_type: *ft,
-        byte_swap: *swap,
-    });
-    match ffi::run(
-        s.n_objects,
-        &s.ops,
-        &s.payload_i,
-        &s.payload_d,
-        stream.as_ref(),
-    ) {
-        Ok(raw) => to_output(s.n_objects, s.ops.len(), &raw.ints, &raw.dbls),
-        // the shim checks object indices and op operands itself (SC_ERR_ARG): a
-        // guard rejection like the wrapper's, as the Rust side's harness errors
-        Err(e @ (FfiError::InvalidArgument(_) | FfiError::Status(solidcore_ffi::SC_ERR_ARG))) => {
-            Err(HarnessError::new(format!("ffi rejected: {e}")))
-        }
-        Err(e) => Ok(Output::err(e.to_string())),
-    }
 }
 
 // ---- Rust side ------------------------------------------------------------------
@@ -1432,10 +1480,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp_case(&case.inputs)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust_case(&case.inputs)
     }
@@ -1446,7 +1490,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn indexed_extraction_failure_compares_native_error_without_placeholders() {
+    fn indexed_extraction_failure_reports_the_error_without_placeholders() {
         for data in ["2 4\nabc\n", "2 4\n", "3 1 tail\n"] {
             let v = serde_json::json!({
                 "n_objects": 1,
@@ -1456,8 +1500,6 @@ mod tests {
             let rust = run_rust_case(&v).unwrap();
             assert_eq!(rust.ints["status"], vec![1001, ST_SKIP], "{data:?}");
             assert!(rust.ints["placeholders"].is_empty(), "{data:?}");
-            let cpp = run_cpp_case(&v).unwrap();
-            assert_eq!(rust, cpp, "{data:?}");
         }
     }
 

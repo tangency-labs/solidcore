@@ -1,6 +1,6 @@
 //! Runner for unit `geom.extent2d`: axis-aligned 2D extents (parameter domains).
 //!
-//! C++: `solidcore_ffi::units::geom_extent2d` (upstream `source/SMLib/src/SmExtent2d.cpp`).
+//! Ported from upstream `source/SMLib/src/SmExtent2d.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::extent2d`.
 //!
 //! | op (`inputs.op`)      | Rust                                               | upstream |
@@ -47,8 +47,6 @@ use solidcore::geom::tol::ScaledZero;
 use solidcore::geom::vector2d::{Point2, Vec2};
 use solidcore::math::{EFF_ZERO, INFINITE_PARAMETER, INFINITE_PARAMETER_SQRT};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_extent2d::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -315,173 +313,6 @@ fn status<T>(r: &solidcore::Result<T>) -> Result<f64, HarnessError> {
     match r {
         Ok(_) => Ok(0.0),
         Err(e) => status_of(e),
-    }
-}
-
-/// Pushes `has, value` for an optional tolerance.
-fn opt(v: &mut Vec<f64>, o: Option<f64>) {
-    v.push(b(o.is_some()));
-    v.push(o.unwrap_or(0.0));
-}
-
-/// Flat input for the C++ op.
-fn flat_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut v = Vec::new();
-    let op = match i {
-        Inputs::FromPoints { a, b } => {
-            v.extend(a);
-            v.extend(b);
-            Op::FromPoints
-        }
-        Inputs::FromPoint { p } => {
-            v.extend(p);
-            Op::FromPoint
-        }
-        Inputs::New {} => Op::New,
-        Inputs::FromExtent3d { x } => {
-            v.extend(x);
-            Op::FromExtent3d
-        }
-        Inputs::AddPoints { e, pts } => {
-            v.extend(e);
-            v.extend(pts.iter().flatten());
-            Op::AddPoints
-        }
-        Inputs::SetMinMax { e, min, max } => {
-            v.extend(e);
-            v.extend(min);
-            v.extend(max);
-            Op::SetMinMax
-        }
-        Inputs::SetMinMaxCoords { e, c } => {
-            v.extend(e);
-            v.extend(c);
-            Op::SetMinMaxCoords
-        }
-        Inputs::Queries { e, tol } => {
-            v.extend(e);
-            v.push(*tol);
-            Op::Queries
-        }
-        Inputs::Evaluate { e, n } => {
-            v.extend(e);
-            v.extend(n);
-            Op::Evaluate
-        }
-        Inputs::Union { e, f } => {
-            v.extend(e);
-            v.extend(f);
-            Op::Union
-        }
-        Inputs::Intersect { e, f } => {
-            v.extend(e);
-            v.extend(f);
-            Op::Intersect
-        }
-        Inputs::Compare { e, f, tol } => {
-            v.extend(e);
-            v.extend(f);
-            v.push(*tol);
-            Op::Compare
-        }
-        Inputs::ExpandRelative { e, factor } => {
-            v.extend(e);
-            v.push(*factor);
-            Op::ExpandRelative
-        }
-        Inputs::ExpandAbsolute { e, amount } => {
-            v.extend(e);
-            v.push(*amount);
-            Op::ExpandAbsolute
-        }
-        Inputs::ExpandAbsoluteVec { e, d } => {
-            v.extend(e);
-            v.extend(d);
-            Op::ExpandAbsoluteVec
-        }
-        Inputs::Transpose { e } => {
-            v.extend(e);
-            Op::Transpose
-        }
-        Inputs::PointOps { e, p, tol, tol_v } => {
-            v.extend(e);
-            v.extend(p);
-            v.push(*tol);
-            opt(&mut v, *tol_v);
-            Op::PointOps
-        }
-        Inputs::ContainsPeriodic {
-            e,
-            p,
-            u_period,
-            v_period,
-            tol,
-        } => {
-            v.extend(e);
-            v.extend(p);
-            v.extend([*u_period, *v_period, *tol]);
-            Op::ContainsPeriodic
-        }
-        Inputs::Inversion { e, p, tol } => {
-            v.extend(e);
-            v.extend(p);
-            v.push(*tol);
-            Op::Inversion
-        }
-        Inputs::ClipLine { e, p, v: d, t } => {
-            v.extend(e);
-            v.extend(p);
-            v.extend(d);
-            v.push(*t);
-            Op::ClipLine
-        }
-        Inputs::IntersectLine {
-            e,
-            p,
-            v: d,
-            tol_u,
-            tol_v,
-        } => {
-            v.extend(e);
-            v.extend(p);
-            v.extend(d);
-            opt(&mut v, *tol_u);
-            opt(&mut v, *tol_v);
-            Op::IntersectLine
-        }
-        Inputs::MapToDomain { e, p, f, switch } => {
-            v.extend(e);
-            v.extend(p);
-            v.extend(f);
-            v.push(b(*switch));
-            Op::MapToDomain
-        }
-        Inputs::Intervals { e, u, v: w } => {
-            v.extend(e);
-            v.extend(u);
-            v.extend(w);
-            Op::Intervals
-        }
-        Inputs::ScaledZero { e } => {
-            v.extend(e);
-            Op::ScaledZero
-        }
-        Inputs::Scale { e, s, s_v } => {
-            v.extend(e);
-            v.push(*s);
-            opt(&mut v, *s_v);
-            Op::Scale
-        }
-    };
-    (op, v)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = flat_input(i);
-    match ffi::op(op, &input) {
-        Ok(flat) => split(i, &flat),
-        Err(e @ FfiError::Status(_)) => Err(harness(format!("shim failure: {e}"))),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
     }
 }
 
@@ -1063,10 +894,6 @@ fn scale_cases(unit: &str) -> Vec<Case> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.extent2d"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

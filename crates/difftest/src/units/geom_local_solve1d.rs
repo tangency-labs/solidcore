@@ -1,11 +1,11 @@
 //! Runner for unit `geom.local_solve1d`: 1D Newton/bisection/Brent local solver.
 //!
-//! C++: `solidcore_ffi::units::geom_local_solve1d` (upstream `SmLocalSolve1d`,
-//! `SmIterQueue1d`, `SmEvalFunctionObject`; `source/SMLib/src/SmLocalSolve1d.cpp`).
+//! Ported from upstream `SmLocalSolve1d`, `SmIterQueue1d`, `SmEvalFunctionObject`
+//! (`source/SMLib/src/SmLocalSolve1d.cpp`); checked against its golden.
 //! Rust: `solidcore::geom::local_solve1d`.
 //!
-//! The solver is driven by a synthetic test function implemented twice with the
-//! same operation order: the shim's `ScTestFn` and [`TestFn`] here. It records every
+//! The solver is driven by a synthetic test function, [`TestFn`] (the operation order
+//! of upstream's `ScTestFn`). It records every
 //! evaluation (`trace_t`, `trace_flags` = `ok + 2 * signal_errors`), so the whole
 //! iteration path is compared, not just the answer. Function kinds: polynomial
 //! (Horner), signed square root (exact Newton oscillation), trig, atan (Newton
@@ -32,11 +32,18 @@ use solidcore::geom::local_solve1d::{
     EvalFunction, FunctionValue, IterQueue1d, IterationValue, LocalSolve1d, SolverAlgorithm,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_local_solve1d::{self as ffi, FnParams, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Number of test-function parameters.
+const N_FN_PARAMS: usize = 14;
+
+/// Test-function parameters `[kind, p0..p7, found_tol, fail_lo, fail_hi, fail_first,
+/// failure_write]` (`0`: keep outputs, `1`: write F, `2`: zero F and F'; see the
+/// shim's `ScTestFn`).
+type FnParams = [f64; N_FN_PARAMS];
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -80,7 +87,7 @@ fn one() -> f64 {
 
 impl Func {
     fn params(&self) -> FnParams {
-        let mut a = [0.0; ffi::N_FN_PARAMS];
+        let mut a = [0.0; N_FN_PARAMS];
         a[0] = f64::from(self.kind);
         for (d, s) in a[1..9].iter_mut().zip(&self.p) {
             *d = *s;
@@ -293,129 +300,6 @@ impl Acc {
             .values("trace_t", trace_t)
             .ints("trace_flags", trace_flags)
     }
-}
-
-fn int(v: f64) -> Result<i64, HarnessError> {
-    if v.fract() == 0.0 && v.abs() < 9.0e15 {
-        Ok(v as i64)
-    } else {
-        Err(harness(format!("non-integer {v} from shim")))
-    }
-}
-
-/// Splits the shim's trace `[n, t[n], flags[n]]` starting at `at`.
-fn cpp_trace(o: &[f64], at: usize) -> Result<(Vec<f64>, Vec<i64>), HarnessError> {
-    let n = int(*o.get(at).ok_or_else(|| harness("short output"))?)? as usize;
-    let t = o
-        .get(at + 1..at + 1 + n)
-        .ok_or_else(|| harness("short trace"))?
-        .to_vec();
-    let flags = o
-        .get(at + 1 + n..at + 1 + 2 * n)
-        .ok_or_else(|| harness("short trace"))?
-        .iter()
-        .map(|v| int(*v))
-        .collect::<Result<Vec<_>, _>>()?;
-    if o.len() != at + 1 + 2 * n {
-        return Err(harness("trailing output"));
-    }
-    Ok((t, flags))
-}
-
-const PER_SOLVE: usize = 26;
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match i {
-        Inputs::SolveIt {
-            func,
-            interval,
-            periodic,
-            algorithm,
-            desired,
-            acceptable,
-            guesses,
-        } => {
-            let [lo, hi] = interval.unwrap_or([0.0, 0.0]);
-            let mut s = vec![
-                f64::from(u8::from(interval.is_some())),
-                lo,
-                hi,
-                f64::from(u8::from(*periodic)),
-                f64::from(*algorithm),
-                f64::from(u8::from(desired.is_some())),
-                desired.unwrap_or(0.0),
-                *acceptable,
-            ];
-            s.extend(guesses);
-            let o = ffi::run(Op::SolveIt, &func.params(), &s).map_err(harness)?;
-            let mut acc = Acc::default();
-            for g in 0..guesses.len() {
-                let r = o
-                    .get(g * PER_SOLVE..(g + 1) * PER_SOLVE)
-                    .ok_or_else(|| harness("short output"))?;
-                acc.status.push(int(r[0])?);
-                acc.found.push(int(r[1])?);
-                acc.t.push(r[2]);
-                acc.state_f.push(r[3]);
-                for k in [4, 5, 6, 7, 8, 11] {
-                    acc.state_i.push(int(r[k])?);
-                }
-                acc.state_f.extend([r[9], r[10], r[12], r[13]]);
-                acc.state_f.extend(&r[14..26]);
-            }
-            let (tt, tf) = cpp_trace(&o, guesses.len() * PER_SOLVE)?;
-            Ok(acc.finish(tt, tf))
-        }
-        Inputs::Bisection {
-            func,
-            level,
-            lo_t,
-            hi_t,
-            lo_f,
-            hi_f,
-        } => {
-            let s = [f64::from(*level), *lo_t, *hi_t, *lo_f, *hi_f];
-            let o = ffi::run(Op::Bisection, &func.params(), &s).map_err(harness)?;
-            pair_cpp(&o)
-        }
-        Inputs::Brent {
-            func,
-            ax,
-            bx,
-            cx,
-            tol,
-            maximize,
-        } => {
-            let s = [*ax, *bx, *cx, *tol, f64::from(u8::from(*maximize))];
-            let o = ffi::run(Op::Brent, &func.params(), &s).map_err(harness)?;
-            pair_cpp(&o)
-        }
-        Inputs::Queue { size, step, steps } => {
-            let mut s = vec![f64::from(*size), f64::from(*step)];
-            s.extend(steps);
-            let o = ffi::run(Op::Queue, &Func::default_params(), &s).map_err(harness)?;
-            let v = o.iter().map(|v| int(*v)).collect::<Result<Vec<_>, _>>()?;
-            Ok(Output::new().ints("oscillating", v))
-        }
-    }
-}
-
-impl Func {
-    fn default_params() -> FnParams {
-        let mut a = [0.0; ffi::N_FN_PARAMS];
-        a[10] = 1.0;
-        a
-    }
-}
-
-fn pair_cpp(o: &[f64]) -> Result<Output, HarnessError> {
-    let r = o.get(0..3).ok_or_else(|| harness("short output"))?;
-    let (tt, tf) = cpp_trace(o, 3)?;
-    Ok(Output::new()
-        .int("status", int(r[0])?)
-        .values("tf", vec![r[1], r[2]])
-        .values("trace_t", tt)
-        .ints("trace_flags", tf))
 }
 
 fn push_iv(v: &mut Vec<f64>, iv: &IterationValue) {
@@ -670,10 +554,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

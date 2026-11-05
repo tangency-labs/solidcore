@@ -1,6 +1,6 @@
 //! Runner for unit `geom.extent3d`: axis-aligned 3D extents (bounding boxes).
 //!
-//! C++: `solidcore_ffi::units::geom_extent3d` (upstream `source/SMLib/src/SmExtent3d.cpp`).
+//! Ported from upstream `source/SMLib/src/SmExtent3d.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::extent3d`.
 //!
 //! | op (`inputs.op`)        | Rust                                             | upstream |
@@ -43,8 +43,6 @@ use solidcore::geom::extent3d::{Extent3d, LineHit};
 use solidcore::geom::pseudo_box::PseudoBox;
 use solidcore::math::{Point3, Vec3, INFINITE_PARAMETER, INFINITE_PARAMETER_SQRT};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_extent3d::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -297,147 +295,6 @@ fn status<T>(r: &solidcore::Result<T>) -> Result<f64, HarnessError> {
     match r {
         Ok(_) => Ok(0.0),
         Err(e) => status_of(e),
-    }
-}
-
-/// Flat input for the C++ op.
-fn flat_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut v = Vec::new();
-    let op = match i {
-        Inputs::FromPoints { a, b } => {
-            v.extend(a);
-            v.extend(b);
-            Op::FromPoints
-        }
-        Inputs::FromPoint { p } => {
-            v.extend(p);
-            Op::FromPoint
-        }
-        Inputs::New {} => Op::New,
-        Inputs::AddPoints { e, pts } => {
-            v.extend(e);
-            v.extend(pts.iter().flatten());
-            Op::AddPoints
-        }
-        Inputs::SetMinMax { e, min, max } => {
-            v.extend(e);
-            v.extend(min);
-            v.extend(max);
-            Op::SetMinMax
-        }
-        Inputs::SetMinMaxCoords { e, c } => {
-            v.extend(e);
-            v.extend(c);
-            Op::SetMinMaxCoords
-        }
-        Inputs::SetBound { e, which, v: x } => {
-            v.extend(e);
-            v.push(f64::from(*which));
-            v.push(*x);
-            Op::SetBound
-        }
-        Inputs::Queries { e, tol } => {
-            v.extend(e);
-            v.push(*tol);
-            Op::Queries
-        }
-        Inputs::Evaluate { e, n } => {
-            v.extend(e);
-            v.extend(n);
-            Op::Evaluate
-        }
-        Inputs::Union { e, f }
-        | Inputs::Intersect { e, f }
-        | Inputs::Distances { e, f }
-        | Inputs::ConeBoundTo { e, f } => {
-            v.extend(e);
-            v.extend(f);
-            match i {
-                Inputs::Union { .. } => Op::Union,
-                Inputs::Intersect { .. } => Op::Intersect,
-                Inputs::Distances { .. } => Op::Distances,
-                _ => Op::ConeBoundTo,
-            }
-        }
-        Inputs::ExpandRelative { e, factor } => {
-            v.extend(e);
-            v.push(*factor);
-            Op::ExpandRelative
-        }
-        Inputs::ExpandAbsolute { e, amount } => {
-            v.extend(e);
-            v.push(*amount);
-            Op::ExpandAbsolute
-        }
-        Inputs::CornersEdgesPlanes { e } => {
-            v.extend(e);
-            Op::CornersEdgesPlanes
-        }
-        Inputs::SphereBound { e } => {
-            v.extend(e);
-            Op::SphereBound
-        }
-        Inputs::DisjointContained { e, f, tol } => {
-            v.extend(e);
-            v.extend(f);
-            v.push(*tol);
-            Op::DisjointContained
-        }
-        Inputs::PointPredicates { e, p, tol } => {
-            v.extend(e);
-            v.extend(p);
-            v.push(*tol);
-            Op::PointPredicates
-        }
-        Inputs::ContainsLineSeg { e, p, q, tol } => {
-            v.extend(e);
-            v.extend(p);
-            v.extend(q);
-            v.push(*tol);
-            Op::ContainsLineSeg
-        }
-        Inputs::IntersectLine { e, p, v: d } => {
-            v.extend(e);
-            v.extend(p);
-            v.extend(d);
-            Op::IntersectLine
-        }
-        Inputs::SetUnbounded { e } => {
-            v.extend(e);
-            Op::SetUnbounded
-        }
-        Inputs::ApproximateUnbounded {
-            e,
-            center,
-            half_size,
-        } => {
-            v.extend(e);
-            v.push(b(center.is_some()));
-            v.extend(center.unwrap_or([0.0; 3]));
-            v.push(*half_size);
-            Op::ApproximateUnbounded
-        }
-        Inputs::Circumscribe { basis, intervals } => {
-            v.extend(basis.iter().flatten());
-            v.extend(intervals.iter().flatten());
-            Op::Circumscribe
-        }
-        Inputs::Intervals { e, u, v: w } => {
-            v.extend(e);
-            v.extend(u);
-            v.extend(w);
-            Op::Intervals
-        }
-    };
-    (op, v)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = flat_input(i);
-    match ffi::op(op, &input) {
-        Ok(flat) => split(i, &flat),
-        Err(e @ FfiError::Status(_)) => Err(harness(format!("shim failure: {e}"))),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
     }
 }
 
@@ -878,10 +735,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.extent3d"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

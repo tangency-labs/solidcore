@@ -3,12 +3,11 @@
 //! and sphere closest points and intersections, best-fit point and line, small
 //! matrices, directional derivatives, sorting helpers).
 //!
-//! C++: `solidcore_ffi::units::geom_geom_utility_p1` (shims
-//! `harness/cpp/shim/geom_geom_utility_p1.cpp` and `..._static.cpp`).
+//! Ported from upstream `SmGeomUtility.cpp`; checked against its golden.
 //! Rust: `solidcore::geom::geom_utility::p1`.
 //!
 //! Every case names one operation `op` and gives its arguments as the flat list `x`
-//! (layouts in the shim and in [`solidcore_ffi::units::geom_geom_utility_p1::Op`]);
+//! (layouts in [`Op`]);
 //! ops taking a point list read it from `pts` (appended to `x`, so fixtures can use
 //! `{"$pts": ...}`). The result `r` is `[status, values...]` with the upstream
 //! `SmStatus` (`SM_SUCCESS` = 1000, `SM_ERR` = 1001, `SM_ERR_INVALID_INPUT` = 1007,
@@ -26,8 +25,6 @@ use solidcore::geom::geom_utility::p1 as gu;
 use solidcore::geom::vector2d::Vec2;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_geom_utility_p1::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -41,6 +38,98 @@ const SM_SUCCESS: f64 = 1000.0;
 
 /// `geom.geom_utility_p1` runner.
 pub struct Runner;
+
+/// Operations; the case encoding of `op`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
+enum Op {
+    /// `smgu_PolygonArea`: `[normal, points...]` (at least one point).
+    PolygonArea = 2,
+    /// `smgu_TriangleAreaSquared`: `[p0, p1, p2]`.
+    TriangleAreaSquared = 3,
+    /// `smgu_TriangleDecomposition`: `[base, left, right]`.
+    TriangleDecomposition = 4,
+    /// `smgu_ParallelogramCrossVectors`: `[base, side, d_tb, d_bs]`.
+    Parallelogram = 5,
+    /// `smgu_LinePointDistance` (3d): `[lp, lv, tp]`.
+    LinePointDistance = 6,
+    /// `smgu_LineLineClosestPoint`: `[p1, v1, p2, v2]`.
+    LineLineClosestPoint = 7,
+    /// `smgu_LinePlaneIntersect` (normal): `[lp, lv, pp, pn]`.
+    LinePlane = 8,
+    /// `smgu_LinePlaneIntersect` (tangents): `[lp, lv, pp, su, sv]`.
+    LinePlaneUv = 9,
+    /// `smgu_LineClosestPoint`: `[lp, lv, tp]`.
+    LineClosestPoint = 10,
+    /// `smgu_SegmentPointDistance`: `[s, e, tp]`.
+    SegmentPointDistance = 11,
+    /// `smgu_SegmentPointAngleDegToPerp`: `[s, e, tp]`.
+    SegmentAngle = 12,
+    /// `smgu_CircleCenterFrom3Points`: `[a, b, c]` (2d).
+    CircleCenter3Points = 13,
+    /// `smgu_CircleFrom3Points`: `[sp, mp, ep, dimension, closed]`.
+    Circle3Points = 14,
+    /// `smgu_CircleFindSilhouettePoints`: `[center, normal, radius, perspective, eye]`.
+    Silhouette = 15,
+    /// `smgu_ConesAreDisjointPerpen`: `[v1, a1, v2, a2]`.
+    ConesDisjoint = 16,
+    /// `smgu_LineCoPlanarCircleIntersect`: `[lp, lv, cc, cn, r, tol]`.
+    LineCircle = 17,
+    /// `smgu_CircleCoPlanarCircleIntersect`: `[n, c1, r1, c2, r2, tol]`.
+    CircleCircle = 18,
+    /// `smgu_LineIntersectSphere`: `[lp, lv, c, r, tol]`.
+    LineSphere = 19,
+    /// `smgu_IntersectThreePlanes`: `[p1, v1, p2, v2, p3, v3]`.
+    ThreePlanes = 20,
+    /// `smgu_PlaneEvaluatePoint`: `[origin, x, y, uv]`.
+    PlaneEval = 21,
+    /// `smgu_PlaneDropPoint`: `[origin, x, y, p]`.
+    PlaneDrop = 22,
+    /// `smgu_PlanePointDistance`: `[pp, pn, tp]`.
+    PlanePointDistance = 23,
+    /// `smgu_PointProjectToPlane`: `[p, pp, pn]`.
+    PointProject = 24,
+    /// `smgu_VectorProjectToPlane`: `[v, n]`.
+    VectorProject = 25,
+    /// `smgu_TransformPointToStartPlane`: `[p, origin, x, y, smin, smax, tol, snap]`.
+    StartPlane = 26,
+    /// `smgu_PointPerspectiveToPlane`: `[p, pp, pn, eye]`.
+    Perspective = 27,
+    /// `smgu_VecLinCombTwoVectors`: `[b1, b2, v]`.
+    VecLinComb = 28,
+    /// `smgu_BestFitPointToPoints`: `[tol, points...]`.
+    BestFitPoint = 29,
+    /// `smgu_BestFitLineToPoints`: `[tol, points...]`.
+    BestFitLine = 30,
+    /// `smgu_VecTripleProduct`: `[a, b, c]`.
+    TripleProduct = 31,
+    /// `smgu_3x3Copy`: 9 values.
+    Copy3x3 = 32,
+    /// `smgu_3x3Determinate` (coefficients): 9 values.
+    Det3x3 = 33,
+    /// `smgu_Determinant3Vectors`: `[v1, v2, v3]`.
+    Det3Vectors = 34,
+    /// `smgu_3x3Inverse`: `[a0, a1, a2]`.
+    Inverse3x3 = 35,
+    /// `smgu_4x4Copy`: 16 values.
+    Copy4x4 = 36,
+    /// `smgu_4x4Determinate`: 16 values.
+    Det4x4 = 37,
+    /// `smgu_SolveQuadraticEqn`: `[c0, c1, c2, tol]`.
+    Quadratic = 38,
+    /// `smgu_DirectionalDerivs`: `[dx, dy, hu, hv, derivs...]`.
+    DirDerivs = 39,
+    /// `smgu_VolDirectionalDerivs`: `[dx, dy, dz, n, derivs...]`.
+    VolDirDerivs = 40,
+    /// `smgu_IsDogLeg` (2d): `[p0, p1, p2, p3, bend_deg, parallel_deg]`.
+    DogLeg = 41,
+    /// `smgu_AddSorted`: `[value, idx, increasing, with_indices, n, values(n), indices(n)]`.
+    AddSorted = 42,
+    /// `smgu_ShellSort_double_array`: the values.
+    ShellSort = 43,
+    /// `smgu_DoubleLessThan`: `[a, b]`.
+    DoubleLess = 44,
+}
 
 /// Operation names used in `inputs.op` (besides `add_point`, `add_closest_point`).
 const OPS: [(&str, Op); 43] = [
@@ -503,14 +592,6 @@ fn rust_op(op: Op, args: &[f64]) -> Result<Output, HarnessError> {
     }
 }
 
-fn cpp_op(op: Op, args: &[f64]) -> Result<Output, HarnessError> {
-    match ffi::call(op, args) {
-        Ok(v) => Ok(finish(&v)),
-        Err(FfiError::Status(s)) if s > 0 => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
-}
-
 /// `[n, p0, p1]` / `[n, params1, params2, dists]` state of the static helpers.
 fn state7(a: &mut Args<'_>) -> Result<[f64; 7], HarnessError> {
     let mut s = [0.0; 7];
@@ -518,25 +599,6 @@ fn state7(a: &mut Args<'_>) -> Result<[f64; 7], HarnessError> {
         *v = a.f()?;
     }
     Ok(s)
-}
-
-fn static_cpp(name: &str, args: &[f64]) -> Result<Output, HarnessError> {
-    let mut a = Args::new(args);
-    let state = state7(&mut a)?;
-    let r = if name == "add_point" {
-        let tol = a.f()?;
-        ffi::add_point(state, tol, a.arr3()?)
-    } else {
-        ffi::add_closest_point(state, a.f()?, a.f()?, a.f()?, a.f()?)
-    };
-    match r {
-        Ok((st, s)) => {
-            let mut v = vec![f64::from(st)];
-            v.extend(s);
-            Ok(finish(&v))
-        }
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
 }
 
 fn static_rust(name: &str, args: &[f64]) -> Result<Output, HarnessError> {
@@ -583,14 +645,6 @@ fn static_rust(name: &str, args: &[f64]) -> Result<Output, HarnessError> {
         v.extend(cp.distances);
     }
     Ok(finish(&v))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let args = i.args();
-    match i.op.as_str() {
-        "add_point" | "add_closest_point" => static_cpp(&i.op, &args),
-        name => cpp_op(lookup(name)?, &args),
-    }
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
@@ -1238,10 +1292,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1262,12 +1312,7 @@ mod tests {
         for i in 0..MIN_GENERATED {
             let mut rng = Rng::new(CaseContext::seed_for("geom.geom_utility_p1", i));
             let inputs = gen_case(&mut rng);
-            let args = inputs.args();
-            let out = match inputs.op.as_str() {
-                "add_point" | "add_closest_point" => static_cpp(&inputs.op, &args),
-                name => cpp_op(lookup(name).unwrap(), &args),
-            }
-            .unwrap();
+            let out = rust(&inputs).unwrap();
             let status = out.ints.get("status").and_then(|v| v.first()).copied().unwrap();
             *tally.entry(inputs.op).or_default().entry(status).or_default() += 1;
         }

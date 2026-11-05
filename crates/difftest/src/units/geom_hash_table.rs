@@ -1,10 +1,10 @@
 //! Runner for unit `geom.hash_table`: the voxel model `SmObjsInVoxels` and the
 //! bucket hash table under it.
 //!
-//! C++: `solidcore_ffi::units::geom_hash_table` (upstream
-//! `source/SMLib/inc/SmHashTable.h`). Rust: `solidcore::geom::hash_table`.
+//! Ported from upstream `source/SMLib/inc/SmHashTable.h`; checked against its golden.
+//! Rust: `solidcore::geom::hash_table`.
 //!
-//! A case is a program run against one voxel model on both sides
+//! A case is a program run against one voxel model
 //! (`kind = "program"`), or a point set run through the `SmHealData::
 //! Cache_CoinVertices` pattern (`kind = "heal"`: a 12x12x12 model over the
 //! points' box with `7 * n` estimated items, every point added, all pairs
@@ -25,7 +25,6 @@ use solidcore::geom::hash_table::{FindPairsOptions, ObjsInVoxels, GAP_HISTOGRAM_
 use solidcore::geom::tol::zone_tol3d;
 use solidcore::kernel::{Kernel, KernelOptions};
 use solidcore::SolidError;
-use solidcore_ffi::units::geom_hash_table as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -116,10 +115,6 @@ enum Inputs {
     },
 }
 
-fn harness(msg: impl Into<String>) -> HarnessError {
-    HarnessError::new(msg)
-}
-
 fn put_ext(o: &mut Vec<f64>, e: &Extent3d) {
     let (a, b) = (e.min(), e.max());
     o.extend([a.x, a.y, a.z, b.x, b.y, b.z]);
@@ -200,65 +195,6 @@ fn program(i: &Inputs) -> (Sizes, Vec<Op>) {
             extra,
         } => heal_program(pts, *tol, dup, extra),
     }
-}
-
-fn push_sizes(v: &mut Vec<f64>, s: &Sizes) {
-    v.extend([f64::from(s.x), f64::from(s.y), f64::from(s.z)]);
-    match s.bbox {
-        Some(b) => {
-            v.push(1.0);
-            v.extend(b);
-        }
-        None => v.extend([0.0; 7]),
-    }
-    v.push(f64::from(s.est));
-}
-
-fn encode(ctor: &Sizes, ops: &[Op]) -> Vec<f64> {
-    let mut v = vec![0.0];
-    push_sizes(&mut v, ctor);
-    for op in ops {
-        match op {
-            Op::SetSize(s) => {
-                v.push(1.0);
-                push_sizes(&mut v, s);
-            }
-            Op::Add { item, p, tol, track } => {
-                v.push(2.0);
-                v.push(*item as f64);
-                v.extend(p);
-                v.push(*tol);
-                v.push(if *track { 1.0 } else { 0.0 });
-            }
-            Op::Remove { item } => v.extend([3.0, *item as f64]),
-            Op::Find {
-                limit,
-                mode,
-                buckets,
-                hist,
-            } => {
-                v.push(4.0);
-                v.push(limit.map_or(-1.0, |l| l as f64));
-                v.push(f64::from(*mode));
-                v.push(if *hist { 1.0 } else { 0.0 });
-                v.push(buckets.len() as f64);
-                v.extend(buckets.iter().map(|&b| f64::from(b)));
-            }
-            Op::MapPoint { p } => {
-                v.push(5.0);
-                v.extend(p);
-            }
-            Op::VoxelBbox { index } => v.extend([6.0, *index as f64]),
-            Op::FindItems { item } => v.extend([7.0, *item as f64]),
-            Op::Dump => v.push(8.0),
-            Op::IndicesToIndex { ix, iy, iz } => {
-                v.extend([9.0, f64::from(*ix), f64::from(*iy), f64::from(*iz)]);
-            }
-            Op::IndexToIndices { index } => v.extend([10.0, *index as f64]),
-            Op::ClearUpdated => v.push(11.0),
-        }
-    }
-    v
 }
 
 type Model = ObjsInVoxels<i64>;
@@ -634,13 +570,6 @@ impl UnitDiff for Runner {
         "geom.hash_table"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let (ctor, ops) = program(&i);
-        let (oi, of) = ffi::run(&encode(&ctor, &ops)).map_err(|e| harness(e.to_string()))?;
-        Ok(Output::new().ints("ints", oi).values("floats", of))
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
         let (ctor, ops) = program(&i);
@@ -677,8 +606,6 @@ mod tests {
         let (c, ops) = heal_program(&[[0.0; 3], [1.0, 1.0, 1.0]], 0.01, &[0], &[[0.5; 3]]);
         assert_eq!(c.est, 21);
         assert_eq!(ops.len(), 3 + 2 + 1 + 2);
-        let enc = encode(&c, &ops);
-        assert_eq!(enc[0], 0.0);
     }
 
     /// The generated programs reach the interesting paths.
