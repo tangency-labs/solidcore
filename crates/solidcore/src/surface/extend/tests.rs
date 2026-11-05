@@ -864,7 +864,18 @@ fn a_cone_extends_as_itself_up_to_its_apex_and_round_its_axis_within_the_open_tu
     // the side's middle (1.5, at height 0.5)
     let quarter = 67.5_f64.to_radians() * 1.5;
     for how in [Continuity::Tangent, Continuity::Natural] {
-        let e = c.extended_sides(&kk, &BoxSide::ALL, how, 5.0).unwrap();
+        // left round the axis unless asked
+        let left = c.extended_sides(&kk, &BoxSide::ALL, how, 5.0).unwrap();
+        assert!(
+            left.sides[..2]
+                .iter()
+                .all(|s| matches!(s, SideExtension::AroundAxis)),
+            "{:?}",
+            left.sides
+        );
+        let e = c
+            .extended_sides_with(&kk, &BoxSide::ALL, how, 5.0, RoundTheAxis::WithinOpenTurn)
+            .unwrap();
         assert!(matches!(e.surface.kind(), SurfaceKind::Cone(_)), "{how:?}");
         for s in &e.sides[..2] {
             let SideExtension::UpToLimit(a) = s else {

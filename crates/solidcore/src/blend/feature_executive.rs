@@ -1623,8 +1623,17 @@ fn ext_surface_rebuild(
                 .surface
                 .clone()
                 .ok_or_else(|| SolidError::null_pointer(OP))?;
-            let new_surf =
-                surface.extended_every_side(k, crate::surface::extend::Continuity::Tangent, ext)?;
+            // round a revolution's axis too: a fillet's quarter cylinder reaches its
+            // neighbours there (Fillet/fillet1019)
+            let new_surf = surface
+                .extended_sides_with(
+                    k,
+                    &crate::surface::side::BoxSide::ALL,
+                    crate::surface::extend::Continuity::Tangent,
+                    ext,
+                    crate::surface::extend::RoundTheAxis::WithinOpenTurn,
+                )?
+                .surface;
 
             // Make a face from pSurface
             keep_unported(

@@ -1405,7 +1405,7 @@ fn keeps(net: &Net, out: &Net, side: BoxSide) -> Result<bool> {
 mod curve;
 mod sides;
 pub use curve::ExtendedCurve;
-pub use sides::{ExtendedSides, SideExtension};
+pub use sides::{ExtendedSides, RoundTheAxis, SideExtension};
 
 #[cfg(test)]
 mod tests;

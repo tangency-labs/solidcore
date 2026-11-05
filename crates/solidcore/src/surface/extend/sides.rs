@@ -23,12 +23,13 @@
 //!   continuity (each row's construction commutes with the rotation between the rows) and is
 //!   extended as asked. Along the generator it is extended up to its apex, pole or full turn where the
 //!   distance asked runs past it (the refusal's named distance, the longest that works), and
-//!   said so. Round its axis a cone, sphere or torus is extended by at most a quarter of the
-//!   turn its sweep leaves open on each side, so the two sides never meet, and said so where
-//!   that is less than asked (#2730: the callers extending "on every side" intersect the
-//!   extension with its neighbours, which a fillet's quarter cylinder must reach round its
-//!   axis); a full turn is a closed direction, and a surface of revolution of another kind is
-//!   left round its axis.
+//!   said so. Round its axis a side is left ([`RoundTheAxis::Leave`]: a face beside another
+//!   on the same surface, as a sphere split along its meridians, would overlap it), or, asked
+//!   ([`RoundTheAxis::WithinOpenTurn`], a defeature's patch, whose fillet's quarter cylinder
+//!   must reach its neighbours), a cone, sphere or torus is extended there by at most a
+//!   quarter of the turn its sweep leaves open on each side, so the two never meet, and said
+//!   so where that is less than asked. A full turn is a closed direction, and a surface of
+//!   revolution of another kind is left round its axis.
 //!
 //! Deviations: none (no upstream counterpart). No recursion.
 
@@ -41,6 +42,18 @@ use crate::surface::side::{Across, BoxSide};
 use crate::surface::surface::{Surface, SurfaceKind};
 
 const OP: &str = "surface::extend::Surface::extended_sides";
+
+/// What [`Surface::extended_sides_with`] does at a cone's, sphere's or torus's sides round its
+/// axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoundTheAxis {
+    /// Left as they are (a face beside another on the same surface, as a sphere split along
+    /// its meridians, would overlap it).
+    Leave,
+    /// Extended as itself by at most a quarter of the turn the sweep leaves open on each side,
+    /// so the two never meet (a fillet's quarter cylinder reaching its neighbours).
+    WithinOpenTurn,
+}
 
 /// What [`Surface::extended_sides`] did at one side of the source's box.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -122,6 +135,22 @@ impl Surface {
         how: Continuity,
         distance: f64,
     ) -> Result<ExtendedSides> {
+        self.extended_sides_with(k, asked, how, distance, RoundTheAxis::Leave)
+    }
+
+    /// [`Surface::extended_sides`], a revolution's sides round its axis as `round` says.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::extended_sides`].
+    pub fn extended_sides_with(
+        &self,
+        k: &Kernel,
+        asked: &[BoxSide],
+        how: Continuity,
+        distance: f64,
+        round: RoundTheAxis,
+    ) -> Result<ExtendedSides> {
         crate::profile::profile_scope!(k, "surface::extended_sides");
         // extended by nothing: the surface itself, every side as it is
         if distance == 0.0 {
@@ -178,7 +207,13 @@ impl Surface {
             // round the axis: as itself by at most a quarter of the turn left open, so the two
             // sides round it never meet; a revolution with no such room is left
             let room = if revolution == Some(true) {
-                match source_carrier.round_room(k, &source_dom, source_side)? {
+                let room = match round {
+                    RoundTheAxis::Leave => None,
+                    RoundTheAxis::WithinOpenTurn => {
+                        source_carrier.round_room(k, &source_dom, source_side)?
+                    }
+                };
+                match room {
                     Some(r) if r > 0.0 => Some(r),
                     _ => {
                         *done = SideExtension::AroundAxis;
