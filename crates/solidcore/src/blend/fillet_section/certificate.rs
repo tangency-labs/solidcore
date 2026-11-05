@@ -166,6 +166,10 @@ const VZ: V3<Ivl> = V3 {
 /// `piece` (the span of the knots it starts at; `None`: each piece `s` covers) for every
 /// parameter in `s`, enclosed (hulled over the pieces).
 ///
+/// Not upstream (#2690): on each piece the quotient is taken about the curve's point at the
+/// interval's middle, as [`nurbs_partials_over_piece`] does, so the enclosures do not
+/// widen with the curve's distance from the origin.
+///
 /// # Errors
 ///
 /// `SM_ERR` when no piece covers `s`.
@@ -225,6 +229,22 @@ pub fn curve_derivs_over(
                 *wd = w;
             }
         }
+        // the quotient about c, the point at the middle (rounded; any c is exact)
+        let c = {
+            let (a0, w0) = (at1(&am, 0, VZ), at1(&wm, 0, IZ).mid());
+            let c = [a0.x.mid() / w0, a0.y.mid() / w0, a0.z.mid() / w0];
+            if c.iter().all(|x| x.is_finite()) {
+                c
+            } else {
+                [0.0; 3]
+            }
+        };
+        let [cx, cy, cz] = c.map(Ivl::from);
+        for (ad, &wd) in am.iter_mut().zip(&wm) {
+            ad.x = ad.x - cx * wd;
+            ad.y = ad.y - cy * wd;
+            ad.z = ad.z - cz * wd;
+        }
         let dt = Ivl::new(a, b) - Ivl::from(m);
         let mut av = vec![VZ; ld + 1];
         let mut wv = vec![IZ; ld + 1];
@@ -269,6 +289,11 @@ pub fn curve_derivs_over(
                 };
             }
         }
+        if let Some(c0) = cv.first_mut() {
+            c0.x = c0.x + cx;
+            c0.y = c0.y + cy;
+            c0.z = c0.z + cz;
+        }
         for (r, c) in rd.iter_mut().zip(&cv) {
             if first {
                 *r = *c;
@@ -290,6 +315,15 @@ pub fn curve_derivs_over(
 /// piece (spans `ku`, `kv`) over `[ua, ub] x [va, vb]`, enclosed: the homogeneous surface's
 /// Taylor polynomials at the box's middle, from exact point derivatives (it is of degree
 /// p, q there), then the rational quotient's (the NURBS book's A4.4) in intervals.
+///
+/// Not upstream (#2690): the quotient is taken about the point at the box's middle, c:
+/// `P - c = (A - c w) / w`, an identity for any constant c, with `A - c w` the homogeneous
+/// surface moved by -c (its Taylor coefficients `A_ab - c w_ab`). Interval arithmetic does
+/// not see that the numerator and w vary together, so each quotient widens by about the
+/// numerator's size times w's relative spread: about the origin that is `|P| |dw| / w`,
+/// however near the box's point the face is, and here `|P - c| |dw| / w`, which is of the
+/// box's size, so the enclosures are as wide wherever the face lies and shrink with the
+/// box as its partials' own ranges do. c is any number: only `P[0][0]` is moved back by it.
 ///
 /// # Errors
 ///
@@ -327,6 +361,19 @@ pub fn nurbs_partials_over_piece(
                 }
             }
             *hab = h;
+        }
+    }
+    // the quotient about c, the point at the middle (rounded; any c is exact)
+    let c = {
+        let [x, y, z, w] = at2(&hm, 0, 0, [IZ; 4]);
+        [x.mid() / w.mid(), y.mid() / w.mid(), z.mid() / w.mid()]
+    };
+    let c_finite = c.iter().all(|x| x.is_finite());
+    let c = if c_finite { c } else { [0.0; 3] };
+    for h in hm.iter_mut().flatten() {
+        let w = h[3];
+        for (he, &ce) in h.iter_mut().zip(&c) {
+            *he = *he - Ivl::from(ce) * w;
         }
     }
     let du = Ivl::new(ua, ub) - Ivl::from(um);
@@ -414,6 +461,17 @@ pub fn nurbs_partials_over_piece(
             );
         }
     }
+    let [cx, cy, cz] = c;
+    let p00 = out.at(0, 0);
+    out.set(
+        0,
+        0,
+        V3 {
+            x: p00.x + Ivl::from(cx),
+            y: p00.y + Ivl::from(cy),
+            z: p00.z + Ivl::from(cz),
+        },
+    );
     Ok(out)
 }
 
