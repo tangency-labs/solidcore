@@ -90,7 +90,7 @@ fn larger_radius_control() {
 
 /// Opt-in diagnostic output for the before/after render; normal tests write no files.
 #[test]
-#[ignore]
+#[ignore = "exports diagnostic artifacts to SOLIDCORE_ELBOW_ARTIFACTS"]
 fn export_elbow_for_diagnostics() {
     use solidcore::topology::api_files::write_brep_to_file;
     use solidcore::topology::brep_data_write::FromBrepEnv;
