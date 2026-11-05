@@ -2,13 +2,14 @@
 //! (WR-494), but every piece's last point was evaluated in the knot span above it (upstream's
 //! `bVFromLeft = TRUE`). Where the surface's derivatives jump at a v knot (a G2 but
 //! not C2 section, merged into one face under `geometric_g2_continuity`), the integrand
-//! jumped at each piece's end and the Runge-Kutta steps shrank toward every knot.
-//! `UpstreamFixes::precise_properties_span_end_from_below` evaluates the end from
-//! the piece's own span.
+//! jumped at each piece's end and the Runge-Kutta steps shrank toward every knot; at the
+//! C0 double knot of #1435's multi-span patch they underflowed at accuracies 1e-9 and
+//! tighter. Each piece's end is now evaluated from the piece's own span (the one-sided
+//! limit from inside it), the only path.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
+use solidcore::blend::fillet_executive::api::create_face_from_surface;
 use solidcore::curve::curve::Curve;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
-use solidcore::blend::fillet_executive::api::create_face_from_surface;
 use solidcore::geom::tol;
 use solidcore::mass::integrator::properties::{brep_volume, face_properties, PropertyAttributes};
 use solidcore::mass::integrator::{OdeIntegrator, OdeOptions, StepCounts};
@@ -17,8 +18,8 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::b_spline_surface::BSplineSurface;
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::nurbs::math::CPoint;
-use solidcore::sweep::api_surfaces::create_skin_primitive;
 use solidcore::surface::surface::Surface;
+use solidcore::sweep::api_surfaces::create_skin_primitive;
 use solidcore::topology::face::p2::{OdeIsoCurveLength, PrecisePropertyLayout, PPF_ALL};
 use solidcore::topology::Brep;
 use solidcore::Kernel;
@@ -58,10 +59,9 @@ fn section(z: f64) -> Vec<Curve> {
     out
 }
 
-fn kernel(span_end_from_below: bool) -> Kernel {
+fn kernel() -> Kernel {
     let mut k = Kernel::default();
     k.fixes.geometric_g2_continuity = true;
-    k.fixes.precise_properties_span_end_from_below = span_end_from_below;
     k
 }
 
@@ -87,32 +87,17 @@ fn volume(k: &Kernel, b: &mut Brep, accuracy: f64) -> f64 {
     brep_volume(k, b, accuracy, &attrs).unwrap()
 }
 
-#[test]
-fn flag_is_off_by_default() {
-    assert!(
-        !Kernel::default()
-            .fixes
-            .precise_properties_span_end_from_below
-    );
-}
-
-/// The volume of the prism spanning six knot spans matches π r² h with the flag on, as
-/// it does with it off.
+/// The volume of the prism spanning six knot spans matches π r² h.
 #[test]
 fn multi_span_prism_volume_matches_closed_form() {
     let exact = PI * RADIUS * RADIUS * HEIGHT;
-    for on in [false, true] {
-        let mut k = kernel(on);
-        let mut b = prism(&mut k);
-        assert_eq!(b.face_list().len(), 3, "one side face and two caps");
-        let v = volume(&k, &mut b, 1e-8);
-        let err = (v - exact).abs() / exact;
-        eprintln!("flag {on}: volume {v} vs {exact} ({err:e})");
-        assert!(
-            err <= 1e-9,
-            "flag {on}: volume {v} vs {exact} ({err:e} relative)"
-        );
-    }
+    let mut k = kernel();
+    let mut b = prism(&mut k);
+    assert_eq!(b.face_list().len(), 3, "one side face and two caps");
+    let v = volume(&k, &mut b, 1e-8);
+    let err = (v - exact).abs() / exact;
+    eprintln!("volume {v} vs {exact} ({err:e})");
+    assert!(err <= 1e-9, "volume {v} vs {exact} ({err:e} relative)");
 }
 
 /// The side face's B-spline surface and its v knots (ends included).
@@ -164,11 +149,12 @@ fn piece_steps(eval: &OdeIsoCurveLength<'_>, a: f64, b: f64, n: usize) -> (Vec<f
     (y, counts)
 }
 
-/// At a piece's end knot the fixed integrand is the limit from inside the piece, and
-/// the piece takes fewer steps; upstream's takes the next span's value there.
+/// At a piece's end knot the integrand evaluated from below is the limit from inside
+/// the piece, and the piece takes fewer steps; evaluated from above (upstream's side)
+/// it is the next span's value there.
 #[test]
 fn piece_end_is_evaluated_in_its_own_span() {
-    let mut k = kernel(true);
+    let mut k = kernel();
     let b = prism(&mut k);
     let (surface, knots) = side_surface(&b);
     let flags = solidcore::topology::face::p2::PPF_AREA;
@@ -316,8 +302,6 @@ fn multispan_reference(
 #[test]
 fn multispan_face_holds_tight_accuracies() {
     let mut k = Kernel::default();
-    k.fixes.precise_properties_span_end_from_below =
-        std::env::var("WR670_OFF").is_err();
     let surface = multispan_surface();
     let origin = Vec3::new(2.37, 3.21, 3.41);
     let layout = PrecisePropertyLayout::new(PPF_ALL);
@@ -370,7 +354,10 @@ fn multispan_face_holds_tight_accuracies() {
                 .fold(0.0_f64, |m, (g, w)| m.max((g - w).abs()))
                 / size;
             eprintln!("accuracy {accuracy:e} group {gi}: {err:e} ({got:?} vs {want:?})");
-            assert!(err <= accuracy, "accuracy {accuracy:e}, group {gi}: {err:e} off");
+            assert!(
+                err <= accuracy,
+                "accuracy {accuracy:e}, group {gi}: {err:e} off"
+            );
         }
     }
 }

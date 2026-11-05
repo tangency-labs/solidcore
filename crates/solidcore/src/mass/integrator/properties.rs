@@ -28,8 +28,8 @@
 //! where the area behaviour selects it (tangency-labs/smlib@d2d9586).
 //! The iso-u integrals start at the trims' lowest v, not at the face UV domain's
 //! (WR-563, #1556).
-//! With `UpstreamFixes::precise_properties_span_end_from_below` (WR-670, #2091) each
-//! span-wise iso-u piece is evaluated at its end from its own knot span.
+//! Each span-wise iso-u piece is evaluated at its end from its own knot span, the
+//! one-sided limit from inside the piece (WR-670, #2091): upstream takes the span above.
 use super::{OdeIntegrator, OdeOptions};
 use crate::curve::curve::Curve;
 use crate::geom::attribute::{ids, AttributeStore, AttributeValue, ObjectKey};

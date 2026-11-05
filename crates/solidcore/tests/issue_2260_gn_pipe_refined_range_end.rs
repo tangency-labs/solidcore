@@ -258,7 +258,6 @@ const SOLIDCRAFT_C494A18: &[&str] = &[
     "point_solve_keeps_triangle_guess",
     "polar_box_region_to_arc_transposes_domain",
     "precise_properties_body_length_scale",
-    "precise_properties_span_end_from_below",
     "primitive_path_curve_statuses",
     "projected_curve_transform_when_owned",
     "proto_edge_self_loop_on_vertex_degenerate",

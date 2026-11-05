@@ -1202,8 +1202,6 @@ pub struct UpstreamFixes {
     /// Degenerate intervals shorter than `SM_EFF_ZERO` still return `0.0` without
     /// evaluating. Off by default for pinned C++ parity.
     pub integrator_propagates_failure: bool,
-    /// Each iso-u piece of `SmODEAreaIFEO` (the iso-u integrals run knot span by knot span, WR-494) evaluates the surface at its end from the knot span below it (`bVFromLeft = FALSE`), not the span above (upstream's `TRUE`, kept by the fork's tangency-labs/smlib@08d9a14): where the piece stops at a v knot with a derivative jump (a G2-not-C2 loft merged into one face across its 19 spans, #2091), the integrand's last point came from the next span, the Runge-Kutta steps shrank toward every knot, and each piece took about 5x the evaluations it needs: the #2091 model's precise volume took 26.7 s, 5.8 s with this fix (WR-670, #2091).
-    pub precise_properties_span_end_from_below: bool,
     /// `SmBrep::ComputePreciseProperties` adds a volume-separating faceuse's volume and mass only where it bounds a non void region and its area only where the area behaviour selects it, where upstream adds both whenever either behaviour selects the faceuse: a face between two solid regions (a merge of overlapping bodies) was counted in the area once per side (WR-535; the fork's tangency-labs/smlib@d2d9586).
     pub brep_area_between_solid_and_void: bool,
     /// `SmVertex::IsTopologicalVertex` ([`crate::topology::vertex::is_topological_vertex`])

@@ -1969,8 +1969,8 @@ pub struct OdeIsoCurveLength<'a> {
     face_thickness: f64,
     layout: &'a PrecisePropertyLayout,
     /// The v evaluated from the lower knot span (`bVFromLeft = FALSE`) rather than
-    /// upstream's upper one: the end of a span-wise piece under
-    /// `precise_properties_span_end_from_below` (WR-670); `None` upstream.
+    /// upstream's upper one: the end of a span-wise piece (WR-670); `None` for an
+    /// integrand not limited to one piece.
     v_from_below: Option<f64>,
 }
 
@@ -2000,7 +2000,8 @@ impl<'a> OdeIsoCurveLength<'a> {
     /// The same integrand, evaluated at `v = end` from the knot span below `end`
     /// (`bVFromLeft = FALSE`), every other v as upstream (`TRUE`, the span above): the
     /// end of a piece that stops at a v knot of the surface lies in the piece's own
-    /// span (WR-670, [`UpstreamFixes::precise_properties_span_end_from_below`](crate::kernel::UpstreamFixes::precise_properties_span_end_from_below)).
+    /// span, so its value there is the one-sided limit from inside the piece (WR-670,
+    /// #2091).
     #[must_use]
     pub const fn with_v_end_from_below(mut self, end: f64) -> Self {
         self.v_from_below = Some(end);
@@ -2347,12 +2348,16 @@ impl OdeArea<'_> {
                 continue;
             };
             piece_y.fill(0.0);
-            // With `fixes.precise_properties_span_end_from_below` (WR-670,
-            // #2091) each piece's end (a v knot, or the trim point) is evaluated
-            // in the piece's own span: upstream's `TRUE` takes the span above,
-            // so the integrand jumped at the piece's last point and the steps
-            // shrank toward every knot (about 5x the evaluations a piece).
-            let piece_eval = if k.fixes.precise_properties_span_end_from_below && b > a {
+            // Each piece's end (a v knot, or the trim point) is evaluated in the
+            // piece's own span: the integral over [a, b] is of the integrand's
+            // restriction to that span, whose value at b is the limit from below.
+            // Upstream's `TRUE` takes the span above, so where the derivatives jump
+            // at the knot (C0 at a rational circle's double knot, #1435; a G2 not C2
+            // loft, #2091) the piece's last sample was the next span's value: the
+            // steps shrank toward every knot, and underflowed at tight accuracies
+            // (WR-670). A piece descending to b (the curve point below `min_v`, one
+            // piece) lies in the span above b, upstream's side.
+            let piece_eval = if b > a {
                 eval.with_v_end_from_below(b)
             } else {
                 eval
