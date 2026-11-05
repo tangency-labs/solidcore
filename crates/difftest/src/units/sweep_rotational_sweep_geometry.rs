@@ -1,6 +1,5 @@
-//! Runner for unit `sweep.rotational_sweep_geometry`. C++:
-//! `solidcore_ffi::units::sweep_rotational_sweep_geometry` (upstream
-//! `source/SMLib/src/SmRotationalSweepGeometry.cpp`). Rust:
+//! Runner for unit `sweep.rotational_sweep_geometry`. Ported from upstream
+//! `source/SMLib/src/SmRotationalSweepGeometry.cpp`; checked against its golden. Rust:
 //! `solidcore::sweep::rotational_sweep_geometry`.
 //!
 //! A case is a sweep (`base`, `axis`, `angle` in degrees, `eps`, `analytics` =
@@ -11,11 +10,11 @@
 //! `SmHermiteCurve`) over `t`, same or opposite to the curve, with its vertices at the
 //! curve ends plus offsets and given edge / vertex tolerances; vertices are shell
 //! vertices, faces `CreateFaceFromSurface` on an `SmBSplineSurface` or finite `SmPlane`.
-//! The Rust side builds the same B-rep records; the shim reports the facts the records
-//! must reproduce (B-rep tolerance, which vertex is the start / primary one, closed,
-//! points, tolerances), which are compared first.
+//! The runner builds these as B-rep records and reports the facts they reproduce
+//! (B-rep tolerance, which vertex is the start / primary one, closed, points,
+//! tolerances) first.
 //!
-//! Both sides produce the flat record of the shim (`out`): statuses (`0` =
+//! The flat record (`out`) holds statuses (`0` =
 //! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust
 //! error upstream cannot produce), curves and surfaces as type code, natural interval /
 //! domain and evaluations at fixed fractions of it, tolerances, the trimming loop's
@@ -52,7 +51,6 @@ use solidcore::topology::{
     Vertexuse, VertexuseOwner,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::sweep_rotational_sweep_geometry::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -215,192 +213,6 @@ struct Inputs {
 }
 
 // ---- C++ ------------------------------------------------------------------------------
-
-fn push3(v: &mut Vec<f64>, p: [f64; 3]) {
-    v.extend(p);
-}
-
-fn push_curve(v: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Nurb { p, cpts, knots } => {
-            let n = cpts.len().saturating_sub(1);
-            v.extend([
-                0.0,
-                n as f64,
-                *p as f64,
-                knots.len().saturating_sub(1) as f64,
-            ]);
-            for cp in cpts {
-                v.extend(cp);
-            }
-            v.extend(knots);
-        }
-        CurveIn::Bline { a, b } => {
-            v.push(1.0);
-            push3(v, *a);
-            push3(v, *b);
-        }
-        CurveIn::Line { a, b, ivl } => {
-            v.push(2.0);
-            push3(v, *a);
-            push3(v, *b);
-            let [t0, t1] = ivl.unwrap_or([0.0, 1.0]);
-            v.extend([flag(ivl.is_some()), t0, t1]);
-        }
-        CurveIn::Circle { c, x, y, d, r, io } => {
-            v.push(3.0);
-            push3(v, *c);
-            push3(v, *x);
-            push3(v, *y);
-            v.extend([d[0], d[1], *r, flag(*io)]);
-        }
-        CurveIn::Ellipse {
-            c,
-            x,
-            y,
-            d,
-            rx,
-            ry,
-            io,
-        } => {
-            v.push(4.0);
-            push3(v, *c);
-            push3(v, *x);
-            push3(v, *y);
-            v.extend([d[0], d[1], *rx, *ry, flag(*io)]);
-        }
-        CurveIn::Hermite { p1, d1, p2, d2 } => {
-            v.push(5.0);
-            for p in [p1, d1, p2, d2] {
-                push3(v, *p);
-            }
-        }
-    }
-}
-
-fn push_surface(v: &mut Vec<f64>, s: &SurfIn) {
-    match s {
-        SurfIn::Nurb {
-            p,
-            q,
-            net,
-            u,
-            v: kv,
-        } => {
-            let n = net.len().saturating_sub(1);
-            let m = net.first().map_or(0, Vec::len).saturating_sub(1);
-            v.extend([
-                0.0,
-                n as f64,
-                m as f64,
-                *p as f64,
-                *q as f64,
-                u.len().saturating_sub(1) as f64,
-                kv.len().saturating_sub(1) as f64,
-            ]);
-            for row in net {
-                for cp in row {
-                    v.extend(cp);
-                }
-            }
-            v.extend(u);
-            v.extend(kv);
-        }
-        SurfIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            dom,
-        } => {
-            v.push(1.0);
-            push3(v, *o);
-            push3(v, *x);
-            push3(v, *y);
-            v.extend(scale);
-            v.extend(dom);
-        }
-    }
-}
-
-fn push_edge(v: &mut Vec<f64>, e: &EdgeIn) {
-    push_curve(v, &e.curve);
-    v.extend([e.t[0], e.t[1], flag(e.opposite), flag(e.closed)]);
-    push3(v, e.off0);
-    push3(v, e.off1);
-    v.extend([e.etol, e.vtol[0], e.vtol[1]]);
-}
-
-fn cpp_args(i: &Inputs) -> (Op, Vec<f64>) {
-    let s = &i.sweep;
-    let mut v = Vec::new();
-    push3(&mut v, s.base);
-    push3(&mut v, s.axis);
-    v.extend([s.angle, s.eps, flag(s.analytics), s.brep_tol]);
-    let op = match &i.op {
-        OpIn::IsClosed { repeats } => {
-            v.push(*repeats as f64);
-            Op::IsClosed
-        }
-        OpIn::StartCs { pt } => {
-            push3(&mut v, *pt);
-            Op::StartCs
-        }
-        OpIn::EndCs { pt } => {
-            push3(&mut v, *pt);
-            Op::EndCs
-        }
-        OpIn::Transform => Op::Transform,
-        OpIn::Copy => Op::Copy,
-        OpIn::CheckCurve {
-            curve,
-            t,
-            tol,
-            pt,
-            vec,
-            amount,
-        } => {
-            push_curve(&mut v, curve);
-            v.extend([t[0], t[1], *tol]);
-            push3(&mut v, *pt);
-            push3(&mut v, *vec);
-            v.push(*amount);
-            Op::CheckCurve
-        }
-        OpIn::VertexHigher { pt, vtol } => {
-            push3(&mut v, *pt);
-            v.push(*vtol);
-            Op::VertexHigher
-        }
-        OpIn::VertexSame { pt, vtol } => {
-            push3(&mut v, *pt);
-            v.push(*vtol);
-            Op::VertexSame
-        }
-        OpIn::EdgeHigher { edge } => {
-            push_edge(&mut v, edge);
-            Op::EdgeHigher
-        }
-        OpIn::EdgeSame { edge } => {
-            push_edge(&mut v, edge);
-            Op::EdgeSame
-        }
-        OpIn::FaceSame { surface, ftol } => {
-            push_surface(&mut v, surface);
-            v.push(*ftol);
-            Op::FaceSame
-        }
-    };
-    (op, v)
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, args) = cpp_args(i);
-    match ffi::eval(op, &args) {
-        Ok(out) => Ok(Output::new().values("out", out)),
-        Err(e) => Err(harness(format!("C++ shim: {e}"))),
-    }
-}
 
 // ---- Rust -----------------------------------------------------------------------------
 
@@ -1408,24 +1220,12 @@ impl UnitDiff for Runner {
         "sweep.rotational_sweep_geometry"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse()?)
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        // keep only cases the shim accepts (the generator aims inside the guards)
-        for _ in 0..16 {
-            let i = gen_case(rng);
-            let (op, args) = cpp_args(&i);
-            if ffi::validate(op, &args).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1434,24 +1234,5 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generated_cases_validate() {
-        let mut ok = 0;
-        for seed in 0..300 {
-            let mut rng = Rng::new(seed);
-            let i = gen_case(&mut rng);
-            let (op, args) = cpp_args(&i);
-            if ffi::validate(op, &args).is_ok() {
-                ok += 1;
-            }
-        }
-        assert!(ok > 280, "only {ok} of 300 generated cases validate");
     }
 }

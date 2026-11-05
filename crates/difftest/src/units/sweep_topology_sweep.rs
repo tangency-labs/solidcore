@@ -1,5 +1,6 @@
-//! Stateful Rust/C++ parity for topology sweep maps, the stitch callback, base
-//! geometry dispatch and vertex helpers. Every script compares all four maps,
+//! Runner for unit `sweep.topology_sweep`: topology sweep maps, the stitch callback, base
+//! geometry dispatch and vertex helpers, ported from upstream `SmTopologySweep`; checked
+//! against its golden. Every script records all four maps,
 //! including null entries, reverse-map leftovers and both B-rep namespaces.
 //! Vertex construction is deferred at the exact missing B-rep constructor;
 //! whole-B-rep geometry construction and the tails behind those calls are not
@@ -37,15 +38,15 @@ struct Input {
     #[serde(default = "vector")]
     vector: [f64; 3],
     /// Whole-B-rep `DoSweep` of a box instead of a map script
-    /// (`solidcore_ffi::units::sweep_topology_sweep::whole` input layout).
+    /// (box origin, size and sweep parameters; see [`whole_rust`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     whole: Option<[f64; 11]>,
     /// Whole-B-rep `DoSweep` of a non-manifold body instead of a map script
-    /// (`solidcore_ffi::units::sweep_topology_sweep::body` input layout).
+    /// (see [`body_rust`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     body: Option<[f64; 16]>,
     /// Explicit `DoSweep` target lists for `body` (its `targets` is 2):
-    /// `solidcore_ffi::units::sweep_topology_sweep::body_lists` layout.
+    /// the target list layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lists: Option<[f64; 7]>,
 }
@@ -1178,40 +1179,6 @@ fn rust(i: &Input) -> Result<Output> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "sweep.topology_sweep"
-    }
-    fn run_cpp(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
-        let i: Input = c.parse()?;
-        if let Some(body) = i.body {
-            // An input whose C++ path is undefined (UB-269, UB-270) is refused by the
-            // FFI guard before the call; Rust is not run on it.
-            if let Some(reason) = solidcore_ffi::units::sweep_topology_sweep::body_undefined(&body) {
-                return Ok(Output::rejected(reason));
-            }
-            // Fresh process per case, as for `whole` below.
-            return solidcore_ffi::isolate::fresh_process(|| match i.lists {
-                Some(lists) => solidcore_ffi::units::sweep_topology_sweep::body_lists(body, lists),
-                None => solidcore_ffi::units::sweep_topology_sweep::body(body),
-            })
-            .map(|record| body_output(&record))
-            .map_err(|e| HarnessError::new(e.to_string()));
-        }
-        if let Some(whole) = i.whole {
-            // Each whole-B-rep case runs in a fresh process: native stitching follows
-            // heap layout (the pointer-hash silhouette order), so a case's C++ result
-            // must not depend on the cases run before it in the same process.
-            return solidcore_ffi::isolate::fresh_process(|| {
-                solidcore_ffi::units::sweep_topology_sweep::whole(whole)
-            })
-            .map(|record| whole_output(&record))
-                .map_err(|e| HarnessError::new(e.to_string()));
-        }
-        solidcore_ffi::units::sweep_topology_sweep::eval_with_values(&i.steps, i.vector, i.kind)
-            .map(|(state, values)| {
-                Output::new()
-                    .ints("state", state)
-                    .values("geometry", values)
-            })
-            .map_err(|e| HarnessError::new(e.to_string()))
     }
     fn run_rust(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
         let i: Input = c.parse()?;

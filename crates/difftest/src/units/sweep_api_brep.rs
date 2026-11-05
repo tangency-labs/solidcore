@@ -1,15 +1,15 @@
 //! Runner for unit `sweep.api_brep`: the `SM_API` B-rep sweep entry points.
 //!
-//! C++: `solidcore_ffi::units::sweep_api_brep` (upstream
-//! `source/SM_API/src/SmApiBrep.cpp`). Rust: `solidcore::sweep::api_brep`.
+//! Ported from upstream `source/SM_API/src/SmApiBrep.cpp`; checked against its golden.
+//! Rust: `solidcore::sweep::api_brep`.
 //!
-//! A case is one API call (`op` plus its arguments). Curve arguments are built the same
-//! way on both sides: the `SM_API` curve constructors (`SmApiCreateCurve`,
+//! A case is one API call (`op` plus its arguments). Curve arguments are built by the
+//! `SM_API` curve constructors (`SmApiCreateCurve`,
 //! `SmApiCreateArc`, `SmApiCreateCircle`, `SmApiCreateLineSegment`, ported in
 //! `primitive.api_curves`), or a 3D `SmHermiteCurve` (a curve without `Copy`). Faces
-//! and edges come from `SmApiCreatePlanarCircle` B-reps on both sides (fixture op
-//! `from_box_face`: one face of an `SmApiCreateBox` B-rep, plus the result's volume). Both sides
-//! produce the flat record documented in the FFI module, split into keys: `status`
+//! and edges come from `SmApiCreatePlanarCircle` B-reps (fixture op
+//! `from_box_face`: one face of an `SmApiCreateBox` B-rep, plus the result's volume). The
+//! flat record is split into keys: `status`
 //! (`0` = `SM_SUCCESS`, else the `SmStatus`: `1001` `SM_ERR`, `1007`
 //! `SM_ERR_INVALID_INPUT`; `-1` on the Rust side for an error upstream cannot produce),
 //! then on success `has`, `counts` (faces, edges, vertices) and, for the curve sweeps,
@@ -43,11 +43,13 @@ use solidcore::primitive::primitive_creation::SweepOptions;
 use solidcore::sweep::api_brep as api;
 use solidcore::topology::{Brep, EdgeId, FaceId};
 use solidcore::SolidError;
-use solidcore_ffi::units::sweep_api_brep::{self as ffi, Call, CurveSpec, SweepArgs};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The first attribute id of the attributed `FromFaces` / `FromEdges`.
+const ATTRIBUTE_BASE: u64 = 10007;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 400;
@@ -194,202 +196,6 @@ enum Inputs {
 }
 
 // ---- C++ side -----------------------------------------------------------------------
-
-fn spec(c: &CrvIn) -> CurveSpec {
-    match c {
-        CrvIn::Null => CurveSpec::Null,
-        CrvIn::Curve { points } => CurveSpec::ApiCurve {
-            points: points.clone(),
-        },
-        CrvIn::Arc {
-            center,
-            radius,
-            start_deg,
-            end_deg,
-        } => CurveSpec::ApiArc {
-            center: *center,
-            radius: *radius,
-            start_deg: *start_deg,
-            end_deg: *end_deg,
-        },
-        CrvIn::Circle { center, radius } => CurveSpec::ApiCircle {
-            center: *center,
-            radius: *radius,
-        },
-        CrvIn::Line { start, end } => CurveSpec::LineSegment {
-            start: *start,
-            end: *end,
-        },
-        CrvIn::AnalyticCircle { center, radius } => CurveSpec::AnalyticCircle {
-            center: *center,
-            radius: *radius,
-        },
-        CrvIn::Hermite { p1, v1, p2, v2 } => CurveSpec::Hermite {
-            p1: *p1,
-            v1: *v1,
-            p2: *p2,
-            v2: *v2,
-        },
-    }
-}
-
-fn specs(cs: &[CrvIn]) -> Vec<CurveSpec> {
-    cs.iter().map(spec).collect()
-}
-
-fn sweep_args(s: &SweepIn) -> SweepArgs {
-    SweepArgs {
-        path: spec(&s.path),
-        scale_reference: spec(&s.scale_reference),
-        scale_curve: spec(&s.scale_curve),
-        options: s.options,
-    }
-}
-
-fn call_of(i: &Inputs) -> Call {
-    match i {
-        Inputs::Linear {
-            curves,
-            dir,
-            dist,
-            cap,
-            ..
-        } => Call::Linear {
-            curves: specs(curves),
-            dir: *dir,
-            dist: *dist,
-            cap: *cap,
-        },
-        Inputs::Rotational {
-            curves,
-            base,
-            axis,
-            angle_deg,
-            cap,
-            ..
-        } => Call::Rotational {
-            curves: specs(curves),
-            base: *base,
-            axis: *axis,
-            angle_deg: *angle_deg,
-            cap: *cap,
-        },
-        Inputs::Draft {
-            curves,
-            height,
-            angle_deg,
-            corner,
-            caps,
-        } => Call::Draft {
-            curves: specs(curves),
-            height: *height,
-            angle_deg: *angle_deg,
-            corner: *corner,
-            caps: *caps,
-        },
-        Inputs::Pipe { radius, path, cap } => Call::Pipe {
-            radius: *radius,
-            path: spec(path),
-            cap: *cap,
-        },
-        Inputs::PlanarPath {
-            profile,
-            path,
-            move_profile,
-            caps,
-        } => Call::PlanarPath {
-            profile: specs(profile),
-            path: specs(path),
-            move_profile: *move_profile,
-            caps: *caps,
-        },
-        Inputs::CurveSweep { profile, sweep } => Call::CurveSweep {
-            profile: specs(profile),
-            args: sweep_args(sweep),
-        },
-        Inputs::FromFaces {
-            circles,
-            sweep,
-            attributed,
-        } => Call::FromFaces {
-            circles: circles.clone(),
-            args: sweep_args(sweep),
-            attributed: *attributed,
-        },
-        Inputs::FromEdges {
-            circles,
-            sweep,
-            attributed,
-        } => Call::FromEdges {
-            circles: circles.clone(),
-            args: sweep_args(sweep),
-            attributed: *attributed,
-        },
-        Inputs::FromBoxFace {
-            origin,
-            size,
-            face,
-            sweep,
-        } => Call::FromBoxFace {
-            origin: *origin,
-            size: *size,
-            face: *face,
-            args: sweep_args(sweep),
-        },
-        Inputs::Taper {
-            curves,
-            height,
-            angle_deg,
-            fillet,
-            caps,
-        } => Call::Taper {
-            curves: specs(curves),
-            height: *height,
-            angle_deg: *angle_deg,
-            fillet: *fillet,
-            caps: *caps,
-        },
-        Inputs::LinearReps {
-            curves,
-            dir,
-            dist,
-            reps,
-            cap,
-        } => Call::LinearReps {
-            curves: specs(curves),
-            dir: *dir,
-            dist: *dist,
-            reps: *reps,
-            cap: *cap,
-        },
-        Inputs::RotationalReps {
-            curves,
-            base,
-            axis,
-            angle_deg,
-            reps,
-            cap,
-        } => Call::RotationalReps {
-            curves: specs(curves),
-            base: *base,
-            axis: *axis,
-            angle_deg: *angle_deg,
-            reps: *reps,
-            cap: *cap,
-        },
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let call = call_of(i);
-    let flat = if observes(i) {
-        ffi::observe_linear(&call)
-    } else {
-        ffi::run(&call)
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
-}
 
 // ---- output splitting ---------------------------------------------------------------
 
@@ -604,21 +410,6 @@ fn success(s: &Swept) -> Output {
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    // an input the FFI refuses is a harness error on both sides: the curve sweeps'
-    // path polygonization does not return upstream for a huge curved path (HANG-5 /
-    // HANG-43, nightly fuzz00293), so the Rust port does not run it either
-    if let Inputs::CurveSweep { sweep, .. }
-    | Inputs::FromFaces { sweep, .. }
-    | Inputs::FromEdges { sweep, .. }
-    | Inputs::FromBoxFace { sweep, .. } = i
-    {
-        ffi::check_path_extent(&spec(&sweep.path)).map_err(|e| harness(e.to_string()))?;
-    }
-    // nor more repetitions than the FFI runs (nightly fuzz00132: 2^31 linear repetitions
-    // ran past the fuzz timeout on the Rust side alone)
-    if let Inputs::LinearReps { reps, .. } | Inputs::RotationalReps { reps, .. } = i {
-        ffi::check_repetitions(*reps).map_err(|e| harness(e.to_string()))?;
-    }
     let mut k = Kernel::default();
     let v = |p: &P3| Vec3::new(p[0], p[1], p[2]);
     // A successful call is compared by its status, presence and counts; a path that
@@ -885,7 +676,7 @@ fn tag_disc(b: &mut Brep, disc: u64, behavior: Behavior) -> solidcore::Result<()
                 .map(|(i, e)| (EntityRef::Edge(e), 1, i)),
         );
     for (entity, kind, index) in tagged {
-        let id = ffi::ATTRIBUTE_BASE + 1000 * disc + 500 * kind + index as u64;
+        let id = ATTRIBUTE_BASE + 1000 * disc + 500 * kind + index as u64;
         b.add_attribute(entity, Attribute::long(id, id as i64, behavior))?;
     }
     Ok(())
@@ -1503,10 +1294,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1542,22 +1329,13 @@ mod tests {
         .unwrap()
     }
 
-    /// HANG-5 / HANG-43: the C++ path polygonization never returns for a path point of
-    /// `1e300`; both sides refuse it with the same message. The path at `1e7` (inside
-    /// the bound) still runs on both sides and agrees.
+    /// HANG-5 / HANG-43: upstream's path polygonization never returns for a path point
+    /// of `1e300`. The port returns a record for it, as for the path at `1e7`.
     #[test]
-    fn huge_curve_sweep_path_is_refused_on_both_sides() {
-        let i = from_faces(1e300);
-        let c = cpp(&i).unwrap_err().to_string();
-        let r = rust(&i).unwrap_err().to_string();
-        assert!(c.contains("HANG-5"), "{c}");
-        assert_eq!(c, r);
-
-        let i = from_faces(1e7);
-        let (c, r) = (cpp(&i).unwrap(), rust(&i).unwrap());
+    fn huge_curve_sweep_path_returns() {
+        let r = rust(&from_faces(1e7)).unwrap();
         assert!(r.deferred.is_none(), "{:?}", r.deferred);
-        let d = crate::compare(&c, &r, Runner.abs_floors());
-        assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
+        rust(&from_faces(1e300)).unwrap();
     }
 
     /// The nightly fuzz00132 input (run 41190675541): two circles swept `reps` times,
@@ -1582,26 +1360,13 @@ mod tests {
         serde_json::from_value(v).unwrap()
     }
 
-    /// The FFI runs at most `2^20` repetitions; the Rust side refuses the same counts
-    /// with the same message instead of running them (fuzz00132: `2^31` linear
-    /// repetitions took the Rust side past the fuzz timeout).
+    /// A few repetitions of both repeated sweeps run to a record.
     #[test]
-    fn repetitions_past_the_ffi_bound_are_refused_on_both_sides() {
+    fn repeated_sweeps_run() {
         for op in ["linear_reps", "rotational_reps"] {
-            for reps in [ffi::MAX_REPETITIONS + 1, 1 << 31] {
-                let i = repeated(op, reps);
-                let c = cpp(&i).unwrap_err().to_string();
-                let r = rust(&i).unwrap_err().to_string();
-                assert!(c.contains("more than 2^20 repetitions"), "{c}");
-                assert_eq!(c, r, "{op} {reps}");
-            }
-            let i = repeated(op, 3);
-            let (c, r) = (cpp(&i).unwrap(), rust(&i).unwrap());
+            let r = rust(&repeated(op, 3)).unwrap();
             assert!(r.deferred.is_none(), "{:?}", r.deferred);
-            let d = crate::compare(&c, &r, Runner.abs_floors());
-            assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
         }
-        assert!(ffi::check_repetitions(ffi::MAX_REPETITIONS).is_ok());
     }
 
     /// Golden stream executed against the pre-observer runner at 11595407bedc.
@@ -1693,7 +1458,7 @@ mod tests {
     }
 
     #[test]
-    fn linear_geometry_native_and_analytic_controls() {
+    fn linear_geometry_and_analytic_controls() {
         let data: Value = serde_json::from_str(include_str!(
             "../../../../fixtures/sweep.api_brep/linear_geometry.json"
         ))
@@ -1702,9 +1467,7 @@ mod tests {
         for case in data["cases"].as_array().expect("cases") {
             let i: Inputs = serde_json::from_value(case["inputs"].clone()).expect("input");
             let distance = case["inputs"]["dist"].as_f64().expect("distance");
-            let native = cpp(&i).expect("native");
             let observed = rust(&i).expect("rust");
-            assert!(crate::compare::compare(&native, &observed, &[]).pass());
             assert_eq!(observed.values["status"], vec![0.0]);
             assert_eq!(observed.values["has"], vec![1.0]);
             assert_eq!(observed.values["counts"], vec![6.0, 12.0, 8.0]);
@@ -1739,7 +1502,7 @@ mod tests {
                 }
             }
             assert_eq!(expected_edges.len(), 12);
-            for output in [&native, &observed] {
+            for output in [&observed] {
                 let mut seen = vec![false; 12];
                 for samples in output.values["linear_edge_samples"].as_chunks::<9>().0 {
                     let index = expected_edges
@@ -1766,13 +1529,13 @@ mod tests {
                 let mut changed = observed.clone();
                 changed.values.get_mut(key).expect("key")[0] *= 1.0 + 1e-8;
                 assert!(
-                    !crate::compare::compare(&native, &changed, &[]).pass(),
+                    !crate::compare::compare(&observed, &changed, &[]).pass(),
                     "{key}"
                 );
             }
             let mut changed = observed.clone();
             changed.ints.get_mut("linear_manifold").expect("manifold")[1] ^= 1;
-            assert!(!crate::compare::compare(&native, &changed, &[]).pass());
+            assert!(!crate::compare::compare(&observed, &changed, &[]).pass());
             let mut legacy_input = i.clone();
             if let Inputs::Linear {
                 observe_geometry, ..
@@ -1781,27 +1544,9 @@ mod tests {
                 *observe_geometry = false;
             }
             let legacy = rust(&legacy_input).expect("legacy");
-            let legacy_native = cpp(&legacy_input).expect("legacy native");
-            assert!(crate::compare::compare(&legacy_native, &legacy, &[]).pass());
-            let legacy_flat = ffi::run(&call_of(&legacy_input)).expect("legacy record");
-            let observed_flat = ffi::observe_linear(&call_of(&i)).expect("observed record");
-            assert_eq!(
-                legacy_flat.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                observed_flat[..legacy_flat.len()]
-                    .iter()
-                    .map(|v| v.to_bits())
-                    .collect::<Vec<_>>()
-            );
             for (key, value) in &legacy.values {
                 assert_eq!(observed.values.get(key), Some(value));
-                assert_eq!(native.values.get(key), legacy_native.values.get(key));
             }
-            eprintln!(
-                "linear distance={distance}: native counts={:?} manifold={:?} volume={:?}; 36 edge evaluations; four mutations detected; legacy prefix bit-identical",
-                native.values["counts"],
-                native.ints["linear_manifold"],
-                native.values["linear_volume"]
-            );
             observations.push(observed);
         }
         assert_eq!(observations.len(), 2);

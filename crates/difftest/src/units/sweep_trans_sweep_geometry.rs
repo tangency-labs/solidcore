@@ -1,4 +1,5 @@
-//! Native differential coverage of translational sweep geometry and boundary roles.
+//! Runner for unit `sweep.trans_sweep_geometry`: translational sweep geometry and
+//! boundary roles, ported from upstream `SmTransSweepGeometry`; checked against its golden.
 // Fixed wire layout / test geometry indices are validated before use.
 #![allow(clippy::indexing_slicing)]
 
@@ -32,9 +33,8 @@ use solidcore::topology::edge::NotifyEnv;
 use solidcore::topology::topology_traverser::Marks;
 use solidcore::topology::{Brep, Edgeuse, EdgeuseOwner, FaceId, Vertexuse, VertexuseOwner};
 use solidcore::{EntityRef, Result, SolidError};
-use solidcore_ffi::units::sweep_trans_sweep_geometry as ffi;
 
-/// Translational sweep differential runner.
+/// `sweep.trans_sweep_geometry` runner.
 pub struct Runner;
 #[derive(Clone, Serialize, Deserialize)]
 struct Input {
@@ -84,24 +84,6 @@ fn status(e: &SolidError) -> f64 {
         SolidError::Nlib { .. } => 1001.,
         _ => -1.,
     }
-}
-fn flat(i: &Input) -> Vec<f64> {
-    let mut o = vec![f64::from(i.op)];
-    o.extend(i.sweep);
-    o.extend(i.point);
-    o.extend(i.tolerances);
-    o.extend([
-        i.epsilon,
-        f64::from(i.analytics),
-        f64::from(i.kind),
-        i.points.len() as f64,
-        i.interval[0],
-        i.interval[1],
-        f64::from(i.swap),
-        f64::from(i.face_kind),
-    ]);
-    o.extend(i.points.iter().flatten());
-    o
 }
 fn build(k: &Kernel, i: &Input) -> Result<Curve> {
     let first = i
@@ -393,18 +375,6 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "sweep.trans_sweep_geometry"
-    }
-    fn run_cpp(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
-        let i: Input = c.parse()?;
-        match ffi::eval(&flat(&i)) {
-            Ok(v) => Ok(Output::new().values("geometry", v)),
-            Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => {
-                Ok(Output::rejected(
-                    "native fixture constructor rejected the geometry before the sweep",
-                ))
-            }
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        }
     }
     fn run_rust(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
         let i: Input = c.parse()?;
