@@ -1,9 +1,9 @@
-//! Runner for unit `surface.plane_p2`. C++: `solidcore_ffi::units::surface_plane_p2`
-//! (`harness/cpp/shim/surface_plane_p2.cpp`). Rust: `solidcore::surface::plane::p2`
+//! Runner for unit `surface.plane_p2`. Ported from upstream `source/SMLib/src/SmPlane.cpp`;
+//! checked against its golden. Rust: `solidcore::surface::plane::p2`
 //! (methods of [`Plane`], and [`Surface::global_surface_intersect`] for the plane kind).
 //!
-//! Each case is one op on freshly built objects; both sides produce the record
-//! documented in the FFI module (`rec`), compared value by value. Planes are built with
+//! Each case is one op on freshly built objects; the Rust side produces a record (`rec`),
+//! compared value by value. Planes are built with
 //! or without their NURB (upstream's `m_pNurb`, which `IntersectWithPlane`'s parallel
 //! case tests). Curves are real `SmLine`, `SmEllipse`, `SmCircle` and B-spline curves.
 
@@ -32,7 +32,6 @@ use solidcore::surface::surface::p2::SurfaceIntersection;
 use solidcore::surface::surface::Surface;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_plane_p2 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -229,86 +228,7 @@ enum Inputs {
     ReadDb(DbIn),
 }
 
-// ---- C++ side -------------------------------------------------------------------------
-
-fn ffi_plane(p: &PlaneIn) -> ffi::PlaneIn {
-    let make = match p.make.clone() {
-        MakeIn::Bounded {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::Make::Bounded {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        },
-        MakeIn::Normal { o, n } => ffi::Make::Normal { o, n },
-        MakeIn::Canonical { o, x, y } => ffi::Make::Canonical { o, x, y },
-    };
-    ffi::PlaneIn {
-        make,
-        nurb: p.nurb,
-    }
-}
-
-fn ffi_surface(s: &SurfaceIn) -> ffi::SurfaceData {
-    let net = s
-        .net
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            r.iter()
-                .enumerate()
-                .map(|(j, c)| {
-                    let w = s
-                        .w
-                        .as_ref()
-                        .and_then(|w| w.get(i).and_then(|r| r.get(j)).copied())
-                        .unwrap_or(NOW);
-                    [c[0], c[1], c[2], w]
-                })
-                .collect()
-        })
-        .collect();
-    ffi::SurfaceData {
-        p: s.p,
-        q: s.q,
-        net,
-        u: s.u.clone(),
-        v: s.v.clone(),
-    }
-}
-
-fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c.clone() {
-        CurveIn::Segment { a, b } => ffi::CurveIn::Segment(a, b),
-        CurveIn::BSpline {
-            dim,
-            p,
-            cpts,
-            w,
-            knots,
-        } => ffi::CurveIn::BSpline(ffi::CurveData {
-            dim,
-            p,
-            cpts: cpts
-                .iter()
-                .enumerate()
-                .map(|(i, q)| {
-                    let wi = w.as_ref().and_then(|w| w.get(i).copied()).unwrap_or(NOW);
-                    [q[0], q[1], q[2], wi]
-                })
-                .collect(),
-            knots,
-        }),
-        CurveIn::Ellipse { c, x, y, dom, r } => ffi::CurveIn::Ellipse { c, x, y, dom, r },
-        CurveIn::Circle { c, x, y, dom, r } => ffi::CurveIn::Circle { c, x, y, dom, r },
-    }
-}
+// ---- records --------------------------------------------------------------------------
 
 /// The bytes of a database stream.
 fn db_bytes(d: &DbIn) -> Result<Vec<u8>, HarnessError> {
@@ -400,110 +320,8 @@ fn db_bytes(d: &DbIn) -> Result<Vec<u8>, HarnessError> {
     Ok(b)
 }
 
-fn ffi_op(i: &Inputs) -> Result<ffi::Op, HarnessError> {
-    Ok(match i {
-        Inputs::Offset { a, dist } => ffi::Op::Offset {
-            a: ffi_plane(a),
-            dist: *dist,
-        },
-        Inputs::Transform { a, frame, scale } => ffi::Op::Transform {
-            a: ffi_plane(a),
-            frame: *frame,
-            scale: *scale,
-        },
-        Inputs::TrimDomain { a, dom } => ffi::Op::TrimDomain {
-            a: ffi_plane(a),
-            dom: *dom,
-        },
-        Inputs::IsNurbPlane { s, scale } => ffi::Op::IsNurbPlane {
-            s: ffi_surface(s),
-            scale: *scale,
-        },
-        Inputs::Intersect {
-            global,
-            a,
-            da,
-            b,
-            db,
-            tol,
-        } => ffi::Op::Intersect {
-            global: *global,
-            a: ffi_plane(a),
-            da: *da,
-            b: match b {
-                OtherIn::Same => ffi::OtherIn::Same,
-                OtherIn::Plane { plane } => ffi::OtherIn::Plane(ffi_plane(plane)),
-                OtherIn::BSpline { surface } => ffi::OtherIn::BSpline(ffi_surface(surface)),
-                OtherIn::Cone {
-                    frame,
-                    cylinder,
-                    bot,
-                    top,
-                    height,
-                    natural,
-                } => ffi::OtherIn::Cone {
-                    frame: *frame,
-                    cylinder: *cylinder,
-                    bot: *bot,
-                    top: *top,
-                    height: *height,
-                    natural: *natural,
-                },
-            },
-            db: *db,
-            tol: *tol,
-        },
-        Inputs::TrimCurve {
-            a,
-            dom,
-            curve,
-            tol,
-        } => ffi::Op::TrimCurve {
-            a: ffi_plane(a),
-            dom: *dom,
-            curve: ffi_curve(curve),
-            tol: *tol,
-        },
-        Inputs::Line { a, dom, p, tol } => ffi::Op::Line {
-            a: ffi_plane(a),
-            dom: *dom,
-            p: *p,
-            tol: *tol,
-        },
-        Inputs::Ellipse {
-            a,
-            dom,
-            c,
-            r,
-            axes,
-            ivl,
-            tol,
-        } => ffi::Op::Ellipse {
-            a: ffi_plane(a),
-            dom: *dom,
-            c: *c,
-            r: *r,
-            axes: *axes,
-            ivl: *ivl,
-            tol: *tol,
-        },
-        Inputs::ReadDb(d) => ffi::Op::ReadDb {
-            binary: d.binary,
-            version: d.version,
-            bytes: db_bytes(d)?,
-        },
-    })
-}
-
 fn to_output(rec: Vec<f64>) -> Output {
     Output::new().values("rec", rec)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_op(i)?) {
-        Ok(rec) => Ok(to_output(rec)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side ------------------------------------------------------------------------
@@ -1488,13 +1306,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            if ffi_op(&i).is_ok_and(|op| ffi::encode(&op).is_ok()) {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1503,10 +1315,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

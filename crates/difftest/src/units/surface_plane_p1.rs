@@ -1,11 +1,11 @@
 //! Runner for unit `surface.plane_p1`: `SmPlane`, part 1.
 //!
-//! C++: `solidcore_ffi::units::surface_plane_p1` (upstream `source/SMLib/src/SmPlane.cpp`
-//! on `SmPlane` objects). Rust: `solidcore::surface::plane`.
+//! Ported from upstream `source/SMLib/src/SmPlane.cpp`; checked against its golden.
+//! Rust: `solidcore::surface::plane`.
 //!
 //! A case is a plane construction (`make`) and a program of operations (`ops`) run on
-//! that plane in order; both sides produce the record documented in the ffi module
-//! (statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
+//! that plane in order; the Rust side produces a record of each op's code, status and
+//! outputs (statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
 //! `InvalidInput`, `-1` for a Rust error upstream cannot produce), reported as the
 //! values `rec`. A case whose Rust side reaches an unported unit is deferred as a
 //! whole.
@@ -37,7 +37,6 @@ use solidcore::surface::plane::p1::is_grazing_intersection;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_plane_p1::{self as ffi};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -231,208 +230,12 @@ struct Inputs {
     ops: Vec<OpIn>,
 }
 
-// ---- C++ side ---------------------------------------------------------------------
-
-fn ffi_make(m: &MakeIn) -> ffi::Make {
-    match m {
-        MakeIn::Bounded {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::Make::Bounded {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        MakeIn::Normal { o, n } => ffi::Make::Normal { o: *o, n: *n },
-        MakeIn::Canonical { o, x, y } => ffi::Make::Canonical {
-            o: *o,
-            x: *x,
-            y: *y,
-        },
-    }
-}
-
-fn ffi_dom(d: DomIn) -> ffi::Dom {
-    match d {
-        DomIn::Step => ffi::Dom::Step,
-        DomIn::Natural => ffi::Dom::Natural,
-        DomIn::Explicit(v) => ffi::Dom::Explicit(v),
-    }
-}
-
 fn weight(w: Option<f64>) -> f64 {
     w.unwrap_or(NOW)
 }
 
-fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c {
-        CurveIn::Segment { a, b } => ffi::CurveIn::Segment(*a, *b),
-        CurveIn::BSpline(b) => ffi::CurveIn::BSpline(ffi::CurveData {
-            dim: b.dim,
-            p: b.p,
-            cpts: b
-                .cpts
-                .iter()
-                .map(|c| {
-                    [
-                        c[0].unwrap_or(f64::NAN),
-                        c[1].unwrap_or(f64::NAN),
-                        c[2].unwrap_or(f64::NAN),
-                        weight(c[3]),
-                    ]
-                })
-                .collect(),
-            knots: b.knots.clone(),
-        }),
-    }
-}
-
-fn ffi_surface(s: &SurfaceIn) -> ffi::SurfaceIn {
-    match s {
-        SurfaceIn::Plane { make } => ffi::SurfaceIn::Plane(Box::new(ffi_make(make))),
-        SurfaceIn::BSpline(b) => ffi::SurfaceIn::BSpline(ffi::SurfaceData {
-            p: b.p,
-            q: b.q,
-            net: b
-                .net
-                .iter()
-                .map(|r| {
-                    r.iter()
-                        .map(|c| {
-                            [
-                                c[0].unwrap_or(f64::NAN),
-                                c[1].unwrap_or(f64::NAN),
-                                c[2].unwrap_or(f64::NAN),
-                                weight(c[3]),
-                            ]
-                        })
-                        .collect()
-                })
-                .collect(),
-            u: b.u.clone(),
-            v: b.v.clone(),
-        }),
-    }
-}
-
-fn ffi_op(o: &OpIn) -> ffi::Op {
-    match o {
-        OpIn::State => ffi::Op::State,
-        OpIn::Evaluate { uv, hu, hv, upper } => ffi::Op::Evaluate {
-            uv: *uv,
-            hu: *hu,
-            hv: *hv,
-            upper: *upper,
-        },
-        OpIn::EvalPoint { uv } => ffi::Op::EvalPoint(*uv),
-        OpIn::EvalFast { uv } => ffi::Op::EvalFast(*uv),
-        OpIn::Normal { uv } => ffi::Op::Normal(*uv),
-        OpIn::Project { p } => ffi::Op::Project(*p),
-        OpIn::Queries { uv } => ffi::Op::Queries(*uv),
-        OpIn::KindOf { t } => ffi::Op::KindOf(*t),
-        OpIn::Adjust { dom } => ffi::Op::Adjust(ffi_dom(*dom)),
-        OpIn::MakeNurb => ffi::Op::MakeNurb,
-        OpIn::Reparam { dom } => ffi::Op::Reparam(ffi_dom(*dom)),
-        OpIn::Toggle => ffi::Op::Toggle,
-        OpIn::Rebuild => ffi::Op::Rebuild,
-        OpIn::Drop {
-            dom,
-            sop,
-            p,
-            tol,
-            target,
-        } => ffi::Op::Drop {
-            dom: ffi_dom(*dom),
-            op: *sop,
-            p: *p,
-            tol: *tol,
-            target: *target,
-        },
-        OpIn::Line {
-            dom,
-            p,
-            v,
-            ivl,
-            ray,
-            tol,
-        } => ffi::Op::Line {
-            dom: ffi_dom(*dom),
-            p: *p,
-            v: *v,
-            ivl: *ivl,
-            ray: *ray,
-            tol: *tol,
-        },
-        OpIn::TrimLine { dom, a, b, tol } => ffi::Op::TrimLine {
-            dom: ffi_dom(*dom),
-            a: *a,
-            b: *b,
-            tol: *tol,
-        },
-        OpIn::Iso {
-            v_dir,
-            iso,
-            domain,
-            want_uv,
-        } => ffi::Op::Iso {
-            v_dir: *v_dir,
-            iso: *iso,
-            domain: *domain,
-            want_uv: *want_uv,
-        },
-        OpIn::DropCurve {
-            dom,
-            curve,
-            ivl,
-            tol,
-            keep_all,
-            creating,
-        } => ffi::Op::DropCurve {
-            dom: ffi_dom(*dom),
-            curve: ffi_curve(curve),
-            ivl: *ivl,
-            tol: *tol,
-            keep_all: *keep_all,
-            creating: *creating,
-        },
-        OpIn::Coincidence { other, tol, whole } => ffi::Op::Coincidence {
-            other: ffi_surface(other),
-            tol: *tol,
-            whole: *whole,
-        },
-        OpIn::Eq { other } => ffi::Op::Eq(Box::new(ffi_make(other))),
-        OpIn::Copy => ffi::Op::Copy,
-        OpIn::Grazing { curve, t, line, s } => ffi::Op::Grazing {
-            curve: ffi_curve(curve),
-            t: *t,
-            line: *line,
-            s: *s,
-        },
-        OpIn::Inherited { v } => ffi::Op::Inherited(*v),
-        OpIn::Reverse { v_dir } => ffi::Op::Reverse(*v_dir),
-        OpIn::Swap => ffi::Op::Swap,
-    }
-}
-
-fn ffi_program(i: &Inputs) -> (ffi::Make, Vec<ffi::Op>) {
-    (ffi_make(&i.make), i.ops.iter().map(ffi_op).collect())
-}
-
 fn to_output(rec: Vec<f64>) -> Output {
     Output::new().values("rec", rec)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (m, ops) = ffi_program(i);
-    match ffi::run(&m, &ops) {
-        Ok(rec) => Ok(to_output(rec)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -964,17 +767,36 @@ fn rust_op(k: &Kernel, op: &OpIn, a: &mut Plane, o: &mut Vec<f64>) -> Result<(),
     Ok(())
 }
 
-fn op_code(op: &OpIn) -> Result<f64, HarnessError> {
-    let prog = ffi::encode(
-        &ffi::Make::Normal {
-            o: [0.0; 3],
-            n: [0.0, 0.0, 1.0],
-        },
-        &[ffi_op(op)],
-    )
-    .map_err(|e| harness(e.to_string()))?;
-    // `1 o n` (7 values), `1` (op count), then the op code
-    prog.get(8).copied().ok_or_else(|| harness("empty op"))
+/// The op's code in the record.
+fn op_code(op: &OpIn) -> f64 {
+    let code: u8 = match op {
+        OpIn::State => 1,
+        OpIn::Evaluate { .. } => 2,
+        OpIn::EvalPoint { .. } => 3,
+        OpIn::EvalFast { .. } => 4,
+        OpIn::Normal { .. } => 5,
+        OpIn::Project { .. } => 6,
+        OpIn::Queries { .. } => 7,
+        OpIn::KindOf { .. } => 8,
+        OpIn::Adjust { .. } => 9,
+        OpIn::MakeNurb => 10,
+        OpIn::Reparam { .. } => 11,
+        OpIn::Toggle => 12,
+        OpIn::Rebuild => 13,
+        OpIn::Drop { .. } => 14,
+        OpIn::Line { .. } => 15,
+        OpIn::TrimLine { .. } => 16,
+        OpIn::Iso { .. } => 17,
+        OpIn::DropCurve { .. } => 18,
+        OpIn::Coincidence { .. } => 19,
+        OpIn::Eq { .. } => 20,
+        OpIn::Copy => 21,
+        OpIn::Grazing { .. } => 22,
+        OpIn::Inherited { .. } => 23,
+        OpIn::Reverse { .. } => 24,
+        OpIn::Swap => 25,
+    };
+    f64::from(code)
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
@@ -996,7 +818,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
     };
     for op in &i.ops {
-        o.push(op_code(op)?);
+        o.push(op_code(op));
         match rust_op(&k, op, &mut a, &mut o) {
             Ok(()) => {}
             Err(Fail::Deferred(d)) => return Ok(*d),
@@ -1515,14 +1337,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let (m, ops) = ffi_program(&i);
-            if ffi::encode(&m, &ops).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1531,10 +1346,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

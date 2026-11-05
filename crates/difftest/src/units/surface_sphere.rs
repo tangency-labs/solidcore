@@ -6,12 +6,13 @@
 //! `GlobalSurfaceIntersect`, `IsNurbSurfaceSphere`, and the inherited
 //! `SmSurfOfRevolution::TrimWithDomain`).
 //!
-//! C++: `solidcore_ffi::units::surface_sphere` (upstream `source/SMLib/src/SmSphere.cpp`).
-//! Rust: `solidcore::surface::sphere`.
+//! Ported from upstream `source/SMLib/src/SmSphere.cpp`; checked against its golden.
+//! Rust: `solidcore::surface::sphere`. `ffi_sphere` and `const_make_cpp` stay as the
+//! native side of unit `surface.surface_p2`'s const-make cases until that unit is checked
+//! against its golden.
 //!
 //! A case is `sphere` (placement, radius, build mode and options) plus `op` and its
-//! parameters. Both sides produce the same flat record (layout in the FFI module docs),
-//! split into `build` (the construction status), `status` (the op status) and `out` (the
+//! parameters. The Rust side produces a flat record, split into `build` (the construction status), `status` (the op status) and `out` (the
 //! rest). Statuses are `0` (`SM_SUCCESS`) or the `SmStatus`; `-1` on the Rust side for an
 //! error upstream cannot produce.
 //!
@@ -259,148 +260,6 @@ fn ffi_sphere(s: &SphereIn) -> ffi::SphereIn {
             r: c.r,
         }),
     }
-}
-
-fn ffi_dom(d: DomIn) -> ffi::Dom {
-    match d {
-        DomIn::Natural => ffi::Dom::Natural,
-        DomIn::Explicit { d } => ffi::Dom::Explicit(d),
-    }
-}
-
-fn ffi_args(a: &Args) -> ffi::IsectArgs {
-    ffi::IsectArgs {
-        dom: ffi_dom(a.dom),
-        other_dom: ffi_dom(a.other_dom),
-        tol: a.tol,
-    }
-}
-
-fn ffi_plane(p: &PlaneIn) -> ffi::Plane {
-    match p {
-        PlaneIn::Bounded {
-            origin,
-            x,
-            y,
-            scale,
-            dom,
-        } => ffi::Plane::Bounded {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            dom: *dom,
-        },
-        PlaneIn::Infinite { origin, normal } => ffi::Plane::Infinite {
-            origin: *origin,
-            normal: *normal,
-        },
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = match &i.op {
-        OpIn::Build {} => ffi::Op::Build,
-        OpIn::EvalStep { u, v, k, point } => ffi::Op::EvalStep {
-            u: *u,
-            v: *v,
-            k: *k,
-            point: *point,
-        },
-        OpIn::ToStep { u, v } => ffi::Op::ToStep { u: *u, v: *v },
-        OpIn::ToNurbs { u, v } => ffi::Op::ToNurbs { u: *u, v: *v },
-        OpIn::Normal { u, v } => ffi::Op::Normal { u: *u, v: *v },
-        OpIn::Iso { param, iso, dom } => ffi::Op::Iso {
-            param: *param,
-            iso: *iso,
-            dom: *dom,
-        },
-        OpIn::Offset { dist, tol, rebuild } => ffi::Op::Offset {
-            dist: *dist,
-            tol: *tol,
-            rebuild: *rebuild,
-        },
-        OpIn::Rebuild {} => ffi::Op::Rebuild,
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => ffi::Op::Transform {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
-        },
-        OpIn::Eq { other } => ffi::Op::Eq {
-            other: Box::new(ffi_sphere(other)),
-        },
-        OpIn::Copy {} => ffi::Op::Copy,
-        OpIn::Closed { param, dom } => ffi::Op::Closed {
-            param: *param,
-            dom: ffi_dom(*dom),
-        },
-        OpIn::StepInv {
-            dom,
-            point,
-            tol,
-            guess,
-        } => ffi::Op::StepInv {
-            dom: *dom,
-            point: *point,
-            tol: *tol,
-            guess: *guess,
-        },
-        OpIn::Trim { c, x, y, d, tol } => ffi::Op::Trim {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            tol: *tol,
-        },
-        OpIn::IsectPlane { plane, args } => ffi::Op::IsectPlane {
-            plane: ffi_plane(plane),
-            args: ffi_args(args),
-        },
-        OpIn::IsectSphere { other, args } => ffi::Op::IsectSphere {
-            other: Box::new(ffi_sphere(other)),
-            args: ffi_args(args),
-        },
-        OpIn::IsectCone { cone, args } => ffi::Op::IsectCone {
-            cone: ffi::ConeIn {
-                origin: cone.origin,
-                x: cone.x,
-                y: cone.y,
-                r0: cone.r0,
-                r1: cone.r1,
-                h: cone.h,
-            },
-            args: ffi_args(args),
-        },
-        OpIn::Global { plane, args } => ffi::Op::Global {
-            plane: ffi_plane(plane),
-            args: ffi_args(args),
-        },
-        OpIn::IsNurb {
-            scale,
-            net_scale,
-            perturb,
-        } => ffi::Op::IsNurb {
-            scale: *scale,
-            net_scale: *net_scale,
-            perturb: perturb
-                .iter()
-                .map(|p| ffi::Perturb {
-                    i: p.i,
-                    j: p.j,
-                    d: p.d,
-                })
-                .collect(),
-        },
-        OpIn::TrimDomain { dom } => ffi::Op::TrimDomain { dom: *dom },
-    };
-    let flat = ffi::sphere_op(&ffi_sphere(&i.sphere), &op).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 /// Splits a record into `build`, `status` and `out`.
@@ -1566,10 +1425,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1666,7 +1521,7 @@ mod tests {
         }
     }
 
-    /// Prints the generated case of `SPHERE_SEED` and both sides' records:
+    /// Prints the generated case of `SPHERE_SEED` and its Rust record:
     /// `SPHERE_SEED=<seed> cargo test --profile difftest -p difftest --features cpp --lib
     /// sphere_dump_case -- --ignored --nocapture`.
     #[test]
@@ -1681,7 +1536,6 @@ mod tests {
         eprintln!("{v}");
         let i: Inputs = serde_json::from_value(v).expect("inputs");
         eprintln!("rust: {:?}", rust(&i).expect("rust").values);
-        eprintln!("cpp: {:?}", cpp(&i).expect("cpp").values);
     }
 
     /// The generators reach a successful construction and a successful run of every op
