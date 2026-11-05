@@ -1806,7 +1806,7 @@ impl Curve {
     /// end is evaluated in its own knot span (upstream: the span above), the
     /// integral's steps are accepted on the quadrature estimate
     /// ([`crate::mass::integrator::integrate_opt_in`]) down to the rounding of the
-    /// computed speed ([`BSplineCurve::speed_rounding_bound`]), and a span whose control
+    /// computed speed for the kinds with control points ([`BSplineCurve::speed_rounding_bound`]), and a span whose control
     /// points are one point has length 0 exactly ([`BSplineCurve::is_point_on`]).
     ///
     /// # Errors
@@ -1887,9 +1887,9 @@ impl Curve {
         let span_accuracy = desired_accuracy / span_count as f64;
 
         let bsp = cache.curve();
-        let nurb = bsp
-            .b_spline_base()
-            .ok_or_else(|| SolidError::sm_err("curve::length"))?;
+        // (a kind with control points; a Hermite curve tessellates without them, and its
+        // speed's rounding is not bounded here)
+        let nurb = bsp.b_spline_base();
         for i in 0..span_count {
             let bez_elem = cache.span(i)?;
             let (p1, p2, seg_ivl) = bez_elem.aux.ends_on(k, bsp)?;
@@ -1902,9 +1902,11 @@ impl Curve {
             }
 
             // a span whose control points are one point is that point: length 0, exactly
-            if nurb.is_point_on(&seg_ivl)? {
-                continue;
-            }
+            let rounding = match nurb {
+                Some(nurb) if nurb.is_point_on(&seg_ivl)? => continue,
+                Some(nurb) => Some(nurb.speed_rounding_bound(&seg_ivl)?),
+                None => None,
+            };
 
             // Greater than degree 1 if make it to here
             // Do an integration to get the length of the
@@ -1915,7 +1917,7 @@ impl Curve {
                 seg_ivl.min(),
                 seg_ivl.max(),
                 span_accuracy,
-                nurb.speed_rounding_bound(&seg_ivl)?,
+                rounding,
                 |t| {
                     // The span's end (a knot) is evaluated in the span's own knot span
                     // (`bFromLeft = FALSE`, the span below), every other t as upstream

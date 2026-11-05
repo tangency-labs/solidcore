@@ -70,9 +70,9 @@ pub struct OdeOptions<'a> {
     /// the step is accepted on the larger.
     pub quadrature: bool,
     /// Optional bounds, one per component, on the absolute rounding error of each
-    /// derivative sample (the evaluator's, from its data); `None` reads as zero. Each
-    /// step's error scale is floored at the rounding of its error estimates
-    /// ([`estimate_rounding`]).
+    /// derivative sample (the evaluator's, from its data). With them each step's error
+    /// scale is floored at the rounding of its error estimates ([`estimate_rounding`]);
+    /// `None` (the rounding is not known) leaves the scale as upstream's.
     pub rounding: Option<&'a [f64]>,
 }
 
@@ -594,9 +594,9 @@ fn estimate_rounding(
 }
 
 /// The floor of component `i`'s error scale for an estimate of weights `weights`:
-/// [`estimate_rounding`] over `accuracy` (without sample rounding bounds `delta` is zero
-/// and only the relative rounding counts); zero at a non-positive accuracy, which the
-/// step refuses as unachievable.
+/// [`estimate_rounding`] over `accuracy`; zero without sample rounding bounds (the
+/// integrand's rounding is then not known, and the step control is upstream's) and at a
+/// non-positive accuracy, which the step refuses as unachievable.
 fn rounding_floor(
     weights: [f64; 6],
     dydx: &[f64],
@@ -606,14 +606,13 @@ fn rounding_floor(
     s: &CashKarpScratch,
     i: usize,
 ) -> Result<f64> {
+    let Some(rounding) = rounding else {
+        return Ok(0.0);
+    };
     if accuracy <= 0.0 {
         return Ok(0.0);
     }
-    let delta = match rounding {
-        Some(rounding) => at(rounding, i)?,
-        None => 0.0,
-    };
-    Ok(estimate_rounding(weights, dydx, h, delta, s, i)? / accuracy)
+    Ok(estimate_rounding(weights, dydx, h, at(rounding, i)?, s, i)? / accuracy)
 }
 
 /// The weights of the fifth divided difference on the Cash–Karp nodes `0, 1/5, 3/10, 3/5,
@@ -705,18 +704,19 @@ pub fn integrate_with_kernel<F>(
 where
     F: FnMut(f64) -> Result<f64>,
 {
-    integrate_rounded_with_kernel(k, a, b, accuracy, 0.0, evaluate)
+    integrate_rounded_with_kernel(k, a, b, accuracy, None, evaluate)
 }
 
 /// [`integrate_with_kernel`] for an integrand whose samples are each within `rounding`
-/// of its exact value ([`OdeOptions::rounding`]): a step is accepted at its estimates'
-/// rounding when the accuracy asks for less than the integrand can resolve.
+/// of its exact value, when that is known ([`OdeOptions::rounding`]): a step is accepted
+/// at its estimates' rounding when the accuracy asks for less than the integrand can
+/// resolve.
 pub fn integrate_rounded_with_kernel<F>(
     k: &Kernel,
     a: f64,
     b: f64,
     accuracy: f64,
-    rounding: f64,
+    rounding: Option<f64>,
     mut evaluate: F,
 ) -> Result<f64>
 where
@@ -763,15 +763,15 @@ pub fn integrate_opt_in<F>(
 where
     F: FnMut(f64) -> Result<f64>,
 {
-    integrate_scalar(a, b, accuracy, 0.0, propagate_failure, evaluate)
+    integrate_scalar(a, b, accuracy, None, propagate_failure, evaluate)
 }
 
-/// [`integrate_opt_in`] with the samples' rounding bound `rounding`.
+/// [`integrate_opt_in`] with the samples' rounding bound `rounding`, when known.
 fn integrate_scalar<F>(
     a: f64,
     b: f64,
     accuracy: f64,
-    rounding: f64,
+    rounding: Option<f64>,
     propagate_failure: bool,
     mut evaluate: F,
 ) -> Result<f64>
@@ -782,7 +782,6 @@ where
         return Ok(0.0);
     }
     let mut y = [0.0];
-    let rounding_bound = [rounding];
     let options = OdeOptions {
         accuracy,
         initial_step: (b - a) / 10.0,
@@ -790,7 +789,7 @@ where
         scale: None,
         // `evaluate` reads `t` alone: the steps are accepted on the quadrature estimate
         quadrature: true,
-        rounding: Some(&rounding_bound),
+        rounding: rounding.as_ref().map(core::slice::from_ref),
     };
     match OdeIntegrator::default().integrate(&mut y, a, b, options, |t, _, dy| {
         let value = evaluate(t)?;
