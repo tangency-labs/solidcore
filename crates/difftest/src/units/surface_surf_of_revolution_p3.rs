@@ -5,17 +5,16 @@
 //! `ReadFromDB`), plus the inherited `SmBSplineSurface::Reverse` and `SwapUV`, which
 //! reach the rebuild through its virtual (run through [`Surface`] on the Rust side).
 //!
-//! C++: `solidcore_ffi::units::surface_surf_of_revolution_p3` (upstream
-//! `source/SMLib/src/SmSurfOfRevolution.cpp`). Rust:
-//! `solidcore::surface::surf_of_revolution::p3`.
+//! Ported from upstream `source/SMLib/src/SmSurfOfRevolution.cpp`; checked against its
+//! golden. Rust: `solidcore::surface::surf_of_revolution::p3`.
 //!
 //! A case is `surf` (the surface block of the `p1` runner) plus `op` and its
-//! parameters. Both sides produce the same flat record (layout in the FFI module
-//! docs), split into `build` (the construction status), `other_build` (for
-//! `intersect`, the other surface's construction status), `status` (the op status)
-//! and `out` (the rest). `read_db` has no construction status: its bytes are the
-//! upstream `WriteToDB` record of `surf` (written by the C++ side when the case is
-//! generated). Statuses are `0` (`SM_SUCCESS`) or the `SmStatus` (`InvalidInput` is
+//! parameters. The output is a flat record, split into `build` (the construction
+//! status), `other_build` (for `intersect`, the other surface's construction status),
+//! `status` (the op status) and `out` (the rest). `read_db` has no construction status:
+//! its bytes are the upstream `WriteToDB` record of `surf`, frozen in
+//! `fixtures/surface.surf_of_revolution_p3/written_records.json` (solidcore has no
+//! writer, #2857). Statuses are `0` (`SM_SUCCESS`) or the `SmStatus` (`InvalidInput` is
 //! `1007`, `SM_ERR_INVALID_INPUT`); `-1` on the Rust side for an error upstream cannot
 //! produce.
 //!
@@ -44,14 +43,13 @@ use solidcore::surface::sphere::Sphere;
 use solidcore::surface::surf_of_revolution::SurfOfRevolution;
 use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
-use solidcore_ffi::units::surface_surf_of_revolution_p3 as ffi;
 
 use super::surface_surf_of_revolution_p1::{
-    add, cross3, ffi_surf, flag, frame, gen_generator, gen_surf, normalize, param_of, put_curve,
+    add, cross3, flag, frame, gen_generator, gen_surf, normalize, param_of, put_curve,
     put_state, rust_surf, unit_vec, v3, BuildIn, GenIn, SurfIn, SC_ERR_ARG,
 };
+use super::surface_offset_surface::revolution_ok;
 use crate::case::CaseContext;
-use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -147,8 +145,7 @@ enum OpIn {
     },
     /// The inherited `SmBSplineSurface::SwapUV` (Rust: [`Surface::swap_uv`]).
     Swap {},
-    /// `bytes` absent in a fixture: filled with the C++ `WriteToDB` record of `surf`
-    /// when the cases are loaded.
+    /// `bytes` absent only in a generated draw, never in a case.
     ReadDb {
         binary: bool,
         version: u32,
@@ -162,98 +159,6 @@ struct Inputs {
     surf: SurfIn,
     #[serde(flatten)]
     op: OpIn,
-}
-
-// ---- C++ side -------------------------------------------------------------------------
-
-fn ffi_dom(d: Option<[f64; 4]>) -> ffi::Dom {
-    d.map_or(ffi::Dom::Natural, ffi::Dom::Explicit)
-}
-
-fn ffi_frame(f: &FrameIn) -> ffi::Frame {
-    ffi::Frame {
-        origin: f.origin,
-        x: f.x,
-        y: f.y,
-        scale: f.scale,
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let s = ffi_surf(&i.surf)?;
-    let flat = if let OpIn::ReadDb {
-        binary,
-        version,
-        bytes,
-    } = &i.op
-    {
-        let bytes = bytes.as_ref().ok_or_else(|| harness("read_db: no bytes"))?;
-        ffi::read_db(&s, *binary, *version, bytes)
-    } else {
-        let op = match &i.op {
-            OpIn::Copy {} => ffi::Op::Copy,
-            OpIn::Reparam { dom } => ffi::Op::Reparam { dom: *dom },
-            OpIn::ToNurbs { u, v } => ffi::Op::ToNurbs { u: *u, v: *v },
-            OpIn::Drop {
-                dom,
-                operation,
-                point,
-                vec,
-                tol,
-                target,
-                requested,
-            } => ffi::Op::Drop {
-                dom: ffi_dom(*dom),
-                operation: *operation,
-                point: *point,
-                vec: *vec,
-                tol: *tol,
-                target: *target,
-                requested: *requested,
-            },
-            OpIn::Intersect {
-                other,
-                dom,
-                other_dom,
-                tol,
-            } => ffi::Op::Intersect {
-                other: match other {
-                    OtherIn::Revolution { surf } => ffi::Other::Revolution(match surf {
-                        Some(o) => Some(Box::new(ffi_surf(o)?)),
-                        None => None,
-                    }),
-                    OtherIn::Cone { frame, r0, r1, h } => ffi::Other::Cone {
-                        frame: *frame,
-                        r0: *r0,
-                        r1: *r1,
-                        h: *h,
-                    },
-                    OtherIn::Sphere { frame, r } => ffi::Other::Sphere {
-                        frame: *frame,
-                        r: *r,
-                    },
-                },
-                dom: ffi_dom(*dom),
-                other_dom: ffi_dom(*other_dom),
-                tol: *tol,
-            },
-            OpIn::Rebuild { edit } => ffi::Op::Rebuild {
-                edit: edit.as_ref().map(ffi_frame),
-            },
-            OpIn::Transform { frame } => ffi::Op::Transform {
-                frame: ffi_frame(frame),
-            },
-            OpIn::Update { dom } => ffi::Op::Update {
-                dom: ffi_dom(*dom),
-            },
-            OpIn::Reverse { param } => ffi::Op::Reverse { param: *param },
-            OpIn::Swap {} => ffi::Op::Swap,
-            OpIn::ReadDb { .. } => return Err(harness("unreachable")),
-        };
-        ffi::surface_op(&s, &op)
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 /// Splits a record into `build`, `other_build`, `status` and `out`.
@@ -953,39 +858,28 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
         _ => {
             let binary = rng.chance(0.5);
             let version = *rng.choose(&[30, 33])?;
-            let bytes = ffi::write_db_bytes(&ffi_surf(&s).ok()?, binary, version).ok()??;
             OpIn::ReadDb {
                 binary,
                 version,
-                bytes: Some(bytes),
+                bytes: None,
             }
         }
     };
     Some(Inputs { surf: s, op })
 }
 
-/// Fills the bytes of a fixture `read_db` case with the C++ `WriteToDB` record.
-fn fill_read_bytes(case: &mut Case) -> Result<(), HarnessError> {
-    let mut i: Inputs = case.parse()?;
-    let OpIn::ReadDb {
-        binary,
-        version,
-        bytes,
-    } = &mut i.op
-    else {
-        return Ok(());
-    };
-    if bytes.is_some() {
-        return Ok(());
-    }
-    let s = ffi_surf(&i.surf)?;
-    *bytes = Some(
-        ffi::write_db_bytes(&s, *binary, *version)
-            .map_err(|e| harness(e.to_string()))?
-            .ok_or_else(|| harness(format!("case {}: WriteToDB failed", case.name)))?,
-    );
-    case.inputs = serde_json::to_value(i).map_err(|e| harness(e.to_string()))?;
-    Ok(())
+/// A generated `read_db` draw (no record yet). Its case reads the record upstream's
+/// `WriteToDB` wrote of the drawn surface, which solidcore has no writer for (#2857): those
+/// cases are frozen in `fixtures/surface.surf_of_revolution_p3/written_records.json` under
+/// their generated names and the generated index is skipped.
+fn is_read_draw(i: &Inputs) -> bool {
+    matches!(i.op, OpIn::ReadDb { bytes: None, .. })
+}
+
+/// A generated case's draw: the first [`gen_case`] whose record, for a `read_db` draw,
+/// upstream's `WriteToDB` writes (a surface inside its constructors' domain).
+fn draw(rng: &mut Rng) -> Option<Inputs> {
+    (0..8).find_map(|_| gen_case(rng).filter(|i| !is_read_draw(i) || revolution_ok(&i.surf)))
 }
 
 impl UnitDiff for Runner {
@@ -994,12 +888,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..8 {
-            if let Some(i) = gen_case(rng) {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        draw(rng)
+            .filter(|i| !is_read_draw(i))
+            .and_then(|i| serde_json::to_value(i).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1007,15 +898,18 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        let mut cases = default_cases(self, &ctx)?;
-        for case in &mut cases {
-            fill_read_bytes(case)?;
-        }
+        let mut cases = ctx.fixture_cases(self.id())?;
+        // a skipped index (a `read_db` draw) is a fixture case of the same name
+        let generated = ctx.generated_cases(self.id(), |rng| {
+            let i = draw(rng)?;
+            Some(if is_read_draw(&i) {
+                Value::Null
+            } else {
+                serde_json::to_value(i).unwrap_or(Value::Null)
+            })
+        });
+        cases.extend(generated.into_iter().filter(|c| !c.inputs.is_null()));
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1050,7 +944,7 @@ mod tests {
         let mut tally: BTreeMap<(String, String), usize> = BTreeMap::new();
         for seed in 0..900u64 {
             let mut rng = Rng::new(0x5eed_3000 + seed);
-            let Some(i) = gen_case(&mut rng) else {
+            let Some(i) = gen_case(&mut rng).filter(|i| !is_read_draw(i)) else {
                 continue;
             };
             let out = rust(&i).expect("harness");
@@ -1092,7 +986,6 @@ mod tests {
             "rebuild",
             "transform",
             "update",
-            "read_db",
             "reverse",
             "swap",
         ] {
