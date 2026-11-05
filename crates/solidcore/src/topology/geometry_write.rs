@@ -138,8 +138,8 @@ pub fn write_surface_at(
         SurfaceKind::SurfOfRevolution(r) => write_surf_of_revolution(r, db, version, depth),
         SurfaceKind::SurfOfExtrusion(e) => write_surf_of_extrusion(e, db, version, depth),
         SurfaceKind::OffsetSurface(o) => o.write_to_db(db, version, depth),
-        SurfaceKind::CurveBounded(_) => Err(unported("SmCurveBoundedSurface::WriteToDB")),
-        SurfaceKind::Step(_) => Err(unported("SmSTEPSurface::WriteToDB")),
+        SurfaceKind::CurveBounded(c) => c.write_to_db_at(db, version, depth),
+        SurfaceKind::Step(st) => st.write_to_db(db, version, depth),
         SurfaceKind::SrfInVolume(_) => Err(unported("SmSrfInVolume::WriteToDB")),
     }
 }
