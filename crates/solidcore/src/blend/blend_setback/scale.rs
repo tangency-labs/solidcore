@@ -389,6 +389,18 @@ mod tests {
             assert!(result.qp_rows_built > 0);
             assert!(result.qp_peak_rows_held <= result.qp_rows_built);
             assert!(result.qp_steps >= result.solves);
+            // Work budgets leave room for floating-point branch differences while
+            // rejecting the former full matrices (up to 693,051 retained rows).
+            assert!(result.qp_rows_built <= 12_000_000);
+            assert!(result.qp_peak_rows_held <= 16_000);
+            assert!(result.qp_steps <= 25_000);
+            if want == 1.0 {
+                // The r=5, setback=8 corner needs no scale search. Its dense
+                // programme built 430,962 rows and retained 254,037 at peak.
+                assert!(result.qp_rows_built <= 10_000);
+                assert!(result.qp_peak_rows_held <= 2_000);
+                assert!(result.qp_steps <= 16);
+            }
             assert_eq!(
                 result.attempts,
                 if want == 1.0 {

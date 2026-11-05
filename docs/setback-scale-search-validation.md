@@ -265,6 +265,32 @@ ties, skipped slots, rounding, infeasibility and multiple 2,000-row batches.
 Validation of this implementation is in progress; the historical native results
 above do not establish parity for this change.
 
+The first Linux production run passed 21 focused setback unit tests (one long
+monotonicity test ignored). The unchanged dense baseline passed seven setback
+integration tests and the thirteen-case executive dump. The six streamed search
+cases retained their existing scales, attempt counts and solve counts:
+
+| Scale case | Rows materialized | Peak selected rows | Dual steps |
+|---|---:|---:|---:|
+| 2/3/4 rounds | 6,937,323 | 10,000 | 9,347 |
+| 1/1.5/2 rounds | 7,389,075 | 10,000 | 10,137 |
+| Upright held at room | 9,483,881 | 10,679 | 12,635 |
+| Asked setback 4.25 | 4,006,627 | 11,422 | 8,025 |
+| r5, setback 8 | 2,250 | 678 | 4 |
+| All edges held, refused | 584,794 | 6,000 | 2,590 |
+
+The scale regression gates bound materializations, retained rows and steps with
+headroom for floating-point branch differences. In particular the r5 case allows
+10,000 materializations and 2,000 retained rows, far below its old dense matrix.
+These budgets do not change geometric tolerances or expected scales.
+
+A clean allowed-source native reference at `5e8c9c1`, baseline overlay `20b1c01`
+and streamed overlay `3843ddb` passed the row-order gate, all six native count
+gates, and their thirteen-case executive comparison (seven bodies, 167 vertices,
+`1e-9` relative with no floor). The dense Rust baseline also passed against that
+native baseline. These are reference checks; final streamed Rust comparisons and
+the expanded Rust test set remain pending at this checkpoint.
+
 ### CI permission boundary
 
 At the resumed verification's pre-push head `ed7a76660`,
