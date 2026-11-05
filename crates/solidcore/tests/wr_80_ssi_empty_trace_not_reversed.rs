@@ -83,9 +83,12 @@ fn intersect(k: &Kernel) -> solidcore::Result<SurfaceIntersection> {
     ]);
     let d1 = with_quartic.natural_uv_domain_with_nurb(k).unwrap();
     let d2 = without.natural_uv_domain_with_nurb(k).unwrap();
-    let tol = approx_tol3d(k, 1e-6);
+    let tol = approx_tol3d(k, TOL);
     with_quartic.global_surface_intersect(k, &d1, &without, &d2, [true, true], Some(tol), None)
 }
+
+/// The approximation tolerance the intersection is asked for.
+const TOL: f64 = 1e-6;
 
 /// Samples per curve, ends included.
 const SAMPLES: usize = 65;
@@ -102,8 +105,8 @@ fn samples(k: &Kernel, curve: &Curve) -> Vec<Point3> {
         .collect()
 }
 
-/// The intersection completes on the default kernel, and what it finds lies on the
-/// contact parabola `y = 0`, `z = 0.2 x^2`.
+/// The intersection completes on the default kernel, and what it finds lies on both
+/// sheets and covers the contact parabola `y = 0`, `z = 0.2 x^2`, from `x = -1` to `1`.
 #[test]
 fn wr_80_quartic_contact_completes() {
     let k = Kernel::default();
@@ -112,19 +115,32 @@ fn wr_80_quartic_contact_completes() {
         Err(e) => panic!("the intersection fails: {e:?}"),
     };
     assert!(!r.curves_3d.is_empty(), "no curve found");
-    // The sheets are `y^4` apart vertically. A point within the tolerance `1e-6` of
-    // both (each sheet's slope is at most about 2 here) has `y^4` below a few times the
-    // tolerance; `(4e-6)^(1/4)`, about 0.045, bounds it with room to spare.
-    let contact_band = 4e-6_f64.powf(0.25);
+    // Every sampled point lies within the tolerance `TOL` of both sheets. Both are
+    // graphs `z = s(x, y)`, so a point's distance to one is, to first order, its height
+    // above it over `sqrt(1 + |grad s|^2)`; the neglected curvature term is of the order
+    // of the distance squared. The sheets are `y^4` apart vertically, so this also keeps
+    // the points within about `(2 TOL)^(1/4)` of the contact line `y = 0`.
+    let without_quartic = |x: f64, y: f64| {
+        (
+            0.5 * y * y * y - 0.5 * y + 0.2 * x * x,
+            [0.4 * x, 1.5 * y * y - 0.5],
+        )
+    };
+    let with_quartic = |x: f64, y: f64| {
+        let (z, [zx, zy]) = without_quartic(x, y);
+        (z + y.powi(4), [zx, zy + 4.0 * y * y * y])
+    };
+    let distance = |p: &Point3, (z, [zx, zy]): (f64, [f64; 2])| {
+        (p.z - z).abs() / (1.0 + zx * zx + zy * zy).sqrt()
+    };
     let curves: Vec<Vec<Point3>> = r.curves_3d.iter().map(|c| samples(&k, c)).collect();
     for p in curves.iter().flatten() {
-        // on the sheet without the quartic term, which is the graph
-        // z = 0.5 y^3 - 0.5 y + 0.2 x^2
-        let on_sheet = 0.5 * p.y * p.y * p.y - 0.5 * p.y + 0.2 * p.x * p.x;
-        assert!((p.z - on_sheet).abs() < 1e-5, "{p:?} is off the sheet");
+        let d_without = distance(p, without_quartic(p.x, p.y));
+        let d_with = distance(p, with_quartic(p.x, p.y));
         assert!(
-            p.y.abs() < contact_band,
-            "{p:?} is off the contact parabola"
+            d_without <= TOL && d_with <= TOL,
+            "{p:?} is {d_without:e} from the sheet without the quartic term and \
+             {d_with:e} from the one with it"
         );
     }
     // The curves cover the whole parabola, x from -1 to 1, without a gap. A curve is
