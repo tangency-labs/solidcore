@@ -352,16 +352,30 @@ impl OdeIntegrator {
                     *s = EFF_ZERO;
                 }
                 let embedded = at(&scratch.errors, i)?;
-                let embedded_rounding =
-                    sample_rounding(EMBEDDED_ERROR_WEIGHTS, dydx, h, accuracy, rounding, scratch, i)?;
+                let embedded_rounding = sample_rounding(
+                    EMBEDDED_ERROR_WEIGHTS,
+                    dydx,
+                    h,
+                    accuracy,
+                    rounding,
+                    scratch,
+                    i,
+                )?;
                 let mut raw = (embedded / *s).abs();
                 let mut ratio = (embedded / floored(*s, embedded_rounding / accuracy)).abs();
                 embedded_max = embedded_max.max(ratio);
                 let mut bound = embedded_rounding;
                 if quadrature {
                     let estimate = quadrature_estimate(dydx, h, scratch, i)?;
-                    let rounding =
-                        sample_rounding(QUADRATURE_ERROR_WEIGHTS, dydx, h, accuracy, rounding, scratch, i)?;
+                    let rounding = sample_rounding(
+                        QUADRATURE_ERROR_WEIGHTS,
+                        dydx,
+                        h,
+                        accuracy,
+                        rounding,
+                        scratch,
+                        i,
+                    )?;
                     raw = raw.max((estimate / *s).abs());
                     ratio = ratio.max((estimate / floored(*s, rounding / accuracy)).abs());
                     bound = bound.max(rounding);
@@ -1456,7 +1470,10 @@ mod tests {
                     },
                 )
                 .unwrap();
-            assert!(outside.is_empty(), "nodes outside [{x1}, {x2}]: {outside:?}");
+            assert!(
+                outside.is_empty(),
+                "nodes outside [{x1}, {x2}]: {outside:?}"
+            );
             assert!(at_end, "no node at the end {b}");
             assert!((y[0] - (b - a)).abs() <= 1e-15, "{}", y[0]);
         }

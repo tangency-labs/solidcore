@@ -749,7 +749,7 @@ why = "a curve's length: each span's end is evaluated in its own knot span and t
 [[mismatch]]
 unit = "mass.integrator"
 case = "gen0054"
-why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.4798720694305123e0 (error 6.28e-9) rust=2.4798720750258814e0 (error 8.54e-9))"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.4798720694305123e0 (error 6.28e-9) rust=2.479872075025882e0 (error 8.54e-9))"
 
 [[mismatch]]
 unit = "mass.integrator"
@@ -764,7 +764,7 @@ why = "a curve's length: each span's end is evaluated in its own knot span and t
 [[mismatch]]
 unit = "mass.integrator"
 case = "gen1177"
-why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=1.47755888032351e5 (error -7.27e-8) rust=1.4775588852330315e5 (error -6.94e-8))"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=1.47755888032351e5 (error -7.27e-8) rust=1.477558885233032e5 (error -6.94e-8))"
 
 [[mismatch]]
 unit = "mass.integrator"

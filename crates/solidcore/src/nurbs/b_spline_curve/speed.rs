@@ -169,7 +169,10 @@ impl BSplineCurve {
         };
         // the bound (see `SpanSpeed::rounding_bound`)
         let (n, factor) = if polynomial {
-            (degree.checked_mul(7).and_then(|d| d.checked_add(12)), 2.0 * p)
+            (
+                degree.checked_mul(7).and_then(|d| d.checked_add(12)),
+                2.0 * p,
+            )
         } else {
             (
                 degree.checked_mul(7).and_then(|d| d.checked_add(24)),
@@ -240,16 +243,17 @@ impl SpanSpeed {
     ///
     /// Counted as Higham, "Accuracy and Stability of Numerical Algorithms", 2nd ed., §3.1
     /// (`theta_a theta_b = theta_(a+b)`; a sum of `m` terms adds `m - 1`):
-    /// - Basis: each level of the triangular recurrence forms `left (N / (right + left))
-    ///   + ...`, every term non-negative for `t` in the span: one rounding each for
-    ///   `left`, `right`, their sum, the quotient, the product and the sum, so each
-    ///   computed `N_(s,r)` is within `theta_(6r)` of the exact one; the exact ones are
-    ///   non-negative and sum to 1.
+    /// - Basis: each level of the triangular recurrence forms sums of
+    ///   `left (N / (right + left))`, every term non-negative for `t` in the span: one
+    ///   rounding each for `left`, `right`, their sum, the quotient, the product and the
+    ///   sum, so each computed `N_(s,r)` is within `theta_(6r)` of the exact one; the
+    ///   exact ones are non-negative and sum to 1.
     /// - Polynomial: each `q_s` coordinate is within `theta_4` (the point difference, the
-    ///   knot difference, the product by `p` and the quotient), and `|q_s| <= p |P_(s+1)
-    ///   - P_s| / D <= 2p M / D` (every knot difference spans the span). The product with
-    ///   `N_(s,p-1)` and the sum of `p` terms give `theta_(6(p-1)+4+1+(p-1)) =
-    ///   theta_(7p-2)` relative to `sum_s N_s |q_s| <= 2p M / D`.
+    ///   knot difference, the product by `p` and the quotient), and
+    ///   `|q_s| <= p |P_(s+1) - P_s| / D <= 2p M / D` (every knot difference spans the
+    ///   span). The product with `N_(s,p-1)` and the sum of `p` terms give
+    ///   `theta_(6(p-1)+4+1+(p-1)) = theta_(7p-2)` relative to
+    ///   `sum_s N_s |q_s| <= 2p M / D`.
     /// - Rational: `g_s` is within `theta_3` (Kahan's difference of products, `2u`
     ///   relative: Jeannerod, Louvet and Muller, Math. Comp. 82 (2013); then the quotient
     ///   by `w_0`), `|g_s| <= w_max M`, `sum_s N_s |g_s| <= w M` and `|A / w| <= M` (a

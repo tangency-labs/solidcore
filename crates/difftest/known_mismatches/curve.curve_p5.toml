@@ -34,7 +34,7 @@ why = "a curve's length: each span's end is evaluated in its own knot span and t
 [[mismatch]]
 unit = "curve.curve_p5"
 case = "gen0561"
-why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.4995196489801322e2 (error 9.73e-9) rust=2.49951964523567e2 (error 8.24e-9))"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.4995196489801322e2 (error 9.73e-9) rust=2.4995196452356697e2 (error 8.24e-9))"
 
 [[mismatch]]
 unit = "curve.curve_p5"
@@ -44,9 +44,9 @@ why = "a curve's length: each span's end is evaluated in its own knot span and t
 [[mismatch]]
 unit = "curve.curve_p5"
 case = "gen2629"
-why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=1.1635546109960732e1 (error -9.37e-9) rust=1.163554609567658e1 (error -1.06e-8))"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=1.1635546109960732e1 (error -9.37e-9) rust=1.1635546095676588e1 (error -1.06e-8))"
 
 [[mismatch]]
 unit = "curve.curve_p5"
 case = "gen2638"
-why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.059102129242284e2 (error -3.21e-6) rust=2.0591026783138494e2 (error -2.95e-6))"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.059102129242284e2 (error -3.21e-6) rust=2.0591026783138523e2 (error -2.95e-6))"

@@ -546,3 +546,48 @@ unit = "boolean.api_brep"
 case = "more0156"
 why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.areas[1]: cpp=8.240059471914208e2 rust=8.240059779483366e2)"
 
+# A curve's speed in difference form (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md): 9 arc-length cases move by rounding.
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_box_cylinder_corner_difference"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; two quarter circles of radius 3, Rust 4.712388980399728 and 4.712388980399731 (3.19e-12 relative from the closed form 3 pi / 2, at 1e-9), equal to rounding, sort the other way than the C++'s, so their rows' point columns swap (values.arc_lengths[20], [27]: z 10 and 5)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_box_cylinder_corner_intersection"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; two quarter circles of radius 3, Rust 4.712388980399728 and 4.712388980399731 (3.19e-12 relative from the closed form 3 pi / 2, at 1e-9), equal to rounding, sort the other way than the C++'s, so their rows' point columns swap (values.arc_lengths[34], [41]: z 10 and 5)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_box_cylinder_hole_union"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; four full circles of radius 2, Rust 12.566370614438554 each (6.3e-12 relative from the closed form 4 pi, at 1e-9), now tie and sort by z, where the C++ lengths differ in the last bits: their rows' point columns permute (values.arc_lengths[111], [118], [125])"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_cylinder_cylinder_tee_union_025"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; the point at half the intersection curve's length (9.88796749071193) moves by 2.7e-15 absolute in a coordinate near zero (values.arc_lengths[18]: cpp=4.9299582291755486e-8 rust=4.9299584956619394e-8): the arc-length search stops at EFF_ZERO_SQRT (len + 1) on the length, so both sides are about 5e-8 from the symmetric midpoint alike"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_cylinder_cylinder_tee_difference_025"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; the point at half the intersection curve's length (9.88796749071193) moves by 2.7e-15 absolute in a coordinate near zero (values.arc_lengths[18]: cpp=4.9299582291755486e-8 rust=4.9299584956619394e-8): the arc-length search stops at EFF_ZERO_SQRT (len + 1) on the length, so both sides are about 5e-8 from the symmetric midpoint alike"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_cylinder_cylinder_tee_intersection_025"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; the point at half the intersection curve's length (9.88796749071193) moves by 2.7e-15 absolute in a coordinate near zero (values.arc_lengths[18]: cpp=4.9299582291755486e-8 rust=4.9299584956619394e-8): the arc-length search stops at EFF_ZERO_SQRT (len + 1) on the length, so both sides are about 5e-8 from the symmetric midpoint alike"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_cylinder_cylinder_tee_union"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; the point at half the intersection curve's length (9.88796749071193) moves by 5.3e-15 absolute in a coordinate near zero (values.arc_lengths[20]: cpp=7.713310058988208e-8 rust=7.713309526104534e-8): the arc-length search stops at EFF_ZERO_SQRT (len + 1) on the length, so both sides are about 8e-8 from the symmetric midpoint alike"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_cylinder_cylinder_tee_difference"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; the point at half the intersection curve's length (9.88796749071193) moves by 5.3e-15 absolute in a coordinate near zero (values.arc_lengths[20]: cpp=7.713310058988208e-8 rust=7.713309526104534e-8): the arc-length search stops at EFF_ZERO_SQRT (len + 1) on the length, so both sides are about 8e-8 from the symmetric midpoint alike"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "arc_lengths_cylinder_cylinder_tee_intersection"
+why = "a curve's length: the speed is evaluated in difference form, sum R'_i (P_i - P_0) (plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md), so the lengths move by rounding; the point at half the intersection curve's length (9.88796749071193) moves by 5.3e-15 absolute in a coordinate near zero (values.arc_lengths[20]: cpp=7.713310058988208e-8 rust=7.713309526104534e-8): the arc-length search stops at EFF_ZERO_SQRT (len + 1) on the length, so both sides are about 8e-8 from the symmetric midpoint alike"
