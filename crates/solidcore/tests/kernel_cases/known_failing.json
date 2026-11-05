@@ -111,8 +111,8 @@
   },
   {
     "case": "fillets/report-peg-front-and-concave-chamfers-together-d2",
-    "issue": "tangency-labs/solidcore#2852",
-    "reason": "graded against SMLib's measured volume (9383.4506602363) to 4e-5 mm^3; solidcore gives 9383.45096246525, and the case has no closed form to say which is right"
+    "issue": "tangency-labs/solidcore#2849",
+    "reason": "the Mixed corner's chamfer face stands 7.2e-4 out of the front face y = 0 (its bilinear Coons patch bulges past the plane), past the case's 4e-5 box"
   },
   {
     "case": "shell/cov-shell-again-open-at-an-inner-wall-of-a-shelled-box",
