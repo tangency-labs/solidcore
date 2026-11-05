@@ -90,6 +90,14 @@ pub fn measure(brep: &mut Brep) {
 
 fn measured(brep: &mut Brep) -> Soundness {
     let mut k = Kernel::default();
+    // The volume is a verdict on the body, not a comparison with the C++ reference: it is
+    // integrated from the trims' lowest v (WR-563, #1556). Upstream's base, the face
+    // domain's lowest v, is -INFINITE_PARAMETER on a face of an unbounded surface (a plane
+    // a local operation moves a face onto keeps its natural domain, as upstream's
+    // `MakeFaceuse` does), where each iso-u integral runs 1.2e6 below the face and the
+    // moments are small differences of large terms: fc0000's moved plane's centroid came
+    // out at z = -33.2 for 4.18 and the body's volume 712 for 1270.
+    k.fixes.precise_properties_trim_base_v = true;
     let counts = [
         solidcore::topology::brep::p1::num_faces(brep),
         solidcore::topology::brep::p1::edges(brep, None).map_or(0, |e| e.len()),
