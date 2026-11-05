@@ -2089,6 +2089,97 @@ mod tests {
         assert!(!crosses);
     }
 
+    /// (#2506) Four half squares end on the z axis from the origin to (0, 0, 1) or near
+    /// it, leaving it along +x, +y, -x and -y; the one along -y ends on the line x = 0.05,
+    /// and its edge there has tolerance 0.1. At a stitch tolerance of 0.01 the gluing
+    /// would glue that edge to the edge along +x, since their own tolerance (the sum of
+    /// their edges') covers the 0.05 gap, so it is on the curve, and it lies between the
+    /// faces along +x and -x on the side the face along +y does not: the pair crosses.
+    /// Taking the pair's own tolerance (0.01) for every edge leaves the edge at 0.05 off
+    /// the curve.
+    #[test]
+    fn radial_glue_takes_each_edge_on_the_curve_at_its_own_tolerance() {
+        use crate::math::Point3;
+
+        let p = |x: f64, y: f64, z: f64| Point3::new(x, y, z);
+        let mut k = Kernel::default();
+        let mut b = crate::topology::brep::p3::new_brep(
+            &mut k,
+            crate::geom::tol::USE_DEFAULT,
+            crate::geom::tol::USE_DEFAULT,
+        )
+        .unwrap();
+        let (o, top) = (p(0.0, 0.0, 0.0), p(0.0, 0.0, 1.0));
+        let faces = [
+            [o, p(1.0, 0.0, 0.0), p(1.0, 0.0, 1.0), top],
+            [o, top, p(0.0, 1.0, 1.0), p(0.0, 1.0, 0.0)],
+            [o, top, p(-1.0, 0.0, 1.0), p(-1.0, 0.0, 0.0)],
+            [
+                p(0.05, 0.0, 0.0),
+                p(0.05, -1.0, 0.0),
+                p(0.05, -1.0, 1.0),
+                p(0.05, 0.0, 1.0),
+            ],
+        ];
+        for corners in &faces {
+            add_planar_face(&mut k, &mut b, &polygon(corners));
+        }
+        // each face's edge from z = 0 to z = 1 at y = 0 and x = 0 or 0.05, in the order of
+        // `faces`
+        let all = bp1::faces(&b, None).unwrap();
+        let on_line: Vec<EdgeId> = all
+            .iter()
+            .map(|&f| {
+                let found: Vec<EdgeId> = bp1::edges(&b, None)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|&e| {
+                        let ivl = edge::interval(&b, e).unwrap();
+                        let c = curve_of(&b, e).unwrap();
+                        let (s, t) = (
+                            c.evaluate_point(&k, ivl.min()).unwrap(),
+                            c.evaluate_point(&k, ivl.max()).unwrap(),
+                        );
+                        edge::faces(&b, e, None).unwrap() == [f]
+                            && s.y == 0.0
+                            && t.y == 0.0
+                            && s.x == t.x
+                            && s.x.abs() < 0.1
+                            && s.z != t.z
+                    })
+                    .collect();
+                assert_eq!(found.len(), 1);
+                found[0]
+            })
+            .collect();
+        edge::set_tolerance(&mut b, on_line[3], 0.1, false, false).unwrap();
+        let pair_tolerance =
+            edge::tolerance(&b, on_line[0]).unwrap() + edge::tolerance(&b, on_line[2]).unwrap();
+        assert!(pair_tolerance < 0.01, "{pair_tolerance}");
+        let ivl = edge::interval(&b, on_line[0]).unwrap();
+        let pv = curve_of(&b, on_line[0])
+            .unwrap()
+            .evaluate(&k, ivl.mid(), 1, true, true)
+            .unwrap();
+        let second = edge::interval(&b, on_line[2]).unwrap().mid();
+        let glue = RadialGlue {
+            point: pv[0],
+            axis: pv[1],
+            tolerance: 0.01,
+            fast: true,
+        };
+        let crosses = glue
+            .crosses(
+                &mut k,
+                &mut b,
+                (on_line[0], ivl.mid()),
+                (on_line[2], second),
+                &[on_line[1], on_line[3]],
+            )
+            .unwrap();
+        assert!(crosses);
+    }
+
     #[test]
     fn shell_without_tolerance_range_is_a_no_op() {
         let mut k = Kernel::default();
