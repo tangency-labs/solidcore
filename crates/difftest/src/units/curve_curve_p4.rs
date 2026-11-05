@@ -50,6 +50,7 @@ use solidcore::surface::plane::Plane;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -100,18 +101,6 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
-}
-
-impl CircleIn {
-    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
-    /// arc that would end past 360 degrees starts one turn back.
-    fn turned_back(mut self) -> Self {
-        if self.a1 > 360.0 {
-            self.a0 -= 360.0;
-            self.a1 -= 360.0;
-        }
-        self
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,7 +262,9 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic,
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
-    let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
+    let cur = arc
+        .gw_nurb()
+        .ok_or_else(|| harness("circle without NURB"))?;
     Ok(CurveIn::Bspline(BSplineIn {
         dim: 3,
         oob: false,
@@ -293,6 +284,224 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
+}
+
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 512,
+    max_degree: 9,
+    max_coord: 1e11,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 4.0;
+/// The most curves of a `FixChain` list.
+const MAX_CURVES: usize = 16;
+/// The most planes of a `Planes` case.
+const MAX_PLANES: usize = 4;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+/// An ellipse frame and domain upstream builds: two non-zero, non-parallel axes, domain
+/// ends within 720 degrees spanning `[1e-4, 360]` degrees, and positive radii.
+fn ellipse(e: &EllipseIn) -> bool {
+    let max = LIMITS.max_coord;
+    let [x, y] = [e.x, e.y];
+    let cross = [
+        x[1] * y[2] - x[2] * y[1],
+        x[2] * y[0] - x[0] * y[2],
+        x[0] * y[1] - x[1] * y[0],
+    ];
+    let [d0, d1] = e.domain;
+    vec3(&e.c)
+        && contract::nonzero3(&x, max)
+        && contract::nonzero3(&y, max)
+        && contract::len_sq(cross) >= 1e-12
+        && fin(d0)
+        && fin(d1)
+        && d0.abs() <= 720.0
+        && d1.abs() <= 720.0
+        && (1e-4..=360.0).contains(&(d1 - d0).abs())
+        && e.radii.iter().all(|&r| fin(r) && r > 1e-6)
+}
+
+/// The domain a curve's parameters are bounded by, if the curve keeps the contract
+/// (analytic lines evaluate anywhere: only their parameters are bounded).
+fn domain(c: &CurveIn) -> Option<(f64, f64)> {
+    let max = LIMITS.max_coord;
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some((s.a, s.b))
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+        .then_some((0.0, 1.0)),
+        CurveIn::Line(l) => {
+            contract::line(&l.p, &l.v, l.domain, l.scale, max).map(|_| (-max / 8.0, max / 8.0))
+        }
+        CurveIn::Ellipse(e) => ellipse(&e).then_some((0.0, 1.0)),
+        CurveIn::Circle(_) => None,
+    }
+}
+
+/// Whether `t` is finite and at most [`MAX_REL_DIST`] domain lengths outside `(a, b)`.
+fn param((a, b): (f64, f64), t: f64) -> bool {
+    let far = MAX_REL_DIST * (b - a);
+    fin(t) && t >= a - far && t <= b + far
+}
+
+/// An analytic operand and its interval fractions in `[-0.5, 1.5]`.
+fn operand(o: &OperandIn, f: [f64; 2]) -> bool {
+    let ok = match o {
+        OperandIn::Line(l) => {
+            contract::line(&l.p, &l.v, l.domain, l.scale, LIMITS.max_coord).is_some()
+        }
+        OperandIn::Ellipse(e) => ellipse(e),
+        OperandIn::Curve(c) => domain(c).is_some(),
+    };
+    ok && f.iter().all(|&x| fin(x) && (-0.5..=1.5).contains(&x))
+}
+
+/// The option vectors property `prop` needs.
+fn property_vectors(prop: i32) -> usize {
+    match prop {
+        0 | 4 | 5 | 6 | 16 | 23 | 25 => 1,
+        17..=22 | 24 | 26..=28 => 2,
+        _ => 0,
+    }
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_curve_p4.rs`, `validate`): curves as [`domain`]
+/// takes them (arcs within the arc constructor's `[-360, 360]` degrees, ellipses as
+/// [`ellipse`]), parameters within [`MAX_REL_DIST`] domain lengths (`DistExtrema`'s of
+/// both curves), finite values within range, a non-negative `FixChain` tolerance, the
+/// option vectors and value a property needs, analytic operands with their fractions, and
+/// the sample, list, kind and plane bounds.
+fn keeps_contract(op: &OpIn) -> bool {
+    let max = LIMITS.max_coord;
+    match op {
+        OpIn::IsClosed {
+            curve, ivl, tol, ..
+        } => domain(curve).is_some_and(|d| param(d, ivl[0]) && param(d, ivl[1]) && fin(*tol)),
+        OpIn::IsDegenerate {
+            curve, tol, ivl, ..
+        } => domain(curve).is_some_and(|d| {
+            let [a, b] = ivl.unwrap_or_else(|| {
+                let r = range_of(curve);
+                [r.0, r.1]
+            });
+            fin(*tol) && param(d, a) && param(d, b)
+        }),
+        OpIn::PolarBox { curve, ivl, count } => domain(curve)
+            .is_some_and(|d| param(d, ivl[0]) && param(d, ivl[1]) && *count <= MAX_SAMPLES as u64),
+        OpIn::Snap { curve, t, tol } => domain(curve).is_some_and(|d| param(d, *t) && fin(*tol)),
+        OpIn::Assert { curve, .. } => domain(curve).is_some(),
+        OpIn::FixChain { curves, tol, .. } => {
+            curves.len() <= MAX_CURVES
+                && curves.iter().flatten().all(|c| domain(c).is_some())
+                && fin(*tol)
+                && *tol >= 0.0
+        }
+        OpIn::Filter {
+            c1,
+            ivl1,
+            c2,
+            ivl2,
+            k1,
+            k2,
+            adj,
+            s,
+            value,
+        } => match (domain(c1), domain(c2)) {
+            (Some(d1), Some(d2)) => {
+                ivl1.iter().all(|&t| param(d1, t))
+                    && ivl2.iter().all(|&t| param(d2, t))
+                    && k1.iter().chain(k2).all(|&k| k <= 13)
+                    && *adj <= 2
+                    && param(d1, s[0])
+                    && param(d2, s[1])
+                    && fin(*value)
+            }
+            _ => false,
+        },
+        OpIn::ProjDist {
+            curve,
+            t,
+            p,
+            n,
+            d,
+            sop,
+            ..
+        } => domain(curve).is_some_and(|dm| {
+            param(dm, *t) && [p, n, d].iter().all(|v| vec3(v)) && (0..=24).contains(sop)
+        }),
+        OpIn::Property {
+            curve,
+            prop,
+            val,
+            vecs,
+            sqtol,
+            t,
+            ..
+        } => domain(curve).is_some_and(|d| {
+            let nv = vecs.len();
+            (0..=28).contains(prop)
+                && fin(val.unwrap_or(0.0))
+                && nv <= 3
+                && vecs.iter().all(vec3)
+                && !((nv > 0 || matches!(prop, 20 | 21)) && nv < property_vectors(*prop))
+                && !(matches!(prop, 22 | 23) && nv > 0 && val.is_none())
+                && fin(*sqtol)
+                && param(d, *t)
+        }),
+        OpIn::CcTangent { c1, c2, x, .. } => match (domain(c1), domain(c2)) {
+            (Some(d1), Some(d2)) => param(d1, x[0]) && param(d2, x[1]),
+            _ => false,
+        },
+        OpIn::CpDistAt {
+            curve,
+            p,
+            dsq,
+            sqtol,
+            x,
+            ..
+        } => domain(curve).is_some_and(|d| {
+            vec3(p)
+                && fin(*dsq)
+                && fin(*sqtol)
+                && param(d, x[0])
+                && x.iter().skip(1).all(|&v| fin(v))
+        }),
+        OpIn::DistExtrema {
+            c1,
+            c2,
+            dom,
+            tol,
+            t,
+        } => match (domain(c1), domain(c2)) {
+            (Some(d1), Some(d2)) => {
+                fin(dom[0]) && fin(dom[1]) && fin(*tol) && param(d1, *t) && param(d2, *t)
+            }
+            _ => false,
+        },
+        OpIn::Analytic { a, fa, b, fb, tol } => operand(a, *fa) && operand(b, *fb) && fin(*tol),
+        OpIn::Planes { curve, planes } => {
+            domain(curve).is_some()
+                && planes.len() <= MAX_PLANES
+                && planes
+                    .iter()
+                    .all(|[p, n]| vec3(p) && contract::nonzero3(n, max))
+        }
+    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -323,7 +532,10 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
                 .len()
                 .checked_sub(1)
                 .ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -613,7 +825,10 @@ fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
                     None => None,
                 });
             }
-            let r = tri!(o, fix_chain_curves_list(&Kernel::default(), list, *tol, *del));
+            let r = tri!(
+                o,
+                fix_chain_curves_list(&Kernel::default(), list, *tol, *del)
+            );
             o.extend([
                 0.0,
                 r.chain_starts.len() as f64,
@@ -655,7 +870,8 @@ fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
             sol.start.parameters[1] = s[1];
             sol.start.solution_value = *value;
             let r = filter_solution(
-                k, &a,
+                k,
+                &a,
                 &Extent1d::from_min_max(ivl1[0], ivl1[1]),
                 &bb,
                 &Extent1d::from_min_max(ivl2[0], ivl2[1]),
@@ -702,7 +918,8 @@ fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
             let prop = CurvePropertyType::from_code(*prop).ok_or_else(|| harness("prop"))?;
             let vs: Vec<Vec3> = vecs.iter().map(|x| v3(*x)).collect();
             let mut efo = CurvePropertyEfo::new(
-                k, &c,
+                k,
+                &c,
                 prop,
                 *val,
                 if vs.is_empty() { None } else { Some(&vs) },
@@ -722,7 +939,8 @@ fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
             let mut f = [0.0; 2];
             let mut m = Matrix::new(2, 2);
             let r = CcTangentIntEnfo::static_evaluate(
-                k, &a,
+                k,
+                &a,
                 &bb,
                 x,
                 &mut f,
@@ -769,7 +987,8 @@ fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
             let a = build(c1)?;
             let bb = build(c2)?;
             let mut efo = FindCurveDistanceExtrema::new(
-                k, &a,
+                k,
+                &a,
                 &bb,
                 Extent1d::from_min_max(dom[0], dom[1]),
                 *tol,
@@ -801,7 +1020,8 @@ fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
             let bb = tri!(o, mk(ob)?);
             let (oa, na) = as_op(&ba);
             let (obb, nb) = as_op(&bb);
-            let r = analytic_curve_intersect::<i64>(&Kernel::default(), 
+            let r = analytic_curve_intersect::<i64>(
+                &Kernel::default(),
                 oa,
                 &sub_ivl(na, *fa),
                 obb,
@@ -904,7 +1124,11 @@ fn gen_hermite(rng: &mut Rng) -> HermiteIn {
         p1,
         d1,
         p2,
-        d2: if rng.chance(0.08) { [0.0; 3] } else { rp(rng, s) },
+        d2: if rng.chance(0.08) {
+            [0.0; 3]
+        } else {
+            rp(rng, s)
+        },
     };
     if h.dim == 2 {
         for v in [&mut h.p1, &mut h.d1, &mut h.p2, &mut h.d2] {
@@ -934,7 +1158,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    }.turned_back())
+    })
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
@@ -959,7 +1183,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
-            }.turned_back());
+            });
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -1270,7 +1494,9 @@ fn gen_case(rng: &mut Rng) -> OpIn {
             };
             OpIn::IsDegenerate {
                 base: rng.chance(0.5),
-                tol: *rng.choose(&[1e-12, 0.0, 1e-6, 0.1, 100.0]).unwrap_or(&1e-12),
+                tol: *rng
+                    .choose(&[1e-12, 0.0, 1e-6, 0.1, 100.0])
+                    .unwrap_or(&1e-12),
                 ivl,
                 curve,
             }
@@ -1352,7 +1578,12 @@ fn gen_case(rng: &mut Rng) -> OpIn {
                 p: rp(rng, 10.0),
                 dsq: rng.uniform(0.0, 50.0),
                 sqtol: 0.0,
-                x: [gen_t(rng, &curve), rng.uniform(0.0, 10.0), rng.uniform(0.0, 10.0), rng.uniform(0.0, 10.0)],
+                x: [
+                    gen_t(rng, &curve),
+                    rng.uniform(0.0, 10.0),
+                    rng.uniform(0.0, 10.0),
+                    rng.uniform(0.0, 10.0),
+                ],
                 jac: rng.chance(0.7),
                 curve,
             }
@@ -1411,7 +1642,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        let op = (0..64).map(|_| gen_case(rng)).find(keeps_contract)?;
+        serde_json::to_value(op).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1428,7 +1660,6 @@ impl UnitDiff for Runner {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1440,18 +1671,27 @@ mod tests {
             seeds: 0,
         };
         let cases = ctx.fixture_cases("curve.curve_p4").unwrap();
-        let matching: Vec<_> = cases.into_iter().filter(|c| {
-            matches!(&c.source, crate::case::CaseSource::Fixture { path, .. }
+        let matching: Vec<_> = cases
+            .into_iter()
+            .filter(|c| {
+                matches!(&c.source, crate::case::CaseSource::Fixture { path, .. }
                 if path == "fixtures/curve.curve_p4/analytic-distance.json")
-        }).collect();
+            })
+            .collect();
         assert_eq!(matching.len(), 1);
-        assert_eq!(matching[0].name, "ellipse_cp_dist_at_interior_full_jacobian");
+        assert_eq!(
+            matching[0].name,
+            "ellipse_cp_dist_at_interior_full_jacobian"
+        );
         matching.into_iter().next().unwrap()
     }
 
     fn ellipse_distance_relative(a: f64, b: f64) {
         assert!(a.is_finite() && b.is_finite());
-        assert!((a - b).abs() <= 1e-9 * a.abs().max(b.abs()), "{a:?} != {b:?}");
+        assert!(
+            (a - b).abs() <= 1e-9 * a.abs().max(b.abs()),
+            "{a:?} != {b:?}"
+        );
     }
 
     #[test]
@@ -1460,44 +1700,85 @@ mod tests {
         let case = ellipse_distance_fixture();
         let op: OpIn = case.parse().unwrap();
         assert_eq!(serde_json::to_value(&op).unwrap(), case.inputs);
-        let OpIn::CpDistAt { curve, p, dsq, sqtol, x, jac } = &op else { panic!("wrong op") };
+        let OpIn::CpDistAt {
+            curve,
+            p,
+            dsq,
+            sqtol,
+            x,
+            jac,
+        } = &op
+        else {
+            panic!("wrong op")
+        };
         assert!(*jac);
-        let CurveIn::Ellipse(e) = curve else { panic!("not ellipse") };
-        assert_eq!(e.domain, [0.,180.]);
-        assert_eq!(range_of(curve), (0.,1.));
+        let CurveIn::Ellipse(e) = curve else {
+            panic!("not ellipse")
+        };
+        assert_eq!(e.domain, [0., 180.]);
+        assert_eq!(range_of(curve), (0., 1.));
         let k = Kernel::default();
         let c = build(curve).unwrap();
-        let CurveKind::Ellipse(actual) = c.kind() else { panic!("lost analytic kind") };
+        let CurveKind::Ellipse(actual) = c.kind() else {
+            panic!("lost analytic kind")
+        };
         assert!(!actual.is_circle());
         let ivl = c.natural_interval();
-        assert_eq!((ivl.min(),ivl.max()), (0.,1.));
+        assert_eq!((ivl.min(), ivl.max()), (0., 1.));
         assert!(ivl.min() < x[0] && x[0] < ivl.max());
         let pv = c.evaluate(&k, x[0], 1, true, true).unwrap();
-        let pos = [pv[0].x,pv[0].y,pv[0].z];
-        let tangent = [pv[1].x,pv[1].y,pv[1].z];
+        let pos = [pv[0].x, pv[0].y, pv[0].z];
+        let tangent = [pv[1].x, pv[1].y, pv[1].z];
         assert!(pos.iter().chain(&tangent).all(|v| v.is_finite()));
         assert!(pv[1].length_squared() > 0.);
-        let gap = [pos[0]-p[0],pos[1]-p[1],pos[2]-p[2]];
-        let expected_f = [gap[0]*gap[0]-x[1],gap[1]*gap[1]-x[2],gap[2]*gap[2]-x[3],x[1]+x[2]+x[3]-dsq];
-        let expected_j = [2.*tangent[0]*gap[0],-1.,0.,0.,
-            2.*tangent[1]*gap[1],0.,-1.,0.,2.*tangent[2]*gap[2],0.,0.,-1.,0.,1.,1.,1.];
+        let gap = [pos[0] - p[0], pos[1] - p[1], pos[2] - p[2]];
+        let expected_f = [
+            gap[0] * gap[0] - x[1],
+            gap[1] * gap[1] - x[2],
+            gap[2] * gap[2] - x[3],
+            x[1] + x[2] + x[3] - dsq,
+        ];
+        let expected_j = [
+            2. * tangent[0] * gap[0],
+            -1.,
+            0.,
+            0.,
+            2. * tangent[1] * gap[1],
+            0.,
+            -1.,
+            0.,
+            2. * tangent[2] * gap[2],
+            0.,
+            0.,
+            -1.,
+            0.,
+            1.,
+            1.,
+            1.,
+        ];
         assert_ne!(expected_j[0], 0.);
-        let mut f = [f64::NAN;4];
-        let mut j = Matrix::new(4,4);
-        let found = CpDistAtEnfo::new(&k,&c,v3(*p),*dsq,*sqtol)
-            .evaluate(x,&mut f,Some(&mut j)).unwrap();
+        let mut f = [f64::NAN; 4];
+        let mut j = Matrix::new(4, 4);
+        let found = CpDistAtEnfo::new(&k, &c, v3(*p), *dsq, *sqtol)
+            .evaluate(x, &mut f, Some(&mut j))
+            .unwrap();
         assert!(!found);
-        for (a,b) in f.into_iter().zip(expected_f) { ellipse_distance_relative(a,b); }
-        for (i,b) in expected_j.into_iter().enumerate() {
-            ellipse_distance_relative(j.at(i/4,i%4).unwrap(),b);
+        for (a, b) in f.into_iter().zip(expected_f) {
+            ellipse_distance_relative(a, b);
         }
-        let out = rust(&k,&op).unwrap();
+        for (i, b) in expected_j.into_iter().enumerate() {
+            ellipse_distance_relative(j.at(i / 4, i % 4).unwrap(), b);
+        }
+        let out = rust(&k, &op).unwrap();
         assert!(out.deferred.is_none());
         assert_eq!(out.ints["status"], vec![0]);
-        assert_eq!(out.values["out"].len(),21);
-        for (a,b) in out.values["out"].iter().copied().zip(
-            expected_f.into_iter().chain(expected_j).chain([0.])) {
-            ellipse_distance_relative(a,b);
+        assert_eq!(out.values["out"].len(), 21);
+        for (a, b) in out.values["out"]
+            .iter()
+            .copied()
+            .zip(expected_f.into_iter().chain(expected_j).chain([0.]))
+        {
+            ellipse_distance_relative(a, b);
         }
     }
 
@@ -1510,7 +1791,10 @@ mod tests {
         let mut trues: BTreeMap<String, usize> = BTreeMap::new();
         for _ in 0..3000 {
             let op = gen_case(&mut rng);
-            let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
+            let name = serde_json::to_value(&op).unwrap()["op"]
+                .as_str()
+                .unwrap()
+                .to_string();
             let out = rust(k, &op);
             let e = stats.entry(name.clone()).or_default();
             e[0] += 1;
@@ -1522,7 +1806,11 @@ mod tests {
                     } else if o.ints.get("status").is_some_and(|s| s == &vec![0]) {
                         e[1] += 1;
                         // first output: a flag, count or value
-                        if o.values.get("out").and_then(|v| v.first()).is_some_and(|&x| x != 0.0) {
+                        if o.values
+                            .get("out")
+                            .and_then(|v| v.first())
+                            .is_some_and(|&x| x != 0.0)
+                        {
                             *trues.entry(name.clone()).or_default() += 1;
                         }
                     } else {
@@ -1532,7 +1820,10 @@ mod tests {
             }
         }
         for (k, v) in &stats {
-            eprintln!("{k}: total {} ok {} err {} other {}", v[0], v[1], v[2], v[3]);
+            eprintln!(
+                "{k}: total {} ok {} err {} other {}",
+                v[0], v[1], v[2], v[3]
+            );
         }
         eprintln!("first output nonzero: {trues:?}");
         assert_eq!(stats.len(), 14);
