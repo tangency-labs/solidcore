@@ -76,6 +76,10 @@ Shared near-bound assembly work (#2404) is separate; no competing change is made
 Before cleanup: the full configured-reference executive unit passed 796 of 798
 cases, with 2 rejections, no failures/deferred cases and `max_rel_err=0e0`.
 Fmt, Clippy, wasm and focused allocation tests also passed on earlier heads.
+Those results predate #2400, which deleted the old corner code and the
+`fillet_blend_corner` flag and left the executive unit `partial`. After rebasing
+onto it, these tests run on the default kernel only; the difftest, the tests and
+the two ignored contracts above have not been re-run locally.
 Current cleanup verification is reported in the PR body, with fresh results
 separated from historical results. No certified self-mitre or full fork-construction
 parity is claimed; #2349 remains open.

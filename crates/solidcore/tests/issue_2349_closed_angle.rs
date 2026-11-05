@@ -96,63 +96,60 @@ fn top_rim(k: &Kernel, b: &Brep) -> EdgeId {
 
 #[test]
 fn teardrop_reaches_the_real_closed_angle_topology() {
-    for blend in [false, true] {
-        let mut k = Kernel::default();
-        k.fixes.fillet_blend_corner = blend;
-        let mut b = teardrop(&mut k);
-        assert_eq!(
-            (
-                b.face_list().len(),
-                b.edge_list().len(),
-                b.vertex_list().len()
-            ),
-            (3, 3, 2)
-        );
-        assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
+    let mut k = Kernel::default();
+    let mut b = teardrop(&mut k);
+    assert_eq!(
+        (
+            b.face_list().len(),
+            b.edge_list().len(),
+            b.vertex_list().len()
+        ),
+        (3, 3, 2)
+    );
+    assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
+        .unwrap()
+        .lines()
+        .is_empty());
+    let rim = top_rim(&k, &b);
+    assert_eq!(
+        edge::start_vertex(&b, rim).unwrap(),
+        edge::end_vertex(&b, rim).unwrap()
+    );
+    let c = edge::curve(&b, rim).unwrap().unwrap();
+    let ivl = edge::interval(&b, rim).unwrap();
+    let a = c.evaluate(&k, ivl.min(), 1, true, true).unwrap()[1];
+    let z = c.evaluate(&k, ivl.max(), 1, true, true).unwrap()[1];
+    assert!((a.dot(z) / (a.length() * z.length()) + 0.6).abs() < 1e-12);
+    let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+    s.prepare_constant_radius_edges(&mut k, &[rim], 0.5, 1, 1, 1.0)
+        .unwrap();
+    s.create_corners(&k, None).unwrap();
+    let ids = s.fillet_corners().unwrap();
+    assert_eq!(ids.len(), 1);
+    let corner = s.corner(ids[0]).unwrap();
+    assert_eq!(corner.kind, FilletCornerKind::NByOneClosed);
+    assert_eq!(corner.solver_eus.as_ref().unwrap().len(), 1);
+    assert_eq!(corner.all_eus.as_ref().unwrap().len(), 2);
+    s.create_corner_vertices(&mut k).unwrap();
+    let corner = s.corner(ids[0]).unwrap();
+    assert!(!corner.g1_case);
+    assert!(!corner.blending);
+    assert_eq!(corner.vertices.len(), 2);
+    assert_eq!(corner.edges.len(), 1);
+    let pseudo = s.pseudo_brep();
+    assert_eq!(
+        pseudo
+            .fillet_edge(corner.edges[0])
             .unwrap()
-            .lines()
-            .is_empty());
-        let rim = top_rim(&k, &b);
-        assert_eq!(
-            edge::start_vertex(&b, rim).unwrap(),
-            edge::end_vertex(&b, rim).unwrap()
-        );
-        let c = edge::curve(&b, rim).unwrap().unwrap();
-        let ivl = edge::interval(&b, rim).unwrap();
-        let a = c.evaluate(&k, ivl.min(), 1, true, true).unwrap()[1];
-        let z = c.evaluate(&k, ivl.max(), 1, true, true).unwrap()[1];
-        assert!((a.dot(z) / (a.length() * z.length()) + 0.6).abs() < 1e-12);
-        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
-        s.prepare_constant_radius_edges(&mut k, &[rim], 0.5, 1, 1, 1.0)
-            .unwrap();
-        s.create_corners(&k, None).unwrap();
-        let ids = s.fillet_corners().unwrap();
-        assert_eq!(ids.len(), 1);
-        let corner = s.corner(ids[0]).unwrap();
-        assert_eq!(corner.kind, FilletCornerKind::NByOneClosed);
-        assert_eq!(corner.solver_eus.as_ref().unwrap().len(), 1);
-        assert_eq!(corner.all_eus.as_ref().unwrap().len(), 2);
-        s.create_corner_vertices(&mut k).unwrap();
-        let corner = s.corner(ids[0]).unwrap();
-        assert!(!corner.g1_case);
-        assert!(!corner.blending);
-        assert_eq!(corner.vertices.len(), 2);
-        assert_eq!(corner.edges.len(), 1);
-        let pseudo = s.pseudo_brep();
-        assert_eq!(
-            pseudo
-                .fillet_edge(corner.edges[0])
-                .unwrap()
-                .fillet_edge_type(),
-            FilletEdgeType::FilletXFillet
-        );
-        assert!(corner.vertices.iter().any(|&v| pseudo
-            .fillet_vertex(v)
-            .unwrap()
-            .fillet_vertex_type()
+            .fillet_edge_type(),
+        FilletEdgeType::FilletXFillet
+    );
+    assert!(corner
+        .vertices
+        .iter()
+        .any(|&v| pseudo.fillet_vertex(v).unwrap().fillet_vertex_type()
             == FilletVertexType::FilletXFillet));
-        assert!(pseudo.geoms().iter().any(|g| g.need_split));
-    }
+    assert!(pseudo.geoms().iter().any(|g| g.need_split));
 }
 
 #[test]
@@ -213,7 +210,6 @@ fn closed_angle_solver_still_allocates_unlinked_zero_tolerance_split_vertices() 
 #[ignore = "#2349: exact closed-angle blend event requires certified curved-spine self-mitre (#2307 merged)"]
 fn closed_angle_is_a_blend_event_instead_of_the_legacy_corner() {
     let mut k = Kernel::default();
-    k.fixes.fillet_blend_corner = true;
     let mut b = teardrop(&mut k);
     let rim = top_rim(&k, &b);
     let mut s = FilletSession::new(&mut k, &mut b).unwrap();
@@ -232,7 +228,6 @@ fn closed_angle_is_a_blend_event_instead_of_the_legacy_corner() {
 #[ignore = "#2349: closed mitre event and sized refusal require certified self-mitre and fit-size proof (#2307 merged)"]
 fn closed_angle_round_builds_validly_or_refuses_with_a_fit_size() {
     let mut k = Kernel::default();
-    k.fixes.fillet_blend_corner = true;
     k.fixes.fillet_gn_section_generator = true;
     let mut b = teardrop(&mut k);
     let rim = top_rim(&k, &b);
