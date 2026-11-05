@@ -3,6 +3,7 @@
 import copy
 import io
 import signal
+import shutil
 import importlib.util
 import json
 import os
@@ -272,7 +273,8 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(result["status"], "descendants_remaining")
         self.assert_process_stopped(int(child_file.read_text()))
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "SIGTERM lifecycle requires Linux")
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("nice") and Path("/usr/bin/time").is_file(),
+                         "SIGTERM lifecycle requires Linux, nice and GNU time")
     def test_sigterm_during_warmup_cleans_child_and_finalizes_manifest(self):
         """External termination preserves interrupted state and stops owned work."""
         child_file = self.root / "evaluator.pid"
