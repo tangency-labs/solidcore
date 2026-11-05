@@ -298,12 +298,6 @@ pub struct UpstreamFixes {
     /// starts at `cu + 1` and extrapolates interior V parameters well beyond `[0.0, 1.0]`
     /// (WR-88). Off by default for pinned C++ parity.
     pub gap_samples_non_bspline_v_stride: bool,
-    /// `SmGapArray::Append` updates the longest-gap index (`m_lMaxGap3d`) when the
-    /// appended array contains a strictly longer gap (or when appending into an empty
-    /// array with a longest gap). Upstream never updates the longest gap on `Append`,
-    /// so the combined array misses any longer gap from the appended array (WR-90).
-    /// Off by default for pinned C++ parity.
-    pub gap_array_append_updates_longest: bool,
     /// `SmTransform::EvaluateBoundingBoxSimple`'s aligned-basis fast path maps parameter
     /// intervals by multiplying by each axis column's length (`|x|`, `|y|`, `|z|`) and
     /// translating by the origin's component along each transformed basis vector
@@ -546,17 +540,6 @@ pub struct UpstreamFixes {
     pub curve_check_zero_speed_tangent_end: bool,
     /// `SmFace::ComputeLoopOrientation`'s 3D path holds a loop's dimensionless area to a floor relative to the loop's own bounding box instead of the face's whole domain, so a loop far smaller than its face (a 0.002 hole in a 3 m plate) is oriented (WR-561, #1523; tangency-labs/smlib 54ca3e0).
     pub loop_orientation_floor_from_loop_box: bool,
-    /// `SmTArray::FindElementInMaskedArray` (called by `sms_FindAndClassifyLoopBisector`
-    /// on `SmFaceProps::m_sPolePoints` with `m_lPoles`) tests each element `ii`'s own bit
-    /// `(mask & (1 << ii)) != 0` (shift-safe: `0` for `ii >= 64`) so edge midpoints on any
-    /// singular side (`SS_UMIN` `1`, `SS_VMIN` `2`, `SS_UMAX` `4`, `SS_VMAX` `8`) are
-    /// skipped and non-singular `SS_UMAX`/`SS_VMAX` slots are not falsely matched when
-    /// `SS_UMIN` is set; pinned v1.0.1 evaluates `(lBitMask & (1 < ii)) != 0`, never
-    /// matching indices `0` or `1` and testing indices `2..` against bit `0` (`SS_UMIN`)
-    /// (WR-167, #2172;
-    /// `plan/upstream-issues/WR-167--addendum-2026-11-01-masked-array-bit-shift.md`).
-    /// Off by default for pinned C++ parity.
-    pub masked_array_uses_bit_shift: bool,
     /// `SmConic::Evaluate` ([`crate::curve::conic::Conic::evaluate_with_fixes`], forwarded by
     /// [`crate::curve::curve::Curve::evaluate`], [`crate::curve::curve::Curve::evaluate_into`],
     /// and `<Conic as CurveEvaluate>::evaluate`) uses the computed second derivative `sSec`
