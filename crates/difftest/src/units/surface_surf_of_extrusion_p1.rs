@@ -5,13 +5,12 @@
 //! `STEPInversion`, `CreateDirectrixFromPoint`, `DropPointFast`, the small queries)
 //! and the file-static `sm_IntersectGenerators`.
 //!
-//! C++: `solidcore_ffi::units::surface_surf_of_extrusion_p1` (upstream
-//! `source/SMLib/src/SmSurfOfExtrusion.cpp`). Rust:
+//! Ported from upstream `source/SMLib/src/SmSurfOfExtrusion.cpp`; checked against its
+//! golden. Rust:
 //! `solidcore::surface::surf_of_extrusion::p1`.
 //!
 //! A case is `surf` (generator, construction, `oob`, `swap`) plus `op` and its
-//! parameters. Both sides produce the same flat record (layout in the FFI module
-//! docs), split into `build` (the construction status), `status` (the op status) and
+//! parameters. The Rust side produces a flat record, split into `build` (the construction status), `status` (the op status) and
 //! `out` (the rest). Statuses are `0` (`SM_SUCCESS`) or the `SmStatus`; `-1` on the
 //! Rust side for an error upstream cannot produce.
 //!
@@ -43,7 +42,6 @@ use solidcore::surface::surf_of_extrusion::p1::intersect_generators;
 use solidcore::surface::surf_of_extrusion::SurfOfExtrusion;
 use solidcore::surface::surface::p2::{B_SPLINE_SURFACE_TYPE, SURF_OF_EXTRUSION_TYPE, TYPE};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_surf_of_extrusion_p1 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -218,7 +216,7 @@ struct Inputs {
     op: OpIn,
 }
 
-// ---- C++ side -------------------------------------------------------------------------
+// ---- records --------------------------------------------------------------------------
 
 pub(crate) fn cpts4(c: &InlineCrv) -> Result<Vec<[f64; 4]>, HarnessError> {
     match &c.weights {
@@ -234,138 +232,6 @@ pub(crate) fn cpts4(c: &InlineCrv) -> Result<Vec<[f64; 4]>, HarnessError> {
                 .collect())
         }
     }
-}
-
-pub(crate) fn ffi_gen(g: &GenIn) -> Result<ffi::Gen, HarnessError> {
-    Ok(match g {
-        GenIn::BSpline(c) => ffi::Gen::BSpline(ffi::BSplineData {
-            cpts: cpts4(c)?,
-            p: c.p,
-            knots: c.u.clone(),
-        }),
-        GenIn::Line { a, b } => ffi::Gen::Line { a: *a, b: *b },
-        GenIn::LazyLine { a, b } => ffi::Gen::LazyLine { a: *a, b: *b },
-        GenIn::Circle { c, x, y, d, r } => ffi::Gen::Circle {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            r: *r,
-        },
-        GenIn::Ellipse { c, x, y, d, rx, ry } => ffi::Gen::Ellipse {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            rx: *rx,
-            ry: *ry,
-        },
-        GenIn::Hyperbola { c, x, y, d, a, b } => ffi::Gen::Hyperbola {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            a: *a,
-            b: *b,
-        },
-        GenIn::Parabola { c, x, y, d, f } => ffi::Gen::Parabola {
-            c: *c,
-            x: *x,
-            y: *y,
-            d: *d,
-            f: *f,
-        },
-    })
-}
-
-pub(crate) fn ffi_surf(s: &SurfIn) -> Result<ffi::Surf, HarnessError> {
-    Ok(ffi::Surf {
-        gen: ffi_gen(&s.gen)?,
-        build: match &s.build {
-            BuildIn::Canonical { vec } => ffi::Build::Canonical { vec: *vec },
-            BuildIn::Ctor {
-                origin,
-                vec,
-                domain,
-            } => ffi::Build::Ctor {
-                origin: *origin,
-                vec: *vec,
-                domain: *domain,
-            },
-            BuildIn::Infinite { vec } => ffi::Build::Infinite { vec: *vec },
-        },
-        oob: s.oob,
-        swap: s.swap,
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = match &i.op {
-        OpIn::Build {} => ffi::Op::Build,
-        OpIn::EvalStep { u, v, k, point } => ffi::Op::EvalStep {
-            u: *u,
-            v: *v,
-            k: *k,
-            point: *point,
-        },
-        OpIn::ToNurbs { u, v } => ffi::Op::ToNurbs { u: *u, v: *v },
-        OpIn::ToStep { u, v } => ffi::Op::ToStep { u: *u, v: *v },
-        OpIn::Adjust { dom } => ffi::Op::Adjust { dom: *dom },
-        OpIn::Update { dom } => ffi::Op::Update { dom: *dom },
-        OpIn::Reparam { dom } => ffi::Op::Reparam { dom: *dom },
-        OpIn::Transform {
-            origin,
-            x,
-            y,
-            scale,
-        } => ffi::Op::Transform {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            scale: *scale,
-        },
-        OpIn::Directrix { p, tol } => ffi::Op::Directrix { p: *p, tol: *tol },
-        OpIn::DropFast {
-            dom,
-            sop,
-            p,
-            vec,
-            tol,
-            target,
-            requested,
-        } => ffi::Op::DropFast {
-            dom: *dom,
-            op: *sop,
-            p: *p,
-            vec: *vec,
-            tol: *tol,
-            target: *target,
-            requested: *requested,
-        },
-        OpIn::StepInv { dom, p, tol, guess } => ffi::Op::StepInv {
-            dom: *dom,
-            p: *p,
-            tol: *tol,
-            guess: *guess,
-        },
-        OpIn::Eq { other } => ffi::Op::Eq {
-            other: Box::new(ffi_surf(other)?),
-        },
-        OpIn::Copy {} => ffi::Op::Copy,
-        OpIn::Generators {
-            other,
-            vec,
-            ivl,
-            tol,
-        } => ffi::Op::Generators {
-            other: ffi_gen(other)?,
-            vec: *vec,
-            ivl: *ivl,
-            tol: *tol,
-        },
-    };
-    let flat = ffi::surface_op(&ffi_surf(&i.surf)?, &op).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 /// Splits a record into `build`, `status` and `out`.
@@ -1326,10 +1192,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

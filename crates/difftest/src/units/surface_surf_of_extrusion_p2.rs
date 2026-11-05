@@ -3,8 +3,8 @@
 //! `GlobalSurfaceIntersect`, `IsNurbSurfaceSurfOfExtrusion`, `TrimWithDomain`,
 //! `ReadFromDB`).
 //!
-//! C++: `solidcore_ffi::units::surface_surf_of_extrusion_p2` (upstream
-//! `source/SMLib/src/SmSurfOfExtrusion.cpp`). Rust:
+//! Ported from upstream `source/SMLib/src/SmSurfOfExtrusion.cpp`; checked against its
+//! golden. Rust:
 //! `solidcore::surface::surf_of_extrusion::p2`.
 //!
 //! A case is a surface source `src` (a surface built as in the
@@ -12,8 +12,8 @@
 //! record of a surface of extrusion in an upstream test file) plus `op` and its
 //! parameters; `is_nurb` cases have a test surface instead (with a `query`, an
 //! `SmSurface` query runs on the recognised surface while its NURB is still lazy, through
-//! the common `Surface` dispatch on the Rust side). Both sides produce the same
-//! flat record (layout in the FFI module docs), split into `build` (the source status)
+//! the common `Surface` dispatch on the Rust side). The Rust side produces a flat
+//! record, split into `build` (the source status)
 //! and `out` (the rest). Statuses are `0` (`SM_SUCCESS`) or the `SmStatus`; `-1` on the
 //! Rust side for an error upstream cannot produce.
 //!
@@ -46,10 +46,9 @@ use solidcore::surface::surf_of_extrusion::SurfOfExtrusion;
 use solidcore::surface::surface::p1::crossed_seam_or_pole;
 use solidcore::surface::surface::Surface;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
-use solidcore_ffi::units::surface_surf_of_extrusion_p2 as ffi;
 
 use super::surface_surf_of_extrusion_p1::{
-    add, cross3, dom4, ffi_surf, flag, frame, gen_generator, gen_surf, harness, normalize, nurb_of,
+    add, cross3, dom4, flag, frame, gen_generator, gen_surf, harness, normalize, nurb_of,
     put_curve, put_state, rust_surf, scale, status, unit_vec, v3, BuildIn, Frame, SurfIn,
 };
 use crate::case::CaseContext;
@@ -537,198 +536,6 @@ fn src_bytes(s: &SrcIn) -> Result<Option<(bool, u64, Vec<u8>)>, HarnessError> {
             version,
         } => Some((true, *version, file_bytes(path, *line)?)),
     })
-}
-
-// ---- C++ side -------------------------------------------------------------------------
-
-fn ffi_src(s: &SrcIn) -> Result<ffi::Src, HarnessError> {
-    if let SrcIn::Built { surf } = s {
-        return Ok(ffi::Src::Built(ffi_surf(surf)?));
-    }
-    let (ascii, version, bytes) = src_bytes(s)?.ok_or_else(|| harness("no record"))?;
-    Ok(ffi::Src::Record {
-        ascii,
-        version,
-        bytes,
-    })
-}
-
-fn ffi_plane(p: &PlaneIn) -> ffi::PlaneIn {
-    match p {
-        PlaneIn::Bounded {
-            o,
-            x,
-            y,
-            scale,
-            dom,
-        } => ffi::PlaneIn::Bounded {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            dom: *dom,
-        },
-        PlaneIn::Normal { o, n } => ffi::PlaneIn::Normal { o: *o, n: *n },
-    }
-}
-
-fn ffi_cone(c: &ConeIn) -> ffi::ConeIn {
-    ffi::ConeIn {
-        kind: match c.cone {
-            ConeKindIn::Canonical {
-                bot,
-                top,
-                height,
-                swap,
-                inside,
-            } => ffi::ConeKind::Canonical {
-                bot,
-                top,
-                height,
-                swap,
-                inside,
-            },
-            ConeKindIn::Semi {
-                bot,
-                semi,
-                height,
-                swap,
-                inside,
-            } => ffi::ConeKind::Semi {
-                bot,
-                semi,
-                height,
-                swap,
-                inside,
-            },
-            ConeKindIn::Cylinder { radius } => ffi::ConeKind::Cylinder { radius },
-        },
-        o: c.o,
-        x: c.x,
-        y: c.y,
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let flat = match i {
-        Inputs::IsNurb {
-            is_nurb,
-            scale,
-            query,
-        } => {
-            let t = ffi::TestSurf {
-                source: match &is_nurb.source {
-                    TestSourceIn::Raw { nurb } => ffi::TestSource::Raw(ffi::NurbIn {
-                        n: nurb.n,
-                        m: nurb.m,
-                        p: nurb.p,
-                        q: nurb.q,
-                        cpts: nurb.cpts.clone(),
-                        u: nurb.u.clone(),
-                        v: nurb.v.clone(),
-                    }),
-                    TestSourceIn::Src { of } => ffi::TestSource::Src(ffi_src(of)?),
-                },
-                transpose: is_nurb.transpose,
-                reparam: is_nurb.reparam,
-                perturb: is_nurb.perturb,
-            };
-            match query {
-                None => ffi::is_nurb(&t, *scale),
-                Some(q) => ffi::lazy(&t, *scale, &ffi_query(q)),
-            }
-        }
-        Inputs::Op { src, op } => {
-            let op = match &**op {
-                OpIn::State {} => ffi::Op::State,
-                OpIn::Plane {
-                    plane,
-                    dom,
-                    other_dom,
-                    tol,
-                } => ffi::Op::Plane {
-                    plane: ffi_plane(plane),
-                    dom: *dom,
-                    other_dom: *other_dom,
-                    tol: *tol,
-                },
-                OpIn::Cylinder { cone, tol } => ffi::Op::Cylinder {
-                    cone: ffi_cone(cone),
-                    tol: *tol,
-                },
-                OpIn::Extrusion { other, tol } => ffi::Op::Extrusion {
-                    other: ffi_src(other)?,
-                    tol: *tol,
-                },
-                OpIn::Global {
-                    target,
-                    dom,
-                    other_dom,
-                    tol,
-                    ang,
-                } => ffi::Op::Global {
-                    target: match target {
-                        TargetIn::Plane { plane, .. } => ffi::Target::Plane(ffi_plane(plane)),
-                        TargetIn::Cone { cone } => ffi::Target::Cone(ffi_cone(cone)),
-                        TargetIn::Extrusion { other } => ffi::Target::Extrusion(ffi_src(other)?),
-                        TargetIn::Bspline { other } => ffi::Target::BSpline(ffi_src(other)?),
-                    },
-                    dom: *dom,
-                    other_dom: *other_dom,
-                    tol: *tol,
-                    ang: *ang,
-                },
-                OpIn::Trim { dom } => ffi::Op::Trim { dom: *dom },
-            };
-            ffi::surface_op(&ffi_src(src)?, &op)
-        }
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    to_output(&flat)
-}
-
-/// Splits a record into `build` and `out`.
-fn ffi_query(q: &QueryIn) -> ffi::Query {
-    match *q {
-        QueryIn::EvalSimple {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-        } => ffi::Query::EvalSimple {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-        },
-        QueryIn::EvalFirst { uv, u_left, v_left } => ffi::Query::EvalFirst { uv, u_left, v_left },
-        QueryIn::BBox { dom, expand } => ffi::Query::BBox { dom, expand },
-        QueryIn::DegenPoint { tol, dom } => ffi::Query::DegenPoint { tol, dom },
-        QueryIn::DegenCurve { ang, dom, tol } => ffi::Query::DegenCurve { ang, dom, tol },
-        QueryIn::Planar { tol } => ffi::Query::Planar { tol },
-        QueryIn::NumCpts { dir } => ffi::Query::NumCpts { dir },
-        QueryIn::Bilinear => ffi::Query::Bilinear,
-        QueryIn::Parallel { v } => ffi::Query::Parallel { v },
-        QueryIn::Knots { dir, ivl } => ffi::Query::Knots { dir, ivl },
-        QueryIn::Seam { prev, curr, dom } => ffi::Query::Seam { prev, curr, dom },
-        QueryIn::TessSplits {
-            dir,
-            dom,
-            chord,
-            angle,
-            max_side,
-            diagonals,
-        } => ffi::Query::TessSplits {
-            dir,
-            dom,
-            chord,
-            angle,
-            max_side,
-            diagonals,
-        },
-    }
 }
 
 fn to_output(flat: &[f64]) -> Result<Output, HarnessError> {
@@ -1816,10 +1623,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

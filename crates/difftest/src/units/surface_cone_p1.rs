@@ -7,10 +7,12 @@
 //!
 //! Ported from upstream `source/SMLib/src/SmCone.cpp` and
 //! `source/SMLib/src/SmCylinder.cpp`; checked against its golden. Rust:
-//! `solidcore::surface::cone::p1`. The C++ helpers left here (`cpp`, `common_cpp`,
-//! `const_make_cpp`, `const_make_nurb_cpp`) are the native side of unit
-//! `surface.surface_p2`'s common cases and of the sphere, torus and revolution
-//! const-make cases, and go when those units are checked against their goldens.
+//! `solidcore::surface::cone::p1`. [`common_cases`] builds unit `surface.surface_p2`'s
+//! common cases in Rust only (their database records are written by
+//! `solidcore::topology::geometry_write::write_surface`). The C++ helpers left here
+//! (`common_cpp`, `const_make_cpp`, `const_make_nurb_cpp`) are the native side of
+//! `surface.surface_p2` and of the sphere, torus and revolution const-make cases, and go
+//! when those units are checked against their goldens.
 //!
 //! A case is a `cone` (construction, placement, `oob`) plus `op` and its parameters,
 //! or the static `coincidence` op on two curves. The Rust side produces a flat
@@ -377,8 +379,6 @@ fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
         CurveIn::Ellipse { c, x, y, d, rx, ry } => ffi::CurveIn::Ellipse { c, x, y, d, rx, ry },
     }
 }
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> { cpp_with_roundtrip(i, None, false) }
 
 fn cpp_with_roundtrip(i: &Inputs, roundtrip: Option<bool>, subdomain: bool) -> Result<Output, HarnessError> {
     let flat = if let OpIn::Coincidence {
@@ -1068,20 +1068,16 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     to_output(i, &o)
 }
 
-// Issue #76 integration coverage reuses the exact constructor inputs and native guards.
+// Issue #76 integration coverage reuses the exact constructor inputs.
 // The numerical implementation remains cone_p1; these calls traverse Surface instead.
 pub(super) fn common_cases(ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
+    use solidcore::surface::surface::Surface;
+    use solidcore::topology::database_io::{DatabaseWriter, FileType};
+    use solidcore::topology::geometry_write::write_surface;
     let mut cases = Runner.cases(ctx)?;
     cases.retain(|c| matches!(c.inputs.get("op").and_then(Value::as_str),
         Some("eval" | "eval_point" | "eval_step" | "to_step" | "to_nurbs" | "iso" | "inversion" | "adjust" | "transform" | "copy")));
-    let mut numerical = Vec::new();
-    for case in cases {
-        let input: Inputs = case.parse()?;
-        let native = cpp(&input)?;
-        if native.values.get("status").is_some_and(|v| v == &[SC_ERR_ARG]) { continue; }
-        numerical.push(case);
-    }
-    let mut cases = numerical;
+    let k = Kernel::default();
     for c in &mut cases {
         c.unit = "surface.surface_p2".into();
         c.name = format!("common_cone_{}", c.name);
@@ -1109,12 +1105,12 @@ pub(super) fn common_cases(ctx: &CaseContext) -> Result<Vec<Case>, HarnessError>
                 let mut value = op;
                 value.as_object_mut().ok_or_else(|| harness("database operation object"))?.insert("cone".into(), serde_json::json!({"mode":mode,"origin":[0.0,0.0,0.0],"x":[1.0,0.0,0.0],"y":[0.0,1.0,0.0]}));
                 let i: Inputs = serde_json::from_value(value.clone()).map_err(|e| harness(e.to_string()))?;
-                let data = ffi::serialize_cone(&ffi_cone(i.cone.as_ref().ok_or_else(|| harness("missing cone"))?), binary)
-                    .map_err(|e| harness(e.to_string()))?;
-                if data.first() != Some(&SUCCESS) || data.get(1) != Some(&SUCCESS) {
-                    return Err(harness("database fixture constructor/writer failed"));
-                }
-                let bytes: Vec<u8> = data.into_iter().skip(2).map(|v| v as u8).collect();
+                let cone = rust_cone(&k, i.cone.as_ref().ok_or_else(|| harness("missing cone"))?)
+                    .map_err(|e| harness(format!("database fixture constructor: {e}")))?;
+                let mut db = DatabaseWriter::open_for_write(if binary { FileType::Binary } else { FileType::Ascii });
+                write_surface(&Surface::from(cone), &mut db, 30)
+                    .map_err(|e| harness(format!("database fixture writer: {e}")))?;
+                let bytes = db.into_bytes();
                 database_cases.push(Case { unit:"surface.surface_p2".into(),
                     name:format!("common_db_{class}_{binary}_{}", database_cases.len()),
                     source: crate::case::CaseSource::Generated { seed: 76 },

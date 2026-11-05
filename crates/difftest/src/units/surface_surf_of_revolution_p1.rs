@@ -4,13 +4,15 @@
 //! STEP evaluation, the plane intersection's special cases, the start-plane transform,
 //! the small queries) and `sm_TestForIsoCircles`.
 //!
-//! C++: `solidcore_ffi::units::surface_surf_of_revolution_p1` (upstream
-//! `source/SMLib/src/SmSurfOfRevolution.cpp`). Rust:
-//! `solidcore::surface::surf_of_revolution::p1`.
+//! Ported from upstream `source/SMLib/src/SmSurfOfRevolution.cpp`; checked against its
+//! golden. Rust: `solidcore::surface::surf_of_revolution::p1`. `ffi_gen`, `ffi_surf` and
+//! `const_make_cpp` stay as the native side of the units that still build revolution
+//! inputs for the C++ (`surface.surface_p2`, `surface.surface_point_solve_p2`/`p3`,
+//! `blend.fillet_solver_p4`) until those are checked against their goldens.
 //!
 //! A case is `surf` (generator, construction, `oob`, `swap`) plus `op` and its
-//! parameters, or the static `iso_circles` op on a B-spline surface. Both sides
-//! produce the same flat record (layout in the FFI module docs), split into `build`
+//! parameters, or the static `iso_circles` op on a B-spline surface. The Rust side
+//! produces a flat record, split into `build`
 //! (the construction status), `status` (the op status) and `out` (the rest). Statuses
 //! are `0` (`SM_SUCCESS`) or the `SmStatus`; `-1` on the Rust side for an error
 //! upstream cannot produce.
@@ -317,72 +319,6 @@ pub(crate) fn ffi_surf(s: &SurfIn) -> Result<ffi::Surf, HarnessError> {
         oob: s.oob,
         swap: s.swap,
     })
-}
-
-fn ffi_srf(s: &InlineSrf) -> ffi::SurfaceData {
-    ffi::SurfaceData {
-        net: s.net.clone(),
-        p: s.p,
-        q: s.q,
-        u: s.u.clone(),
-        v: s.v.clone(),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let flat = if let OpIn::IsoCircles {
-        srf: s,
-        param,
-        tol,
-        ang,
-    } = &i.op
-    {
-        ffi::iso_circles(&ffi_srf(&srf(s)?), *param, *tol, *ang)
-    } else {
-        let s = i.surf.as_ref().ok_or_else(|| harness("missing surf"))?;
-        let op = match &i.op {
-            OpIn::Build {} => ffi::Op::Build,
-            OpIn::EvalStep { u, v, k, point } => ffi::Op::EvalStep {
-                u: *u,
-                v: *v,
-                k: *k,
-                point: *point,
-            },
-            OpIn::ToStep { u, v } => ffi::Op::ToStep { u: *u, v: *v },
-            OpIn::Iso { param, iso, dom } => ffi::Op::Iso {
-                param: *param,
-                iso: *iso,
-                dom: *dom,
-            },
-            OpIn::Directrix { t } => ffi::Op::Directrix { t: *t },
-            OpIn::Generator { angle } => ffi::Op::Generator { angle: *angle },
-            OpIn::StartPlane { p, tol, snap } => ffi::Op::StartPlane {
-                p: *p,
-                tol: *tol,
-                snap: *snap,
-            },
-            OpIn::Eq { other } => ffi::Op::Eq {
-                other: Box::new(ffi_surf(other)?),
-            },
-            OpIn::Plane {
-                origin,
-                x,
-                y,
-                dom,
-                tol,
-            } => ffi::Op::Plane {
-                origin: *origin,
-                x: *x,
-                y: *y,
-                dom: *dom,
-                tol: *tol,
-            },
-            OpIn::IsoCircles { .. } => return Err(harness("unreachable")),
-        };
-        ffi::surface_op(&ffi_surf(s)?, &op)
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 /// Splits a record into `build`, `status` and `out`.
@@ -1267,10 +1203,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
