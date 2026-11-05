@@ -1768,7 +1768,6 @@ fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
         "precise_properties_split_at_surface_knots" => {
             &mut k.fixes.precise_properties_split_at_surface_knots
         }
-        "precise_properties_trim_base_v" => &mut k.fixes.precise_properties_trim_base_v,
         "precise_properties_span_end_from_below" => {
             &mut k.fixes.precise_properties_span_end_from_below
         }

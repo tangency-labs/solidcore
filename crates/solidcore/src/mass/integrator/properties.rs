@@ -26,8 +26,8 @@
 //! With `UpstreamFixes::brep_area_between_solid_and_void` (WR-535) a volume-separating
 //! faceuse adds its volume only where it bounds a non void region and its area only
 //! where the area behaviour selects it (tangency-labs/smlib@d2d9586).
-//! With `UpstreamFixes::precise_properties_trim_base_v` (WR-563, #1556) the iso-u
-//! integrals start at the trims' lowest v, not at the face UV domain's.
+//! The iso-u integrals start at the trims' lowest v, not at the face UV domain's
+//! (WR-563, #1556).
 //! With `UpstreamFixes::precise_properties_span_end_from_below` (WR-670, #2091) each
 //! span-wise iso-u piece is evaluated at its end from its own knot span.
 use super::{OdeIntegrator, OdeOptions};
@@ -313,16 +313,12 @@ pub fn boundary_properties(
     } else {
         1.0
     };
-    // The base of every iso-u integral: upstream's `GetUVDomain().GetMin().y`. Any base
-    // gives the same loop integral (a different base adds a function of u alone, whose
-    // integral round a closed loop is zero), but one far below the trims makes each
-    // integral long and the area a small difference of large terms. With
-    // `fixes.precise_properties_trim_base_v` (WR-563, #1556) it is the trims' lowest v.
-    let base_v = if k.fixes.precise_properties_trim_base_v {
-        trims_base_v(k, trims, domain)?
-    } else {
-        domain.min().y
-    };
+    // The base of every iso-u integral: the trims' lowest v. Any base gives the same loop
+    // integral (a different base adds a function of u alone, whose integral round a
+    // closed loop is zero), but one far below the trims, such as upstream's
+    // `GetUVDomain().GetMin().y` on a face whose domain is unbounded in v, makes each
+    // integral long and the area a small difference of large terms (WR-563, #1556).
+    let base_v = trims_base_v(k, trims, domain)?;
     let mut result = PreciseProperties::default();
     for trim in trims {
         let area_scale = estimated_area / 10.0;
