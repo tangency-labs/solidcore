@@ -2,17 +2,16 @@
 //! (accessors, copies, equality, the `USE_VOLUMES`-less evaluations, bounding boxes,
 //! inversion guesses, transforms) and the `SmVolume` base members dispatching to it.
 //!
-//! C++: `solidcore_ffi::units::surface_b_spline_volume` (upstream
-//! `source/SMLib/src/SmBSplineVolume.cpp` on a B-spline volume built from an
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineVolume.cpp` (on a B-spline volume built from an
 //! `sm_AllocateNurbVolume` record, optionally oriented and compounded with
-//! `SmTransform` next maps). Rust: `solidcore::surface::b_spline_volume` through
+//! `SmTransform` next maps); checked against its golden. Rust: `solidcore::surface::b_spline_volume` through
 //! `solidcore::surface::volume`.
 //!
 //! A case is a volume (`vol`: `hi` highest control point indices, `deg` degrees,
 //! `knots` per direction, `cpts` `[x, y, z, w]` with `w` index fastest, optional
 //! `orient` and `next` transforms `[origin, X, Y, Z]`) and an `op` with its
-//! parameters. Both sides produce the flat record documented in the ffi module; the
-//! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
+//! parameters. The Rust side produces a flat record; the runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream
 //! cannot produce) and the rest as `out`.
 //!
@@ -35,7 +34,6 @@ use solidcore::nurbs::spiral::allocate_nurb_volume;
 use solidcore::surface::b_spline_volume::{BSplineVolume, VolumeParam, VolumeParams};
 use solidcore::surface::volume::{EvalOptions, Volume, VolumeKind};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_b_spline_volume::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -47,6 +45,13 @@ pub struct Runner;
 
 /// Generated cases per run (at least).
 pub const MIN_GENERATED: usize = 2000;
+
+/// Most control points per direction.
+const MAX_CP: usize = 8;
+/// Highest degree per direction.
+const MAX_DEGREE: usize = 5;
+/// Most next maps.
+const MAX_NEXT: usize = 3;
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
@@ -130,7 +135,7 @@ enum Inputs {
     },
 }
 
-// ---- C++ side -----------------------------------------------------------------------
+// ---- records ------------------------------------------------------------------------
 
 fn b(x: bool) -> f64 {
     if x {
@@ -140,143 +145,12 @@ fn b(x: bool) -> f64 {
     }
 }
 
-fn push3(o: &mut Vec<f64>, p: [f64; 3]) {
-    o.extend(p);
-}
-
-fn push_tf(o: &mut Vec<f64>, t: &Tf) {
-    for p in t {
-        push3(o, *p);
-    }
-}
-
-fn push_vol(o: &mut Vec<f64>, v: &VolIn) {
-    o.extend(v.hi.map(|x| x as f64));
-    o.extend(v.deg.map(|x| x as f64));
-    for k in &v.knots {
-        o.extend(k);
-    }
-    for c in &v.cpts {
-        o.extend(c);
-    }
-    match &v.orient {
-        Some(t) => {
-            o.push(1.0);
-            push_tf(o, t);
-        }
-        None => o.push(0.0),
-    }
-    o.push(v.next.len() as f64);
-    for t in &v.next {
-        push_tf(o, t);
-    }
-}
-
-fn cpp_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::Info { vol, types, ivl } => {
-            push_vol(&mut o, vol);
-            o.push(types.len() as f64);
-            o.extend(types.iter().map(|&t| t as f64));
-            o.extend(ivl);
-            Op::Info
-        }
-        Inputs::Copy { vol, simple } => {
-            push_vol(&mut o, vol);
-            o.push(b(*simple));
-            Op::Copy
-        }
-        Inputs::Equal { vol, mode, other } => {
-            push_vol(&mut o, vol);
-            o.push(*mode as f64);
-            if *mode == 2 {
-                if let Some(other) = other {
-                    push_vol(&mut o, other);
-                }
-            }
-            Op::Equal
-        }
-        Inputs::Eval { vol, p, n, comp } => {
-            push_vol(&mut o, vol);
-            push3(&mut o, *p);
-            o.push(*n as f64);
-            o.push(b(*comp));
-            Op::Eval
-        }
-        Inputs::BBox {
-            vol,
-            a,
-            b: e,
-            want_box,
-            want_pb,
-        } => {
-            push_vol(&mut o, vol);
-            push3(&mut o, *a);
-            push3(&mut o, *e);
-            o.push(b(*want_box));
-            o.push(b(*want_pb));
-            Op::BBox
-        }
-        Inputs::Iso { vol, kind, p1, p2 } => {
-            push_vol(&mut o, vol);
-            o.extend([*kind as f64, *p1, *p2]);
-            Op::Iso
-        }
-        Inputs::InvGuess { vol, p } => {
-            push_vol(&mut o, vol);
-            push3(&mut o, *p);
-            Op::InvGuess
-        }
-        Inputs::Transform {
-            vol,
-            o: org,
-            x,
-            y,
-            scale,
-            simple,
-        } => {
-            push_vol(&mut o, vol);
-            push3(&mut o, *org);
-            push3(&mut o, *x);
-            push3(&mut o, *y);
-            o.push(b(scale.is_some()));
-            push3(&mut o, scale.unwrap_or([1.0; 3]));
-            o.push(b(*simple));
-            Op::Transform
-        }
-        Inputs::Preds {
-            vol,
-            p,
-            a,
-            b: e,
-            c,
-            d,
-        } => {
-            push_vol(&mut o, vol);
-            for v in [p, a, e, c, d] {
-                push3(&mut o, *v);
-            }
-            Op::Preds
-        }
-    };
-    (op, o)
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i);
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -691,7 +565,7 @@ fn gen_knots(rng: &mut Rng, count: usize, deg: usize) -> Vec<f64> {
 
 fn gen_vol(rng: &mut Rng) -> VolIn {
     let hi = [
-        rng.below(ffi::MAX_CP as u64) as usize,
+        rng.below(MAX_CP as u64) as usize,
         rng.below(4) as usize,
         rng.below(4) as usize,
     ];
@@ -700,7 +574,7 @@ fn gen_vol(rng: &mut Rng) -> VolIn {
     } else {
         hi
     };
-    let deg = hi.map(|h| (rng.below(h as u64 + 1) as usize).min(ffi::MAX_DEGREE));
+    let deg = hi.map(|h| (rng.below(h as u64 + 1) as usize).min(MAX_DEGREE));
     let ([h0, h1, h2], [d0, d1, d2]) = (hi, deg);
     let knots = [
         gen_knots(rng, h0 + d0 + 2, d0),
@@ -726,7 +600,7 @@ fn gen_vol(rng: &mut Rng) -> VolIn {
     let n_next = if rng.chance(0.6) {
         0
     } else {
-        1 + rng.below(ffi::MAX_NEXT as u64) as usize
+        1 + rng.below(MAX_NEXT as u64) as usize
     };
     let next = (0..n_next).map(|_| gen_transform(rng)).collect();
     VolIn {
@@ -877,14 +751,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let (op, input) = cpp_input(&i);
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -893,10 +760,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -916,18 +779,15 @@ mod tests {
         let mut seen: BTreeMap<(String, bool), usize> = BTreeMap::new();
         for _ in 0..3000 {
             let i = gen_case(&mut rng);
-            let (op, input) = cpp_input(&i);
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
-            let flat = ffi::eval(op, &input).unwrap();
-            let ok = flat.first() == Some(&0.0);
-            *seen.entry((format!("{op:?}"), ok)).or_default() += 1;
+            let op = serde_json::to_value(&i).unwrap()["op"].as_str().unwrap().to_string();
+            let out = rust(&i).unwrap();
+            let ok = out.ints.get("status").and_then(|s| s.first()) == Some(&0);
+            *seen.entry((op, ok)).or_default() += 1;
         }
-        for op in ["Info", "Copy", "Equal", "BBox", "InvGuess", "Transform", "Preds"] {
+        for op in ["info", "copy", "equal", "bbox", "inv_guess", "transform", "preds"] {
             assert!(seen.contains_key(&(op.to_string(), true)), "{op} never succeeds: {seen:?}");
         }
-        for op in ["BBox", "Iso", "Transform"] {
+        for op in ["bbox", "iso", "transform"] {
             assert!(seen.contains_key(&(op.to_string(), false)), "{op} never fails: {seen:?}");
         }
         eprintln!("{seen:?}");

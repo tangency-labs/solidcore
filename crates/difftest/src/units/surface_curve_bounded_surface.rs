@@ -2,16 +2,15 @@
 //! the evaluation overrides passed along to the basis surface, the `SmSurface` defaults it
 //! does not override, type queries, `operator==`, `SetContext` and `ReadFromDB`).
 //!
-//! C++: `solidcore_ffi::units::surface_curve_bounded_surface` (upstream
-//! `source/SMLib/src/SmCurveBoundedSurface.cpp`, called through `SmSurface*` so the virtual
-//! dispatch is upstream's). Rust: `solidcore::surface::curve_bounded_surface` through
+//! Ported from upstream `source/SMLib/src/SmCurveBoundedSurface.cpp`; checked against its
+//! golden. Rust: `solidcore::surface::curve_bounded_surface` through
 //! `solidcore::surface::surface::p2::Surface`.
 //!
 //! A case is a curve bounded surface `this` (a B-spline basis, inline or an upstream `.sms`
 //! file, the implicit-outer flag, 3D and UV B-spline boundaries, inline or upstream `.smc`
 //! files) and an `op` with its parameters, or the static `read_db` op (an ASCII record built
-//! by `ffi::cbs_record` from the same kind of data, read by both sides). Both sides produce
-//! the flat record documented in the ffi module; the runner reports its first entry as the
+//! by [`cbs_record`] from the same kind of data). The Rust side produces a flat record; the
+//! runner reports its first entry as the
 //! `status` (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1`
 //! for a Rust error upstream cannot produce) and the rest as the `out` values.
 //!
@@ -19,7 +18,7 @@
 //! `Surface` dispatch yet (`EvaluateNormal`, `EvaluateSimple`, `EvaluateNormalAtSingularity`,
 //! `EvaluateGeometric`, `EvaluateNormalSection`, `EvaluateSTEP`, `EvaluateSTEPPoint`) and
 //! `operator==` between two objects (`SmSurface::operator==`). Every run has at least
-//! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are redrawn.
+//! [`MIN_GENERATED`] generated cases.
 //!
 //! Deviations: runner-local `.sms`/`.smc` parsers reject unrepresentable counts,
 //! check dimension, coordinate-width and knot arithmetic and available numeric
@@ -28,6 +27,8 @@
 
 #[path = "fixtures/surface_curve_bounded_surface_fixtures.rs"]
 mod fixtures;
+
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -49,9 +50,6 @@ use solidcore::surface::curve_bounded_surface::{self as cbs, CurveBoundedSurface
 use solidcore::surface::surface::p2::{Surface, SurfaceKind};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_curve_bounded_surface::{
-    self as ffi, CbsRecord, Op, RecordCurve, RecordSurface,
-};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -62,6 +60,11 @@ pub const MIN_GENERATED: usize = 400;
 
 /// `surface.curve_bounded_surface` runner.
 pub struct Runner;
+
+/// `SmBSplineSurface_TYPE`.
+const B_SPLINE_SURFACE_TYPE: i64 = 15002;
+/// `SmBSplineCurve_TYPE`.
+const B_SPLINE_CURVE_TYPE: i64 = 14033;
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
@@ -130,11 +133,11 @@ fn default_form() -> u8 {
 }
 
 fn default_basis_type() -> i64 {
-    ffi::B_SPLINE_SURFACE_TYPE
+    B_SPLINE_SURFACE_TYPE
 }
 
 fn default_uv_header_type() -> i64 {
-    ffi::B_SPLINE_CURVE_TYPE
+    B_SPLINE_CURVE_TYPE
 }
 
 fn default_version() -> u64 {
@@ -245,29 +248,6 @@ fn yes() -> bool {
     true
 }
 
-impl OpIn {
-    fn ffi(&self) -> Op {
-        match self {
-            Self::State => Op::State,
-            Self::Eval { .. } => Op::Eval,
-            Self::EvalPt { .. } => Op::EvalPt,
-            Self::Queries { .. } => Op::Queries,
-            Self::Defaults { .. } => Op::Defaults,
-            Self::EqSelf => Op::EqSelf,
-            Self::EqOther { .. } => Op::EqOther,
-            Self::Normal { .. } => Op::Normal,
-            Self::Simple { .. } => Op::Simple,
-            Self::Singular { .. } => Op::Singular,
-            Self::Geometric { .. } => Op::Geometric,
-            Self::NormalSection { .. } => Op::NormalSection,
-            Self::Step { .. } => Op::Step,
-            Self::StepPt { .. } => Op::StepPt,
-            Self::SetContext => Op::SetContext,
-            Self::ReadDb { .. } => Op::ReadDb,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,22 +300,6 @@ fn crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
@@ -378,135 +342,136 @@ fn record_of(op: &OpIn) -> Result<CbsRecord, HarnessError> {
     })
 }
 
-// ---- C++ side -----------------------------------------------------------------------
+// ---- the read_db record -------------------------------------------------------------
 
-fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend(
-        [
-            n,
-            m,
-            s.p,
-            s.q,
-            s.u.len().saturating_sub(1),
-            s.v.len().saturating_sub(1),
-        ]
-        .map(|x| x as f64),
+/// An inline B-spline record for [`cbs_record`]: control points `[x, y, z, w]` (`w` =
+/// `NL_NOW` when non-rational) and knots.
+#[derive(Debug, Clone, PartialEq)]
+struct RecordCurve {
+    /// Dimension (2 or 3): the header's and the record's.
+    dim: u64,
+    /// Degree.
+    p: usize,
+    /// Control points as stored.
+    cpts: Vec<[f64; 4]>,
+    /// Knots.
+    knots: Vec<f64>,
+}
+
+/// An inline B-spline surface record for [`cbs_record`].
+#[derive(Debug, Clone, PartialEq)]
+struct RecordSurface {
+    /// Degrees `(p, q)`.
+    pq: (usize, usize),
+    /// Control net as stored, rows in u.
+    net: Vec<Vec<[f64; 4]>>,
+    /// u knots.
+    u: Vec<f64>,
+    /// v knots.
+    v: Vec<f64>,
+}
+
+/// What [`cbs_record`] writes: an `SmCurveBoundedSurface::WriteToDB` ASCII record (stream
+/// version <= 32 layout of the B-spline records).
+#[derive(Debug, Clone, PartialEq)]
+struct CbsRecord {
+    /// The implicit-outer flag written.
+    implicit: bool,
+    /// The basis surface's type header: `SmBSplineSurface_TYPE` or a type that is not a
+    /// surface (upstream fails without reading on).
+    basis_type: i64,
+    /// The basis surface record.
+    basis: RecordSurface,
+    /// The 3D boundaries (written with `SmBSplineCurve_TYPE` headers).
+    curves_3d: Vec<RecordCurve>,
+    /// The type written in the UV boundaries' headers (upstream reads them with the
+    /// last 3D type whatever this says).
+    uv_header_type: i64,
+    /// The UV boundaries.
+    curves_uv: Vec<RecordCurve>,
+}
+
+fn rational(pts: &[[f64; 4]]) -> bool {
+    pts.first().is_some_and(|p| p[3] != NOW)
+}
+
+fn push_point(t: &mut String, p: &[f64; 4], dim: u64, rat: bool) {
+    let k = if dim == 2 { 2 } else { 3 };
+    let mut first = true;
+    for c in p
+        .iter()
+        .take(k)
+        .chain(p.iter().skip(3).take(usize::from(rat)))
+    {
+        if !first {
+            t.push(' ');
+        }
+        first = false;
+        t.push_str(&c.to_string());
+    }
+    t.push('\n');
+}
+
+fn push_curve(t: &mut String, ty: i64, c: &RecordCurve) {
+    let rat = rational(&c.cpts);
+    let _ = write!(t, "Object Type {ty}\nCurve Dim {}\n", c.dim);
+    let _ = write!(
+        t,
+        "{}\n{}\n{}\n{}\n",
+        c.cpts.len().saturating_sub(1),
+        c.p,
+        u8::from(rat),
+        c.dim
     );
+    for p in &c.cpts {
+        push_point(t, p, c.dim, rat);
+    }
+    for k in &c.knots {
+        let _ = writeln!(t, "{k}");
+    }
+}
+
+/// The ASCII record of `r`, laid out as `SmCurveBoundedSurface::WriteToDB` and the
+/// B-spline writers do (version <= 32).
+fn cbs_record(r: &CbsRecord) -> String {
+    let mut t = String::new();
+    let _ = writeln!(
+        t,
+        "{} SmCurveBoundedSurface Number of 3D Boundaries ",
+        r.curves_3d.len()
+    );
+    let _ = writeln!(
+        t,
+        "{} SmCurveBoundedSurface Number of UV Boundaries ",
+        r.curves_uv.len()
+    );
+    let _ = writeln!(
+        t,
+        "{} SmCurveBoundedSurface Implicit Outer Flag ",
+        u8::from(r.implicit)
+    );
+    t.push_str(" SmCurveBoundedSurface->BasisSurface \n");
+    let _ = writeln!(t, "Object Type {}", r.basis_type);
+    let s = &r.basis;
+    let n = s.net.len().saturating_sub(1);
+    let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
+    let rat = s.net.first().is_some_and(|row| rational(row));
+    let _ = write!(t, "{n} {m}\n{} {}\n{}\n", s.pq.0, s.pq.1, u8::from(rat));
     for row in &s.net {
         for p in row {
-            o.extend_from_slice(p);
+            push_point(&mut t, p, 3, rat);
         }
     }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &CrvIn) -> Result<(), HarnessError> {
-    let c = crv(c)?;
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([
-        c.dim as f64,
-        n as f64,
-        c.p as f64,
-        c.u.len().saturating_sub(1) as f64,
-    ]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
+    for k in s.u.iter().chain(&s.v) {
+        let _ = writeln!(t, "{k}");
     }
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn push_cbs(o: &mut Vec<f64>, b: &CbsIn) -> Result<(), HarnessError> {
-    o.push(flag(b.oob));
-    o.push(f64::from(b.form));
-    push_srf(o, &srf(&b.srf)?)?;
-    o.push(flag(b.implicit));
-    o.push(b.c3d.len() as f64);
-    for c in &b.c3d {
-        push_crv(o, c)?;
+    for c in &r.curves_3d {
+        push_curve(&mut t, B_SPLINE_CURVE_TYPE, c);
     }
-    o.push(b.cuv.len() as f64);
-    for c in &b.cuv {
-        push_crv(o, c)?;
+    for c in &r.curves_uv {
+        push_curve(&mut t, r.uv_header_type, c);
     }
-    Ok(())
-}
-
-fn push_derivs(o: &mut Vec<f64>, uv: [f64; 2], hu: usize, hv: usize, flags: [bool; 3]) {
-    o.extend_from_slice(&uv);
-    o.extend([hu as f64, hv as f64]);
-    o.extend(flags.map(flag));
-}
-
-/// The ffi input of a surface op.
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let this = i
-        .this
-        .as_ref()
-        .ok_or_else(|| harness("surface op without this"))?;
-    let mut o = vec![1.0];
-    push_cbs(&mut o, this)?;
-    match &i.op {
-        OpIn::State | OpIn::EqSelf | OpIn::SetContext => {}
-        OpIn::Eval {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-            upper,
-            nzt,
-        } => {
-            push_derivs(&mut o, *uv, *hu, *hv, [*u_left, *v_left, *upper]);
-            o.push(flag(*nzt));
-        }
-        OpIn::EvalPt { uv } | OpIn::StepPt { uv } => o.extend_from_slice(uv),
-        OpIn::Queries { types } => {
-            o.push(types.len() as f64);
-            o.extend(types.iter().map(|&t| t as f64));
-        }
-        OpIn::Defaults { v } => o.extend_from_slice(v),
-        OpIn::EqOther { other } => push_cbs(&mut o, other)?,
-        OpIn::Normal { uv, u_left, v_left } | OpIn::Geometric { uv, u_left, v_left } => {
-            o.extend_from_slice(uv);
-            o.extend([flag(*u_left), flag(*v_left)]);
-        }
-        OpIn::Simple {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-            upper,
-        }
-        | OpIn::Step {
-            uv,
-            hu,
-            hv,
-            u_left,
-            v_left,
-            upper,
-        } => push_derivs(&mut o, *uv, *hu, *hv, [*u_left, *v_left, *upper]),
-        OpIn::Singular { uv, tol } => {
-            o.extend_from_slice(uv);
-            o.push(*tol);
-        }
-        OpIn::NormalSection {
-            uv,
-            u_left,
-            v_left,
-            dir,
-        } => {
-            o.extend_from_slice(uv);
-            o.extend([flag(*u_left), flag(*v_left)]);
-            o.extend_from_slice(dir);
-        }
-        OpIn::ReadDb { .. } => return Err(harness("read_db is static")),
-    }
-    Ok((i.op.ffi(), o))
+    t
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -516,27 +481,6 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .values("status", vec![status])
         .values("out", rest.to_vec())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let flat = if let OpIn::ReadDb { version, .. } = &i.op {
-        ffi::read_db(cbs::TYPE, *version, &record_of(&i.op)?)
-    } else {
-        let (op, input) = cpp_input(i)?;
-        ffi::eval(op, &input)
-    }
-    .map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
-}
-
-/// Checks the inputs as the C++ side does (generators redraw rejected inputs).
-fn validate(i: &Inputs) -> Result<(), HarnessError> {
-    if let OpIn::ReadDb { version, .. } = &i.op {
-        return ffi::validate_read_db(cbs::TYPE, *version, &record_of(&i.op)?)
-            .map_err(|e| harness(e.to_string()));
-    }
-    let (op, input) = cpp_input(i)?;
-    ffi::validate(op, &input).map_err(|e| harness(e.to_string()))
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -925,7 +869,7 @@ fn rust_read(op: &OpIn) -> Result<Run, HarnessError> {
     let OpIn::ReadDb { version, .. } = op else {
         return Err(harness("not a read op"));
     };
-    let text = ffi::cbs_record(&record_of(op)?);
+    let text = cbs_record(&record_of(op)?);
     let mut db = DatabaseReader::new();
     db.open_for_read(text.into_bytes(), FileType::Ascii);
     let k = Kernel::default();
@@ -1095,16 +1039,16 @@ fn gen_case(rng: &mut Rng) -> Inputs {
                 version: 30,
                 implicit: c.implicit,
                 basis_type: if rng.chance(0.1) {
-                    ffi::B_SPLINE_CURVE_TYPE
+                    B_SPLINE_CURVE_TYPE
                 } else {
-                    ffi::B_SPLINE_SURFACE_TYPE
+                    B_SPLINE_SURFACE_TYPE
                 },
                 srf: c.srf,
                 c3d,
                 uv_header_type: if rng.chance(0.3) {
                     14010
                 } else {
-                    ffi::B_SPLINE_CURVE_TYPE
+                    B_SPLINE_CURVE_TYPE
                 },
                 cuv: c.cuv,
             },
@@ -1187,13 +1131,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            if validate(&i).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1202,10 +1140,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1227,10 +1161,7 @@ mod tests {
         for seed in 0..1000u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
             let i = gen_case(&mut rng);
-            if validate(&i).is_err() {
-                continue;
-            }
-            let name = format!("{:?}", i.op.ffi());
+            let name = serde_json::to_value(&i.op).unwrap()["op"].as_str().unwrap().to_string();
             let out = rust(k, &i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.unit)
@@ -1244,14 +1175,14 @@ mod tests {
             println!("{k:?}: {v}");
         }
         for op in [
-            "State",
-            "Eval",
-            "EvalPt",
-            "Queries",
-            "Defaults",
-            "EqSelf",
-            "SetContext",
-            "ReadDb",
+            "state",
+            "eval",
+            "eval_pt",
+            "queries",
+            "defaults",
+            "eq_self",
+            "set_context",
+            "read_db",
         ] {
             assert!(
                 tally.keys().any(|(n, k)| n == op && k == "status:0"),

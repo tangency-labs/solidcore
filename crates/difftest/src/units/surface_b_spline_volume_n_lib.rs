@@ -1,16 +1,15 @@
 //! Runner for unit `surface.b_spline_volume_n_lib`: the knot-plane continuities, the
 //! discontinuity summary and the parameter-domain curve test of a B-spline volume.
 //!
-//! C++: `solidcore_ffi::units::surface_b_spline_volume_n_lib` (upstream
-//! `source/SMLib/src/SmBSplineVolumeNLib.cpp` through `SmVolume*` on a B-spline volume
+//! Ported from upstream
+//! `source/SMLib/src/SmBSplineVolumeNLib.cpp` (through `SmVolume*` on a B-spline volume
 //! built from an `sm_AllocateNurbVolume` record, optionally oriented and compounded with
 //! `SmTransform` next maps; parameter curves are real `SmBSplineCurve`, `SmLine`,
-//! `SmEllipse` and `SmHermiteCurve` objects). Rust: `solidcore::surface::b_spline_volume_n_lib`
+//! `SmEllipse` and `SmHermiteCurve` objects); checked against its golden. Rust: `solidcore::surface::b_spline_volume_n_lib`
 //! through `solidcore::surface::volume`.
 //!
 //! A case is a volume (`vol`, as in unit `surface.b_spline_volume`) and an `op` with its
-//! parameters. Both sides produce the flat record documented in the ffi module; the
-//! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
+//! parameters. The Rust side produces a flat record; the runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce) and the rest as `out`.
 //!
@@ -38,7 +37,6 @@ use solidcore::surface::b_spline_volume::{BSplineVolume, VolumeParam};
 use solidcore::surface::volume::p1::{DirectionDiscontinuities, Discontinuities3d};
 use solidcore::surface::volume::{Volume, VolumeKind};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_b_spline_volume_n_lib::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -49,6 +47,13 @@ pub struct Runner;
 
 /// Generated cases per run (at least).
 pub const MIN_GENERATED: usize = 2000;
+
+/// Most control points per volume direction.
+const MAX_CP: usize = 8;
+/// Highest degree per direction.
+const MAX_DEGREE: usize = 5;
+/// Most next maps.
+const MAX_NEXT: usize = 3;
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
@@ -121,7 +126,7 @@ enum Inputs {
     },
 }
 
-// ---- C++ side -----------------------------------------------------------------------
+// ---- records ------------------------------------------------------------------------
 
 fn b(x: bool) -> f64 {
     if x {
@@ -131,108 +136,12 @@ fn b(x: bool) -> f64 {
     }
 }
 
-fn push_tf(o: &mut Vec<f64>, t: &Tf) {
-    for p in t {
-        o.extend(p);
-    }
-}
-
-fn push_vol(o: &mut Vec<f64>, v: &VolIn) {
-    o.extend(v.hi.map(|x| x as f64));
-    o.extend(v.deg.map(|x| x as f64));
-    for k in &v.knots {
-        o.extend(k);
-    }
-    for c in &v.cpts {
-        o.extend(c);
-    }
-    match &v.orient {
-        Some(t) => {
-            o.push(1.0);
-            push_tf(o, t);
-        }
-        None => o.push(0.0),
-    }
-    o.push(v.next.len() as f64);
-    for t in &v.next {
-        push_tf(o, t);
-    }
-}
-
-fn push_curve(o: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Bspline { p, cpts, knots } => {
-            o.extend([0.0, cpts.len() as f64 - 1.0, *p as f64]);
-            for c in cpts {
-                o.extend(c);
-            }
-            o.extend(knots);
-        }
-        CurveIn::Line { p, v, d } => {
-            o.push(1.0);
-            o.extend(p);
-            o.extend(v);
-            o.extend(d);
-        }
-        CurveIn::Ellipse { c, x, y, d, r } => {
-            o.push(2.0);
-            o.extend(c);
-            o.extend(x);
-            o.extend(y);
-            o.extend(d);
-            o.extend(r);
-        }
-        CurveIn::Hermite { p1, d1, p2, d2 } => {
-            o.push(3.0);
-            for v in [p1, d1, p2, d2] {
-                o.extend(v);
-            }
-        }
-    }
-}
-
-fn cpp_input(i: &Inputs) -> (Op, Vec<f64>) {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::Conts { vol, e, geom } => {
-            push_vol(&mut o, vol);
-            o.extend([*e as f64, b(*geom)]);
-            Op::Conts
-        }
-        Inputs::HasDisc { vol, given, geom } => {
-            push_vol(&mut o, vol);
-            o.extend([b(*given), b(*geom)]);
-            Op::HasDisc
-        }
-        Inputs::CurveIn {
-            vol,
-            which,
-            comp,
-            curve,
-        } => {
-            push_vol(&mut o, vol);
-            o.extend([*which as f64, b(*comp)]);
-            push_curve(&mut o, curve);
-            Op::CurveIn
-        }
-    };
-    (op, o)
-}
-
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i);
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -524,8 +433,8 @@ fn gen_scale(rng: &mut Rng) -> (f64, f64) {
 }
 
 fn gen_vol(rng: &mut Rng) -> VolIn {
-    let hi = [0, 1, 2].map(|_| rng.below(ffi::MAX_CP as u64) as usize);
-    let deg = hi.map(|h| (rng.below(h as u64 + 1) as usize).min(ffi::MAX_DEGREE));
+    let hi = [0, 1, 2].map(|_| rng.below(MAX_CP as u64) as usize);
+    let deg = hi.map(|h| (rng.below(h as u64 + 1) as usize).min(MAX_DEGREE));
     let (lo, span) = gen_scale(rng);
     let [(h0, p0), (h1, p1), (h2, p2)] = [(hi[0], deg[0]), (hi[1], deg[1]), (hi[2], deg[2])];
     let knots = [(h0, p0), (h1, p1), (h2, p2)].map(|(h, p)| {
@@ -547,7 +456,7 @@ fn gen_vol(rng: &mut Rng) -> VolIn {
     let n_next = if rng.chance(0.7) {
         0
     } else {
-        1 + rng.below(ffi::MAX_NEXT as u64) as usize
+        1 + rng.below(MAX_NEXT as u64) as usize
     };
     let next = (0..n_next).map(|_| gen_transform(rng)).collect();
     VolIn {
@@ -731,14 +640,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let (op, input) = cpp_input(&i);
-            if ffi::validate(op, &input).is_ok() {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        serde_json::to_value(gen_case(rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -747,10 +649,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -769,17 +667,23 @@ mod tests {
     fn generated_cases_cover_outcomes() {
         let mut rng = Rng::new(11);
         let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+        let k = Kernel::default();
         for _ in 0..3000 {
             let i = gen_case(&mut rng);
-            let (op, input) = cpp_input(&i);
-            if ffi::validate(op, &input).is_err() {
-                *seen.entry("invalid".into()).or_default() += 1;
+            let op = match i {
+                Inputs::Conts { .. } => "Conts",
+                Inputs::HasDisc { .. } => "HasDisc",
+                Inputs::CurveIn { .. } => "CurveIn",
+            };
+            let Ok(out) = rust(&k, &i) else {
+                *seen.entry("harness".into()).or_default() += 1;
                 continue;
-            }
-            let flat = ffi::eval(op, &input).unwrap();
-            let key = match op {
-                Op::CurveIn => format!("{op:?} {}", flat.get(1).copied().unwrap_or(-1.0)),
-                _ => format!("{op:?} {}", flat.first().copied().unwrap_or(-1.0)),
+            };
+            let status = out.ints.get("status").and_then(|s| s.first()).copied();
+            let first = out.values.get("out").and_then(|o| o.first()).copied();
+            let key = match i {
+                Inputs::CurveIn { .. } if status == Some(0) => format!("{op} {}", first.unwrap_or(-1.0)),
+                _ => format!("{op} {}", status.unwrap_or(-1)),
             };
             *seen.entry(key).or_default() += 1;
         }

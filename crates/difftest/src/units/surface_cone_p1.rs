@@ -5,12 +5,16 @@
 //! `AdjustSTEPUVDomain`; `Transform`; `operator==`; `Copy`) and the file-static
 //! `sm_TotalCoincidenceChecker`.
 //!
-//! C++: `solidcore_ffi::units::surface_cone_p1` (upstream `source/SMLib/src/SmCone.cpp`,
-//! `source/SMLib/src/SmCylinder.cpp`). Rust: `solidcore::surface::cone::p1`.
+//! Ported from upstream `source/SMLib/src/SmCone.cpp` and
+//! `source/SMLib/src/SmCylinder.cpp`; checked against its golden. Rust:
+//! `solidcore::surface::cone::p1`. The C++ helpers left here (`cpp`, `common_cpp`,
+//! `const_make_cpp`, `const_make_nurb_cpp`) are the native side of unit
+//! `surface.surface_p2`'s common cases and of the sphere, torus and revolution
+//! const-make cases, and go when those units are checked against their goldens.
 //!
 //! A case is a `cone` (construction, placement, `oob`) plus `op` and its parameters,
-//! or the static `coincidence` op on two curves. Both sides produce the same flat
-//! record (layout in the FFI module docs), split into `build` (the construction
+//! or the static `coincidence` op on two curves. The Rust side produces a flat
+//! record, split into `build` (the construction
 //! status), `status` (the op status) and `out` (the rest). Statuses are raw `SmStatus`
 //! values (`1000` = `SM_SUCCESS`); `-1` on the Rust side for an error upstream cannot
 //! produce; `-1002` (`SC_ERR_ARG`) where the shim refuses an op upstream would crash
@@ -2095,10 +2099,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

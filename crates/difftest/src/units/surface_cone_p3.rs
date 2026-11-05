@@ -1,8 +1,8 @@
 //! Differential tests of analytic cone intersections, including full analytic and
 //! NURBS curve records, UV curve presence, classification and deviations.
-//! `rejected_*` fixtures assert native FFI guard rejection only; they do not
-//! compare geometry, but still execute the Rust intersection (result ignored) so
-//! a Rust panic or hang on those inputs fails the case.
+//! Ported from upstream `source/SMLib/src/SmCone.cpp`; checked against its golden.
+//! The `rejected_*` fixtures are inputs upstream crashes on; their golden is the
+//! Rust result or refusal.
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -19,7 +19,6 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::p2::SurfaceIntersection;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_cone_p3 as ffi;
 
 /// Cone intersection differential runner.
 pub struct Runner;
@@ -298,28 +297,8 @@ impl UnitDiff for Runner {
         Ok(v)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let result = ffi::intersect(i.op, &i.cone, &i.other, &i.domains, i.tolerance, i.same);
-        if case.name.starts_with("rejected_") {
-            return match result {
-                Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => {
-                    Ok(Output::err("ffi_rejected"))
-                }
-                Err(e) => Err(HarnessError::new(format!("unexpected rejection: {e}"))),
-                Ok(_) => Err(HarnessError::new("expected native guard rejection")),
-            };
-        }
-        let out = result.map_err(|e| HarnessError::new(e.to_string()))?;
-        output(&out)
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        if case.name.starts_with("rejected_") {
-            // Upstream crashes on these inputs; only require that Rust returns.
-            let _ = rust(&i);
-            return Ok(Output::err("ffi_rejected"));
-        }
         match rust(&i) {
             Ok(v) => output(&v),
             Err(e) => Ok(Output::unported(&e).unwrap_or_else(|| {
@@ -437,8 +416,8 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
-    /// Prints curve count and line records (point, vector, interval) of both sides for
-    /// the parallel-cylinder cases; run with `--nocapture`.
+    /// Prints the curve count and line records (point, vector, interval) of the
+    /// parallel-cylinder cases; run with `--nocapture`.
     fn lines(v: &[f64]) -> String {
         use std::fmt::Write as _;
         let n = at(v, 2) as usize;
@@ -464,10 +443,8 @@ mod tests {
     fn parallel_cylinders_report() {
         for c in parallel_cylinder_cases() {
             let i: Inputs = c.parse().unwrap();
-            let cpp = ffi::intersect(i.op, &i.cone, &i.other, &i.domains, i.tolerance, i.same);
             let rs = rust(&i);
-            println!("{}\n  C++ : {}", c.name, cpp.map_or_else(|e| format!("{e}"), |v| lines(&v)));
-            println!("  Rust: {}", rs.map_or_else(|e| format!("{e}"), |v| lines(&v)));
+            println!("{}\n  Rust: {}", c.name, rs.map_or_else(|e| format!("{e}"), |v| lines(&v)));
         }
     }
 }

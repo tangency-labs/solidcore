@@ -3,12 +3,12 @@
 //! `SmCone::RebuildSTEPFromNURBParameters` and the file-static
 //! `sm_GetEllipseTrimIntervals`.
 //!
-//! C++: `solidcore_ffi::units::surface_cone_p2` (upstream `source/SMLib/src/SmCone.cpp`).
+//! Ported from upstream `source/SMLib/src/SmCone.cpp`; checked against its golden.
 //! Rust: `solidcore::surface::cone::p2`.
 //!
 //! A case is a `cone` (built as in `surface.cone_p1`: real `SmCone` / `SmCylinder`
 //! objects through `CreateCanonical` or the constructors with `MakeNurb`) and an `op`.
-//! Both sides produce the same flat record (layout in the FFI module docs), split into
+//! The Rust side produces a flat record, split into
 //! `build` (the construction status), `status` (the op status or boolean) and `out`
 //! (the rest: the result's or the edited cone's full state, or the intervals).
 //! Statuses are raw `SmStatus` values (`1000` = `SM_SUCCESS`); `-1` on the Rust side
@@ -38,7 +38,6 @@ use solidcore::nurbs::srf_basic::Surface as NurbSurface;
 use solidcore::surface::cone::{ellipse_trim_intervals, Cone};
 use solidcore::surface::surface::p2::{CONE_TYPE, CYLINDER_TYPE};
 use solidcore::SolidError;
-use solidcore_ffi::units::surface_cone_p2 as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -233,167 +232,61 @@ fn rotation(axis: [f64; 3], angle: f64) -> [f64; 9] {
     ]
 }
 
-fn ffi_edit(e: &EditIn) -> ffi::Edit {
+/// An edit of the cone's NURB control points (homogeneous `x y z w`), applied before
+/// `IsNurbSurfaceCone` or `RebuildSTEPFromNURBParameters`. The last row is the last
+/// control points along the generator (linear) direction: `u` with `swap_uv`, else `v`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Edit {
+    /// No edit.
+    None,
+    /// `p = R p + w t` on the last row (`R` row-major).
+    MoveLast {
+        /// Rotation matrix, row-major.
+        r: [f64; 9],
+        /// Translation.
+        t: [f64; 3],
+    },
+    /// `(x, y, z, w) *= f` on the last row (the same Euclidean points).
+    ScaleLast {
+        /// Factor.
+        f: f64,
+    },
+    /// `p = R p + w t` on every control point.
+    MoveAll {
+        /// Rotation matrix, row-major.
+        r: [f64; 9],
+        /// Translation.
+        t: [f64; 3],
+    },
+    /// `z = 0` on every control point.
+    Flatten,
+    /// `(x, y) *= f` on the last row, leaving `z` and the weight unchanged.
+    /// For a cylinder about the world Z axis through the origin, this changes
+    /// one end radius while preserving its circular iso curve.
+    ScaleLastXy {
+        /// Factor applied to the homogeneous X and Y coordinates.
+        f: f64,
+    },
+}
+
+fn edit_of(e: &EditIn) -> Edit {
     match *e {
-        EditIn::None => ffi::Edit::None,
-        EditIn::MoveLast { axis, angle, t } => ffi::Edit::MoveLast {
+        EditIn::None => Edit::None,
+        EditIn::MoveLast { axis, angle, t } => Edit::MoveLast {
             r: rotation(axis, angle),
             t,
         },
-        EditIn::ScaleLast { f } => ffi::Edit::ScaleLast { f },
-        EditIn::MoveAll { axis, angle, t } => ffi::Edit::MoveAll {
+        EditIn::ScaleLast { f } => Edit::ScaleLast { f },
+        EditIn::MoveAll { axis, angle, t } => Edit::MoveAll {
             r: rotation(axis, angle),
             t,
         },
-        EditIn::Flatten => ffi::Edit::Flatten,
-        EditIn::ScaleLastXy { f } => ffi::Edit::ScaleLastXy { f },
+        EditIn::Flatten => Edit::Flatten,
+        EditIn::ScaleLastXy { f } => Edit::ScaleLastXy { f },
     }
 }
 
-fn ffi_mode(m: &ModeIn) -> ffi::Mode {
-    match *m {
-        ModeIn::CanonicalSemi {
-            bot,
-            semi,
-            height,
-            swap,
-            inside,
-        } => ffi::Mode::CanonicalSemi {
-            bot,
-            semi,
-            height,
-            swap,
-            inside,
-        },
-        ModeIn::Canonical {
-            bot,
-            top,
-            height,
-            swap,
-            inside,
-        } => ffi::Mode::Canonical {
-            bot,
-            top,
-            height,
-            swap,
-            inside,
-        },
-        ModeIn::CylCanonical { radius } => ffi::Mode::CylCanonical { radius },
-        ModeIn::ConeUnbounded {
-            base,
-            semi,
-            swap,
-            inside,
-        } => ffi::Mode::ConeUnbounded {
-            base,
-            semi,
-            swap,
-            inside,
-        },
-        ModeIn::ConeBounded {
-            bot,
-            top,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        } => ffi::Mode::ConeBounded {
-            bot,
-            top,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        },
-        ModeIn::CylBounded {
-            radius,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        } => ffi::Mode::CylBounded {
-            radius,
-            start,
-            end,
-            height,
-            swap,
-            inside,
-            make_nurb_gen,
-        },
-        ModeIn::CylUnbounded {
-            radius,
-            swap,
-            inside,
-        } => ffi::Mode::CylUnbounded {
-            radius,
-            swap,
-            inside,
-        },
-    }
-}
-
-fn ffi_cone(c: &ConeIn) -> ffi::Build {
-    ffi::Build {
-        mode: ffi_mode(&c.mode),
-        origin: c.origin,
-        x: c.x,
-        y: c.y,
-        oob: c.oob,
-    }
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-/// The trim domain of the shim: corner points at the fractions of the natural domain.
-/// The C++ side computes it on its own cone; the record carries the fractions.
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = match &i.op {
-        OpIn::Offset { distance, tol } => ffi::Op::Offset {
-            distance: *distance,
-            tol: *tol,
-        },
-        OpIn::Recognize { edit, scale } => ffi::Op::Recognize {
-            edit: ffi_edit(edit),
-            scale: *scale,
-        },
-        OpIn::Rebuild { edit } => ffi::Op::Rebuild {
-            edit: ffi_edit(edit),
-        },
-        OpIn::RecognizeCylinder { edit, scale } => ffi::Op::RecognizeCylinder {
-            edit: ffi_edit(edit),
-            scale: *scale,
-        },
-        OpIn::Trim {
-            origin,
-            x,
-            y,
-            rx,
-            ry,
-            start,
-            end,
-            dom,
-            tol,
-        } => ffi::Op::Trim {
-            origin: *origin,
-            x: *x,
-            y: *y,
-            rx: *rx,
-            ry: *ry,
-            start: *start,
-            end: *end,
-            dom: *dom,
-            tol: *tol,
-        },
-    };
-    let flat = ffi::cone_op(&ffi_cone(&i.cone), &op).map_err(|e| harness(e.to_string()))?;
-    to_output(&flat)
-}
+// ---- records ------------------------------------------------------------------------
 
 /// Splits a record into `build`, `status` and `out`.
 fn to_output(flat: &[f64]) -> Result<Output, HarnessError> {
@@ -628,7 +521,7 @@ fn put_state(k: &Kernel, o: &mut Vec<f64>, s: &Cone) -> solidcore::Result<()> {
 }
 
 /// The shim's `edit_nurb` on the NURB control points.
-fn edit_nurb(sur: &mut NurbSurface, edit: &ffi::Edit, swap: bool) -> solidcore::Result<()> {
+fn edit_nurb(sur: &mut NurbSurface, edit: &Edit, swap: bool) -> solidcore::Result<()> {
     let (n, m) = (sur.n(), sur.m());
     for i in 0..=n {
         for j in 0..=m {
@@ -636,8 +529,8 @@ fn edit_nurb(sur: &mut NurbSurface, edit: &ffi::Edit, swap: bool) -> solidcore::
             let p = sur.cpt_mut(i, j)?;
             let w = if p.w == NOW { 1.0 } else { p.w };
             match *edit {
-                ffi::Edit::MoveLast { r, t } | ffi::Edit::MoveAll { r, t }
-                    if last || matches!(edit, ffi::Edit::MoveAll { .. }) =>
+                Edit::MoveLast { r, t } | Edit::MoveAll { r, t }
+                    if last || matches!(edit, Edit::MoveAll { .. }) =>
                 {
                     let (x, y, z) = (p.x, p.y, p.z);
                     let [r0, r1, r2, r3, r4, r5, r6, r7, r8] = r;
@@ -646,7 +539,7 @@ fn edit_nurb(sur: &mut NurbSurface, edit: &ffi::Edit, swap: bool) -> solidcore::
                     p.y = r3 * x + r4 * y + r5 * z + w * ty;
                     p.z = r6 * x + r7 * y + r8 * z + w * tz;
                 }
-                ffi::Edit::ScaleLast { f } if last => {
+                Edit::ScaleLast { f } if last => {
                     p.x *= f;
                     p.y *= f;
                     p.z *= f;
@@ -654,8 +547,8 @@ fn edit_nurb(sur: &mut NurbSurface, edit: &ffi::Edit, swap: bool) -> solidcore::
                         p.w *= f;
                     }
                 }
-                ffi::Edit::Flatten => p.z = 0.0,
-                ffi::Edit::ScaleLastXy { f } if last => {
+                Edit::Flatten => p.z = 0.0,
+                Edit::ScaleLastXy { f } if last => {
                     p.x *= f;
                     p.y *= f;
                 }
@@ -779,7 +672,7 @@ fn rust_op(k: &Kernel, s: &mut Cone, op: &OpIn, o: &mut Vec<f64>) -> solidcore::
         OpIn::Recognize { edit, scale } => {
             let swap = s.rev().swap_uv();
             let mut test = s.rev().base().clone();
-            edit_nurb(test.get_or_create_gw_nurb()?, &ffi_edit(edit), swap)?;
+            edit_nurb(test.get_or_create_gw_nurb()?, &edit_of(edit), swap)?;
             match Cone::is_nurb_surface_cone(k, &test, *scale) {
                 Ok(found) => {
                     o.push(flag(found.is_some()));
@@ -795,7 +688,7 @@ fn rust_op(k: &Kernel, s: &mut Cone, op: &OpIn, o: &mut Vec<f64>) -> solidcore::
         OpIn::RecognizeCylinder { edit, scale } => {
             let swap = s.rev().swap_uv();
             let mut test = s.rev().base().clone();
-            edit_nurb(test.get_or_create_gw_nurb()?, &ffi_edit(edit), swap)?;
+            edit_nurb(test.get_or_create_gw_nurb()?, &edit_of(edit), swap)?;
             match Cone::is_nurb_surface_cylinder(k, &test, *scale) {
                 Ok(found) => {
                     o.push(flag(found.is_some()));
@@ -810,7 +703,7 @@ fn rust_op(k: &Kernel, s: &mut Cone, op: &OpIn, o: &mut Vec<f64>) -> solidcore::
         }
         OpIn::Rebuild { edit } => {
             let swap = s.rev().swap_uv();
-            edit_nurb(s.base_mut().get_or_create_gw_nurb()?, &ffi_edit(edit), swap)?;
+            edit_nurb(s.base_mut().get_or_create_gw_nurb()?, &edit_of(edit), swap)?;
             match s.rebuild_step_from_nurb_parameters(k) {
                 Ok(()) => o.push(SUCCESS),
                 Err(e) if e.is_unported() => return Err(e),
@@ -1291,10 +1184,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
