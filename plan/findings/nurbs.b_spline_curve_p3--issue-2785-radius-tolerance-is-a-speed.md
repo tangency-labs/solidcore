@@ -3,13 +3,20 @@
 Unit: `nurbs.b_spline_curve_p3` (`crates/solidcore/src/nurbs/b_spline_curve/p3.rs`).
 Issue: tangency-labs/solidcore#2785. Fix: this PR.
 
-![Tests 13/14 compare a radius of curvature with a speed](issue-2785-radius-tolerance.svg)
+![A three-panel schematic. A: the same cubic Bezier drawn twice, once with knots
+[0,0,0,0,1,1,1,1] and once with [0,0,0,0,50,50,50,50], the two identical in space. B: the bend
+magnified, with the osculating circle at it, r = 5.82e-6. C: log-log, domain length T against
+length: the bend's radius a level black line, the speed tolerance a dashed falling line crossing
+it at T = 24.3, the length tolerance a level blue line above both, with vertical markers at
+T = 1 and T = 50 and the verdict at each.](issue-2785-radius-tolerance.svg)
 
-*Figure. Left: the curve of #2785 magnified, with the osculating circle at its bend. Right:
-the tolerance the check compares that radius against. The dashed line is the old speed
-`sqrt(2) / T / 10000`, which falls below the bend's radius at `T = 24.3`; the solid blue line
-is the length `size_xyz / 10000` this fix uses. From `T = 24.3` on the bend was silently
+*Figure. The same curve at `T = 1` and `T = 50`: its bend and its radius are unchanged, while the
+speed-based tolerance falls through it at `T = 24.3`. From there on the bend was silently
 accepted, although nothing about the curve had changed.*
+
+(The SVG is hand-authored to the house palette in `docs/agent-style.md`; no VectorCraft instance
+was reachable from the environment this was written in, so there is no `.vectorcraft` source
+beside it yet. Redraw and export it there when one is available.)
 
 ## The defect
 
