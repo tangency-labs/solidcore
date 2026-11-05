@@ -2,7 +2,8 @@
 //! `SmApiIntersectSurfaces`, `SmApiIntersectFaces`, `SmApiIntersectBreps`,
 //! `SmApiIntersectCurveSurface`, `SmApiIntersectCurveFace`, `SmApiIntersectCurveBrep`).
 //!
-//! Each side builds the operands itself from the case: curves (`SmApiCreateCurve`,
+//! Ported from upstream `source/SM_API/src/SmApiIntersectors.cpp`; checked against its
+//! golden. The Rust side builds the operands from the case: curves (`SmApiCreateCurve`,
 //! `SmApiCreateLineSegment`, `SmApiCreateCircle`, `SmApiCreateArc`), surfaces
 //! (`SmBSplineSurface::CreateCanonical` over a control net with clamped knots,
 //! `SmApiCreateCylinder`, `SmApiCreateSurfaceRevolution`, `SmApiCreateRuledSurface`,
@@ -10,14 +11,12 @@
 //! cylinders, cones, spheres and surfaces of extrusion and revolution with an optional
 //! `AdjustSTEPUVDomain`) and bodies (`SmApiCreateBox`, `SmApiCreateSphere`,
 //! `SmApiCreateCylinder`, and a box with a hole by `SmApiBooleanDifference`), with the Rust
-//! ports of the same constructors. Pairs of analytic surfaces, and the curve/surface,
+//! ports of those constructors. Pairs of analytic surfaces, and the curve/surface,
 //! curve/face and curve/B-rep cases, are also generated from their own seeds (`ssi` and
-//! `hit` cases), so the `gen` cases keep their inputs. No C++-built geometry reaches the Rust side. The case
-//! then runs one API call and compares the status (`status`) and the record (`record`):
-//! the curve/curve parameters (and points), or the count and samples of every 3D curve
-//! (type code, natural interval, five evaluated points) and the points. The native side
-//! runs in a fresh child process. Inputs the native build or the FFI guard refuse are
-//! `rejected`, not failed.
+//! `hit` cases), so the `gen` cases keep their inputs. The case then runs one API call and
+//! records the status (`status`) and the record (`record`): the curve/curve parameters (and
+//! points), or the count and samples of every 3D curve (type code, natural interval, five
+//! evaluated points) and the points. Operands the Rust constructors refuse are `rejected`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,8 +44,6 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p1 as brep1;
 use solidcore::topology::Brep;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::intersect_api_intersectors as ffi;
-use solidcore_ffi::{FfiError, SC_ERR_ARG};
 
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
@@ -226,294 +223,7 @@ fn v(p: P) -> Vec3 {
     Vec3::new(p[0], p[1], p[2])
 }
 
-fn flag(b: bool) -> f64 {
-    f64::from(u8::from(b))
-}
-
 // ---- the shim's argument stream ----------------------------------------------------------
-
-fn push_points(o: &mut Vec<f64>, points: &[P]) {
-    o.push(points.len() as f64);
-    for p in points {
-        o.extend(p);
-    }
-}
-
-fn push_curve(o: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Points { points } => {
-            o.push(1.);
-            push_points(o, points);
-        }
-        CurveIn::Segment { a, b } => {
-            o.push(2.);
-            o.extend(a);
-            o.extend(b);
-        }
-        CurveIn::Circle { center, radius } => {
-            o.push(3.);
-            o.extend(center);
-            o.push(*radius);
-        }
-        CurveIn::Arc {
-            center,
-            radius,
-            start,
-            end,
-        } => {
-            o.push(4.);
-            o.extend(center);
-            o.extend([*radius, *start, *end]);
-        }
-    }
-}
-
-fn push_surface(o: &mut Vec<f64>, s: &SurfaceIn) {
-    match s {
-        SurfaceIn::Net {
-            nu,
-            nv,
-            du,
-            dv,
-            points,
-        } => {
-            o.extend([1., *nu as f64, *nv as f64, *du as f64, *dv as f64]);
-            for p in points {
-                o.extend(p);
-            }
-        }
-        SurfaceIn::Cylinder {
-            origin,
-            radius,
-            height,
-        } => {
-            o.push(2.);
-            o.extend(origin);
-            o.extend([*radius, *height]);
-        }
-        SurfaceIn::Revolution {
-            curve,
-            origin,
-            axis,
-            angle,
-        } => {
-            o.push(3.);
-            push_points(o, curve);
-            o.extend(origin);
-            o.extend(axis);
-            o.push(*angle);
-        }
-        SurfaceIn::Ruled { curve1, curve2 } => {
-            o.push(4.);
-            push_points(o, curve1);
-            push_points(o, curve2);
-        }
-        SurfaceIn::Corners { corners } => {
-            o.push(5.);
-            for p in corners {
-                o.extend(p);
-            }
-        }
-        SurfaceIn::Ordered { rows, cols, points } => {
-            o.extend([7., *rows as f64, *cols as f64]);
-            for p in points {
-                o.extend(p);
-            }
-        }
-        SurfaceIn::Analytic { shape, domain } => {
-            o.push(6.);
-            match shape {
-                AnalyticIn::Plane { origin, x, y } => {
-                    o.push(1.);
-                    o.extend(origin.iter().chain(x).chain(y));
-                }
-                AnalyticIn::Cylinder {
-                    origin,
-                    x,
-                    y,
-                    radius,
-                } => {
-                    o.push(2.);
-                    o.extend(origin.iter().chain(x).chain(y));
-                    o.push(*radius);
-                }
-                AnalyticIn::Cone {
-                    origin,
-                    x,
-                    y,
-                    bot_radius,
-                    top_radius,
-                    height,
-                } => {
-                    o.push(3.);
-                    o.extend(origin.iter().chain(x).chain(y));
-                    o.extend([*bot_radius, *top_radius, *height]);
-                }
-                AnalyticIn::Sphere {
-                    origin,
-                    x,
-                    y,
-                    radius,
-                } => {
-                    o.push(4.);
-                    o.extend(origin.iter().chain(x).chain(y));
-                    o.push(*radius);
-                }
-                AnalyticIn::Extrusion { curve, vector } => {
-                    o.push(5.);
-                    push_points(o, curve);
-                    o.extend(vector);
-                }
-                AnalyticIn::Revolution {
-                    curve,
-                    axis_point,
-                    axis_dir,
-                } => {
-                    o.push(6.);
-                    push_points(o, curve);
-                    o.extend(axis_point);
-                    o.extend(axis_dir);
-                }
-            }
-            match domain {
-                Some(d) => {
-                    o.push(1.);
-                    o.extend(d);
-                }
-                None => o.push(0.),
-            }
-        }
-    }
-}
-
-fn push_body(o: &mut Vec<f64>, b: &BodyIn) {
-    match b {
-        BodyIn::Box { origin, size } => {
-            o.push(1.);
-            o.extend(origin);
-            o.extend(size);
-        }
-        BodyIn::Sphere { origin, radius } => {
-            o.push(2.);
-            o.extend(origin);
-            o.push(*radius);
-        }
-        BodyIn::Cylinder {
-            origin,
-            radius,
-            height,
-        } => {
-            o.push(3.);
-            o.extend(origin);
-            o.extend([*radius, *height]);
-        }
-        BodyIn::HoledBox {
-            origin,
-            size,
-            hole_origin,
-            hole_radius,
-            hole_height,
-        } => {
-            o.push(4.);
-            o.extend(origin);
-            o.extend(size);
-            o.extend(hole_origin);
-            o.extend([*hole_radius, *hole_height]);
-        }
-    }
-}
-
-fn args(i: &Inputs) -> (u8, Vec<f64>) {
-    let mut o = Vec::new();
-    match i {
-        Inputs::Curves {
-            curve1,
-            curve2,
-            want_points,
-        } => {
-            o.extend([flag(*want_points), flag(curve2.is_none())]);
-            push_curve(&mut o, curve1);
-            if let Some(c) = curve2 {
-                push_curve(&mut o, c);
-            }
-            (1, o)
-        }
-        Inputs::Surfaces { surface1, surface2 } => {
-            push_surface(&mut o, surface1);
-            push_surface(&mut o, surface2);
-            (2, o)
-        }
-        Inputs::Faces {
-            body1,
-            body2,
-            face1,
-            face2,
-            want_points,
-        } => {
-            o.extend([flag(*want_points), flag(body2.is_none())]);
-            push_body(&mut o, body1);
-            if let Some(b) = body2 {
-                push_body(&mut o, b);
-            }
-            o.extend([*face1 as f64, *face2 as f64]);
-            (3, o)
-        }
-        Inputs::Breps {
-            body1,
-            body2,
-            want_points,
-        } => {
-            o.extend([flag(*want_points), flag(body2.is_none())]);
-            push_body(&mut o, body1);
-            if let Some(b) = body2 {
-                push_body(&mut o, b);
-            }
-            (4, o)
-        }
-        Inputs::CurveSurface { curve, surface } => {
-            push_curve(&mut o, curve);
-            push_surface(&mut o, surface);
-            (5, o)
-        }
-        Inputs::CurveFace { curve, body, face } => {
-            push_curve(&mut o, curve);
-            push_body(&mut o, body);
-            o.push(*face as f64);
-            (6, o)
-        }
-        Inputs::CurveBrep { curve, body } => {
-            push_curve(&mut o, curve);
-            push_body(&mut o, body);
-            (7, o)
-        }
-    }
-}
-
-/// The native record, or `Err(output)` when the FFI guard, the shim or a build refuses.
-fn native(i: &Inputs) -> Result<Result<Vec<f64>, Output>, HarnessError> {
-    let (op, a) = args(i);
-    match ffi::eval(op, &a) {
-        Ok(raw) if raw.first() == Some(&-997.) => Ok(Err(Output::rejected(
-            "UB-81/UB-93: sm_IntersectGenerators dereferences SmApiIntersectSurfaces' NULL \
-             curve-type array (a range solution with both ends overlapping) or an unset \
-             cylinder generator; not run",
-        ))),
-        Ok(raw) if raw.first() == Some(&-998.) => Ok(Err(Output::rejected(
-            "UB-123: SmCone::IntersectWithCone dereferences the absent tolerance for \
-             coincident overlapping cylinders; not run",
-        ))),
-        Ok(raw) if raw.first() == Some(&-999.) => Ok(Err(Output::rejected(format!(
-            "operand build status {}",
-            raw.get(1).copied().unwrap_or(-1.)
-        )))),
-        Ok(raw) => Ok(Ok(raw)),
-        Err(e @ FfiError::InvalidArgument(_)) => {
-            Ok(Err(Output::rejected(format!("ffi guard: {e}"))))
-        }
-        Err(FfiError::Status(SC_ERR_ARG)) => Ok(Err(Output::rejected("shim refused the stream"))),
-        Err(e) => Err(herr(e)),
-    }
-}
 
 // ---- the Rust side ------------------------------------------------------------------------
 
@@ -1444,14 +1154,6 @@ const SSI_SEEDS: &str = "intersect.api_intersectors.analytic_surfaces";
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "intersect.api_intersectors"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match native(&i)? {
-            Ok(raw) => output(&raw),
-            Err(refused) => Ok(refused),
-        }
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

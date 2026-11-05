@@ -1,8 +1,7 @@
 //! Runner for unit `intersect.surface_drop_curve`: `SmSurfaceDropCurve`.
 //!
-//! C++: `solidcore_ffi::units::intersect_surface_drop_curve` (upstream
-//! `source/SMLib/src/SmSurfaceDropCurve.cpp`, compiled into the shim, on a real
-//! `SmBSplineSurface` or `SmPlane` and a real `SmLine` or `SmBSplineCurve`).
+//! Ported from upstream `source/SMLib/src/SmSurfaceDropCurve.cpp` (on an `SmBSplineSurface`
+//! or `SmPlane` and an `SmLine` or `SmBSplineCurve`); checked against its golden.
 //! Rust: `solidcore::intersect::surface_drop_curve`.
 //!
 //! A case is a surface, a tracer domain, a curve and its interval, the on-surface flag, optional
@@ -10,8 +9,8 @@
 //! program of ops: `ComputePointValues` (with and without a previous point), `ComputeStepSize`,
 //! `sm_AddBreak`, `sm_TestPoint`, `sm_IsGrazingIntersection`, `LocalPointSolve`,
 //! `ComputeNextPoint`, `ComputeSpanDeviation`, `TraceCurve2`, `FindInteriorCurves`,
-//! `FindBoundaryStartPoints`, `DoTrace` and the trivial `TestPoint`/`IsPointOnCurve`. Both sides
-//! produce the record documented in the ffi module, reported as the values `rec`.
+//! `FindBoundaryStartPoints`, `DoTrace` and the trivial `TestPoint`/`IsPointOnCurve`. The Rust
+//! side produces a flat record, reported as the values `rec`.
 //!
 //! Deferred cases (a case is deferred as a whole, so most programs avoid the deferring ops):
 //! the surface point solves (`SmSurface::LocalPointSolve`, `surface.surface_p5`;
@@ -22,8 +21,7 @@
 //! (`intersect.surface_drop_lib_p3`); the projected boundary intersections over a plane
 //! (`curve.crv_on_surf`).
 //!
-//! At least [`MIN_GENERATED`] generated cases run; generation only draws inputs the ffi
-//! wrapper accepts.
+//! At least [`MIN_GENERATED`] generated cases run.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -49,7 +47,6 @@ use solidcore::nurbs::srf_basic::Surface as NurbSurface;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_surface_drop_curve::{self as ffi};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -180,121 +177,6 @@ struct Inputs {
     #[serde(default)]
     breaks: Option<Vec<f64>>,
     ops: Vec<OpIn>,
-}
-
-// ---- C++ side -----------------------------------------------------------------------
-
-fn ffi_surface(s: &SurfIn) -> ffi::SurfaceIn {
-    match s {
-        SurfIn::Bspline(d) => ffi::SurfaceIn::BSpline(ffi::SurfaceData {
-            p: d.p,
-            q: d.q,
-            net: d.net.clone(),
-            u: d.u.clone(),
-            v: d.v.clone(),
-        }),
-        SurfIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-    }
-}
-
-fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
-    match c {
-        CurveIn::Segment { a, b } => ffi::CurveIn::Segment(*a, *b),
-        CurveIn::Bspline(d) => ffi::CurveIn::BSpline(ffi::CurveData {
-            p: d.p,
-            cpts: d.cpts.clone(),
-            knots: d.knots.clone(),
-        }),
-    }
-}
-
-fn ffi_op(o: &OpIn) -> ffi::Op {
-    match o {
-        OpIn::Cpv {
-            param,
-            uv,
-            use_prev,
-        } => ffi::Op::Cpv {
-            param: *param,
-            uv: *uv,
-            use_prev: *use_prev,
-        },
-        OpIn::Step { param, old } => ffi::Op::Step {
-            param: *param,
-            old: *old,
-        },
-        OpIn::AddBreak { values, new } => ffi::Op::AddBreak {
-            values: values.clone(),
-            new: *new,
-        },
-        OpIn::TestPoint {
-            domain,
-            uv,
-            point,
-            tol,
-        } => ffi::Op::TestPoint {
-            domain: *domain,
-            uv: *uv,
-            point: *point,
-            tol: *tol,
-        },
-        OpIn::Graze { p1, curve, p2 } => ffi::Op::Graze {
-            p1: *p1,
-            curve: ffi_curve(curve),
-            p2: *p2,
-        },
-        OpIn::Lps { param, guess } => ffi::Op::Lps {
-            param: *param,
-            guess: *guess,
-        },
-        OpIn::Next { first, kind, step } => ffi::Op::Next {
-            first: *first,
-            kind: *kind,
-            step: *step,
-        },
-        OpIn::Span { step } => ffi::Op::Span { step: *step },
-        OpIn::Trace2 => ffi::Op::Trace2,
-        OpIn::Interior => ffi::Op::Interior,
-        OpIn::Boundary => ffi::Op::Boundary,
-        OpIn::DoTrace => ffi::Op::DoTrace,
-        OpIn::Hooks { point } => ffi::Op::Hooks { point: *point },
-    }
-}
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    ffi::Program {
-        surface: ffi_surface(&i.surface),
-        domain: i.domain,
-        curve: ffi_curve(&i.curve),
-        interval: i.interval,
-        on_surface: i.on_surface,
-        tol: i.tol,
-        ang: i.ang,
-        working_interval: i.working_interval,
-        working_domain: i.working_domain,
-        knots: i.knots.clone(),
-        breaks: i.breaks.clone(),
-        ops: i.ops.iter().map(ffi_op).collect(),
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_program(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -1311,10 +1193,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

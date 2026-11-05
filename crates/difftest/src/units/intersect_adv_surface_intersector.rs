@@ -1,16 +1,14 @@
 //! Runner for unit `intersect.adv_surface_intersector`: `SmAdvSurfaceIntersector`.
 //!
-//! C++: `solidcore_ffi::units::intersect_adv_surface_intersector` (a real
-//! `SmAdvSurfaceIntersector` on `SmPlane` / `SmBSplineSurface` objects with hand-built
-//! decomposition trees in their surface caches). Rust:
-//! `solidcore::intersect::adv_surface_intersector`.
+//! Ported from upstream `source/SMLib/src/SmAdvSurfaceIntersector.cpp` (on `SmPlane` /
+//! `SmBSplineSurface` objects with hand-built decomposition trees in their surface
+//! caches); checked against its golden. Rust: `solidcore::intersect::adv_surface_intersector`.
 //!
 //! A case is two surfaces (B may be A itself), their domains, the fillet flag, optional
-//! trees (one per surface cache), a point arena and a program of operations; both sides
-//! produce the record documented in the ffi module (statuses `0` = `SM_SUCCESS`, else
-//! the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream
-//! cannot return, [`ffi::REJECTED`] for an op upstream would crash on), reported as the
-//! values `rec`. A case whose Rust side reaches an unported unit is deferred as a whole.
+//! trees (one per surface cache), a point arena and a program of operations; the Rust side
+//! produces a record (statuses `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust
+//! `InvalidInput`, `-1` for a Rust error upstream cannot return, [`REJECTED`] for an op
+//! upstream would crash on), reported as the values `rec`. A case whose Rust side reaches an unported unit is deferred as a whole.
 //!
 //! Three kinds of programs are generated: singular points (local surface geometry
 //! built from a shape tensor per surface: planar, parabolic, elliptic, hyperbolic,
@@ -57,12 +55,16 @@ use solidcore::surface::surface_cache::p1::{
     BezierAux2d, BezierPatch, SurfaceCache, SurfaceCacheOptions,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_adv_surface_intersector::{self as ffi};
-use solidcore_ffi::units::intersect_surface_intersector_p1 as p1ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
+
+/// The record value of an op upstream would crash on (not run).
+const REJECTED: f64 = -2.0;
+
+/// Values per point in the point arena.
+const POINT_LEN: usize = 80;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -192,7 +194,7 @@ struct Inputs {
     /// [`AdvSurfaceIntersector::set_surface_caches`]) on fresh caches.
     #[serde(default)]
     build_trees: bool,
-    /// [`p1ffi::POINT_LEN`] values each.
+    /// [`POINT_LEN`] values each.
     points: Vec<Vec<f64>>,
     ops: Vec<OpIn>,
 }
@@ -204,108 +206,6 @@ fn cpt4(c: &[Option<f64>; 4]) -> [f64; 4] {
         c[2].unwrap_or(f64::NAN),
         c[3].unwrap_or(NOW),
     ]
-}
-
-fn ffi_surface(s: &SurfaceIn) -> p1ffi::SurfaceIn {
-    match s {
-        SurfaceIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => p1ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfaceIn::BSpline { p, q, net, u, v } => p1ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.iter().map(|r| r.iter().map(cpt4).collect()).collect(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-    }
-}
-
-fn ffi_node(n: &NodeIn) -> ffi::NodeIn {
-    ffi::NodeIn {
-        parent: n.parent,
-        c1: n.c1,
-        c2: n.c2,
-        aux: n.aux,
-        bbox: n.bbox,
-        dom: n.dom,
-        polar: n.polar.clone(),
-        pseudo: n.pseudo,
-    }
-}
-
-fn ffi_op(o: &OpIn) -> ffi::Op {
-    match o {
-        OpIn::State => ffi::Op::State,
-        OpIn::Set {
-            dir,
-            ang,
-            approx,
-            tol,
-            sop,
-        } => ffi::Op::Set {
-            dir: *dir,
-            ang: *ang,
-            approx: *approx,
-            tol: *tol,
-            op: *sop,
-        },
-        OpIn::Push { i } => ffi::Op::Push(*i),
-        OpIn::Sing { i, prev } => ffi::Op::Sing { i: *i, prev: *prev },
-        OpIn::Dupin { eval, normal } => ffi::Op::Dupin {
-            eval: eval.clone(),
-            normal: *normal,
-        },
-        OpIn::Solve { sop, req, tol, best } => ffi::Op::Solve {
-            op: *sop,
-            req: *req,
-            tol: *tol,
-            best: *best,
-        },
-        OpIn::BestSub { a, b } => ffi::Op::BestSub(*a, *b),
-        OpIn::Gauss { a, b } => ffi::Op::Gauss(*a, *b),
-        OpIn::Local { a, b } => ffi::Op::Local(*a, *b),
-        OpIn::Interior => ffi::Op::Interior,
-        OpIn::SolveBranch { a, b } => ffi::Op::SolveBranch(*a, *b),
-    }
-}
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    ffi::Program {
-        a: ffi_surface(&i.a),
-        b: i.b.as_ref().map(ffi_surface),
-        dom1: i.dom1,
-        dom2: i.dom2,
-        fillet: i.fillet,
-        trees: i.trees.as_ref().map(|(t0, t1)| {
-            (
-                t0.iter().map(ffi_node).collect(),
-                t1.as_ref().map(|t| t.iter().map(ffi_node).collect()),
-            )
-        }),
-        build_trees: i.build_trees,
-        points: i.points.clone(),
-        ops: i.ops.iter().map(ffi_op).collect(),
-    }
-}
-
-// ---- C++ side -----------------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match ffi::run(&ffi_program(i)) {
-        Ok(rec) => Ok(Output::new().values("rec", rec)),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------------
@@ -485,7 +385,7 @@ fn ept(code: f64) -> Result<ExtentPointType, HarnessError> {
 }
 
 fn rust_point(v: &[f64]) -> Result<TsectPnt, HarnessError> {
-    if v.len() != p1ffi::POINT_LEN {
+    if v.len() != POINT_LEN {
         return Err(harness("point length"));
     }
     let mut it = v.iter().copied();
@@ -618,7 +518,7 @@ fn run_op(k: &Kernel, cx: &mut Ctx<'_>, si: &mut Si<'_>, op: &OpIn, o: &mut Vec<
         }
         OpIn::Push { i } => {
             if si.base.is_linked(TsectId(*i)) {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
             } else {
                 st(o, si.base.add_point_to_curve(TsectId(*i)))?;
             }
@@ -638,7 +538,7 @@ fn run_op(k: &Kernel, cx: &mut Ctx<'_>, si: &mut Si<'_>, op: &OpIn, o: &mut Vec<
             let r = si.compute_singularity_point(uvs, id, prev.map(TsectId));
             if let Err(e) = &r {
                 if is_sing_overflow(e) {
-                    o.push(ffi::REJECTED);
+                    o.push(REJECTED);
                     return Ok(());
                 }
             }
@@ -707,7 +607,7 @@ fn run_op(k: &Kernel, cx: &mut Ctx<'_>, si: &mut Si<'_>, op: &OpIn, o: &mut Vec<
                 cx.aux.get(t).and_then(|a| a.get(i)).copied() == Some(AuxDataType::BezierSurface)
             };
             if !is_patch(0, *a) || !is_patch(1, *bb) {
-                o.push(ffi::REJECTED);
+                o.push(REJECTED);
                 return Ok(());
             }
             std::mem::swap(&mut si.solver.solutions, &mut cx.sols);
@@ -1021,7 +921,7 @@ fn jacobian(rng: &mut Rng) -> [[f64; 2]; 2] {
     }
 }
 
-/// 80 values of a point (layout of the ffi module).
+/// [`POINT_LEN`] values of a point.
 fn point_values(
     ptype: u8,
     uvs: [[f64; 2]; 2],
@@ -1929,8 +1829,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            let Some(i) = gen_case(rng) else { continue };
-            if ffi::encode(&ffi_program(&i)).is_ok() {
+            if let Some(i) = gen_case(rng) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -1952,10 +1851,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

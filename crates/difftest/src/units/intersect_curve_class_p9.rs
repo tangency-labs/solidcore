@@ -1,7 +1,8 @@
-//! Part-9 differential tests: real native topology, full interval and point records,
-//! both cache traversal branches and explicit dependency deferrals. No absolute floors.
-//! The `IntersectEdges` target edges are real wire edges of a Rust B-rep, made as the
-//! shim makes them (`CreateWireEdgeFromCurve`, `SetTolerance(zone, FALSE)`), so the
+//! Part-9 curve classification, ported from upstream `source/SMLib/src/SmCurveClass.cpp`;
+//! checked against its golden: real topology, full interval and point records, both cache
+//! traversal branches and explicit dependency deferrals. No absolute floors.
+//! The `IntersectEdges` target edges are real wire edges of a Rust B-rep, made as
+//! upstream makes them (`CreateWireEdgeFromCurve`, `SetTolerance(zone, FALSE)`), so the
 //! classification reaches their curves and vertices through `topology_entity`. An
 //! edge's curve is the line `a`-`b`, the source curve (`same`) or a real
 //! `SmHermiteCurve(p1, d1, p2, d2, 3)`: a nonlinear target whose curve cache
@@ -45,7 +46,6 @@ use solidcore::surface::trim_srf_cache::TrimSrfCache;
 use solidcore::surface::volume::Volume;
 use solidcore::topology::{Brep, EdgeId, VertexId};
 use solidcore::{EntityRef, Result as ScResult, SolidError};
-use solidcore_ffi::units::intersect_curve_class_p9 as ffi;
 
 /// Differential runner for the two part-9 methods.
 pub struct Runner;
@@ -79,10 +79,6 @@ struct EdgeIn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hermite: Option<[[f64; 3]; 4]>,
 }
-/// The flat edge record: `kind a[3] b[3] lo hi same_source edge_zone p1[3] d1[3]
-/// p2[3] d2[3]` (23 scalars). `kind` is 0 for the line and 1 for the Hermite curve;
-/// the four Hermite vectors are zero for a line.
-const EDGE_RECORD: usize = 23;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)] // Independent native flags.
 struct Input {
@@ -117,42 +113,6 @@ struct Input {
     vertices: Vec<[f64; 3]>,
     #[serde(default)]
     edges: Vec<EdgeIn>,
-}
-impl Input {
-    fn flat(&self) -> Vec<f64> {
-        let mut out = vec![
-            self.op as f64,
-            self.kind as f64,
-            self.state as f64,
-            f64::from(self.check3d),
-            f64::from(self.cross),
-            f64::from(self.big),
-            f64::from(self.uv),
-            f64::from(self.defaults),
-            f64::from(self.dim3),
-            f64::from(self.rectangle),
-            self.scale,
-            self.zone,
-            self.vertices.len() as f64,
-            self.edges.len() as f64,
-            self.interval[0],
-            self.interval[1],
-        ];
-        out.extend(self.source.iter().flatten());
-        out.extend(self.vertices.iter().flatten());
-        for e in &self.edges {
-            out.push(f64::from(e.hermite.is_some()));
-            out.extend(e.a);
-            out.extend(e.b);
-            out.extend(e.interval);
-            out.extend([f64::from(e.same), e.zone]);
-            let hermite = e.hermite.unwrap_or([[0.; 3]; 4]);
-            out.extend(hermite.iter().flatten().copied());
-        }
-        let n = 22 + 3 * self.vertices.len() + EDGE_RECORD * self.edges.len();
-        debug_assert_eq!(out.len(), n);
-        out
-    }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum H {
@@ -680,21 +640,8 @@ impl UnitDiff for Runner {
         }
         Some(out)
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Input = case.parse()?;
-        let flat = i.flat();
-        ffi::validate(&flat).map_err(|e| HarnessError::new(e.to_string()))?;
-        match ffi::run(&flat) {
-            Ok(v) => Ok(Output::new().values("out", v)),
-            Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => Ok(
-                Output::rejected("native topology fixture construction failed"),
-            ),
-            Err(e) => Err(HarnessError::new(e.to_string())),
-        }
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Input = case.parse()?;
-        ffi::validate(&i.flat()).map_err(|e| HarnessError::new(e.to_string()))?;
         rust(&i).map_err(|e| HarnessError::new(e.to_string()))
     }
 }

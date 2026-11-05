@@ -1,6 +1,7 @@
 //! Five p8 boundary/discontinuity calls on concrete lines, circles, stationary
-//! B-splines, planes, C0/warped grids, identity and C0 B-spline volumes.
-//! Native output includes complete interval partition and start/mid/end labels,
+//! B-splines, planes, C0/warped grids, identity and C0 B-spline volumes, ported from
+//! upstream `source/SMLib/src/SmCurveClass.cpp`; checked against its golden.
+//! The output includes complete interval partition and start/mid/end labels,
 //! object identities, curve parameters and gaps. No absolute tolerance floors.
 
 use crate::case::CaseContext;
@@ -28,9 +29,8 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::{Volume, VolumeKind};
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_curve_class_p8 as ffi;
 
-/// Differential runner for curve classification part 8.
+/// Runner for curve classification part 8.
 pub struct Runner;
 #[derive(Clone, Serialize, Deserialize)]
 struct Input {
@@ -194,7 +194,6 @@ fn geometry(k: &Kernel, r: &[f64; 23]) -> solidcore::Result<Geometry> {
 }
 fn rust(input: Input) -> Result<Output, HarnessError> {
     let record = input.record;
-    ffi::validate(&record).map_err(|e| HarnessError::new(e.to_string()))?;
     let (header, ivls) = record
         .split_at_checked(23)
         .ok_or_else(|| HarnessError::new("missing p8 header"))?;
@@ -305,11 +304,6 @@ fn output(state: &[f64]) -> Result<Output, HarnessError> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "intersect.curve_class_p8"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Input = case.parse()?;
-        let state = ffi::run(&i.record).map_err(|e| HarnessError::new(e.to_string()))?;
-        output(&state)
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(case.parse()?)

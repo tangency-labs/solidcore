@@ -1,7 +1,7 @@
 //! Runner for unit `intersect.ray_tracer`: `SmRayTracer` and `SmLSI3LocalSolver`.
 //!
-//! C++: `solidcore_ffi::units::intersect_ray_tracer` (upstream
-//! `source/SMLib/src/SmRayTracer.cpp`). Rust: `solidcore::intersect::ray_tracer`.
+//! Ported from upstream `source/SMLib/src/SmRayTracer.cpp`; checked against its golden.
+//! Rust: `solidcore::intersect::ray_tracer`.
 //!
 //! A case is a set of surfaces (planes and Bezier-knot B-spline patches), a grid with the
 //! tracer's tolerances and a program of ops: `solver_tol` (`SetSolverTolerance`), `add_leaf`
@@ -14,8 +14,8 @@
 //! and polar box) and `add_poly_brep` (an `SmPolyBrep` of one region and shell with closed
 //! loops, then `SmRayTracer::AddPolyBrepToGrid`: builds its `SmBrepCache` and adds a polygon
 //! element per surface-tree leaf, whose box and sphere the record holds; rays reaching them run
-//! `sm_FindPolyHit`, and a poly face hit is reported by poly B-rep and face position). Both
-//! sides produce the flat record documented in the ffi module, reported as the values `rec`.
+//! `sm_FindPolyHit`, and a poly face hit is reported by poly B-rep and face position). The
+//! Rust side produces a flat record, reported as the values `rec`.
 //! The grid elements of a ray walk are reported as positions among the `add_leaf` leaves (`-1`
 //! for an element `add_surface` or `add_poly_brep` made).
 //!
@@ -55,11 +55,23 @@ use solidcore::topology::topology::Topology;
 use std::collections::BTreeMap;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::intersect_ray_tracer as ffi;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Most ops per program.
+const MAX_OPS: usize = 64;
+/// Most poly B-reps per program.
+const MAX_POLY_BREPS: usize = 4;
+/// Most vertices per poly B-rep.
+const MAX_POLY_VERTICES: usize = 1024;
+/// Most faces per poly B-rep.
+const MAX_POLY_FACES: usize = 512;
+/// Most loops per poly face.
+const MAX_POLY_LOOPS: usize = 8;
+/// Most vertices per poly loop.
+const MAX_LOOP_VERTICES: usize = 32;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 400;
@@ -193,156 +205,6 @@ struct Inputs {
     ops: Vec<OpIn>,
 }
 
-// ---- C++ side -----------------------------------------------------------------------
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    ffi::Program {
-        surfaces: i
-            .surfaces
-            .iter()
-            .map(|s| match s {
-                SurfIn::Bezier { p, q, net } => ffi::SurfaceIn::Bezier {
-                    p: *p,
-                    q: *q,
-                    net: net.clone(),
-                },
-                SurfIn::Plane {
-                    o,
-                    x,
-                    y,
-                    scale,
-                    domain,
-                } => ffi::SurfaceIn::Plane {
-                    o: *o,
-                    x: *x,
-                    y: *y,
-                    scale: *scale,
-                    domain: *domain,
-                },
-            })
-            .collect(),
-        grid: ffi::GridIn {
-            bbox: i.grid.bbox,
-            size: i.grid.size,
-            ray_tolerance: i.grid.ray_tol,
-            ray_accuracy: i.grid.ray_acc,
-        },
-        ops: i
-            .ops
-            .iter()
-            .map(|op| match op {
-                OpIn::SolverTol { tol } => ffi::Op::SolverTol(*tol),
-                OpIn::AddLeaf {
-                    surface,
-                    uv,
-                    bbox,
-                    pseudo,
-                    pseudo_basis,
-                    polar,
-                    elem_box,
-                } => ffi::Op::AddLeaf(ffi::LeafIn {
-                    surface: *surface,
-                    uv_domain: *uv,
-                    bbox: *bbox,
-                    pseudo_box: *pseudo,
-                    pseudo_basis: *pseudo_basis,
-                    polar: polar.clone(),
-                    elem_box: *elem_box,
-                }),
-                OpIn::Fire {
-                    p,
-                    v,
-                    max_t,
-                    hit_any,
-                    skip,
-                } => ffi::Op::Fire(ffi::FireIn {
-                    point: *p,
-                    vector: *v,
-                    max_t: *max_t,
-                    hit_any: *hit_any,
-                    skip: *skip,
-                }),
-                OpIn::Local {
-                    leaf,
-                    p,
-                    v,
-                    d3d_tol,
-                    dist_tol,
-                    acc,
-                    ray_fire,
-                    have_t,
-                    t_min,
-                    t_max,
-                    interval,
-                } => ffi::Op::Local(ffi::LocalIn {
-                    leaf: *leaf,
-                    point: *p,
-                    vector: *v,
-                    d3d_tolerance: *d3d_tol,
-                    distance_tolerance: *dist_tol,
-                    ray_accuracy: *acc,
-                    ray_fire: *ray_fire,
-                    have_t_min_t_max: *have_t,
-                    t_min: *t_min,
-                    t_max: *t_max,
-                    interval: *interval,
-                }),
-                OpIn::AddSurface { surface } => ffi::Op::AddSurface(*surface),
-                OpIn::Renderer {
-                    origin,
-                    x,
-                    y,
-                    view,
-                    nx,
-                    ny,
-                    rate,
-                } => ffi::Op::Renderer(ffi::RendererIn {
-                    origin: *origin,
-                    x: *x,
-                    y: *y,
-                    view: *view,
-                    nx: *nx,
-                    ny: *ny,
-                    rate: *rate,
-                }),
-                OpIn::Light { v, point } => ffi::Op::Light {
-                    vector: *v,
-                    is_point: *point,
-                },
-                OpIn::DoRender {
-                    shadows,
-                    background,
-                    object,
-                } => ffi::Op::DoRender {
-                    shadows: *shadows,
-                    background: *background,
-                    object: *object,
-                },
-                OpIn::RenderPixel { x, y } => ffi::Op::RenderPixel(*x, *y),
-                OpIn::RenderRay { p, v } => ffi::Op::RenderRay(*p, *v),
-                OpIn::AddPolyBrep {
-                    tol,
-                    vertices,
-                    faces,
-                    expansion,
-                } => ffi::Op::AddPolyBrep(ffi::PolyBrepIn {
-                    tolerance: *tol,
-                    vertices: vertices.clone(),
-                    faces: faces
-                        .iter()
-                        .map(|f| ffi::PolyFaceIn {
-                            tolerance: f.tol,
-                            normal: f.normal,
-                            loops: f.loops.clone(),
-                        })
-                        .collect(),
-                    expansion: *expansion,
-                }),
-            })
-            .collect(),
-    }
-}
-
 // ---- Rust side ----------------------------------------------------------------------
 
 fn v3(p: P3) -> Vec3 {
@@ -414,11 +276,11 @@ fn build_poly(
         operation: "difftest::intersect_ray_tracer::build_poly",
         reason,
     };
-    // the FFI's bounds, so a fuzzed case cannot make the Rust side allocate without end
+    // the input bounds, so a fuzzed case cannot make the Rust side allocate without end
     if vertices.is_empty()
-        || vertices.len() > ffi::MAX_POLY_VERTICES
+        || vertices.len() > MAX_POLY_VERTICES
         || faces.is_empty()
-        || faces.len() > ffi::MAX_POLY_FACES
+        || faces.len() > MAX_POLY_FACES
     {
         return Err(bad("poly B-rep size"));
     }
@@ -431,13 +293,13 @@ fn build_poly(
     }
     let mut out = Vec::new();
     for f in faces {
-        if f.loops.is_empty() || f.loops.len() > ffi::MAX_POLY_LOOPS {
+        if f.loops.is_empty() || f.loops.len() > MAX_POLY_LOOPS {
             return Err(bad("poly loop count"));
         }
         let face = b.add_face(k, shell, f.tol, f.normal.map(v3))?;
         out.push(face);
         for l in &f.loops {
-            if l.is_empty() || l.len() > ffi::MAX_LOOP_VERTICES {
+            if l.is_empty() || l.len() > MAX_LOOP_VERTICES {
                 return Err(bad("poly loop size"));
             }
             let lp = b.start_poly_edge_loop(face)?;
@@ -561,7 +423,7 @@ fn run_rust(k: &Kernel, i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64
             ..
         } = op
         {
-            if polys.len() >= ffi::MAX_POLY_BREPS {
+            if polys.len() >= MAX_POLY_BREPS {
                 return Err(SolidError::InvalidInput {
                     operation: "difftest::intersect_ray_tracer",
                     reason: "too many poly B-reps",
@@ -1446,7 +1308,7 @@ fn gen_poly_ops(rng: &mut Rng, ops: &mut Vec<OpIn>, gbox: E6, scale: f64) {
     let diag = len3(sub(hi, lo));
     let mut targets: Vec<(P3, P3)> = Vec::new();
     for _ in 0..rng.range_i64(1, 2) {
-        if ops.len() + 2 > ffi::MAX_OPS {
+        if ops.len() + 2 > MAX_OPS {
             return;
         }
         let tol = *rng.choose(&[1e-5, 1e-6, 1e-3]).unwrap_or(&1e-5) * scale;
@@ -1492,7 +1354,7 @@ fn gen_poly_ops(rng: &mut Rng, ops: &mut Vec<OpIn>, gbox: E6, scale: f64) {
             expansion: *rng.choose(&[0.0, 1e-3 * scale, 0.05 * diag]).unwrap_or(&0.0),
         });
     }
-    while ops.len() < ffi::MAX_OPS && rng.chance(0.85) {
+    while ops.len() < MAX_OPS && rng.chance(0.85) {
         let Some(&(target, normal)) = rng.choose(&targets) else {
             return;
         };
@@ -1533,12 +1395,6 @@ fn gen_checked(k: &Kernel, rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "intersect.ray_tracer"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let rec = ffi::run(&ffi_program(&i)).map_err(|e| harness(e.to_string()))?;
-        Ok(Output::new().values("rec", rec))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
