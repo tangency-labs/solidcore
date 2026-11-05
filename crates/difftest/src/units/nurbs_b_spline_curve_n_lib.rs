@@ -25,6 +25,7 @@
 //! `SetIntersectionCurveThroughPoint` calls on intersector-form curves that reach
 //! `SmCurve::ApproximateLength` (unit `curve.curve_p2`). Every run has at least
 //! [`MIN_GENERATED`] generated cases.
+//! Generated cases are drawn inside the routines' input contract ([`in_contract`]).
 //!
 //! An `interp_crv` case with `given_params` (fixture cases only, never generated) runs
 //! the SolidCraft fork's `CreateInterpolatingCurve(..., cpOptParams)` (tangency-labs/
@@ -1295,13 +1296,771 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     }
 }
 
+// ---- input contract ---------------------------------------------------------------
+//
+// The generator keeps a case only when it is inside the routines' input contract (ported
+// from the upstream harness's validator): well-formed clamped curves (`m = n+p+1`,
+// `1 <= p <= n`, `p <= MAX_DEGREE`, finite data, consistent dimension and rationality,
+// positive weights, bounded Euclidean points, non-decreasing knots with end
+// multiplicity exactly `p+1` and interior multiplicity at most `p`), finite bounded
+// parameters, counts and codes in range, and per op the restrictions documented on
+// [`op_ok`]. Hostile inputs are fixtures; the generated cases exercise the working path.
+
+/// Largest control point index of a generated curve.
+const MAX_INDEX: usize = 2048;
+/// Largest NURB degree (upstream `NL_MAXDEG`).
+const MAX_DEGREE: usize = 17;
+/// Largest magnitude of coordinates and parameters.
+const MAX_COORD: f64 = 1e6;
+/// Largest number of data points / knots in an op.
+const MAX_COUNT: usize = 256;
+/// Largest number of curves of `Compat` / `Sync`.
+const MAX_CURVES: usize = 8;
+/// Largest extension (or out-of-range parameter), relative to the curve size.
+const MAX_REL_DIST: f64 = 64.0;
+/// Smallest `NL_G2` extension by distance, relative to the curve size.
+const MIN_G2_FRACTION: f64 = 1e-3;
+/// Smallest parameter range relative to the knot magnitude.
+const MIN_REL_RANGE: f64 = 1e-6;
+/// Most UV trim curves of a `Through` call.
+const MAX_UV_CURVES: usize = 4;
+/// Largest number of span splits of `Dampen` (simulated before the call).
+const MAX_DAMPEN_SPLITS: usize = 4000;
+/// Largest number of turns of `Helix`.
+const MAX_TURNS: f64 = 50.0;
+/// Largest `n` of `Even`.
+const MAX_EVEN: usize = 256;
+/// Largest `nc` of `Arc`.
+const MAX_NC: u64 = 400;
+/// Smallest tolerance of `Rational` (besides 0).
+const MIN_RAT_TOL: f64 = 1e-7;
+/// Largest degree of a `Rational` input curve (as `nlib.crv_approx`).
+const MAX_RAT_DEGREE: usize = 9;
+/// Largest dimension code of a curve block.
+const MAX_DIM: u64 = 8;
+/// Largest `SmContinuityType` code.
+const MAX_CONT: u8 = 13;
+const CONT_G1: u8 = 3;
+const CONT_G1_G2: u8 = 5;
+const CONT_CINFINITY: u8 = 13;
+
+/// Finite and at most [`MAX_COORD`] in magnitude.
+fn fin(v: f64) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+fn fin3(v: &[f64; 3]) -> bool {
+    v.iter().all(|&c| fin(c))
+}
+
+/// At most `max` points, each [`fin3`].
+fn points_ok(p: &[[f64; 3]], max: usize) -> bool {
+    p.len() <= max && p.iter().all(fin3)
+}
+
+/// The Euclidean point of a stored control point (`NOZ` -> `z = 0`, `NOW` ->
+/// non-rational).
+fn euclid([x, y, z, w]: [f64; 4]) -> [f64; 3] {
+    let z = if z == NOZ { 0.0 } else { z };
+    if w == NOW {
+        [x, y, z]
+    } else {
+        [x / w, y / w, z / w]
+    }
+}
+
+fn dist([ax, ay, az]: [f64; 3], [bx, by, bz]: [f64; 3]) -> f64 {
+    let (x, y, z) = (ax - bx, ay - by, az - bz);
+    (x * x + y * y + z * z).sqrt()
+}
+
+/// A curve inside the contract: Euclidean control points, degree, knots.
+#[derive(Debug, Clone)]
+struct CurveInfo {
+    pts: Vec<[f64; 3]>,
+    p: usize,
+    knots: Vec<f64>,
+    rational: bool,
+}
+
+impl CurveInfo {
+    fn range(&self) -> (f64, f64) {
+        (
+            self.knots.first().copied().unwrap_or(0.0),
+            self.knots.last().copied().unwrap_or(0.0),
+        )
+    }
+
+    fn polygon_length(&self) -> f64 {
+        self.pts
+            .iter()
+            .zip(self.pts.iter().skip(1))
+            .map(|(&a, &b)| dist(a, b))
+            .sum()
+    }
+
+    fn pair_ok(&self, i: usize, j: usize) -> bool {
+        match (self.pts.get(i), self.pts.get(j)) {
+            (Some(&a), Some(&b)) => {
+                let d = dist(a, b);
+                d > 1e-150 && d < 1e150
+            }
+            _ => false,
+        }
+    }
+
+    /// The end-tangent fallbacks of the extensions read the third point from the end:
+    /// with only two points, the end pair must be normalisable.
+    fn tangent_ok(&self, start: bool) -> bool {
+        let n = self.pts.len().saturating_sub(1);
+        if n >= 2 {
+            return true;
+        }
+        if start {
+            self.pair_ok(0, 1)
+        } else {
+            self.pair_ok(n, n.saturating_sub(1))
+        }
+    }
+
+    /// The unique knots.
+    fn unique_knots(&self) -> Vec<f64> {
+        let mut u: Vec<f64> = Vec::new();
+        for &k in &self.knots {
+            if u.last().is_none_or(|&l| (l - k).abs() > 1e-12) {
+                u.push(k);
+            }
+        }
+        u
+    }
+}
+
+/// The curve `c` when it is inside the contract.
+fn curve_info(c: &InlineCrv) -> Option<CurveInfo> {
+    let n = c.cpts.len().saturating_sub(1);
+    let p = c.p;
+    let m = c.u.len().saturating_sub(1);
+    if n > MAX_INDEX || p > MAX_DEGREE || m > MAX_INDEX + MAX_DEGREE + 1 {
+        return None;
+    }
+    if p == 0 || p > n || m != n + p + 1 {
+        return None;
+    }
+    let [_, _, z0, w0] = *c.cpts.first()?;
+    let mut pts = Vec::with_capacity(c.cpts.len());
+    for &[x, y, z, w] in &c.cpts {
+        if (z == NOZ) != (z0 == NOZ) || (w == NOW) != (w0 == NOW) {
+            return None;
+        }
+        if !x.is_finite() || !y.is_finite() || !z.is_finite() || !w.is_finite() {
+            return None;
+        }
+        if w != NOW && w <= 0.0 {
+            return None;
+        }
+        let e = euclid([x, y, z, w]);
+        if !e.iter().all(|&v| fin(v)) {
+            return None;
+        }
+        pts.push(e);
+    }
+    let knots = &c.u;
+    if !knots.iter().all(|&k| fin(k)) || knots.windows(2).any(|w| w.first() > w.last()) {
+        return None;
+    }
+    let (&a, &b) = (knots.first()?, knots.last()?);
+    let head = knots.get(..=p)?;
+    let tail = knots.get(m - p..)?;
+    let inner = knots.get(p + 1..m - p)?;
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return None;
+    }
+    if b - a < MIN_REL_RANGE * a.abs().max(b.abs()) {
+        return None;
+    }
+    if inner.iter().any(|&k| k == a || k == b) {
+        return None;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return None;
+        }
+    }
+    Some(CurveInfo {
+        pts,
+        p,
+        knots: knots.clone(),
+        rational: w0 != NOW,
+    })
+}
+
+/// A curve block (`dim`, `oob`, the curve) inside the contract.
+fn block_info(t: &This) -> Option<CurveInfo> {
+    if t.dim > MAX_DIM {
+        return None;
+    }
+    curve_info(&resolve(&t.crv).ok()?)
+}
+
+/// A clamped knot vector of degree `p` (surface form: range relative to at least 1).
+fn surface_knots(knots: &[f64], p: usize) -> Option<(f64, f64)> {
+    let m = knots.len().checked_sub(1)?;
+    if knots.windows(2).any(|w| w.first() > w.last()) || m < 2 * p + 1 {
+        return None;
+    }
+    let (&a, &b) = (knots.first()?, knots.last()?);
+    let head = knots.get(..=p)?;
+    let tail = knots.get(m - p..)?;
+    let inner = knots.get(p + 1..m - p)?;
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return None;
+    }
+    if b - a < 1e-6 * a.abs().max(b.abs()).max(1.0) {
+        return None;
+    }
+    if inner.iter().any(|&k| k == a || k == b) {
+        return None;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return None;
+        }
+    }
+    Some((a, b))
+}
+
+/// Whether `SetIntersectionCurveThroughPoint` on `c` surely takes a case that moves an
+/// existing knot (cases 2, 3, 5, 6, 7) rather than inserting one (cases 1, 4, 8); `c`
+/// must be a non-rational piecewise C0 cubic (exactly triple interior knots). With UV
+/// curves the inserting cases build each new UV curve from the address of an array
+/// slot holding a pointer in upstream. Conservative: every span and end node the
+/// parameter could select must satisfy the move test (`min_dist / span < pct`, the
+/// projection of the through point on the outward end tangent within `(-0.01 *
+/// chord, 0.01)`), with a relative margin.
+fn through_moves_knot(c: &CurveInfo, knot: f64, through: [f64; 3], pct: f64) -> bool {
+    let p = c.p;
+    let m = c.knots.len().saturating_sub(1);
+    let inner = c.knots.get(p + 1..m.saturating_sub(p)).unwrap_or(&[]);
+    let c0 = p == 3
+        && !c.rational
+        && inner.len() % 3 == 0
+        && inner
+            .chunks(3)
+            .all(|w| matches!(w, [a, _, b] if a == b));
+    if !c0 {
+        return false;
+    }
+    let u = c.unique_knots();
+    let segs = u.len().saturating_sub(1);
+    if segs == 0 || c.pts.len() != 3 * segs + 1 {
+        return false;
+    }
+    let (Some(&u_first), Some(&u_last)) = (u.first(), u.last()) else {
+        return false;
+    };
+    let spans: Vec<usize> = if knot < u_first {
+        vec![0]
+    } else if knot > u_last {
+        vec![segs - 1]
+    } else {
+        (0..segs)
+            .filter(|&j| matches!((u.get(j), u.get(j + 1)), (Some(&a), Some(&b)) if a <= knot && knot <= b))
+            .collect()
+    };
+    if spans.is_empty() {
+        return false;
+    }
+    let pt = |i: usize| c.pts.get(i).copied();
+    let sub = |a: [f64; 3], b: [f64; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let margin = 1e-6;
+    spans.iter().all(|&j| {
+        let (Some(&u0), Some(&u1)) = (u.get(j), u.get(j + 1)) else {
+            return false;
+        };
+        let size = u1 - u0;
+        let (d0, d1) = ((knot - u0).abs(), (knot - u1).abs());
+        let mut nodes = Vec::new();
+        if d0 <= d1 * (1.0 + margin) {
+            nodes.push(false);
+        }
+        if d0 * (1.0 + margin) >= d1 {
+            nodes.push(true);
+        }
+        let (Some(c_lo), Some(c_hi)) = (pt(3 * j), pt(3 * j + 3)) else {
+            return false;
+        };
+        let chord = dist(c_lo, c_hi);
+        nodes.iter().all(|&top| {
+            let (min_dist, idx) = if top { (d1, 3 * j + 3) } else { (d0, 3 * j) };
+            let tan = match (top, idx) {
+                (false, 0) => pt(1).zip(pt(0)).map(|(b, a)| sub(a, b)),
+                (false, i) => pt(i - 1).zip(pt(i)).map(|(b, a)| sub(b, a)),
+                (true, i) => pt(i).zip(pt(i - 1)).map(|(a, b)| sub(a, b)),
+            };
+            let (Some(tan), Some(node)) = (tan, pt(idx)) else {
+                return false;
+            };
+            let len = dot(tan, tan).sqrt();
+            if len < 1e-9 * (1.0 + chord) {
+                return false;
+            }
+            let proj = dot(tan, sub(through, node)) / len;
+            let slack = margin * (1.0 + dist(through, node) + chord);
+            min_dist / size < pct * (1.0 - margin)
+                && proj > -0.01 * chord + slack
+                && proj < 0.01 - slack
+        })
+    })
+}
+
+/// One UV trim curve of `Through`: a 2D curve sharing the degree, control point count
+/// and knots of `this` (upstream edits it at the indices of `this`), a well-formed
+/// clamped surface with finite data and positive weights, and a UV point inside the
+/// surface's domain.
+fn uv_trim_curve_ok(e: &UvIn, this: &CurveInfo) -> bool {
+    let Some(uv) = curve_info(&e.crv) else {
+        return false;
+    };
+    if uv.p != this.p || uv.pts.len() != this.pts.len() || uv.knots != this.knots {
+        return false;
+    }
+    let s = &e.srf;
+    let n = s.net.len().saturating_sub(1);
+    let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
+    let (p, q) = (s.p, s.q);
+    let r = s.u.len().saturating_sub(1);
+    let ss = s.v.len().saturating_sub(1);
+    if n > MAX_INDEX
+        || m > MAX_INDEX
+        || p > MAX_DEGREE
+        || q > MAX_DEGREE
+        || r > MAX_INDEX + MAX_DEGREE + 1
+        || ss > MAX_INDEX + MAX_DEGREE + 1
+    {
+        return false;
+    }
+    if p == 0 || p > n || q == 0 || q > m || r != n + p + 1 || ss != m + q + 1 {
+        return false;
+    }
+    if (n + 1) * (m + 1) > MAX_INDEX || s.net.iter().any(|row| row.len() != m + 1) {
+        return false;
+    }
+    let rational = s.net.first().and_then(|row| row.first()).is_some_and(|c| c[3] != NOW);
+    for &[x, y, z, w] in s.net.iter().flatten() {
+        if (w != NOW) != rational || z == NOZ {
+            return false;
+        }
+        if !x.is_finite() || !y.is_finite() || !z.is_finite() || !w.is_finite() {
+            return false;
+        }
+        if rational && w <= 0.0 {
+            return false;
+        }
+        if !euclid([x, y, z, w]).iter().all(|&v| fin(v)) {
+            return false;
+        }
+    }
+    if !s.u.iter().chain(&s.v).all(|&k| fin(k)) {
+        return false;
+    }
+    let (Some((u0, u1)), Some((v0, v1))) = (surface_knots(&s.u, p), surface_knots(&s.v, q))
+    else {
+        return false;
+    };
+    match e.uvp {
+        Some([pu, pv]) => fin(pu) && fin(pv) && (u0..=u1).contains(&pu) && (v0..=v1).contains(&pv),
+        None => true,
+    }
+}
+
+/// Consecutive data points distinct (the NLib fits).
+fn distinct(pts: &[[f64; 3]]) -> bool {
+    !pts.windows(2).any(|w| matches!(w, [a, b] if a == b))
+}
+
+/// `p!/(p-k)!` (upstream's `int` derivative factor in `N_BasisDerivs`) fits an `i32`.
+fn factor_fits(p: usize, k: usize) -> bool {
+    let mut f: i64 = 1;
+    for r in 0..k.min(p) {
+        f *= (p - r) as i64;
+        if f > i64::from(i32::MAX) {
+            return false;
+        }
+    }
+    true
+}
+
+/// The knots `x` of a refinement: non-decreasing and, inside the range, no knot
+/// reaching a multiplicity above the degree.
+fn refine_knots_ok(info: &CurveInfo, x: &[f64]) -> bool {
+    if x.windows(2).any(|w| w.first() > w.last()) {
+        return false;
+    }
+    let (a, b) = info.range();
+    let (Some(&first), Some(&last)) = (x.first(), x.last()) else {
+        return true;
+    };
+    if first <= a || last >= b {
+        return true; // refused by the routine before any indexing
+    }
+    x.iter().all(|&k| {
+        info.knots.iter().filter(|&&u| u == k).count() + x.iter().filter(|&&u| u == k).count()
+            <= info.p
+    })
+}
+
+/// Whether `DampenKnotSpacing`'s splitting of the unique knots finishes within
+/// [`MAX_DAMPEN_SPLITS`] splits (upstream loops forever when it does not).
+fn dampen_finishes(unique: &[f64], factor: f64) -> bool {
+    let mut kv = unique.to_vec();
+    let mut splits = 0usize;
+    let mut done = false;
+    while !done {
+        done = true;
+        let mut i = 0usize;
+        while i + 1 < kv.len() {
+            let at = |j: usize| kv.get(j).copied().unwrap_or(f64::NAN);
+            let span = at(i + 1) - at(i);
+            let mut split = false;
+            if i > 0 && span / (at(i) - at(i - 1)) > factor {
+                split = true;
+            }
+            if i + 2 < kv.len() && span / (at(i + 2) - at(i + 1)) > factor {
+                split = true;
+            }
+            if split {
+                splits += 1;
+                if splits > MAX_DAMPEN_SPLITS {
+                    return false;
+                }
+                done = false;
+                let mid = (at(i + 1) + at(i)) / 2.0;
+                kv.insert(i + 1, mid);
+            }
+            i += 1;
+        }
+    }
+    true
+}
+
+fn opt3_ok(v: Option<[f64; 3]>) -> bool {
+    v.as_ref().is_none_or(fin3)
+}
+
+/// Whether the op's parameters (with `this` for curve ops) are inside the contract:
+///
+/// - `Arc`: `nc <= MAX_NC`; with the routine's own checks passed (`r > 0`, distinct
+///   angles), a sweep of at least `1e-6` degrees (non-zero end tangents).
+/// - `Rational`: a rational input needs a degree within `nlib.crv_approx`'s limits,
+///   at most 2049 control points and `MIN_RAT_TOL <= tol <= 1` (or `tol == 0`).
+/// - `Helix`: no input that passes `CreateHelixSegment`'s checks but hits
+///   `N_CrvApproxSpiral`'s early input errors; at most `MAX_TURNS` turns,
+///   `tol >= 1e-7`.
+/// - `ExtParam` / `ExtDist`: bounded, strict extensions; end tangents that can be
+///   normalised for `NL_G1`/`NL_G2`; `NL_G2` distances of at least `MIN_G2_FRACTION`
+///   curve sizes.
+/// - `InterpCrv` / `InterpPts`: `1..=MAX_COUNT` distinct consecutive points, degree at
+///   least 1, a derivative factor that fits an `i32`, strictly increasing parameters
+///   (one per point), enough points for the local interpolant of a closed fit.
+/// - `Dampen`: a factor whose splitting finishes within `MAX_DAMPEN_SPLITS` splits,
+///   `mult <= p`.
+/// - `InsKnots`: refinement knots that keep every multiplicity at most the degree.
+/// - `Compat` / `Sync`: `1..=MAX_CURVES` curves, `tol >= 0` (`> 0` for `Sync`).
+/// - `Trim`: `b - a` at least `1e-6` (relative to the knot magnitude).
+/// - `Through`: a parameter within one range of the curve, `0 <= pct <= 0.5`; at most
+///   `MAX_UV_CURVES` UV curves, each [`uv_trim_curve_ok`], and only where an existing
+///   knot moves ([`through_moves_knot`]).
+fn op_ok(op: &OpIn, this: Option<&CurveInfo>) -> bool {
+    match op {
+        OpIn::Arc {
+            dim,
+            nc,
+            frame,
+            r,
+            a0,
+            a1,
+            tol,
+        } => {
+            if *dim > MAX_DIM || nc.is_some_and(|k| k > MAX_NC) {
+                return false;
+            }
+            if !frame.iter().all(fin3) || ![*r, *a0, *a1, *tol].iter().all(|&v| fin(v)) {
+                return false;
+            }
+            if *r > 0.0 && a0 != a1 {
+                let mut ae = *a1;
+                if (ae - a0 - 90.0).abs() < 1.0e-10 {
+                    ae = a0 + 90.0;
+                }
+                if ae < *a0 {
+                    ae += 360.0;
+                }
+                if ae - a0 < 1e-6 {
+                    return false;
+                }
+            }
+            true
+        }
+        OpIn::Rational { tol } => {
+            let Some(c) = this else { return false };
+            fin(*tol)
+                && (!c.rational
+                    || (c.p <= MAX_RAT_DEGREE
+                        && c.pts.len() <= 2049
+                        && (*tol == 0.0 || (MIN_RAT_TOL..=1.0).contains(tol))))
+        }
+        OpIn::Helix {
+            frame,
+            h,
+            r0,
+            r1,
+            turns,
+            tol,
+            ..
+        } => {
+            if !frame.iter().all(fin3) || ![*h, *r0, *r1, *turns, *tol].iter().all(|&v| fin(v)) {
+                return false;
+            }
+            let passes = *h >= -1e-12 && *r0 >= 0.0 && *r1 >= 0.0 && *turns >= 1e-12;
+            if passes {
+                let mtol = 1.0e-7;
+                let q0 = if *r0 < mtol { 0.0 } else { *r0 };
+                let q1 = if *r1 < mtol { 0.0 } else { *r1 };
+                if *h < mtol || (q0 + q1) < mtol || *turns < mtol {
+                    return false;
+                }
+                if *turns > MAX_TURNS || *tol < 1e-7 {
+                    return false;
+                }
+            }
+            true
+        }
+        OpIn::ExtParam { t, cont, precise } => {
+            let Some(c) = this else { return false };
+            if !fin(*t) || *cont > MAX_CONT {
+                return false;
+            }
+            if [CONT_G1, CONT_G1_G2, CONT_CINFINITY].contains(cont) {
+                let (a, b) = c.range();
+                let mut t = *t;
+                if !precise {
+                    if t < a {
+                        t -= b - a;
+                    } else if t > b {
+                        t += b - a;
+                    }
+                }
+                if t < a - MAX_REL_DIST * (b - a) || t > b + MAX_REL_DIST * (b - a) {
+                    return false;
+                }
+                if *cont != CONT_CINFINITY && !(c.tangent_ok(true) && c.tangent_ok(false)) {
+                    return false;
+                }
+            }
+            true
+        }
+        OpIn::ExtDist { d, end, cont } => {
+            let Some(c) = this else { return false };
+            if !fin(*d) || !(1..=2).contains(end) || *cont > MAX_CONT {
+                return false;
+            }
+            if [CONT_G1, CONT_G1_G2, CONT_CINFINITY].contains(cont) {
+                let size = c.polygon_length();
+                if !(*d > 0.0 && *d <= MAX_REL_DIST * size) {
+                    return false;
+                }
+                if *cont == CONT_G1_G2 && *d < MIN_G2_FRACTION * size {
+                    return false;
+                }
+                if *cont != CONT_CINFINITY && !c.tangent_ok(*end == 1) {
+                    return false;
+                }
+            }
+            true
+        }
+        OpIn::InterpCrv {
+            par,
+            dim,
+            deg,
+            pts,
+            vecs,
+            more,
+            ..
+        } => {
+            let more = more.as_deref().unwrap_or(&[]);
+            *par <= 2
+                && *dim <= MAX_DIM
+                && *deg <= MAX_DEGREE
+                && points_ok(pts, MAX_COUNT)
+                && points_ok(vecs, MAX_COUNT)
+                && points_ok(more, 8)
+                && !pts.is_empty()
+                && *deg != 0
+                && distinct(pts)
+                && factor_fits((*deg).max(4), vecs.len().max(more.len()).min(MAX_DEGREE))
+        }
+        OpIn::Dampen { factor, mult } => {
+            let Some(c) = this else { return false };
+            fin(*factor)
+                && *mult <= MAX_DEGREE
+                && *mult <= c.p
+                && dampen_finishes(&c.unique_knots(), *factor)
+        }
+        OpIn::DegRed { tol, .. } => this.is_some() && fin(*tol),
+        OpIn::InsOne { knot, times } => this.is_some() && fin(*knot) && *times <= 64,
+        OpIn::Through {
+            knot,
+            p,
+            tan,
+            pct,
+            uv,
+        } => {
+            let Some(c) = this else { return false };
+            if !fin(*knot) || !fin3(p) || !opt3_ok(*tan) || !fin(*pct) {
+                return false;
+            }
+            let (a, b) = c.range();
+            if *knot < a - (b - a) || *knot > b + (b - a) || !(0.0..=0.5).contains(pct) {
+                return false;
+            }
+            uv.len() <= MAX_UV_CURVES
+                && uv.iter().all(|e| uv_trim_curve_ok(e, c))
+                && (uv.is_empty() || through_moves_knot(c, *knot, *p, *pct))
+        }
+        OpIn::Even { t0, t1, n, tol } => {
+            this.is_some() && fin(*t0) && fin(*t1) && *n <= MAX_EVEN && fin(*tol) && *tol >= 0.0
+        }
+        OpIn::InsKnots { knots } => {
+            let Some(c) = this else { return false };
+            knots.len() <= MAX_COUNT && knots.iter().all(|&k| fin(k)) && refine_knots_ok(c, knots)
+        }
+        OpIn::InterpPts {
+            pts,
+            params,
+            deg,
+            ts,
+            te,
+            closed,
+            par,
+        } => {
+            let prm = params.as_deref().unwrap_or(&[]);
+            if !points_ok(pts, MAX_COUNT)
+                || prm.len() > MAX_COUNT
+                || !prm.iter().all(|&v| fin(v))
+                || *deg > MAX_DEGREE
+                || !opt3_ok(*ts)
+                || !opt3_ok(*te)
+                || *par > 2
+            {
+                return false;
+            }
+            if pts.is_empty() || *deg == 0 || !distinct(pts) || !factor_fits(*deg, 1) {
+                return false;
+            }
+            if params.is_some()
+                && !closed
+                && (prm.len() != pts.len() || prm.windows(2).any(|w| matches!(w, [a, b] if a >= b)))
+            {
+                return false;
+            }
+            if *closed {
+                if pts.len() < 2 {
+                    return false;
+                }
+                let n = (pts.len() - 1) as i64;
+                let pi = *deg as i64;
+                let nm = n / 2;
+                let is = nm.max(n - pi - 1);
+                let ie = nm.min(pi + 1);
+                if pi > n - is + ie {
+                    return false;
+                }
+            }
+            true
+        }
+        OpIn::Compat { curves, tol } | OpIn::Sync { curves, tol } => {
+            let sync = matches!(op, OpIn::Sync { .. });
+            !curves.is_empty()
+                && curves.len() <= MAX_CURVES
+                && curves.iter().all(|c| block_info(c).is_some())
+                && fin(*tol)
+                && *tol >= 0.0
+                && !(sync && *tol == 0.0)
+        }
+        OpIn::Deform {
+            s,
+            e,
+            st,
+            st_type,
+            et,
+            et_type,
+        } => {
+            this.is_some()
+                && [*s, *e, *st, *et].into_iter().all(opt3_ok)
+                && *st_type <= 2
+                && *et_type <= 2
+        }
+        OpIn::Reparam => this.is_some(),
+        OpIn::Scale { f } => this.is_some() && fin(*f),
+        OpIn::ScaleKnots { a, b } => this.is_some() && fin(*a) && fin(*b),
+        OpIn::Trim { a, b, mode } => {
+            let Some(c) = this else { return false };
+            if !fin(*a) || !fin(*b) || *mode > 2 {
+                return false;
+            }
+            let (lo, hi) = (a.min(*b), a.max(*b));
+            let (ka, kb) = c.range();
+            hi - lo >= 1e-6 * (1.0 + ka.abs().max(kb.abs()))
+        }
+    }
+}
+
+/// Whether the static ops (no `this`).
+fn is_static(op: &OpIn) -> bool {
+    matches!(
+        op,
+        OpIn::Arc { .. }
+            | OpIn::Helix { .. }
+            | OpIn::InterpCrv { .. }
+            | OpIn::InterpPts { .. }
+            | OpIn::Compat { .. }
+            | OpIn::Sync { .. }
+    )
+}
+
+/// The case is inside the input contract: `this` exactly for the curve ops, a curve
+/// block inside the contract, and the op's parameters ([`op_ok`]).
+fn in_contract(i: &Inputs) -> bool {
+    match (&i.this, is_static(&i.op)) {
+        (None, true) => op_ok(&i.op, None),
+        (Some(t), false) => block_info(t).is_some_and(|c| op_ok(&i.op, Some(&c))),
+        _ => false,
+    }
+}
+
+/// A generated case inside the contract (redrawn up to 64 times).
+fn gen_valid(rng: &mut Rng) -> Option<Inputs> {
+    for _ in 0..64 {
+        let i = gen_case(rng);
+        if in_contract(&i) {
+            return Some(i);
+        }
+    }
+    None
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "nurbs.b_spline_curve_n_lib"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        serde_json::to_value(gen_valid(rng)?).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
