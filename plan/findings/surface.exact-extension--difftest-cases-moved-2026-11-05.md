@@ -981,3 +981,31 @@ operation does not make them.
   (deferred), and the known mismatch gen0658 is among the deferred (its entry must go). Without the
   clip the same cases differ only by the status code (1006 vs the port invariant). Whether the
   clip applies when the extension is the surface itself (native stops at 1006) is a decision.
+
+### fc0000's volume: the probe integrated from the plane's unbounded domain (2026-11-05, volume item)
+
+- *Root cause.* The plane a local operation moves a face onto keeps its natural domain, ±1234567
+  (INFINITE_PARAMETER) in u and v, as upstream's `MakeFaceuse` gives it. The soundness probe
+  (`difftest::soundness::measured`) measured with `Kernel::default()`, so with upstream's
+  integral base: each iso-u integral of `SmODEAreaIFEO` ran from the face domain's lowest v,
+  1.2e6 below the face, and the area and moments came out as small differences of large terms
+  (WR-563, #1556). On fc0000's moved plane (face 31) that gave the centroid (2.93, -4.74, -33.2)
+  for (-0.92, -4.74, 4.18) and the body 712.32 for 1269.97. The trims, their orientation and the
+  plane's parametrization are right: with the trims' lowest v as base the kernel's centroid is the
+  shoelace's to 1e-8 and the area 15.74546 (the shoelace's 15.74546).
+- *fc0025, same cause.* Its moved plane (face 32, same domain) made the step control fail
+  (`mass::integrator::step_control`, 1001), so its volume was None; with the trims' base, 1230.03.
+- *Fix (dca5a3d3a).* The probe measures with `precise_properties_trim_base_v` on: its volume is a
+  verdict on the body, not a comparison with the C++ reference. Under every precise-properties fix
+  (knot splits, span ends, length scale as well) fc0000's volume is the same to 2e-7.
+- *Probe (all 165, `notes-localop/sound-volume.tsv` vs `sound-circle.tsv`).* Sound 72 -> 74:
+  gen0032 and gen0041 (manifold, 0 lines, volume None before) get 681.15 and 580.94. No status or
+  check line changes. Volumes: the boxes are now 1050.0 / 950.0 to the last digit (1050.00000004
+  before); the unchanged input fillet body 1252.27040 (1252.27026); fc0014 1236.09 (1179.52);
+  gen0009 +5.6, gen0051 +3.0, gen0007 -0.5; the rest within 1e-6 relative.
+- *Left.* `precise_properties_trim_base_v` is still opt-in in the kernel (off for pinned C++
+  parity), so `brep_volume` with a default kernel still gives 712 for fc0000. Making it the
+  default moves the rounding of every precise property on faces of unbounded surfaces and on
+  cylinders and cones: the mass difftest units and the bit-for-bit fork comparisons
+  (`tests/fork_eb883ad_keep_features.rs`) would each need re-recording; a separate item.
+  fc0016's volume is still negative (-877.59).
