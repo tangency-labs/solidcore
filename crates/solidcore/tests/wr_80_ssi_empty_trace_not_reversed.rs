@@ -106,14 +106,25 @@ fn wr_80_quartic_contact_completes() {
         Err(e) => panic!("the intersection fails: {e:?}"),
     };
     assert!(!r.curves_3d.is_empty(), "no curve found");
-    // The sheets are `y^4` apart, so a point within the tolerance `1e-6` of both lies
-    // within `1e-6^(1/4)` (about 0.032) of the contact line `y = 0`.
-    let contact_band = 1e-6_f64.powf(0.25);
-    for p in r.curves_3d.iter().flat_map(|c| samples(&k, c)) {
+    // The sheets are `y^4` apart vertically. A point within the tolerance `1e-6` of
+    // both (each sheet's slope is at most about 2 here) has `y^4` below a few times the
+    // tolerance; `(4e-6)^(1/4)`, about 0.045, bounds it with room to spare.
+    let contact_band = 4e-6_f64.powf(0.25);
+    let points: Vec<Point3> = r.curves_3d.iter().flat_map(|c| samples(&k, c)).collect();
+    for p in &points {
         // on the sheet without the quartic term, which is the graph
         // z = 0.5 y^3 - 0.5 y + 0.2 x^2
         let on_sheet = 0.5 * p.y * p.y * p.y - 0.5 * p.y + 0.2 * p.x * p.x;
         assert!((p.z - on_sheet).abs() < 1e-5, "{p:?} is off the sheet");
-        assert!(p.y.abs() < contact_band, "{p:?} is off the contact parabola");
+        assert!(
+            p.y.abs() < contact_band,
+            "{p:?} is off the contact parabola"
+        );
     }
+    // the curves reach both ends of the parabola, x = -1 and x = 1, so no trace
+    // stopped short
+    let x_min = points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let x_max = points.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    assert!(x_min < -1.0 + 1e-6, "no curve reaches x = -1 (min {x_min})");
+    assert!(x_max > 1.0 - 1e-6, "no curve reaches x = 1 (max {x_max})");
 }
