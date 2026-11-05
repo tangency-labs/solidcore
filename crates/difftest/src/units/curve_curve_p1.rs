@@ -48,6 +48,7 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::curve_contract::{self as contract, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -94,18 +95,6 @@ struct CircleIn {
     a1: f64,
 }
 
-impl CircleIn {
-    /// The same arc with its angles in the arc constructor's `[-360, 360]` degrees: an
-    /// arc that would end past 360 degrees starts one turn back.
-    fn turned_back(mut self) -> Self {
-        if self.a1 > 360.0 {
-            self.a0 -= 360.0;
-            self.a1 -= 360.0;
-        }
-        self
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LineIn {
     p: [f64; 3],
@@ -147,7 +136,6 @@ enum CurveIn {
     Line(LineIn),
 }
 
-
 /// `c` with a circle replaced by its inline B-spline.
 fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
     let CurveIn::Circle(ci) = c else {
@@ -163,7 +151,9 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic,
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
-    let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
+    let cur = arc
+        .gw_nurb()
+        .ok_or_else(|| harness("circle without NURB"))?;
     Ok(CurveIn::Bspline(BSplineIn {
         dim: 3,
         oob: false,
@@ -176,9 +166,6 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
 fn b(x: bool) -> f64 {
     f64::from(u8::from(x))
 }
-
-
-
 
 fn v3(p: [f64; 3]) -> Vec3 {
     Vec3::from_array(p)
@@ -206,7 +193,10 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
                 .len()
                 .checked_sub(1)
                 .ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -319,7 +309,6 @@ impl SolutionObject for Obj {
     }
 }
 
-
 fn sop_of(code: i32) -> Result<SolverOperation, HarnessError> {
     SolverOperation::from_code(code).ok_or_else(|| harness("solver operation"))
 }
@@ -327,7 +316,6 @@ fn sop_of(code: i32) -> Result<SolverOperation, HarnessError> {
 fn ivl_of(i: [f64; 2]) -> Extent1d {
     Extent1d::from_min_max(i[0], i[1])
 }
-
 
 /// A two-curve solution (`type v0 s0 s1 v1 e0 e1`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -441,7 +429,11 @@ fn per_point(
         if o.deferred.is_some() {
             return Ok(Some(o));
         }
-        let sfx = if i == 0 { String::new() } else { format!("_{i}") };
+        let sfx = if i == 0 {
+            String::new()
+        } else {
+            format!("_{i}")
+        };
         for (key, v) in o.ints {
             all.ints.insert(format!("{key}{sfx}"), v);
         }
@@ -458,6 +450,214 @@ fn to_output(flat: &[f64]) -> Output {
     Output::new()
         .ints("status", vec![status as i64])
         .values("out", rest)
+}
+
+// ---- input contract ---------------------------------------------------------------
+
+/// The curve block bounds of the C++ reference wrapper.
+const LIMITS: Limits = Limits {
+    max_index: 128,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+/// How far outside its domain, in domain lengths, a curve is evaluated.
+const MAX_REL_DIST: f64 = 2.0;
+/// The most transforms applied to a curve.
+const MAX_TRANSFORMS: u64 = 16;
+/// The most `ApproximateCurve` breaks.
+const MAX_BREAKS: usize = 8;
+/// The most solutions refined at once.
+const MAX_SOLUTIONS: usize = 8;
+/// The most tessellation segments asked for.
+const MAX_SEGMENTS: u64 = 64;
+/// The smallest approximation tolerance.
+const MIN_TOL: f64 = 1e-9;
+/// The smallest non-zero chord, angle and distance tessellation tolerances.
+const MIN_CHORD: f64 = 1e-4;
+const MIN_ANGLE: f64 = 0.5;
+const MIN_DIST: f64 = 1e-3;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+/// The parameter domain of a curve that keeps the contract, and whether it is a B-spline
+/// (analytic lines evaluate anywhere: only their parameters are bounded).
+fn domain(c: &CurveIn) -> Option<((f64, f64), bool)> {
+    let max = LIMITS.max_coord;
+    match resolve(c).ok()? {
+        CurveIn::Bspline(bs) => {
+            let s = contract::bspline(&bs.cpts, bs.p, &bs.u, &LIMITS)?;
+            (2..=3).contains(&bs.dim).then_some(((s.a, s.b), true))
+        }
+        CurveIn::Hermite(h) => ((2..=3).contains(&h.dim)
+            && contract::hermite([&h.p1, &h.d1, &h.p2, &h.d2], max))
+        .then_some(((0.0, 1.0), false)),
+        CurveIn::Line(l) => contract::line(&l.p, &l.v, l.domain, l.scale, max)
+            .map(|_| ((-max / 8.0, max / 8.0), false)),
+        CurveIn::Circle(_) => None,
+    }
+}
+
+/// Whether `t` is finite and at most [`MAX_REL_DIST`] domain lengths outside `(a, b)`.
+fn param((a, b): (f64, f64), t: f64) -> bool {
+    let far = MAX_REL_DIST * (b - a);
+    fin(t) && t >= a - far && t <= b + far
+}
+
+fn interval(d: (f64, f64), ivl: [f64; 2]) -> bool {
+    param(d, ivl[0]) && param(d, ivl[1]) && ivl[0] < ivl[1]
+}
+
+fn tol(v: f64) -> bool {
+    fin(v) && v >= 0.0
+}
+
+/// A tessellation tolerance: zero (unused) or at least `min`.
+fn tess_tol(v: f64, min: f64) -> bool {
+    tol(v) && (v == 0.0 || v >= min)
+}
+
+/// The option vectors `GlobalPointSolve` operation `sop` needs, `None` for one it refuses.
+fn gps_vectors(sop: i32) -> Option<usize> {
+    match sop {
+        0 | 3..=6 => Some(0),
+        8 | 9 | 14 | 15 | 24 => Some(1),
+        11..=13 => Some(2),
+        _ => None,
+    }
+}
+
+/// Transforms of a B-spline only, at most [`MAX_TRANSFORMS`], each with an origin within
+/// `MAX_COORD / MAX_TRANSFORMS`, two non-parallel axes and scales in `[1e-3, 1]`.
+fn transforms(xf: &[XformIn], bspline: bool) -> bool {
+    let max = LIMITS.max_coord;
+    let nt: u64 = xf.iter().map(|t| t.repeat).sum();
+    (nt == 0 || bspline)
+        && nt <= MAX_TRANSFORMS
+        && xf.iter().filter(|t| t.repeat > 0).all(|t| {
+            let s = t.scale.unwrap_or([1.0; 3]);
+            contract::vec3(&t.o, max)
+                && t.o.iter().all(|c| c.abs() <= max / MAX_TRANSFORMS as f64)
+                && contract::frame(&t.x, &t.y, max)
+                && contract::vec3(&s, max)
+                && (t.scale.is_none() || s.iter().all(|c| (1e-3..=1.0).contains(&c.abs())))
+        })
+}
+
+/// The two solution ends, each a finite value and parameters on both curves.
+fn ends(s: &SolIn, d1: (f64, f64), d2: (f64, f64)) -> bool {
+    fin(s.v0)
+        && param(d1, s.s[0])
+        && param(d2, s.s[1])
+        && fin(s.v1)
+        && param(d1, s.e[0])
+        && param(d2, s.e[1])
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/curve_curve_p1.rs`, `validate`): curves as [`domain`]
+/// takes them (arcs within the arc constructor's `[-360, 360]` degrees), parameters near
+/// the curve's domain, increasing intervals, non-negative tolerances, tessellation
+/// tolerances of zero or above their minimum, `GlobalPointSolve` operations it accepts with
+/// their option vectors, and the transform, break and solution bounds.
+fn keeps_contract(op: &OpIn) -> bool {
+    let max = LIMITS.max_coord;
+    match op {
+        OpIn::Gps {
+            curve,
+            xf,
+            ivl,
+            sop,
+            p,
+            tol: t,
+            target,
+            vecs,
+            req,
+            ..
+        } => {
+            let Some((d, bspline)) = domain(curve) else {
+                return false;
+            };
+            transforms(xf, bspline)
+                && interval(d, *ivl)
+                && gps_vectors(*sop).is_some_and(|need| vecs.len() >= need)
+                && contract::vec3(p, max)
+                && tol(*t)
+                && fin(target.unwrap_or(0.0))
+                && vecs.len() <= 3
+                && vecs.iter().all(|v| contract::vec3(v, max))
+                && (0..=1).contains(req)
+        }
+        OpIn::Approx {
+            curve,
+            breaks,
+            tol: t,
+            ..
+        } => {
+            let Some((d, _)) = domain(curve) else {
+                return false;
+            };
+            (2..=MAX_BREAKS).contains(&breaks.len())
+                && breaks.iter().all(|&b| param(d, b))
+                && breaks.windows(2).all(|w| w.first() <= w.last())
+                && tol(*t)
+                && *t >= MIN_TOL
+        }
+        OpIn::Bisect {
+            curve,
+            ivl,
+            chord,
+            angle,
+            max3d,
+        } => domain(curve).is_some_and(|(d, _)| {
+            interval(d, *ivl)
+                && tess_tol(*chord, MIN_CHORD)
+                && tess_tol(*angle, MIN_ANGLE)
+                && tess_tol(*max3d, MIN_DIST)
+        }),
+        OpIn::Tess {
+            curve,
+            ivl,
+            chord,
+            angle,
+            minseg,
+        } => domain(curve).is_some_and(|(d, _)| {
+            interval(d, *ivl)
+                && tess_tol(*chord, MIN_CHORD)
+                && tess_tol(*angle, MIN_ANGLE)
+                && *minseg <= MAX_SEGMENTS
+        }),
+        OpIn::Classify { c1, c2, sol } => match (domain(c1), domain(c2)) {
+            (Some((d1, _)), Some((d2, _))) => ends(sol, d1, d2),
+            _ => false,
+        },
+        OpIn::Span {
+            curve,
+            lt,
+            lp,
+            ld,
+            ct,
+            cp,
+            cd,
+            tol: t,
+            ..
+        } => domain(curve).is_some_and(|(d, _)| {
+            param(d, *lt)
+                && param(d, *ct)
+                && [lp, ld, cp, cd].iter().all(|v| contract::vec3(v, max))
+                && tol(*t)
+        }),
+        OpIn::Refine { c1, c2, sols } => match (domain(c1), domain(c2)) {
+            (Some((d1, _)), Some((d2, _))) => {
+                sols.len() <= MAX_SOLUTIONS
+                    && sols
+                        .iter()
+                        .all(|s| s.nvar <= 3 && s.o.iter().all(|&o| o <= 2) && ends(s, d1, d2))
+            }
+            _ => false,
+        },
+    }
 }
 
 // ---- Rust side --------------------------------------------------------------------
@@ -584,7 +784,9 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 opt_vectors: if vs.is_empty() { None } else { Some(&vs) },
                 handle: Some(Obj(0, Some(c.natural_interval()))),
                 analytic_handle: Some(Obj(2, None)),
-                zone_tol_3d: Some(solidcore::geom::global_solver::ObjectZoneTol(&system_zone_tol)),
+                zone_tol_3d: Some(solidcore::geom::global_solver::ObjectZoneTol(
+                    &system_zone_tol,
+                )),
             };
             let req = SolutionRequested::from_code(*req).ok_or_else(|| harness("req"))?;
             let sols = tri!(
@@ -610,7 +812,10 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 match_parameterization: *match_param,
                 just_copy_bsplines: *copy,
             };
-            let r = tri!(o, c.approximate_curve(&Kernel::default(), breaks, *tol, &opts));
+            let r = tri!(
+                o,
+                c.approximate_curve(&Kernel::default(), breaks, *tol, &opts)
+            );
             o.extend([
                 0.0,
                 b(r.achieved_tol.is_some()),
@@ -667,7 +872,8 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let c = build(curve)?;
             let r = tri!(
                 o,
-                test_span_accuracy(&k, 
+                test_span_accuracy(
+                    &k,
                     &c,
                     *lt,
                     [v3(*lp), v3(*ld)],
@@ -788,7 +994,11 @@ fn gen_hermite(rng: &mut Rng) -> HermiteIn {
         p1,
         d1,
         p2,
-        d2: if rng.chance(0.08) { [0.0; 3] } else { rp(rng, s) },
+        d2: if rng.chance(0.08) {
+            [0.0; 3]
+        } else {
+            rp(rng, s)
+        },
     };
     if h.dim == 2 {
         for v in [&mut h.p1, &mut h.d1, &mut h.p2, &mut h.d2] {
@@ -818,7 +1028,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
-    }.turned_back())
+    })
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
@@ -843,7 +1053,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
-            }.turned_back());
+            });
             resolve(&c).unwrap_or(c)
         }
         1 => {
@@ -932,7 +1142,6 @@ fn scale3(a: [f64; 3], s: f64) -> [f64; 3] {
     [a[0] * s, a[1] * s, a[2] * s]
 }
 
-
 fn gen_curve_or_degenerate(rng: &mut Rng) -> CurveIn {
     if rng.chance(0.08) {
         let p = rp(rng, 3.0);
@@ -953,7 +1162,9 @@ fn gen_point_near(k: &Kernel, rng: &mut Rng, c: &CurveIn) -> [f64; 3] {
         return rp(rng, 10.0);
     };
     let t = gen_t(rng, c);
-    let base = curve.evaluate_point(k, t).map_or([0.0; 3], |p| [p.x, p.y, p.z]);
+    let base = curve
+        .evaluate_point(k, t)
+        .map_or([0.0; 3], |p| [p.x, p.y, p.z]);
     match rng.below(5) {
         0 => base,
         1 => rp(rng, 20.0),
@@ -963,7 +1174,6 @@ fn gen_point_near(k: &Kernel, rng: &mut Rng, c: &CurveIn) -> [f64; 3] {
         }
     }
 }
-
 
 fn gen_straight(rng: &mut Rng) -> CurveIn {
     let p = rp(rng, 5.0);
@@ -996,7 +1206,6 @@ fn gen_straight(rng: &mut Rng) -> CurveIn {
         u,
     })
 }
-
 
 /// Operations of `GlobalPointSolve` with the option vectors each needs.
 const GPS_OPS: [(i32, usize); 13] = [
@@ -1043,7 +1252,11 @@ fn gen_gps(k: &Kernel, rng: &mut Rng) -> OpIn {
             .and_then(|c| {
                 let p0 = c.evaluate_point(k, a).ok()?;
                 let p1 = c.evaluate_point(k, 0.5 * (a + bb)).ok()?;
-                Some([(p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0, (p0.z + p1.z) / 2.0])
+                Some([
+                    (p0.x + p1.x) / 2.0,
+                    (p0.y + p1.y) / 2.0,
+                    (p0.z + p1.z) / 2.0,
+                ])
             })
             .unwrap_or([0.0; 3])
     } else {
@@ -1182,7 +1395,11 @@ fn gen_sol(rng: &mut Rng, c1: &CurveIn, c2: &CurveIn) -> SolIn {
 
 fn gen_classify(rng: &mut Rng) -> OpIn {
     let c1 = gen_curve(rng);
-    let c2 = if rng.chance(0.3) { c1.clone() } else { gen_curve(rng) };
+    let c2 = if rng.chance(0.3) {
+        c1.clone()
+    } else {
+        gen_curve(rng)
+    };
     let mut sol = gen_sol(rng, &c1, &c2);
     sol.o = [1, 2];
     sol.nvar = 2;
@@ -1251,7 +1468,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(&Kernel::default(), rng)).ok()
+        let k = &Kernel::default();
+        let op = (0..64).map(|_| gen_case(k, rng)).find(keeps_contract)?;
+        serde_json::to_value(op).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1276,10 +1495,9 @@ mod tests {
     fn approximation_of_a_break_at_1e300_fails_softly() {
         // fuzz01255 (`tests/fuzz_corpus/curve.curve_p1.json`): the port's `approximate_curve` used to abort on a 6 GiB allocation and now stops
         // at `MAX_APPROX_SPANS` with an error status.
-        let corpus: Value = serde_json::from_str(include_str!(
-            "../../tests/fuzz_corpus/curve.curve_p1.json"
-        ))
-        .unwrap();
+        let corpus: Value =
+            serde_json::from_str(include_str!("../../tests/fuzz_corpus/curve.curve_p1.json"))
+                .unwrap();
         let case = corpus["cases"]
             .as_array()
             .unwrap()
@@ -1299,7 +1517,10 @@ mod tests {
         let mut stats: BTreeMap<String, [usize; 4]> = BTreeMap::new();
         for _ in 0..600 {
             let op = gen_case(k, &mut rng);
-            let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
+            let name = serde_json::to_value(&op).unwrap()["op"]
+                .as_str()
+                .unwrap()
+                .to_string();
             let out = rust(&op);
             let e = stats.entry(name).or_default();
             e[0] += 1;
@@ -1311,7 +1532,10 @@ mod tests {
             }
         }
         for (k, v) in &stats {
-            eprintln!("{k}: total {} ok {} err {} deferred/harness {}", v[0], v[1], v[2], v[3]);
+            eprintln!(
+                "{k}: total {} ok {} err {} deferred/harness {}",
+                v[0], v[1], v[2], v[3]
+            );
         }
         assert_eq!(stats.len(), 7);
     }
