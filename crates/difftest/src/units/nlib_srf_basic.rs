@@ -2,8 +2,8 @@
 //! validity checks, accessors, storage sizing and copying, u/v swap, rationality
 //! conversions, closedness, equality, cheap flatness and average lengths.
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_basic` (upstream
-//! `source/SMLib/src/NL_SrfBasic.cpp`, `N_SrfGetAverageLen` of `NL_SrfGeom.cpp`).
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfBasic.cpp`, `N_SrfGetAverageLen` of `NL_SrfGeom.cpp`; checked against its golden.
 //! Rust: `solidcore::nurbs::srf_basic`.
 //!
 //! Each case runs one *op* (`inputs.op`, a group of upstream calls). Both sides
@@ -27,8 +27,6 @@ use solidcore::nurbs::srf_basic::{
     make_rat_compatible, size_arrays, Direction, Surface, SurfaceIndices,
 };
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_basic::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -156,23 +154,6 @@ fn shape(s: &InlineSrf) -> Result<([usize; 4], [usize; 4]), HarnessError> {
     Ok((big, used))
 }
 
-fn encode(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (big, used) = shape(s)?;
-    o.extend(big.iter().map(|&k| k as f64));
-    o.extend([
-        used[0] as f64,
-        used[1] as f64,
-        s.p as f64,
-        s.q as f64,
-        used[2] as f64,
-        used[3] as f64,
-    ]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
 /// `[n, m, p, q, r, s]` as [`SurfaceIndices`].
 fn indices(idx: &[usize; 6]) -> SurfaceIndices {
     let [n, m, p, q, r, s] = *idx;
@@ -288,76 +269,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::Inspect { sur, eps, sized } => {
-            encode(&resolve(sur)?, &mut o)?;
-            o.push(*eps);
-            o.extend(sized.iter().map(|&k| k as f64));
-            Op::Inspect
-        }
-        Inputs::Enet { sur, idx } => {
-            encode(&resolve(sur)?, &mut o)?;
-            o.extend(idx.iter().map(|&k| k as f64));
-            Op::Enet
-        }
-        Inputs::Modify { sur, kind } => {
-            encode(&resolve(sur)?, &mut o)?;
-            match kind {
-                Kind::Compress => o.push(0.0),
-                Kind::SwapUv => o.push(1.0),
-                Kind::NonRatToRat => o.push(2.0),
-                Kind::MakeNonRat => o.push(3.0),
-                Kind::PruneRat => o.push(4.0),
-                Kind::Reparam { rect, dir } => {
-                    o.push(5.0);
-                    o.extend_from_slice(rect);
-                    o.push(f64::from(*dir));
-                }
-                Kind::SetSize { idx } => {
-                    o.push(6.0);
-                    o.extend(idx.iter().map(|&k| k as f64));
-                }
-                Kind::CopyNull => o.push(7.0),
-                Kind::CopyInto { dst } => {
-                    o.push(8.0);
-                    encode(&resolve(dst)?, &mut o)?;
-                }
-                Kind::SizeArrays { idx } => {
-                    o.push(9.0);
-                    o.extend(idx.iter().map(|&k| k as f64));
-                }
-            }
-            Op::Modify
-        }
-        Inputs::Equal { a, b, tol3d, tol1d } => {
-            encode(&resolve(a)?, &mut o)?;
-            encode(&resolve(b)?, &mut o)?;
-            o.push(*tol3d);
-            o.push(*tol1d);
-            Op::Equal
-        }
-        Inputs::RatCompatible { surfaces } => {
-            o.push(surfaces.len() as f64);
-            for s in surfaces {
-                encode(&resolve(s)?, &mut o)?;
-            }
-            Op::RatCompatible
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -863,10 +774,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

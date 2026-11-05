@@ -1,8 +1,8 @@
 //! Runner for unit `nlib.srf_common`: common NURBS surfaces (bilinear patch from corner
 //! points, extrusion, cylinder / cone, ruled and revolved surfaces).
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_common` (upstream
-//! `source/SMLib/src/NL_SrfCommon.cpp`). Rust: `solidcore::nurbs::srf_common`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfCommon.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_common`.
 //!
 //! Each case runs one routine (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok, else the `NL_*_ERR`
@@ -26,8 +26,6 @@ use solidcore::nurbs::srf_common::{
     corner_pts, cyl_cone, extrude_crv, revolved_srf, ruled_srf, CylCone,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::nlib_srf_common::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -196,78 +194,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    let m = c.u.len().checked_sub(1).ok_or_else(|| harness("empty knots"))?;
-    o.extend([n as f64, c.p as f64, m as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::CornerPts { p00, p10, p01, p11 } => {
-            for p in [p00, p10, p01, p11] {
-                o.extend_from_slice(p);
-            }
-            Op::CornerPts
-        }
-        Inputs::ExtrudeCrv { crv, w, d, dir } => {
-            encode_crv(&resolve(crv)?, &mut o)?;
-            o.extend_from_slice(w);
-            o.extend([*d, f64::from(*dir)]);
-            Op::ExtrudeCrv
-        }
-        Inputs::CylCone {
-            c,
-            x,
-            y,
-            rb,
-            rt,
-            r#as,
-            ae,
-            h,
-            ctp,
-            dir,
-        } => {
-            o.extend_from_slice(c);
-            o.extend_from_slice(x);
-            o.extend_from_slice(y);
-            o.extend([*rb, *rt, *r#as, *ae, *h, f64::from(*ctp), f64::from(*dir)]);
-            Op::CylCone
-        }
-        Inputs::RuledSrf { a, b, dir } => {
-            encode_crv(&resolve(a)?, &mut o)?;
-            encode_crv(&resolve(b)?, &mut o)?;
-            o.push(f64::from(*dir));
-            Op::RuledSrf
-        }
-        Inputs::RevolvedSrf { crv, s, t, al, ctp } => {
-            encode_crv(&resolve(crv)?, &mut o)?;
-            o.extend_from_slice(s);
-            o.extend_from_slice(t);
-            o.extend([*al, f64::from(*ctp)]);
-            Op::RevolvedSrf
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::Status(s)) => Err(harness(format!("shim status {s}"))),
-        Err(e) => Err(harness(e.to_string())),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -594,10 +520,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

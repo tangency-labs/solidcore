@@ -1,8 +1,8 @@
 //! Runner for unit `nlib.srf_adv_p6`: sweep surfaces with scaling
 //! (`N_CreateSweepScale`) and n-sided hole filling (`N_FillNSidedHole`).
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_adv_p6` (upstream
-//! `source/SMLib/src/NL_SrfAdv.cpp`). Rust: `solidcore::nurbs::srf_adv::p6`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfAdv.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_adv::p6`.
 //!
 //! A case is `{"op": "sweep", ...}` or `{"op": "fill", ...}`. Both sides produce the
 //! same flat record of doubles, split into keys by [`to_output`]: `status` (`0` ok,
@@ -30,8 +30,6 @@ use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_adv::p6 as adv;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_adv_p6 as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -178,14 +176,6 @@ fn resolve_crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c.cpts.len().checked_sub(1).ok_or_else(|| harness("empty curve"))?;
-    o.extend([n as f64, c.p as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
 fn build_crv(c: &InlineCrv) -> Result<Curve, HarnessError> {
     let pw = c.cpts.iter().map(|&[x, y, z, w]| CPoint::new(x, y, z, w)).collect();
     Curve::new(pw, c.p, c.u.clone()).map_err(|e| harness(format!("rust curve: {e}")))
@@ -272,60 +262,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 /// Upstream's `der` array has one entry per curve; missing trailing entries are NULL.
 fn der_entry(der: &[Option<CrvIn>], i: usize) -> Option<&CrvIn> {
     der.get(i).and_then(Option::as_ref)
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match i {
-        Inputs::Sweep(s) => {
-            encode_crv(&resolve_crv(&s.traj)?, &mut o)?;
-            encode_crv(&resolve_crv(&s.sect)?, &mut o)?;
-            o.extend_from_slice(&s.z0);
-            for c in [&s.cur_z, &s.cur_s] {
-                o.push(flag(c.is_some()));
-                if let Some(c) = c {
-                    encode_crv(&resolve_crv(c)?, &mut o)?;
-                }
-            }
-            o.extend([flag(s.tflg), s.tc, s.deg as f64, f64::from(s.dir), s.e]);
-        }
-        Inputs::Fill(f) => {
-            let k = f.curves.len().checked_sub(1).ok_or_else(|| harness("no curves"))?;
-            o.push(k as f64);
-            for c in &f.curves {
-                encode_crv(&resolve_crv(c)?, &mut o)?;
-            }
-            o.push(flag(f.der.is_some()));
-            if let Some(der) = &f.der {
-                for j in 0..=k {
-                    let d = der_entry(der, j);
-                    o.push(flag(d.is_some()));
-                    if let Some(d) = d {
-                        encode_crv(&resolve_crv(d)?, &mut o)?;
-                    }
-                }
-            }
-            o.push(f.eps);
-            o.push(flag(f.center.is_some()));
-            let [c, n] = f.center.unwrap_or([[0.0; 3]; 2]);
-            o.extend_from_slice(&c);
-            o.extend_from_slice(&n);
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    let r = match i {
-        Inputs::Sweep(_) => ffi::sweep(&input),
-        Inputs::Fill(_) => ffi::fill(&input),
-    };
-    match r {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
 }
 
 // ---- Rust side ----------------------------------------------------------------------
@@ -853,10 +789,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

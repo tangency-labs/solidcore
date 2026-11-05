@@ -2,8 +2,8 @@
 //! extension by a parameter distance, swung, skinned and translational sweep
 //! surfaces.
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_adv_p3` (upstream
-//! `source/SMLib/src/NL_SrfAdv.cpp`). Rust: `solidcore::nurbs::srf_adv::p3`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfAdv.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_adv::p3`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok, else the `NL_*_ERR`
@@ -29,8 +29,6 @@ use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_adv::p3 as adv;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_adv_p3::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -165,43 +163,6 @@ fn resolve_crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn encode(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    o.extend([n as f64, c.p as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
 fn build(s: &InlineSrf) -> Result<Surface, HarnessError> {
     let net = s
         .net
@@ -303,92 +264,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side -----------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let flag = |b: bool| if b { 1.0 } else { 0.0 };
-    let op = match i {
-        Inputs::Grid {
-            sur,
-            u,
-            v,
-            ufl,
-            vfl,
-        } => {
-            encode(&resolve(sur)?, &mut o)?;
-            o.push(u.len() as f64);
-            o.extend_from_slice(u);
-            o.push(v.len() as f64);
-            o.extend_from_slice(v);
-            o.extend([f64::from(*ufl), f64::from(*vfl)]);
-            Op::Grid
-        }
-        Inputs::Extend {
-            sur,
-            par,
-            dir,
-            end,
-            cont,
-            inplace,
-        } => {
-            encode(&resolve(sur)?, &mut o)?;
-            o.extend([
-                *par,
-                f64::from(*dir),
-                f64::from(*end),
-                f64::from(*cont),
-                flag(*inplace),
-            ]);
-            Op::Extend
-        }
-        Inputs::Swung { prof, traj, alf } => {
-            encode_crv(&resolve_crv(prof)?, &mut o)?;
-            encode_crv(&resolve_crv(traj)?, &mut o)?;
-            o.push(*alf);
-            Op::Swung
-        }
-        Inputs::Skin {
-            curves,
-            cmp,
-            cld,
-            deg,
-            dir,
-            knot_tol,
-        } => {
-            let k = curves
-                .len()
-                .checked_sub(1)
-                .ok_or_else(|| harness("no curves"))?;
-            o.push(k as f64);
-            for c in curves {
-                encode_crv(&resolve_crv(c)?, &mut o)?;
-            }
-            o.extend([
-                flag(*cmp),
-                flag(*cld),
-                *deg as f64,
-                f64::from(*dir),
-                *knot_tol,
-            ]);
-            Op::Skin
-        }
-        Inputs::Sweep { traj, sect } => {
-            encode_crv(&resolve_crv(traj)?, &mut o)?;
-            encode_crv(&resolve_crv(sect)?, &mut o)?;
-            Op::TransSweep
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side ----------------------------------------------------------------------
 
@@ -920,10 +795,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

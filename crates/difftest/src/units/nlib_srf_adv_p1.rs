@@ -2,8 +2,8 @@
 //! evaluation, skinning along a spine and cross-boundary derivative strips from a
 //! vector field.
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_adv_p1` (upstream
-//! `source/SMLib/src/NL_SrfAdv.cpp`). Rust: `solidcore::nurbs::srf_adv::p1`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfAdv.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_adv::p1`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok, else the `NL_*_ERR`
@@ -34,12 +34,9 @@ use solidcore::nurbs::srf_adv::p1 as adv;
 use solidcore::nurbs::srf_adv::p3::ExtendContinuity;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_adv_p1::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
-use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 #[path = "fixtures/nlib_srf_adv_p1_text.rs"]
@@ -156,33 +153,6 @@ fn resolve_crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
         CrvIn::File { smc } => read_smc(smc),
         CrvIn::Inline(c) => Ok(c.clone()),
     }
-}
-
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn encode(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c.cpts.len().checked_sub(1).ok_or_else(|| harness("empty curve"))?;
-    o.extend([n as f64, c.p as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
 }
 
 fn build(s: &InlineSrf) -> Result<Surface, HarnessError> {
@@ -310,73 +280,8 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 
 // ---- C++ side -----------------------------------------------------------------------
 
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::MaxDeriv { sur, d } => {
-            encode(&resolve(sur)?, &mut o)?;
-            o.push(*d);
-            Op::MaxDeriv
-        }
-        Inputs::Unbounded { sur, cont, ndr, uv } => {
-            encode(&resolve(sur)?, &mut o)?;
-            o.extend([f64::from(*cont), *ndr as f64, uv.len() as f64]);
-            o.extend(uv.iter().flatten());
-            Op::Unbounded
-        }
-        Inputs::SkinSpine {
-            curves,
-            spine,
-            params,
-            cmp,
-            align,
-            z0,
-            subdiv,
-            derivs,
-            deg,
-            dir,
-        } => {
-            let k = curves.len().checked_sub(1).ok_or_else(|| harness("no curves"))?;
-            if params.len() != k + 1 {
-                return Err(harness("one spine parameter per profile expected"));
-            }
-            o.push(k as f64);
-            for c in curves {
-                encode_crv(&resolve_crv(c)?, &mut o)?;
-            }
-            encode_crv(&resolve_crv(spine)?, &mut o)?;
-            o.extend_from_slice(params);
-            o.extend([flag(*cmp), flag(*align)]);
-            o.extend_from_slice(z0);
-            o.extend([
-                *subdiv as f64,
-                f64::from(*derivs),
-                *deg as f64,
-                f64::from(*dir),
-            ]);
-            Op::SkinSpine
-        }
-        Inputs::VectorField { cur, vfield, bndy } => {
-            encode_crv(&resolve_crv(cur)?, &mut o)?;
-            encode_crv(&resolve_crv(vfield)?, &mut o)?;
-            o.push(f64::from(*bndy));
-            Op::VectorField
-        }
-    };
-    Ok((op, o))
-}
-
 /// Status of the upstream bare error flag (no `NL_ERROR` number of its own).
 const BARE_FLAG: f64 = 1000.0;
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side ----------------------------------------------------------------------
 
@@ -1010,10 +915,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

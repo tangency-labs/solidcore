@@ -1,8 +1,8 @@
 //! Runner for unit `nlib.srf_adv_p5`: skinned surfaces with cross-boundary
 //! continuity and rails (`N_CreateSkinSrfBoundaryContinuity`).
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_adv_p5` (upstream
-//! `source/SMLib/src/NL_SrfAdv.cpp`). Rust: `solidcore::nurbs::srf_adv::p5`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfAdv.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_adv::p5`.
 //!
 //! Both sides produce the same flat record of doubles, split into keys by
 //! [`to_output`]: `status` (`0` ok, else the `NL_*_ERR` number; `-1` on the Rust side
@@ -28,8 +28,6 @@ use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_adv::p5 as adv;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_adv_p5 as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -212,43 +210,6 @@ fn resolve(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn encode(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let n = c
-        .cpts
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty curve"))?;
-    o.extend([n as f64, c.p as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
 fn build(s: &InlineSrf) -> Result<Surface, HarnessError> {
     let net = s
         .net
@@ -363,61 +324,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side -----------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    let flag = |b: bool| if b { 1.0 } else { 0.0 };
-    let k = i
-        .curves
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("no curves"))?;
-    o.push(k as f64);
-    for c in &i.curves {
-        encode_crv(&resolve_crv(c)?, &mut o)?;
-    }
-    o.push(flag(i.der.is_some()));
-    if let Some(der) = &i.der {
-        for d in der {
-            o.push(flag(d.is_some()));
-            if let Some(d) = d {
-                encode(&resolve(d)?, &mut o)?;
-            }
-        }
-    }
-    o.push(flag(i.cmp));
-    o.extend(i.cnt.map(f64::from));
-    o.extend(i.bnd.map(f64::from));
-    o.push(flag(i.rail.is_some()));
-    if let Some(rail) = &i.rail {
-        for r in rail {
-            o.push(flag(r.is_some()));
-            if let Some(r) = r {
-                encode_crv(&resolve_crv(r)?, &mut o)?;
-            }
-        }
-    }
-    o.extend([i.deg as f64, i.es, f64::from(i.dir)]);
-    o.push(flag(i.ts.is_some()));
-    if let Some(ts) = &i.ts {
-        o.extend_from_slice(ts);
-    }
-    o.push(flag(i.kns.is_some()));
-    if let Some(kns) = &i.kns {
-        o.push(kns.len() as f64);
-        o.extend_from_slice(kns);
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    match ffi::skin(&input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side ----------------------------------------------------------------------
 
@@ -958,10 +864,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

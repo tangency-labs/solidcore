@@ -2,8 +2,8 @@
 //! construction and approximation, derivative strip adjustment, sweep frame helpers
 //! and knot vector merging.
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_adv_p4` (upstream
-//! `source/SMLib/src/NL_SrfAdv.cpp`). Rust: `solidcore::nurbs::srf_adv::p4`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfAdv.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_adv::p4`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok, else the `NL_*_ERR`
@@ -32,8 +32,6 @@ use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_adv::p4 as adv;
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_adv_p4::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -180,34 +178,6 @@ fn resolve_crv(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     }
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn encode_srf(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn encode_crv(c: &CrvIn, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let c = resolve_crv(c)?;
-    let n = c.cpts.len().checked_sub(1).ok_or_else(|| harness("empty curve"))?;
-    o.extend([n as f64, c.p as f64]);
-    o.extend(c.cpts.iter().flatten());
-    o.extend_from_slice(&c.u);
-    Ok(())
-}
-
 fn build_srf(s: &InlineSrf) -> Result<Surface, HarnessError> {
     let net = s
         .net
@@ -320,139 +290,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side -----------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let flag = |b: bool| if b { 1.0 } else { 0.0 };
-    let op = match i {
-        Inputs::Bvec { cur, b0, t } => {
-            encode_crv(cur, &mut o)?;
-            o.extend(b0);
-            let k = t.len().checked_sub(1).ok_or_else(|| harness("no parameters"))?;
-            o.push(k as f64);
-            o.extend_from_slice(t);
-            Op::BVectors
-        }
-        Inputs::Coons { curves } => {
-            if curves.len() != 4 {
-                return Err(harness("coons needs 4 curves"));
-            }
-            for c in curves {
-                encode_crv(c, &mut o)?;
-            }
-            Op::Coons
-        }
-        Inputs::SkinDerivs { cur, v, bndy } => {
-            encode_crv(cur, &mut o)?;
-            o.extend(v);
-            o.push(f64::from(*bndy));
-            Op::SkinDerivs
-        }
-        Inputs::Merge { p, r, s } => {
-            o.push(*p as f64);
-            o.push(r.len() as f64);
-            o.extend_from_slice(r);
-            o.push(s.len() as f64);
-            o.extend_from_slice(s);
-            Op::MergeKnots
-        }
-        Inputs::Rot { traj, u, zsrc } => {
-            encode_crv(traj, &mut o)?;
-            o.push(*u);
-            match zsrc {
-                ZIn::Curve { zcur } => {
-                    o.push(0.0);
-                    encode_crv(zcur, &mut o)?;
-                }
-                ZIn::Samples { z, prev, next } => {
-                    o.push(1.0);
-                    o.extend(z);
-                    for nb in [prev, next] {
-                        let (pt, t) = nb.unwrap_or(([0.0; 3], 0.0));
-                        o.push(flag(nb.is_some()));
-                        o.extend(pt);
-                        o.push(t);
-                    }
-                }
-            }
-            Op::RotationRate
-        }
-        Inputs::SweepTangent {
-            dtraj,
-            scale,
-            dscale,
-            rma,
-            drma,
-            cur,
-        } => {
-            o.extend(dtraj);
-            o.extend(scale);
-            o.extend(dscale);
-            o.extend(rma.iter().flatten());
-            o.extend(drma.iter().flatten());
-            encode_crv(cur, &mut o)?;
-            Op::SweepTangent
-        }
-        Inputs::AdjustDeriv {
-            sur,
-            dir,
-            cst,
-            usg,
-            inplace,
-        } => {
-            encode_srf(sur, &mut o)?;
-            o.extend([f64::from(*dir), f64::from(*cst), f64::from(*usg), flag(*inplace)]);
-            Op::AdjustDeriv
-        }
-        Inputs::AdjustWeight { pw, qw, rw } => {
-            o.extend(pw);
-            o.extend(qw);
-            o.extend(rw);
-            Op::AdjustWeight
-        }
-        Inputs::Approx {
-            cur,
-            ds,
-            de,
-            eps,
-            inplace,
-        } => {
-            encode_crv(cur, &mut o)?;
-            o.extend(ds);
-            o.extend(de);
-            o.push(*eps);
-            o.push(flag(*inplace));
-            Op::Approx
-        }
-        Inputs::CoonsBoundary { curves, cpf } => {
-            if curves.len() != 8 {
-                return Err(harness("coons_boundary needs 8 curves"));
-            }
-            for c in curves {
-                encode_crv(c, &mut o)?;
-            }
-            o.push(flag(*cpf));
-            Op::CoonsBoundary
-        }
-        Inputs::CrossDeriv { cur, ns, ne, bs, be } => {
-            encode_crv(cur, &mut o)?;
-            for v in [ns, ne, bs, be] {
-                o.extend(v);
-            }
-            Op::CrossDeriv
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side ----------------------------------------------------------------------
 
@@ -1289,10 +1126,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
