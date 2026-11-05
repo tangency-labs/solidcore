@@ -1,7 +1,7 @@
 //! Runner for unit `nlib.srf_offset`: offset of an NLib surface (`N_SrfOffset`).
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_offset` (upstream
-//! `source/SMLib/src/NL_SrfOffset.cpp`). Rust: `solidcore::nurbs::srf_offset`
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfOffset.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_offset`
 //! ([`Surface::offset`]).
 //!
 //! Both sides produce the same flat record of doubles, split into keys: `status` (`0`
@@ -38,8 +38,6 @@ use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::nurbs::srf_common::{extrude_crv, revolved_srf};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_offset as ffi;
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -109,31 +107,6 @@ fn resolve(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
         SrfIn::File { sms } => read_sms(sms),
         SrfIn::Inline(i) => Ok(i.clone()),
     }
-}
-
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s
-        .net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn encode(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
 }
 
 fn build(s: &InlineSrf) -> Result<Surface, HarnessError> {
@@ -206,24 +179,6 @@ fn to_output(flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side -----------------------------------------------------------------------
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let mut input = Vec::new();
-    encode(&resolve(&i.sur)?, &mut input)?;
-    input.extend([
-        i.d,
-        i.pp as f64,
-        i.qq as f64,
-        f64::from(i.par),
-        i.eps,
-        i.tol,
-    ]);
-    match ffi::eval(&input) {
-        Ok(flat) => to_output(&flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side ----------------------------------------------------------------------
 
@@ -642,10 +597,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

@@ -2,8 +2,8 @@
 //! (parameter values, interpolation with given knots, least-squares approximation)
 //! and interpolation of a value grid by a surface function.
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_fit` (upstream
-//! `source/SMLib/src/NL_SrfFit.cpp`). Rust: `solidcore::nurbs::srf_fit`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfFit.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_fit`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record
 //! (see the ffi module), split into keys: `status` (`0` ok, else the `NL_*_ERR`
@@ -35,8 +35,6 @@ use solidcore::nurbs::math::CPoint;
 use solidcore::nurbs::srf_basic::Surface;
 use solidcore::nurbs::srf_fit as fit;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::nlib_srf_fit::{self as ffi, Grid};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -320,81 +318,6 @@ fn finish(out: Output, flat: &[f64], at: usize) -> Result<Output, HarnessError> 
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn cpp_flat(i: &Inputs) -> Result<Result<Vec<f64>, FfiError>, HarnessError> {
-    Ok(match i {
-        Inputs::ParamValues { ptp, grid, par } => {
-            let g = grid4(grid)?;
-            ffi::param_values(
-                &Grid {
-                    ptp: *ptp,
-                    rows: &g,
-                },
-                *par,
-            )
-        }
-        Inputs::InterpParams {
-            ptp,
-            grid,
-            par,
-            dir,
-        } => {
-            let g = grid4(grid)?;
-            ffi::interp_params(
-                &Grid {
-                    ptp: *ptp,
-                    rows: &g,
-                },
-                *par,
-                *dir,
-            )
-        }
-        Inputs::Interp {
-            ptp,
-            grid,
-            u,
-            v,
-            u_knots,
-            v_knots,
-            p,
-            q,
-        } => {
-            let g = grid4(grid)?;
-            ffi::interp_given_knots(
-                &Grid {
-                    ptp: *ptp,
-                    rows: &g,
-                },
-                need(u.as_ref(), "u")?,
-                need(v.as_ref(), "v")?,
-                need(u_knots.as_ref(), "u_knots")?,
-                need(v_knots.as_ref(), "v_knots")?,
-                *p,
-                *q,
-            )
-        }
-        Inputs::Approx {
-            grid,
-            n,
-            m,
-            p,
-            q,
-            par,
-        } => {
-            let g = grid4(grid)?;
-            ffi::lst_sq_approx(&g, *n, *m, *p, *q, *par)
-        }
-        Inputs::Func { values, p, q, u, v } => ffi::func_interp(values, *p, *q, u, v),
-    })
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match cpp_flat(i)? {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -805,10 +728,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&resolve(&case.parse()?)?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

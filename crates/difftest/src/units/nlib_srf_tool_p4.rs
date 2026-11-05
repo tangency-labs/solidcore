@@ -1,8 +1,8 @@
 //! Runner for unit `nlib.srf_tool_p4`: NLib surface knot removal that keeps a list
 //! of knots, and making a set of surfaces compatible in both directions.
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_tool_p4` (upstream
-//! `source/SMLib/src/NL_SrfTool.cpp`). Rust: `solidcore::nurbs::srf_tool::p4`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfTool.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_tool::p4`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok, else the `NL_*_ERR`
@@ -28,13 +28,11 @@ use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::nurbs::srf_tool::p1 as tool1;
 use solidcore::nurbs::srf_tool::p2 as tool2;
 use solidcore::nurbs::srf_tool::p4 as tool;
-use solidcore_ffi::units::nlib_srf_tool_p4::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::units::nlib_srf_tool_p2::{
-    build, direction, dump, encode, gen_srf, harness, inline, split_srf, status, take, InlineSrf,
+    build, direction, dump, gen_srf, harness, inline, split_srf, status, take, InlineSrf,
 };
 use crate::units::nlib_srf_tool_p3::{
     flip_rational, gen_dir, gen_refined, gen_tol, new_knots, plain, surface, valid, Src,
@@ -158,54 +156,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn push_list(o: &mut Vec<f64>, l: Option<&Vec<f64>>) {
-    match l {
-        Some(l) => {
-            o.push(l.len() as f64);
-            o.extend(l);
-        }
-        None => o.push(0.0),
-    }
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    let op = match i {
-        Inputs::RemoveConstrained {
-            sur,
-            keep_u,
-            keep_v,
-            tol,
-            dir,
-            inplace,
-        } => {
-            let (s, lu, lv) = resolve_remove(sur, keep_u.as_ref(), keep_v.as_ref())?;
-            encode(&s, &mut o)?;
-            push_list(&mut o, lu.as_ref());
-            push_list(&mut o, lv.as_ref());
-            o.extend([*tol, f64::from(*dir), if *inplace { 1.0 } else { 0.0 }]);
-            Op::RemoveKnotsConstraints
-        }
-        Inputs::CompatibleUv { surs } => {
-            o.push(surs.len() as f64);
-            for s in surs {
-                encode(&surface(s)?, &mut o)?;
-            }
-            Op::MakeCompatibleUv
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -400,10 +350,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

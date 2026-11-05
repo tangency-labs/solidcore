@@ -3,8 +3,8 @@
 //! reversal, reparametrisation, type recognition, smooth closure and the
 //! elliptic-ended cone.
 //!
-//! C++: `solidcore_ffi::units::nlib_srf_nurb` (upstream
-//! `source/SMLib/src/NL_SrfNurb.cpp`). Rust: `solidcore::nurbs::srf_nurb`.
+//! Ported from upstream
+//! `source/SMLib/src/NL_SrfNurb.cpp`; checked against its golden. Rust: `solidcore::nurbs::srf_nurb`.
 //!
 //! Each case runs one *op* (`inputs.op`). Both sides produce the same flat record of
 //! doubles, split into keys by [`to_output`]: `status` (`0` ok, else the `NL_*_ERR`
@@ -32,8 +32,6 @@ use solidcore::nurbs::srf_basic::{Direction, Surface};
 use solidcore::nurbs::srf_common::{corner_pts, cyl_cone, extrude_crv, revolved_srf, ruled_srf, CylCone};
 use solidcore::nurbs::srf_nurb::{cone_elliptic_ends, EllipticCone, PtDerivNormal, SurfaceType};
 use solidcore::{Result as SolidResult, SolidError, Vec3};
-use solidcore_ffi::units::nlib_srf_nurb::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -224,15 +222,6 @@ fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
     Ok((n, m))
 }
 
-fn encode(s: &InlineSrf, o: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend(s.net.iter().flatten().flatten());
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
 fn build(s: &InlineSrf) -> Result<Surface, HarnessError> {
     let net = s
         .net
@@ -361,114 +350,6 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 }
 
 // ---- C++ side ---------------------------------------------------------------------
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut o = Vec::new();
-    if let Some(s) = i.sur() {
-        encode(&resolve(s)?, &mut o)?;
-    }
-    let flag = |b: bool| if b { 1.0 } else { 0.0 };
-    let op = match i {
-        Inputs::BasisDerivs {
-            u,
-            v,
-            ufl,
-            vfl,
-            mfl,
-            udr,
-            vdr,
-            ..
-        }
-        | Inputs::Derivs {
-            u,
-            v,
-            ufl,
-            vfl,
-            mfl,
-            udr,
-            vdr,
-            ..
-        } => {
-            o.extend([
-                *u,
-                *v,
-                f64::from(*ufl),
-                f64::from(*vfl),
-                flag(*mfl),
-                *udr as f64,
-                *vdr as f64,
-            ]);
-            if matches!(i, Inputs::BasisDerivs { .. }) {
-                Op::BasisDerivs
-            } else {
-                Op::Derivs
-            }
-        }
-        Inputs::EvalPt { u, v, ufl, vfl, .. }
-        | Inputs::NormalFast { u, v, ufl, vfl, .. }
-        | Inputs::NormalPole { u, v, ufl, vfl, .. }
-        | Inputs::NormalAtPole { u, v, ufl, vfl, .. } => {
-            o.extend([*u, *v, f64::from(*ufl), f64::from(*vfl)]);
-            match i {
-                Inputs::EvalPt { .. } => Op::EvalPt,
-                Inputs::NormalFast { .. } => Op::NormalFast,
-                Inputs::NormalPole { .. } => Op::NormalPole,
-                _ => Op::NormalAtPole,
-            }
-        }
-        Inputs::Bbox { .. } => Op::BBox,
-        Inputs::Transform { m, .. } => {
-            if m.len() != 16 {
-                return Err(harness("matrix needs 16 entries"));
-            }
-            o.extend_from_slice(m);
-            Op::Transform
-        }
-        Inputs::MinMax { .. } => Op::MinMaxWeightPos,
-        Inputs::Translate { t, .. } => {
-            o.extend_from_slice(t);
-            Op::Translate
-        }
-        Inputs::Rotate { p, v, al, .. } => {
-            o.extend_from_slice(p);
-            o.extend_from_slice(v);
-            o.push(*al);
-            Op::Rotate
-        }
-        Inputs::Reverse { dir, inplace, .. } => {
-            o.extend([f64::from(*dir), flag(*inplace)]);
-            Op::Reverse
-        }
-        Inputs::Type { tol, .. } => {
-            o.push(*tol);
-            Op::Type
-        }
-        Inputs::Reparam { r, .. } => {
-            o.extend_from_slice(r);
-            Op::Reparam
-        }
-        Inputs::ClosedSmooth { n, tols, dflg, .. } => {
-            o.push(*n as f64);
-            o.extend_from_slice(tols);
-            o.push(f64::from(*dflg));
-            Op::ClosedSmooth
-        }
-        Inputs::ConeElliptic { c } => {
-            o.extend_from_slice(c);
-            Op::ConeElliptic
-        }
-    };
-    Ok((op, o))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => to_output(i, &flat),
-        Err(FfiError::InvalidArgument(m)) => Err(harness(format!("ffi rejected: {m}"))),
-        Err(e) => Err(harness(format!("shim failure: {e}"))),
-    }
-}
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -1244,10 +1125,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
