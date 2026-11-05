@@ -723,9 +723,10 @@ pub struct RadialSector {
     pub coincident_faceuse: Option<FaceuseId>,
 }
 
-/// An error a caller treats as a failed status: [`SolidError::Unported`] propagates.
+/// An error a caller treats as a failed status: unported dependencies and
+/// cooperative cancellation propagate.
 fn failed(e: SolidError) -> Result<()> {
-    if e.is_unported() {
+    if e.is_unported() || e.is_cancelled() {
         Err(e)
     } else {
         Ok(())
@@ -3169,6 +3170,18 @@ pub(crate) mod notification_test_support {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn cancellation_status_survives_failed_radial_classification() {
+        let cancelled = SolidError::cancelled("radial-sector-classification");
+        assert_eq!(failed(cancelled.clone()), Err(cancelled));
+        assert_eq!(
+            failed(SolidError::sm_err("ordinary-classification-failure")),
+            Ok(())
+        );
+        let unported = SolidError::unported("callee", "unit");
+        assert_eq!(failed(unported.clone()), Err(unported));
+    }
     use super::*;
     use crate::curve::curve::Curve as C;
     use crate::nurbs::b_spline_curve::BSplineCurve;
