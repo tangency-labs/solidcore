@@ -126,3 +126,10 @@ projected searches. Separate topology pre-pruning and unsupported projected
 surface-pair paths are not repaired here. The existing wrapper's status-suppression
 policy also remains unchanged; propagating endpoint errors locally is not a claim
 that every enclosing legacy caller propagates them.
+
+The full sweep also changes 43 direct topology-subsolver fixtures. Their
+[case-by-case audit](intersect.topology_solver_p2--projected-extrema-callers-2840.md)
+includes a newly returned sphere-band value whose error from the exact surface
+maximum exceeds the requested tolerance. The existing face path measures an
+approximated silhouette. That result remains an unresolved accuracy limitation;
+neither its tolerance nor the parity gate is relaxed to declare this work green.

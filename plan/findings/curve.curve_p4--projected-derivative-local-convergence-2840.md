@@ -12,7 +12,16 @@ The public LocalPropertyAnalysis contract searches for a zero from one guess and
 | gen2938 | (-1.416959240152698, 842.2781967874612) | (-1.635855706635469, 223.8362336456594) | Both valid roots; native maximum, Rust minimum. Changed basin, not a false native result. |
 | gen2940 | (0.08124076285751645, 38.51742584776892) | not found | Native valid maximum; Rust misses it from this guess. Lost local convergence. |
 
-All five Rust returned distances independently agree with the rational/polynomial curve evaluator within 3e-16 relative error. gen1144 has normalized stationarity residual 2.38e-11; the other four are below 1.5e-14. The two native maxima lost by the local solve are independently valid. The corresponding global queries were checked on the revised library with Single requests and tolerance 1e-7. Both retrieve the correct global maxima: gen1760 at t=6.160833635900567, distance 1702.7465397258381; gen2940 at t=0.08124076285751648, distance 38.517425847689154. These agree with independent per-span polynomial roots and endpoints. This does not remove the two local convergence differences.
+All five Rust returned distances independently agree with the rational/polynomial curve evaluator within 3e-16 relative error. gen1144 has normalized stationarity residual 2.38e-11; the other four are below 1.5e-14. The two native maxima lost by the local solve are independently valid. The corresponding global queries were checked on the revised library with Single requests and tolerance 1e-7. Both retrieve the correct global maxima: gen1760 at t=6.160833635900567, distance 1702.7465397258381; gen2940 at t=0.08124076285751648, distance 38.517425847689154. These agree with independent per-span polynomial roots and endpoints. The pinned native global queries both return success with zero solutions on these identical inputs. This does not remove the two local convergence differences.
+
+The global fixtures are `lpa_gen1760_global_max` and `lpa_gen2940_global_max` in
+`fixtures/curve.curve_p1/issue_2840_local_root_global_maxima.json`. The first request
+lies inside the natural domain. The second extends below zero; an independent
+degree-five stationary polynomial over the entire requested Hermite interval
+`[-0.19271549177165576,0.36770704114935876]` has exactly one real root in the
+interval, at `0.08124076285751636`. There are no roots on the negative portion;
+endpoint distances `14.503802936837797` and `20.978930958500555` are smaller.
+Thus these two oracle comparisons cover their full requested intervals.
 
 For p4, all 21 changes are only exact negations of values.out[1], the derivative. Twenty nonsingular cases independently match the analytic derivative. gen1477 is a zero-tangent endpoint: the evaluator substitutes a tiny tangent from the second derivative. Its sign change is confirmed, but this audit does not certify that regularized derivative as the derivative of the ordinary smooth curve equation.
 
