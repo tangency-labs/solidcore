@@ -438,7 +438,15 @@ fn measure(result: &[Slot]) -> Result<Measured, String> {
     };
     let mut volume = Some(0.0);
     for s in result {
-        let c = s.body.counts().map_err(|e| format!("counts: {e}"))?;
+        // Counted as the record writes the body, the rig's convention (`outcome.raw_counts`): a
+        // line where the body touches itself is one edge in the kernel's list and one per pair
+        // of faces in the record.
+        let (record, _) = s.body.to_record().map_err(|e| format!("record: {e}"))?;
+        let c = [
+            record.faces.len(),
+            record.edges.len(),
+            record.vertices.len(),
+        ];
         for (a, b) in m.counts.iter_mut().zip(c) {
             *a += b;
         }
