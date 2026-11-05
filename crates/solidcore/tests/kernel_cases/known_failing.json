@@ -70,16 +70,6 @@
     "reason": "continuity_order: G1 at one seam where the corner patch meets a contact face (g2 wanted), as on SMLib d01d7b0"
   },
   {
-    "case": "fillets/cov-junction-boss-tilt-20-root-round",
-    "issue": "to file",
-    "reason": "fillet status 1001 on a cylinder tilted 20 degrees into the plate, as on SMLib"
-  },
-  {
-    "case": "fillets/cov-junction-boss-tilt-40-root-round",
-    "issue": "to file",
-    "reason": "fillet status 1001 on a cylinder tilted 40 degrees into the plate, as on SMLib"
-  },
-  {
     "case": "fillets/cov-junction-tee-equal-round",
     "issue": "to file",
     "reason": "the result is not a closed solid, as on SMLib: equal pipes' intersection is two plane ellipses crossing, a corner the old corner code cannot join (the corner step)"
@@ -91,8 +81,8 @@
   },
   {
     "case": "fillets/every-block-cylinder-tangent-concave-arc-r2-partial-chain",
-    "issue": "tangency-labs/solidcore#2851",
-    "reason": "solidcore builds the round where the recorded SMLib run refused (status 1001); the case still compares against that refusal instead of its analytic volume"
+    "issue": "tangency-labs/solidcore#2864",
+    "reason": "the picked edge ends at the cylinder's seam, and the round ends there with a step 54.9 degrees short of the half circle (19085.7707 against 19091.9620); it should run on into the same curve, or refuse"
   },
   {
     "case": "fillets/report-drafted-peg-front-and-concave-rounds-together-r2",
