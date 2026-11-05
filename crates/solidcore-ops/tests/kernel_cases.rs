@@ -724,6 +724,19 @@ fn a_terminal_refusal_cannot_hide_later_invalid_markers() {
     }
 }
 
+/// The final bodies are counted as their records write them, the convention of the rig's
+/// `raw_counts` (#2817). Here the hole is tangent to the front face, so the body touches itself
+/// along a line: the kernel keeps that line as one edge with four uses, the record writes it once
+/// per pair of faces (its Touching rule), 21 edges where the kernel's list has 20.
+#[test]
+fn a_body_touching_itself_along_a_line_is_counted_as_its_record() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join("ladder/02-booleans/018-hole-tangent-to-side-face.json");
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    assert_eq!(e["outcome"]["raw_counts"]["edges"], 21);
+    run_case(&entry, &e).unwrap();
+}
+
 fn check_discarded_edit(record: Record, op: &str, params: &Value, made: &Value, retained: Value) {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let mut records = serde_json::Map::new();
