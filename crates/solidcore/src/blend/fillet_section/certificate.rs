@@ -55,7 +55,7 @@
 use super::definition_box::{definition_partials_over_box, GnDefFace, GnDefs};
 use super::form::{binom, gn_form_normalized, GnSectionFormT};
 use super::interval::{cmax, cmin, round_down, round_up, Ivl};
-use super::series::{GnScalar, Ser, Trunc, VSer, MAX_E, MAX_S, TAYLOR, V3};
+use super::series::{GnScalar, Ser, Trunc, VSer, MAX_E, MAX_K, MAX_S, TAYLOR, V3};
 use super::station::{
     ders_basis, gn_evaluate, gn_evaluate_vn, gn_jacobian, gn_solve_station_counted, gn_top_jets,
     knot, smax, solve4, span, GnStation, GnSystem, Nurbs, Partials,
@@ -206,94 +206,7 @@ pub fn curve_derivs_over(
         if a > b || (a == b && s.lo < s.hi) {
             continue;
         }
-        // the homogeneous curve is a polynomial of degree p on the span: its derivatives
-        // over [a, b] are its Taylor polynomials at the middle m, from exact point
-        // derivatives (rounding only)
-        let m = 0.5 * (a + b);
-        let nb = ders_basis(&cn.u, k, p, Ivl::from(m), p);
-        let mut am = vec![VZ; p + 1];
-        let mut wm = vec![IZ; p + 1];
-        for d in 0..=p {
-            let (mut x, mut y, mut z, mut w) = (IZ, IZ, IZ, IZ);
-            for j in 0..=p {
-                // k >= p (sm_Span)
-                let li = 4 * (k + j - p);
-                let nj = at2(&nb, d, j, IZ);
-                x = x + nj * Ivl::from(pw_at(&cn.pw, li));
-                y = y + nj * Ivl::from(pw_at(&cn.pw, li + 1));
-                z = z + nj * Ivl::from(pw_at(&cn.pw, li + 2));
-                w = w + nj * Ivl::from(pw_at(&cn.pw, li + 3));
-            }
-            if let (Some(ad), Some(wd)) = (am.get_mut(d), wm.get_mut(d)) {
-                *ad = V3 { x, y, z };
-                *wd = w;
-            }
-        }
-        // the quotient about c, the point at the middle (rounded; any c is exact)
-        let c = {
-            let (a0, w0) = (at1(&am, 0, VZ), at1(&wm, 0, IZ).mid());
-            let c = [a0.x.mid() / w0, a0.y.mid() / w0, a0.z.mid() / w0];
-            if c.iter().all(|x| x.is_finite()) {
-                c
-            } else {
-                [0.0; 3]
-            }
-        };
-        let [cx, cy, cz] = c.map(Ivl::from);
-        for (ad, &wd) in am.iter_mut().zip(&wm) {
-            ad.x = ad.x - cx * wd;
-            ad.y = ad.y - cy * wd;
-            ad.z = ad.z - cz * wd;
-        }
-        let dt = Ivl::new(a, b) - Ivl::from(m);
-        let mut av = vec![VZ; ld + 1];
-        let mut wv = vec![IZ; ld + 1];
-        for d in 0..=ld {
-            let (mut x, mut y, mut z, mut w, mut pwr) = (IZ, IZ, IZ, IZ, Ivl::from(1.0));
-            let mut f = 1.0_f64;
-            for j in d..=p {
-                if j > d {
-                    pwr = pwr * dt;
-                    f *= (j - d) as f64;
-                }
-                let c = pwr * (Ivl::from(1.0) / Ivl::from(f));
-                let aj = at1(&am, j, VZ);
-                x = x + aj.x * c;
-                y = y + aj.y * c;
-                z = z + aj.z * c;
-                w = w + at1(&wm, j, IZ) * c;
-            }
-            if let (Some(ad), Some(wd)) = (av.get_mut(d), wv.get_mut(d)) {
-                *ad = V3 { x, y, z };
-                *wd = w;
-            }
-        }
-        let w0 = at1(&wv, 0, IZ);
-        let mut cv = vec![VZ; ld + 1];
-        for d in 0..=ld {
-            let mut v = at1(&av, d, VZ);
-            let mut c = 1.0_f64;
-            for i in 1..=d {
-                c = c * (d - i + 1) as f64 / i as f64;
-                let wi = at1(&wv, i, IZ);
-                let cdi = at1(&cv, d - i, VZ);
-                v.x = v.x - Ivl::from(c) * wi * cdi.x;
-                v.y = v.y - Ivl::from(c) * wi * cdi.y;
-                v.z = v.z - Ivl::from(c) * wi * cdi.z;
-            }
-            if let Some(cd) = cv.get_mut(d) {
-                *cd = V3 {
-                    x: v.x / w0,
-                    y: v.y / w0,
-                    z: v.z / w0,
-                };
-            }
-        }
-        if let Some(c0) = cv.first_mut() {
-            c0.x = c0.x + cx;
-            c0.y = c0.y + cy;
-            c0.z = c0.z + cz;
-        }
+        let cv = piece_derivs_centred(cn, k, a, b, ld)?;
         for (r, c) in rd.iter_mut().zip(&cv) {
             if first {
                 *r = *c;
@@ -311,19 +224,182 @@ pub fn curve_derivs_over(
     Ok(rd)
 }
 
-/// `sm_NurbsPartialsOverPiece`: the partials `P[a][b]`, `a + b <= lk`, of one polynomial
-/// piece (spans `ku`, `kv`) over `[ua, ub] x [va, vb]`, enclosed: the homogeneous surface's
-/// Taylor polynomials at the box's middle, from exact point derivatives (it is of degree
-/// p, q there), then the rational quotient's (the NURBS book's A4.4) in intervals.
+/// The derivatives `D[0..=ld]` of the curve's polynomial piece k over `[a, b]`, enclosed
+/// directly: the homogeneous curve's Taylor polynomials at the middle m (it is of degree p
+/// there), from exact point derivatives (rounding only), then the quotient (the NURBS
+/// book's A4.2) in intervals, about the point at m (as [`nurbs_partials_direct`]). A point
+/// `a = b` is enclosed to rounding.
+fn piece_derivs_direct(cn: &NurbsCurve, k: usize, a: f64, b: f64, ld: usize) -> Vec<V3<Ivl>> {
+    let p = cn.p;
+    // the homogeneous curve is a polynomial of degree p on the span: its derivatives
+    // over [a, b] are its Taylor polynomials at the middle m, from exact point
+    // derivatives (rounding only)
+    let m = 0.5 * (a + b);
+    let nb = ders_basis(&cn.u, k, p, Ivl::from(m), p);
+    let mut am = vec![VZ; p + 1];
+    let mut wm = vec![IZ; p + 1];
+    for d in 0..=p {
+        let (mut x, mut y, mut z, mut w) = (IZ, IZ, IZ, IZ);
+        for j in 0..=p {
+            // k >= p (sm_Span)
+            let li = 4 * (k + j - p);
+            let nj = at2(&nb, d, j, IZ);
+            x = x + nj * Ivl::from(pw_at(&cn.pw, li));
+            y = y + nj * Ivl::from(pw_at(&cn.pw, li + 1));
+            z = z + nj * Ivl::from(pw_at(&cn.pw, li + 2));
+            w = w + nj * Ivl::from(pw_at(&cn.pw, li + 3));
+        }
+        if let (Some(ad), Some(wd)) = (am.get_mut(d), wm.get_mut(d)) {
+            *ad = V3 { x, y, z };
+            *wd = w;
+        }
+    }
+    // the quotient about c, the point at the middle (rounded; any c is exact)
+    let c = {
+        let (a0, w0) = (at1(&am, 0, VZ), at1(&wm, 0, IZ).mid());
+        let c = [a0.x.mid() / w0, a0.y.mid() / w0, a0.z.mid() / w0];
+        if c.iter().all(|x| x.is_finite()) {
+            c
+        } else {
+            [0.0; 3]
+        }
+    };
+    let [cx, cy, cz] = c.map(Ivl::from);
+    for (ad, &wd) in am.iter_mut().zip(&wm) {
+        ad.x = ad.x - cx * wd;
+        ad.y = ad.y - cy * wd;
+        ad.z = ad.z - cz * wd;
+    }
+    let dt = Ivl::new(a, b) - Ivl::from(m);
+    let mut av = vec![VZ; ld + 1];
+    let mut wv = vec![IZ; ld + 1];
+    for d in 0..=ld {
+        let (mut x, mut y, mut z, mut w, mut pwr) = (IZ, IZ, IZ, IZ, Ivl::from(1.0));
+        let mut f = 1.0_f64;
+        for j in d..=p {
+            if j > d {
+                pwr = pwr * dt;
+                f *= (j - d) as f64;
+            }
+            let c = pwr * (Ivl::from(1.0) / Ivl::from(f));
+            let aj = at1(&am, j, VZ);
+            x = x + aj.x * c;
+            y = y + aj.y * c;
+            z = z + aj.z * c;
+            w = w + at1(&wm, j, IZ) * c;
+        }
+        if let (Some(ad), Some(wd)) = (av.get_mut(d), wv.get_mut(d)) {
+            *ad = V3 { x, y, z };
+            *wd = w;
+        }
+    }
+    let w0 = at1(&wv, 0, IZ);
+    let mut cv = vec![VZ; ld + 1];
+    for d in 0..=ld {
+        let mut v = at1(&av, d, VZ);
+        let mut c = 1.0_f64;
+        for i in 1..=d {
+            c = c * (d - i + 1) as f64 / i as f64;
+            let wi = at1(&wv, i, IZ);
+            let cdi = at1(&cv, d - i, VZ);
+            v.x = v.x - Ivl::from(c) * wi * cdi.x;
+            v.y = v.y - Ivl::from(c) * wi * cdi.y;
+            v.z = v.z - Ivl::from(c) * wi * cdi.z;
+        }
+        if let Some(cd) = cv.get_mut(d) {
+            *cd = V3 {
+                x: v.x / w0,
+                y: v.y / w0,
+                z: v.z / w0,
+            };
+        }
+    }
+    if let Some(c0) = cv.first_mut() {
+        c0.x = c0.x + cx;
+        c0.y = c0.y + cy;
+        c0.z = c0.z + cz;
+    }
+    cv
+}
+
+/// [`piece_derivs_direct`] in the centred (mean value) form: `D_d(m) + D_(d+1)([a, b])
+/// (s - m)`, the derivatives at the middle enclosed on that point and the next one's over
+/// the interval, within the direct enclosure. The direct quotient widens with the interval
+/// by the numerator's size times w's spread, which the derivatives' own ranges need not
+/// (a line's tangent is constant, its rational quotient's is not): the centred form's
+/// excess over the range is of the interval's square.
 ///
-/// Not upstream (#2690): the quotient is taken about the point at the box's middle, c:
-/// `P - c = (A - c w) / w`, an identity for any constant c, with `A - c w` the homogeneous
-/// surface moved by -c (its Taylor coefficients `A_ab - c w_ab`). Interval arithmetic does
-/// not see that the numerator and w vary together, so each quotient widens by about the
-/// numerator's size times w's relative spread: about the origin that is `|P| |dw| / w`,
-/// however near the box's point the face is, and here `|P - c| |dw| / w`, which is of the
-/// box's size, so the enclosures are as wide wherever the face lies and shrink with the
-/// box as its partials' own ranges do. c is any number: only `P[0][0]` is moved back by it.
+/// # Errors
+///
+/// `SM_ERR` where the two enclosures do not meet (they hold the same derivatives: only a
+/// curve that is not finite there).
+fn piece_derivs_centred(
+    cn: &NurbsCurve,
+    k: usize,
+    a: f64,
+    b: f64,
+    ld: usize,
+) -> Result<Vec<V3<Ivl>>> {
+    if a >= b {
+        return Ok(piece_derivs_direct(cn, k, a, b, ld));
+    }
+    let wide = piece_derivs_direct(cn, k, a, b, ld + 1);
+    let m = 0.5 * (a + b);
+    let mid = piece_derivs_direct(cn, k, m, m, ld);
+    let dt = Ivl::new(a, b) - Ivl::from(m);
+    let mut out = vec![VZ; ld + 1];
+    for (d, o) in out.iter_mut().enumerate() {
+        let (cm, cn1, cw) = (at1(&mid, d, VZ), at1(&wide, d + 1, VZ), at1(&wide, d, VZ));
+        let comps = [
+            (cm.x, cn1.x, cw.x),
+            (cm.y, cn1.y, cw.y),
+            (cm.z, cn1.z, cw.z),
+        ];
+        let mut got = [IZ; 3];
+        for (g, (m, n1, w)) in got.iter_mut().zip(comps) {
+            *g = centred_within(m + n1 * dt, w)?;
+        }
+        let [x, y, z] = got;
+        *o = V3 { x, y, z };
+    }
+    Ok(out)
+}
+
+/// The centred form `c` within the direct enclosure `w` (both hold the value: they meet).
+///
+/// # Errors
+///
+/// `SM_ERR` where they do not meet.
+fn centred_within(c: Ivl, w: Ivl) -> Result<Ivl> {
+    let x = Ivl::new(cmax(c.lo, w.lo), cmin(c.hi, w.hi));
+    let meet = x.lo <= x.hi;
+    if !meet {
+        return Err(SolidError::sm_err(OP));
+    }
+    Ok(x)
+}
+
+/// `sm_NurbsPartialsOverPiece`: the partials `P[a][b]`, `a + b <= lk`, of one polynomial
+/// piece (spans `ku`, `kv`) over `[ua, ub] x [va, vb]`, enclosed.
+///
+/// Not upstream (#2690): the fork takes them directly, the homogeneous surface's Taylor
+/// polynomials at the box's middle (exact) and the rational quotient (the NURBS book's
+/// A4.4) in intervals. Interval arithmetic does not see that the numerator `A` and the
+/// weight w vary together, so each quotient widens by about the numerator's size times w's
+/// relative spread over the box: `|P| |dw| / w` for the point, measured from the origin
+/// however near the box the face lies, and `|P_ab| |dw| / w` for each partial, which its
+/// range need not have (a cylinder's partial along its axis is constant; its quotient's
+/// enclosure is not). The Jacobian of the blend's system over a feet's box then comes out
+/// thousands of times wider than its range, Krawczyk's test fails on spans far shorter
+/// than it needs, and the certificate subdivides to make up for it. Here:
+///
+/// - the quotient is taken about the point at the box's middle, c: `P - c = (A - c w) /
+///   w`, an identity for any c, with `A - c w` the homogeneous surface moved by -c, so the
+///   point's excess is `|P - c| |dw| / w`, of the box's size, wherever the face lies;
+/// - each partial is in the centred (mean value) form, `P_ab(m) + P_(a+1)b(box) du +
+///   P_a(b+1)(box) dv`, the partials at the middle on that point and the next order's over
+///   the box, within the direct enclosure: its excess over the range is of the box's
+///   square.
 ///
 /// # Errors
 ///
@@ -331,6 +407,60 @@ pub fn curve_derivs_over(
 /// not positive over a box").
 #[allow(clippy::too_many_arguments)]
 pub fn nurbs_partials_over_piece(
+    cn: &Nurbs,
+    ku: usize,
+    kv: usize,
+    ua: f64,
+    ub: f64,
+    va: f64,
+    vb: f64,
+    lk: usize,
+) -> Result<Partials<Ivl>> {
+    let point = ua >= ub && va >= vb;
+    // the centred form takes the next order over the box (a series holds MAX_K at most)
+    if point || lk >= MAX_K {
+        return nurbs_partials_direct(cn, ku, kv, ua, ub, va, vb, lk);
+    }
+    let wide = nurbs_partials_direct(cn, ku, kv, ua, ub, va, vb, lk + 1)?;
+    let (um, vm) = (0.5 * (ua + ub), 0.5 * (va + vb));
+    let mid = nurbs_partials_direct(cn, ku, kv, um, um, vm, vm, lk)?;
+    let du = Ivl::new(ua, ub) - Ivl::from(um);
+    let dv = Ivl::new(va, vb) - Ivl::from(vm);
+    let mut out = Partials::default();
+    for a in 0..=lk {
+        for b in 0..=(lk - a) {
+            let (cm, cu, cv, cw) = (
+                mid.at(a, b),
+                wide.at(a + 1, b),
+                wide.at(a, b + 1),
+                wide.at(a, b),
+            );
+            let comps = [
+                (cm.x, cu.x, cv.x, cw.x),
+                (cm.y, cu.y, cv.y, cw.y),
+                (cm.z, cu.z, cv.z, cw.z),
+            ];
+            let mut got = [IZ; 3];
+            for (g, (m, u, v, w)) in got.iter_mut().zip(comps) {
+                *g = centred_within(m + u * du + v * dv, w)?;
+            }
+            let [x, y, z] = got;
+            out.set(a, b, V3 { x, y, z });
+        }
+    }
+    Ok(out)
+}
+
+/// [`nurbs_partials_over_piece`]'s direct enclosure: the homogeneous surface's Taylor
+/// polynomials at the box's middle, from exact point derivatives (it is of degree p, q
+/// there), then the rational quotient's (the NURBS book's A4.4) in intervals, about the
+/// point at the middle. A point box is enclosed to rounding.
+///
+/// # Errors
+///
+/// As [`nurbs_partials_over_piece`].
+#[allow(clippy::too_many_arguments)]
+fn nurbs_partials_direct(
     cn: &Nurbs,
     ku: usize,
     kv: usize,
