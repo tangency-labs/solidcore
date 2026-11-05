@@ -1722,8 +1722,7 @@ impl FilletBrep {
             }
             // `SM_FCR_N_x_1_CLOSED`: one closed blend meeting itself, now the blend corner's
             // closed Join (the fork's `IsClosedJoin()`, 543d25a; WR-697) or closed Turn (#2349)
-            if meets_itself && Some(eu) == primary_edgeuse(self.brep(), e)?
-            {
+            if meets_itself && Some(eu) == primary_edgeuse(self.brep(), e)? {
                 continue;
             }
 
