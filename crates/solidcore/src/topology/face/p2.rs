@@ -2337,8 +2337,7 @@ impl OdeArea<'_> {
         // knot, and a step across any knot has an error its estimate does not measure.
         // Integrated span by span, as the trim curve is (WR-494; the SolidCraft fork's
         // tangency-labs/smlib@08d9a14).
-        let mut breaks =
-            surface_knots_inside(k, self.surface, SurfParamType::V, self.min_v, p0.y)?;
+        let mut breaks = surface_knots_inside(k, self.surface, SurfParamType::V, self.min_v, p0.y)?;
         breaks.insert(0, self.min_v);
         breaks.push(p0.y);
         let mut piece_y = Vec::new();
