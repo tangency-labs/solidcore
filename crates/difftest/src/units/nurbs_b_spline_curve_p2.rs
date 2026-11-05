@@ -28,6 +28,7 @@
 //! `curve.curve_p2`), `GetMaxAnalyticDomain` (`SmCurve::IsClosed`, `curve.curve_p4`)
 //! and `CreateSimpleOffset` (`SmCurve::IsArc`, `curve.curve_p5`; `EvaluateContinuity`,
 //! `curve.curve_p2`). Every run has at least [`MIN_GENERATED`] generated cases.
+//! Generated cases are drawn inside the routines' input contract ([`in_contract`]).
 
 use std::fmt::Write as _;
 
@@ -1275,13 +1276,456 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     }
 }
 
+// ---- input contract ---------------------------------------------------------------
+//
+// The generator keeps a case only when it is inside the routines' input contract (ported
+// from the upstream harness's validator): well-formed clamped curves (`m = n+p+1`,
+// `1 <= p <= n`, `p <= MAX_DEGREE`, finite data, consistent dimension and rationality,
+// positive weights, bounded Euclidean points, non-decreasing knots with end
+// multiplicity exactly `p+1` and interior multiplicity at most `p`; for `Reverse` also
+// unclamped knots with a non-empty defined interval `[U[p], U[m-p]]` and no
+// multiplicity above `p+1`), dimensions 1 to 8, a curve without NURB only for the op
+// that handles one (`Repeated`), counts and codes in range, and per op the
+// restrictions documented on [`op_ok`]. Hostile inputs are fixtures; the generated
+// cases exercise the working path.
+
+/// Largest control point index of a generated curve.
+const MAX_INDEX: usize = 2048;
+/// Largest NURB degree.
+const MAX_DEGREE: usize = 17;
+/// Largest magnitude of coordinates and parameters.
+const MAX_COORD: f64 = 1e6;
+/// Largest number of segments of `Join`.
+const MAX_SEGMENTS: usize = 16;
+/// Largest degree of a `Join` segment.
+const MAX_JOIN_DEGREE: usize = 9;
+/// Largest extension (or out-of-range parameter), relative to the curve's range.
+const MAX_REL_DIST: f64 = 16.0;
+/// Largest number of samples of `IsLine`.
+const MAX_SAMPLES: usize = 200;
+/// Largest stride of `Expert`.
+const MAX_STRIDE: usize = 16;
+/// Largest new degree of `Elevate`.
+const MAX_NEW_DEGREE: usize = 24;
+/// Largest control point / knot count of `ReadDb`.
+const MAX_DB_INDEX: usize = 2048;
+/// Largest dimension code of a curve block.
+const MAX_DIM: u64 = 8;
+/// Largest `ReadDb` stream, in bytes.
+const MAX_DB_BYTES: usize = 1 << 20;
+
+/// Finite and at most [`MAX_COORD`] in magnitude.
+fn fin(v: f64) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+fn fin3(v: &[f64; 3]) -> bool {
+    v.iter().all(|&c| fin(c))
+}
+
+/// The Euclidean point of a stored control point (`NOZ` -> `z = 0`, `NOW` ->
+/// non-rational).
+fn euclid([x, y, z, w]: [f64; 4]) -> [f64; 3] {
+    let z = if z == NOZ { 0.0 } else { z };
+    if w == NOW {
+        [x, y, z]
+    } else {
+        [x / w, y / w, z / w]
+    }
+}
+
+/// A curve block inside the contract.
+#[derive(Debug, Clone)]
+struct CurveInfo {
+    dim: u64,
+    /// Euclidean control points (empty without NURB).
+    pts: Vec<[f64; 3]>,
+    p: usize,
+    knots: Vec<f64>,
+    three_d: bool,
+    has_nurb: bool,
+}
+
+impl CurveInfo {
+    fn range(&self) -> (f64, f64) {
+        (
+            self.knots.first().copied().unwrap_or(0.0),
+            self.knots.last().copied().unwrap_or(0.0),
+        )
+    }
+}
+
+/// The curve `c` of a block of dimension `dim` when it is inside the contract. With
+/// `unclamped_ok` (`Reverse`: `ReverseParameterization` reverses any knot vector) the
+/// end knots need not be clamped: the defined interval `[U[p], U[m-p]]` must be
+/// non-empty and no knot repeat more than `p + 1` times.
+fn curve_info(c: &InlineCrv, dim: u64, unclamped_ok: bool) -> Option<CurveInfo> {
+    let n = c.cpts.len().saturating_sub(1);
+    let p = c.p;
+    let m = c.u.len().saturating_sub(1);
+    if n > MAX_INDEX || p > MAX_DEGREE || m > MAX_INDEX + MAX_DEGREE + 1 {
+        return None;
+    }
+    if p == 0 || p > n || m != n + p + 1 {
+        return None;
+    }
+    let [_, _, z0, w0] = *c.cpts.first()?;
+    let mut pts = Vec::with_capacity(c.cpts.len());
+    for &[x, y, z, w] in &c.cpts {
+        if (z == NOZ) != (z0 == NOZ) || (w == NOW) != (w0 == NOW) {
+            return None;
+        }
+        if !x.is_finite() || !y.is_finite() || !z.is_finite() || !w.is_finite() {
+            return None;
+        }
+        if w != NOW && w <= 0.0 {
+            return None;
+        }
+        let e = euclid([x, y, z, w]);
+        if !e.iter().all(|&v| fin(v)) {
+            return None;
+        }
+        pts.push(e);
+    }
+    let knots = &c.u;
+    if !knots.iter().all(|&k| fin(k)) || knots.windows(2).any(|w| w.first() > w.last()) {
+        return None;
+    }
+    let (&a, &b) = (knots.first()?, knots.last()?);
+    let head = knots.get(..=p)?;
+    let tail = knots.get(m - p..)?;
+    let inner = knots.get(p + 1..m - p)?;
+    let info = CurveInfo {
+        dim,
+        pts,
+        p,
+        knots: knots.clone(),
+        three_d: z0 != NOZ,
+        has_nurb: true,
+    };
+    if unclamped_ok {
+        let (&lo, &hi) = (knots.get(p)?, knots.get(m - p)?);
+        if lo >= hi || hi - lo < 1e-6 * lo.abs().max(hi.abs()) {
+            return None;
+        }
+        let mut run = 1;
+        for w in knots.windows(2) {
+            run = if w.first() == w.last() { run + 1 } else { 1 };
+            if run > p + 1 {
+                return None;
+            }
+        }
+        return Some(info);
+    }
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return None;
+    }
+    if b - a < 1e-6 * a.abs().max(b.abs()) {
+        return None;
+    }
+    if inner.iter().any(|&k| k == a || k == b) {
+        return None;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return None;
+        }
+    }
+    Some(info)
+}
+
+/// A curve block (`dim` 1 to 8, `oob`, an optional curve) inside the contract.
+fn block_info(t: &This, unclamped_ok: bool) -> Option<CurveInfo> {
+    if t.dim == 0 || t.dim > MAX_DIM {
+        return None;
+    }
+    match &t.crv {
+        Some(c) => curve_info(&resolve(c).ok()?, t.dim, unclamped_ok),
+        None => Some(CurveInfo {
+            dim: t.dim,
+            pts: Vec::new(),
+            p: 0,
+            knots: Vec::new(),
+            three_d: false,
+            has_nurb: false,
+        }),
+    }
+}
+
+/// An interval `a b`, finite and within [`MAX_REL_DIST`] ranges of the curve's; returns
+/// it ordered.
+fn interval_ok(x: f64, y: f64, c: &CurveInfo) -> Option<(f64, f64)> {
+    if !fin(x) || !fin(y) {
+        return None;
+    }
+    let (lo, hi) = (x.min(y), x.max(y));
+    let (a, b) = c.range();
+    let far = MAX_REL_DIST * (b - a);
+    (lo >= a - far && hi <= b + far).then_some((lo, hi))
+}
+
+/// `SetCanonical` data (as `CreateCanonical` of `nurbs.b_spline_curve_p1`): counts and
+/// codes in range, finite values, one multiplicity per knot, and, where the routine's
+/// own checks pass, at least one control point and `ncp + deg + 1` knots.
+fn canonical_ok(c: &CanonIn) -> bool {
+    let ncp = c.pts.len();
+    let nk = c.knots.len();
+    if c.dim > MAX_DIM
+        || c.deg > 40
+        || ncp > MAX_INDEX
+        || !c.pts.iter().all(fin3)
+        || c.form > 6
+        || nk > MAX_INDEX
+        || c.mults.len() != nk
+        || !c.knots.iter().all(|&k| fin(k))
+        || c.mults.iter().any(|&m| m > 64)
+        || c.kt > 4
+        || !c.trim.is_none_or(|t| t.iter().all(|&v| fin(v)))
+    {
+        return false;
+    }
+    let total: usize = c.mults.iter().sum();
+    let weights_ok = match &c.weights {
+        Some(w) => {
+            if w.len() > MAX_INDEX || !w.iter().all(|&v| fin(v)) {
+                return false;
+            }
+            w.len() == ncp
+        }
+        None => true,
+    };
+    let checked = (1..=3).contains(&c.dim) && (1..=32).contains(&c.deg) && weights_ok;
+    !(checked && (ncp == 0 || total < ncp + c.deg + 1))
+}
+
+/// The numbers of one line of an ASCII stream (at least `min`, all finite).
+fn line_numbers(line: &str, min: usize) -> Option<Vec<f64>> {
+    let v: Vec<f64> = line
+        .split_whitespace()
+        .map(|t| t.parse::<f64>().ok())
+        .collect::<Option<_>>()?;
+    (v.len() >= min && v.iter().all(|x| x.is_finite())).then_some(v)
+}
+
+fn int_of(v: f64, max: usize) -> Option<usize> {
+    (v.fract() == 0.0 && v >= 0.0 && v <= max as f64).then_some(v as usize)
+}
+
+/// A database stream holding every value `ReadFromDB` reads, with sizes in range.
+fn db_ok(bytes: &[u8], ascii: bool, version: u64) -> bool {
+    if ascii {
+        let Ok(text) = core::str::from_utf8(bytes) else {
+            return false;
+        };
+        let mut lines = text.split('\n');
+        let mut next = |min: usize| line_numbers(lines.next()?, min);
+        let get = |l: &[f64]| l.first().copied().unwrap_or(-1.0);
+        let parsed = (|| {
+            let n = int_of(get(&next(1)?), MAX_DB_INDEX)?;
+            let p = int_of(get(&next(1)?), MAX_DEGREE)?;
+            let rat = get(&next(1)?);
+            let dim = get(&next(1)?);
+            if rat.fract() != 0.0
+                || rat.abs() > 32767.0
+                || dim.fract() != 0.0
+                || !(0.0..=8.0).contains(&dim)
+            {
+                return None;
+            }
+            if version > 32 {
+                int_of(get(&next(1)?), 4)?;
+                int_of(get(&next(1)?), 6)?;
+            }
+            let per = 2 + usize::from(dim != 2.0) + usize::from(rat != 0.0);
+            for _ in 0..=n {
+                next(per)?;
+            }
+            for _ in 0..n + p + 2 {
+                next(1)?;
+            }
+            Some(())
+        })();
+        parsed.is_some()
+    } else {
+        let rd8 = |at: usize| -> Option<i64> {
+            let b: [u8; 8] = bytes.get(at..at + 8)?.try_into().ok()?;
+            Some(i64::from_ne_bytes(b))
+        };
+        let rd2 = |at: usize| -> Option<i16> {
+            let b: [u8; 2] = bytes.get(at..at + 2)?.try_into().ok()?;
+            Some(i16::from_ne_bytes(b))
+        };
+        let size = |v: i64, max: usize| usize::try_from(v).ok().filter(|&x| x <= max);
+        let parsed = (|| {
+            let n = size(rd8(0)?, MAX_DB_INDEX)?;
+            let p = size(i64::from(rd2(8)?), MAX_DEGREE)?;
+            let rat = rd2(10)?;
+            let dim = rd2(12)?;
+            if !(0..=8).contains(&dim) {
+                return None;
+            }
+            let mut at = 14;
+            if version > 32 {
+                let kt = rd8(at)?;
+                let form = rd8(at + 8)?;
+                if !(0..=4).contains(&kt) || !(0..=6).contains(&form) {
+                    return None;
+                }
+                at += 16;
+            }
+            let per = 2 + usize::from(dim != 2) + usize::from(rat != 0);
+            let doubles = (n + 1) * per + (n + p + 2);
+            (bytes.len() >= at + 8 * doubles).then_some(())
+        })();
+        parsed.is_some()
+    }
+}
+
+/// Whether a static op's parameters are inside the contract: `Join` has
+/// `1..=MAX_SEGMENTS` segments with a NURB, of dimension 2 or 3 matching their data and
+/// degree at most [`MAX_JOIN_DEGREE`], and a sense per segment when senses are given;
+/// `Point` a finite point; `ReadDb` a stream [`db_ok`] accepts.
+fn static_ok(op: &OpIn) -> bool {
+    match op {
+        OpIn::Join { segs, senses } => {
+            !segs.is_empty()
+                && segs.len() <= MAX_SEGMENTS
+                && senses.as_ref().is_none_or(|v| v.len() >= segs.len())
+                && segs.iter().all(|s| {
+                    block_info(s, false).is_some_and(|c| {
+                        c.has_nurb
+                            && (2..=3).contains(&c.dim)
+                            && c.three_d == (c.dim == 3)
+                            && c.p <= MAX_JOIN_DEGREE
+                    })
+                })
+        }
+        OpIn::Point { p } => fin3(p),
+        OpIn::ReadDb {
+            dim,
+            binary,
+            version,
+            db,
+        } => {
+            *dim <= MAX_DIM
+                && *version <= 100
+                && db_bytes(*binary, *version, db)
+                    .is_ok_and(|b| b.len() <= MAX_DB_BYTES && db_ok(&b, !binary, *version))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a curve op's parameters (after `this`) are inside the contract:
+///
+/// - Ops other than `Repeated` need a NURB.
+/// - `BBox`, `Reverse`, `Adjust`, `Degenerate`: intervals within [`MAX_REL_DIST`]
+///   ranges of the curve's ([`interval_ok`]); `BBox` needs its interval inside the
+///   curve's range (a few ulps of slack); `Adjust` needs `b - a` of at least `1e-6`
+///   (relative to the knot magnitude).
+/// - `Offset`: a single-span 3D curve without interior knots and a tolerance in
+///   `[1e-6, 1]`.
+/// - `IsLine`: at most [`MAX_SAMPLES`] samples, a non-negative tolerance.
+/// - `Expert`: form `0..=2`, stride at most [`MAX_STRIDE`]; a dimension below 2 only
+///   when upstream's own checks fail first (it writes past the stride otherwise).
+/// - `Analytic`, `Polygon`: a finite interval. `Match`: another curve with a NURB.
+/// - `Elevate`: at most [`MAX_NEW_DEGREE`]. `SetCanonical`: [`canonical_ok`].
+/// - `SetCp`: form `0..=2`, finite point and weight.
+fn op_ok(op: &OpIn, c: &CurveInfo) -> bool {
+    if !c.has_nurb && !matches!(op, OpIn::Repeated { .. }) {
+        return false;
+    }
+    match op {
+        OpIn::Intersector | OpIn::Canonical | OpIn::C0 | OpIn::MaxDomain | OpIn::Unique => true,
+        OpIn::BBox { a, b, .. } => {
+            let Some((lo, hi)) = interval_ok(*a, *b, c) else {
+                return false;
+            };
+            let (ka, kb) = c.range();
+            lo >= ka - 1e-12 * (1.0 + ka.abs()) && hi <= kb + 1e-12 * (1.0 + kb.abs())
+        }
+        OpIn::Analytic { a, b } | OpIn::Polygon { a, b } => fin(*a) && fin(*b),
+        OpIn::Offset { tol, n, d, .. } => {
+            fin(*tol)
+                && fin3(n)
+                && fin(*d)
+                && c.pts.len() == c.p + 1
+                && c.three_d
+                && (1e-6..=1.0).contains(tol)
+        }
+        OpIn::Repeated { tol } => fin(*tol),
+        OpIn::IsLine { ns, tol } => *ns <= MAX_SAMPLES && fin(*tol) && *tol >= 0.0,
+        OpIn::Degenerate { tol, ivl } => {
+            let [x, y] = ivl.unwrap_or([0.0, 1.0]);
+            fin(*tol) && interval_ok(x, y, c).is_some()
+        }
+        OpIn::Expert {
+            form,
+            start,
+            end,
+            stride,
+        } => {
+            if *form > 2 || *start > MAX_INDEX + 4 || *end > MAX_INDEX + 4 || *stride > MAX_STRIDE
+            {
+                return false;
+            }
+            let min_stride = c.dim + u64::from(*form != 0);
+            let passes = start <= end && *end < c.pts.len() && *stride as u64 >= min_stride;
+            !(passes && c.dim < 2)
+        }
+        OpIn::Match { other } => block_info(other, false).is_some_and(|o| o.has_nurb),
+        OpIn::Elevate { deg } => *deg <= MAX_NEW_DEGREE,
+        OpIn::Reverse { a, b } => interval_ok(*a, *b, c).is_some(),
+        OpIn::SetCanonical { data } => canonical_ok(data),
+        OpIn::SetCp { form, index, p, w } => {
+            *form <= 2 && *index <= MAX_INDEX + 4 && fin3(p) && fin(*w)
+        }
+        OpIn::Adjust { a, b } => {
+            let Some((lo, hi)) = interval_ok(*a, *b, c) else {
+                return false;
+            };
+            let (ka, kb) = c.range();
+            hi - lo >= 1e-6 * (1.0 + ka.abs().max(kb.abs()))
+        }
+        OpIn::Join { .. } | OpIn::Point { .. } | OpIn::ReadDb { .. } => false,
+    }
+}
+
+/// The case is inside the input contract: `this` exactly for the curve ops, inside the
+/// contract with the op's parameters ([`op_ok`]), or a static op's ([`static_ok`]).
+fn in_contract(i: &Inputs) -> bool {
+    let is_static = matches!(
+        i.op,
+        OpIn::Join { .. } | OpIn::Point { .. } | OpIn::ReadDb { .. }
+    );
+    match (&i.this, is_static) {
+        (None, true) => static_ok(&i.op),
+        (Some(t), false) => block_info(t, matches!(i.op, OpIn::Reverse { .. }))
+            .is_some_and(|c| op_ok(&i.op, &c)),
+        _ => false,
+    }
+}
+
+/// A generated case inside the contract (redrawn up to 64 times).
+fn gen_valid(rng: &mut Rng) -> Option<Inputs> {
+    for _ in 0..64 {
+        let i = gen_case(rng);
+        if in_contract(&i) {
+            return Some(i);
+        }
+    }
+    None
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "nurbs.b_spline_curve_p2"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        serde_json::to_value(gen_valid(rng)?).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
