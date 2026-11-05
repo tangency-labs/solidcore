@@ -103,6 +103,11 @@ pub fn rel_err(a: f64, b: f64) -> f64 {
     }
 }
 
+/// The documented absolute floor for value key `key`, if the unit has one.
+pub fn floor_of(floors: &[AbsFloor], key: &str) -> Option<f64> {
+    floors.iter().find(|f| f.key == key).map(|f| f.abs)
+}
+
 /// Whether `a` and `b` agree under the rule above (`floor` = documented abs floor).
 pub fn values_agree(a: f64, b: f64, floor: Option<f64>) -> bool {
     if a.is_nan() || b.is_nan() {
@@ -156,7 +161,7 @@ pub fn compare(cpp: &Output, rust: &Output, floors: &[AbsFloor]) -> CaseDiff {
             });
             continue;
         }
-        let floor = floors.iter().find(|f| f.key == key).map(|f| f.abs);
+        let floor = floor_of(floors, &key);
         for (i, (&x, &y)) in a.iter().zip(b.iter()).enumerate() {
             d.values_compared += 1;
             if x != 0.0 || y != 0.0 {

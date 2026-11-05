@@ -574,7 +574,7 @@ impl UnitResult {
     }
 }
 
-pub(crate) fn guarded(f: impl FnOnce() -> Result<Output, HarnessError>, side: &str) -> Result<Output, String> {
+fn guarded(f: impl FnOnce() -> Result<Output, HarnessError>, side: &str) -> Result<Output, String> {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(Ok(o)) => Ok(o),
         Ok(Err(e)) => Err(format!("{side}: {e}")),
@@ -914,6 +914,41 @@ pub struct DigestResult {
     pub harness_error: Option<String>,
 }
 
+/// Runs the Rust side of every case of `unit` (filtered by `opts.filter`; in reverse order
+/// with `reverse`) and hands `f` each case, its output or why it failed (a harness error or
+/// a panic), and whether the Rust side called a C++ stub (wasm32 only; never natively).
+///
+/// # Errors
+///
+/// Building the case list failed, or called a C++ stub.
+pub fn each_rust_output(
+    unit: &dyn UnitDiff,
+    ctx: &CaseContext,
+    opts: &RunOptions,
+    reverse: bool,
+    mut f: impl FnMut(&Case, Result<Output, String>, bool),
+) -> Result<(), HarnessError> {
+    let before = solidcore_ffi::unlinked_calls();
+    let mut cases = unit.cases(ctx)?;
+    if solidcore_ffi::unlinked_calls() != before {
+        return Err(HarnessError(
+            "building the cases calls the C++ kernel".into(),
+        ));
+    }
+    if let Some(filter) = &opts.filter {
+        cases.retain(|c| c.name.contains(filter.as_str()));
+    }
+    if reverse {
+        cases.reverse();
+    }
+    for case in &cases {
+        let before = solidcore_ffi::unlinked_calls();
+        let rust = guarded(|| unit.run_rust(case), "rust");
+        f(case, rust, solidcore_ffi::unlinked_calls() != before);
+    }
+    Ok(())
+}
+
 /// Runs only the Rust side of every case of `unit` and digests each output like
 /// `DIFFTEST_RUST_DIGEST` does (`--digest-dir`). Nothing is compared: equal digests from
 /// two builds (native and wasm32) mean bit-identical Rust outputs. A case whose Rust
@@ -929,37 +964,21 @@ pub fn digest_unit(
         unit: unit.id().to_string(),
         ..DigestResult::default()
     };
-    let before = solidcore_ffi::unlinked_calls();
-    let cases = match unit.cases(ctx) {
-        Ok(c) => c,
-        Err(e) => {
-            res.harness_error = Some(e.0);
-            return res;
-        }
-    };
-    if solidcore_ffi::unlinked_calls() != before {
-        res.harness_error = Some("building the cases calls the C++ kernel".into());
-        return res;
-    }
-    for case in cases {
-        if let Some(f) = &opts.filter {
-            if !case.name.contains(f.as_str()) {
-                continue;
-            }
-        }
-        let before = solidcore_ffi::unlinked_calls();
-        let rust = guarded(|| unit.run_rust(&case), "rust");
-        if solidcore_ffi::unlinked_calls() == before {
-            let s = format!("{rust:?}");
-            res.lines
-                .push(format!("{}\t{:016x}", case.name, fnv1a64(&s)));
-            if debug {
-                res.debug.push(format!("{}\t{s}", case.name));
-            }
-        } else {
+    let walked = each_rust_output(unit, ctx, opts, false, |case, rust, needs_cpp| {
+        if needs_cpp {
             res.needs_cpp += 1;
             res.lines.push(format!("{}\tneeds-cpp", case.name));
+            return;
         }
+        let s = format!("{rust:?}");
+        res.lines
+            .push(format!("{}\t{:016x}", case.name, fnv1a64(&s)));
+        if debug {
+            res.debug.push(format!("{}\t{s}", case.name));
+        }
+    });
+    if let Err(e) = walked {
+        res.harness_error = Some(e.0);
     }
     res
 }

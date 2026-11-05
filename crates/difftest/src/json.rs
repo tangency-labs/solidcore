@@ -17,6 +17,17 @@ pub fn num(x: f64) -> Value {
     }
 }
 
+/// The `f64` of a JSON value written by [`num`]: a number, or `"NaN"`, `"inf"`, `"-inf"`.
+pub fn num_of(v: &Value) -> Option<f64> {
+    match v.as_str() {
+        Some("NaN") => Some(f64::NAN),
+        Some("inf") => Some(f64::INFINITY),
+        Some("-inf") => Some(f64::NEG_INFINITY),
+        Some(_) => None,
+        None => v.as_f64(),
+    }
+}
+
 /// Serialises `v` canonically (trailing newline included).
 pub fn to_canonical_string(v: &Value) -> String {
     let mut s = String::new();

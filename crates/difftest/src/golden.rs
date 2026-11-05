@@ -10,7 +10,7 @@
 //! * line 1: `{"unit": <id>, "format": 1}`;
 //! * then one line per case: `{"case", "error", "deferred", "values", "ints", "topology"}`.
 //!
-//! A float array of at most [`BLOCK`] entries is stored in full. A longer one is stored as
+//! A float array of at most [`FULL`] entries is stored in full. A longer one is stored as
 //! `{"n": N, "blocks": [[sum, abs_sum, weighted_sum], ...]}`, one triple per [`BLOCK`] entries
 //! (the last block may be shorter), with `weighted_sum = Σ (j + 1) x_j` over the block, so a
 //! change in any block, or entries swapped within one, shows. Integer arrays follow the same
@@ -30,19 +30,23 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Map, Value};
 
 use crate::case::CaseContext;
-use crate::compare::{values_agree, AbsFloor, REL_TOL};
+use crate::compare::{floor_of, values_agree, AbsFloor, REL_TOL};
+use crate::json::{num, num_of};
 use crate::output::Output;
-use crate::runner::{guarded, RunOptions, UnitDiff};
+use crate::runner::{each_rust_output, RunOptions, UnitDiff};
 use crate::HarnessError;
 
-/// Entries per block of a long array, and the longest array stored in full.
-pub const BLOCK: usize = 16;
+/// The longest array stored in full.
+pub const FULL: usize = 16;
+
+/// Entries per block of a longer array.
+pub const BLOCK: usize = 256;
 
 /// Version of the file format above.
 pub const FORMAT: u64 = 1;
 
-/// Mismatches recorded per case (all are counted).
-const MAX_RECORDED: usize = 8;
+/// Differences described per case (all are counted).
+const MAX_DETAILS: usize = 8;
 
 /// The goldens directory: `crates/difftest/goldens`.
 pub fn default_dir() -> PathBuf {
@@ -54,63 +58,45 @@ pub fn path_of(dir: &Path, unit: &str) -> PathBuf {
     dir.join(format!("{unit}.jsonl"))
 }
 
-fn float(x: f64) -> Value {
-    if x.is_nan() {
-        json!("NaN")
-    } else if x.is_infinite() {
-        json!(if x > 0.0 { "inf" } else { "-inf" })
-    } else {
-        json!(x)
+/// A stored array: in full up to [`FULL`] entries, else `{"n", "blocks"}` with one
+/// `block(chunk)` per [`BLOCK`] entries.
+fn array<T>(xs: &[T], full: impl Fn(&[T]) -> Value, block: impl Fn(&[T]) -> Value) -> Value {
+    if xs.len() <= FULL {
+        return full(xs);
     }
-}
-
-fn float_of(v: &Value) -> Option<f64> {
-    match v {
-        Value::String(s) => match s.as_str() {
-            "NaN" => Some(f64::NAN),
-            "inf" => Some(f64::INFINITY),
-            "-inf" => Some(f64::NEG_INFINITY),
-            _ => None,
-        },
-        _ => v.as_f64(),
-    }
+    let blocks: Vec<Value> = xs.chunks(BLOCK).map(block).collect();
+    json!({"n": xs.len(), "blocks": blocks})
 }
 
 fn floats(xs: &[f64]) -> Value {
-    if xs.len() <= BLOCK {
-        return Value::Array(xs.iter().map(|&x| float(x)).collect());
-    }
-    let blocks: Vec<Value> = xs
-        .chunks(BLOCK)
-        .map(|b| {
+    array(
+        xs,
+        |xs| Value::Array(xs.iter().map(|&x| num(x)).collect()),
+        |b| {
             let (mut sum, mut abs, mut weighted) = (0.0f64, 0.0f64, 0.0f64);
             for (j, &x) in b.iter().enumerate() {
                 sum += x;
                 abs += x.abs();
                 weighted += (j as f64 + 1.0) * x;
             }
-            json!([float(sum), float(abs), float(weighted)])
-        })
-        .collect();
-    json!({"n": xs.len(), "blocks": blocks})
+            json!([num(sum), num(abs), num(weighted)])
+        },
+    )
 }
 
 fn ints(xs: &[i64]) -> Value {
-    if xs.len() <= BLOCK {
-        return json!(xs);
-    }
-    let blocks: Vec<Value> = xs
-        .chunks(BLOCK)
-        .map(|b| {
+    array(
+        xs,
+        |xs| json!(xs),
+        |b| {
             let (mut sum, mut weighted) = (0i64, 0i64);
             for (j, &x) in b.iter().enumerate() {
                 sum = sum.wrapping_add(x);
                 weighted = weighted.wrapping_add((j as i64 + 1).wrapping_mul(x));
             }
             json!([sum, weighted])
-        })
-        .collect();
-    json!({"n": xs.len(), "blocks": blocks})
+        },
+    )
 }
 
 /// One case's golden line.
@@ -200,9 +186,7 @@ pub fn write(dir: &Path, unit: &str, golden: &Golden) -> Result<PathBuf, Harness
 /// How one case differs from its golden.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Change {
-    /// Case name.
-    pub case: String,
-    /// Differences counted (at most [`MAX_RECORDED`] are kept in `details`).
+    /// Differences counted (at most [`MAX_DETAILS`] are kept in `details`).
     pub count: usize,
     /// `field: golden -> now`, one per recorded difference.
     pub details: Vec<String>,
@@ -216,15 +200,11 @@ struct Differ<'a> {
 impl Differ<'_> {
     fn note(&mut self, field: &str, golden: &Value, now: &Value) {
         self.change.count += 1;
-        if self.change.details.len() < MAX_RECORDED {
+        if self.change.details.len() < MAX_DETAILS {
             self.change
                 .details
                 .push(format!("{field}: {golden} -> {now}"));
         }
-    }
-
-    fn floor(&self, key: &str) -> Option<f64> {
-        self.floors.iter().find(|f| f.key == key).map(|f| f.abs)
     }
 
     fn exact(&mut self, field: &str, golden: &Value, now: &Value) {
@@ -234,11 +214,11 @@ impl Differ<'_> {
     }
 
     fn float_array(&mut self, field: &str, key: &str, golden: &Value, now: &Value) {
-        let floor = self.floor(key);
+        let floor = floor_of(self.floors, key);
         match (golden, now) {
             (Value::Array(g), Value::Array(n)) if g.len() == n.len() => {
                 for (i, (a, b)) in g.iter().zip(n).enumerate() {
-                    let agree = match (float_of(a), float_of(b)) {
+                    let agree = match (num_of(a), num_of(b)) {
                         (Some(a), Some(b)) => values_agree(a, b, floor),
                         _ => false,
                     };
@@ -265,20 +245,15 @@ impl Differ<'_> {
         }
     }
 
-    fn keyed(&mut self, section: &str, golden: &Value, now: &Value, floats: bool) {
+    fn floats(&mut self, golden: &Value, now: &Value) {
         let empty = Map::new();
         let g = golden.as_object().unwrap_or(&empty);
         let n = now.as_object().unwrap_or(&empty);
         for key in g.keys().chain(n.keys().filter(|k| !g.contains_key(*k))) {
-            let field = format!("{section}.{key}");
+            let field = format!("values.{key}");
             match (g.get(key), n.get(key)) {
-                (Some(a), Some(b)) if floats => self.float_array(&field, key, a, b),
-                (Some(a), Some(b)) => self.exact(&field, a, b),
-                (a, b) => self.note(
-                    &field,
-                    a.unwrap_or(&Value::Null),
-                    b.unwrap_or(&Value::Null),
-                ),
+                (Some(a), Some(b)) => self.float_array(&field, key, a, b),
+                (a, b) => self.note(&field, a.unwrap_or(&Value::Null), b.unwrap_or(&Value::Null)),
             }
         }
     }
@@ -290,13 +265,12 @@ impl Differ<'_> {
 fn block_agrees(golden: &Value, now: &Value, floor: Option<f64>) -> bool {
     let parse = |v: &Value| -> Option<[f64; 3]> {
         let a = v.as_array()?;
-        Some([float_of(a.first()?)?, float_of(a.get(1)?)?, float_of(a.get(2)?)?])
+        Some([num_of(a.first()?)?, num_of(a.get(1)?)?, num_of(a.get(2)?)?])
     };
     if golden == now {
         return true;
     }
     let (Some([s0, a0, w0]), Some([s1, a1, w1])) = (parse(golden), parse(now)) else {
-        // Integer blocks are `[sum, weighted]` and agree only exactly.
         return false;
     };
     if [s0, a0, w0, s1, a1, w1].iter().any(|x| !x.is_finite()) {
@@ -314,34 +288,15 @@ fn block_agrees(golden: &Value, now: &Value, floor: Option<f64>) -> bool {
 }
 
 /// How `now` differs from `golden`; `None` when they agree.
-pub fn diff(case: &str, golden: &Value, now: &Value, floors: &[AbsFloor]) -> Option<Change> {
+pub fn diff(golden: &Value, now: &Value, floors: &[AbsFloor]) -> Option<Change> {
     let mut d = Differ {
         floors,
-        change: Change {
-            case: case.to_string(),
-            ..Change::default()
-        },
+        change: Change::default(),
     };
-    for field in ["error", "deferred", "topology"] {
-        d.exact(
-            field,
-            golden.get(field).unwrap_or(&Value::Null),
-            now.get(field).unwrap_or(&Value::Null),
-        );
+    for field in ["error", "deferred", "topology", "ints"] {
+        d.exact(field, &golden[field], &now[field]);
     }
-    let null = Value::Null;
-    d.keyed(
-        "values",
-        golden.get("values").unwrap_or(&null),
-        now.get("values").unwrap_or(&null),
-        true,
-    );
-    d.keyed(
-        "ints",
-        golden.get("ints").unwrap_or(&null),
-        now.get("ints").unwrap_or(&null),
-        false,
-    );
+    d.floats(&golden["values"], &now["values"]);
     (d.change.count > 0).then_some(d.change)
 }
 
@@ -350,15 +305,14 @@ pub fn diff(case: &str, golden: &Value, now: &Value, floors: &[AbsFloor]) -> Opt
 pub struct GoldenResult {
     /// Unit id.
     pub unit: String,
-    /// Cases run.
-    pub cases: usize,
-    /// Cases whose output differs from the golden.
-    pub changed: Vec<Change>,
+    /// Cases whose output differs from the golden, by name.
+    pub changed: Vec<(String, Change)>,
     /// Cases the run produced that the golden lacks.
     pub added: Vec<String>,
     /// Cases in the golden the run did not produce.
     pub removed: Vec<String>,
-    /// Cases whose Rust side failed as a harness error or panicked: never blessed.
+    /// Cases whose Rust side failed as a harness error, panicked or called the C++ kernel:
+    /// never blessed.
     pub broken: Vec<(String, String)>,
     /// Building the case list failed.
     pub harness_error: Option<String>,
@@ -367,6 +321,11 @@ pub struct GoldenResult {
 }
 
 impl GoldenResult {
+    /// Cases run.
+    pub fn cases(&self) -> usize {
+        self.now.len() + self.broken.len()
+    }
+
     /// Whether the run matches the golden exactly in its case set and to rounding in values.
     pub fn passed(&self) -> bool {
         self.harness_error.is_none()
@@ -390,33 +349,23 @@ pub fn check_unit(
         unit: unit.id().to_string(),
         ..GoldenResult::default()
     };
-    let mut cases = match unit.cases(ctx) {
-        Ok(c) => c,
-        Err(e) => {
-            res.harness_error = Some(e.0);
-            return res;
-        }
-    };
-    if let Some(f) = &opts.filter {
-        cases.retain(|c| c.name.contains(f.as_str()));
-    }
-    if reverse {
-        cases.reverse();
-    }
     let floors = unit.abs_floors();
-    for case in &cases {
-        res.cases += 1;
-        let line = match guarded(|| unit.run_rust(case), "rust") {
+    let walked = each_rust_output(unit, ctx, opts, reverse, |case, rust, needs_cpp| {
+        let out = match rust {
+            Ok(_) if needs_cpp => Err("calls the C++ kernel".to_string()),
+            other => other,
+        };
+        let line = match out {
             Ok(out) => encode(&case.name, &out),
             Err(e) => {
                 res.broken.push((case.name.clone(), e));
-                continue;
+                return;
             }
         };
         match golden.get(&case.name) {
             Some(g) => {
-                if let Some(c) = diff(&case.name, g, &line, floors) {
-                    res.changed.push(c);
+                if let Some(c) = diff(g, &line, floors) {
+                    res.changed.push((case.name.clone(), c));
                 }
             }
             None => res.added.push(case.name.clone()),
@@ -424,6 +373,10 @@ pub fn check_unit(
         if res.now.insert(case.name.clone(), line).is_some() {
             res.harness_error = Some(format!("case `{}` appears twice", case.name));
         }
+    });
+    if let Err(e) = walked {
+        res.harness_error = Some(e.0);
+        return res;
     }
     if opts.filter.is_none() {
         res.removed = golden
@@ -433,6 +386,14 @@ pub fn check_unit(
             .collect();
     }
     res
+}
+
+/// The golden a bless writes: `old` with every case this run produced replaced or added, and,
+/// for an unfiltered run, the cases it no longer produces dropped.
+pub fn blessed(old: &Golden, res: &GoldenResult, filtered: bool) -> Golden {
+    let mut out = if filtered { old.clone() } else { Golden::new() };
+    out.extend(res.now.iter().map(|(k, v)| (k.clone(), v.clone())));
+    out
 }
 
 #[cfg(test)]
@@ -452,36 +413,36 @@ mod tests {
     fn short_arrays_are_stored_in_full_and_round_trip() {
         let line = encode("c", &out(&[1.0, f64::NAN, f64::INFINITY]));
         assert_eq!(line["values"]["v"], json!([1.0, "NaN", "inf"]));
-        assert!(diff("c", &line, &line, &[]).is_none());
+        assert!(diff(&line, &line, &[]).is_none());
     }
 
     #[test]
     fn rounding_passes_and_a_real_change_fails() {
         let g = encode("c", &out(&[1.0, 2.0]));
         let rounded = encode("c", &out(&[1.0 + 1e-13, 2.0]));
-        assert!(diff("c", &g, &rounded, &[]).is_none());
+        assert!(diff(&g, &rounded, &[]).is_none());
         let moved = encode("c", &out(&[1.0 + 1e-6, 2.0]));
-        let c = diff("c", &g, &moved, &[]).unwrap();
+        let c = diff(&g, &moved, &[]).unwrap();
         assert_eq!(c.count, 1);
         assert!(c.details[0].starts_with("values.v[0]"));
     }
 
     #[test]
     fn long_arrays_are_blocks_that_catch_one_entry_and_a_swap() {
-        let base: Vec<f64> = (0..40).map(|i| f64::from(i) * 0.5 + 1.0).collect();
+        let base: Vec<f64> = (0..600).map(|i| f64::from(i) * 0.5 + 1.0).collect();
         let g = encode("c", &out(&base));
-        assert_eq!(g["values"]["v"]["n"], json!(40));
+        assert_eq!(g["values"]["v"]["n"], json!(600));
         assert_eq!(g["values"]["v"]["blocks"].as_array().unwrap().len(), 3);
         let mut one = base.clone();
-        one[37] += 1e-6;
-        let c = diff("c", &g, &encode("c", &out(&one)), &[]).unwrap();
+        one[537] += 1e-4;
+        let c = diff(&g, &encode("c", &out(&one)), &[]).unwrap();
         assert!(c.details[0].starts_with("values.v.block[2]"));
         let mut swapped = base.clone();
         swapped.swap(3, 4);
-        assert!(diff("c", &g, &encode("c", &out(&swapped)), &[]).is_some());
+        assert!(diff(&g, &encode("c", &out(&swapped)), &[]).is_some());
         let mut rounded = base;
-        rounded[20] *= 1.0 + 1e-14;
-        assert!(diff("c", &g, &encode("c", &out(&rounded)), &[]).is_none());
+        rounded[300] *= 1.0 + 1e-14;
+        assert!(diff(&g, &encode("c", &out(&rounded)), &[]).is_none());
     }
 
     #[test]
@@ -489,21 +450,25 @@ mod tests {
         let g = encode("c", &out(&[1.0]));
         let mut o = out(&[1.0]);
         o.error = Some("nlib_7".into());
-        assert!(diff("c", &g, &encode("c", &o), &[]).is_some());
+        assert!(diff(&g, &encode("c", &o), &[]).is_some());
         let mut o = out(&[1.0]);
         o.topology = Some(Topology::new().count("faces", 3));
-        assert!(diff("c", &g, &encode("c", &o), &[]).is_some());
+        assert!(diff(&g, &encode("c", &o), &[]).is_some());
         let mut o = out(&[1.0]);
         o.ints.insert("extra".into(), vec![0]);
-        assert!(diff("c", &g, &encode("c", &o), &[]).is_some());
+        assert!(diff(&g, &encode("c", &o), &[]).is_some());
     }
 
     #[test]
     fn a_floor_widens_only_its_key() {
-        let floors = [AbsFloor { key: "v", abs: 1e-6, why: "test" }];
+        let floors = [AbsFloor {
+            key: "v",
+            abs: 1e-6,
+            why: "test",
+        }];
         let g = encode("c", &out(&[0.0]));
-        assert!(diff("c", &g, &encode("c", &out(&[5e-7])), &floors).is_none());
-        assert!(diff("c", &g, &encode("c", &out(&[5e-7])), &[]).is_some());
+        assert!(diff(&g, &encode("c", &out(&[5e-7])), &floors).is_none());
+        assert!(diff(&g, &encode("c", &out(&[5e-7])), &[]).is_some());
     }
 
     #[test]

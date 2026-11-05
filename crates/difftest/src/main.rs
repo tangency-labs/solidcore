@@ -473,7 +473,10 @@ fn main() -> ExitCode {
     }
 
     if args.goldens {
-        let dir = args.goldens_dir.clone().unwrap_or_else(difftest::golden::default_dir);
+        let dir = args
+            .goldens_dir
+            .clone()
+            .unwrap_or_else(difftest::golden::default_dir);
         return goldens_main(&wanted, &reg, &ctx, &opts, &dir, args.bless, args.reverse);
     }
 
@@ -825,8 +828,9 @@ fn digest_main(
 }
 
 /// `--goldens`: the Rust side of each unit only, checked against `DIR/<unit>.jsonl`; with
-/// `--bless`, the goldens are rewritten from this run instead (a case whose Rust side fails as
-/// a harness error or panics is never blessed). Prints one line per unit and, for a unit that
+/// `--bless`, the goldens are rewritten from this run instead (with `--filter`, only the cases
+/// it ran; a unit with a case whose Rust side fails as a harness error, panics or calls the C++
+/// kernel is not blessed). Prints one line per unit and, for a unit that
 /// changed, its first changes.
 fn goldens_main(
     wanted: &[String],
@@ -863,14 +867,21 @@ fn goldens_main(
         let secs = start.elapsed().as_secs_f64();
         let counts = format!(
             "cases={} changed={} added={} removed={} broken={} rust={secs:.3}s",
-            res.cases,
+            res.cases(),
             res.changed.len(),
             res.added.len(),
             res.removed.len(),
             res.broken.len()
         );
-        if bless && opts.filter.is_none() && res.broken.is_empty() {
-            if let Err(e) = golden::write(dir, id, &res.now) {
+        if bless && !res.broken.is_empty() {
+            println!("FAIL {id} {counts} (not blessed: a broken case is never blessed)");
+            print_golden_changes(&res);
+            failed += 1;
+            continue;
+        }
+        if bless {
+            let new = golden::blessed(&old, &res, opts.filter.is_some());
+            if let Err(e) = golden::write(dir, id, &new) {
                 println!("FAIL {id} ({e})");
                 failed += 1;
                 continue;
@@ -887,11 +898,8 @@ fn goldens_main(
             failed += 1;
         }
     }
-    println!(
-        "goldens: {} unit(s), {} passed, {failed} failed",
-        wanted.len(),
-        wanted.len() - failed
-    );
+    // The summary line `difftest::jobs` reads from each child, as every mode prints it.
+    println!("{}", report::run_summary(wanted.len(), 0, failed, 0));
     if failed > 0 {
         ExitCode::from(1)
     } else {
@@ -903,8 +911,8 @@ fn goldens_main(
 const MAX_GOLDEN_LINES: usize = 10;
 
 fn print_golden_changes(res: &difftest::golden::GoldenResult) {
-    for c in res.changed.iter().take(MAX_GOLDEN_LINES) {
-        println!("  changed {} ({} differences)", c.case, c.count);
+    for (name, c) in res.changed.iter().take(MAX_GOLDEN_LINES) {
+        println!("  changed {name} ({} differences)", c.count);
         for d in &c.details {
             println!("    {d}");
         }
