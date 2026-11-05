@@ -923,4 +923,33 @@ mod tests {
         assert!(built > 0, "near-boundary rows require exact arithmetic");
         assert!(skipped > 0, "well-inside rows still use the cheap bound");
     }
+
+    #[test]
+    fn native_row_order_fixture_matches_integrated_streamed_solver() {
+        use super::super::qp::{dual_qp_source, QpOutcome, QpStats};
+
+        // Same inputs as harness/cpp/tests/blend_setback_streamed_row_order.cpp:
+        // two patches, one coefficient, four direction pairs, alternating skips.
+        let mut rows = SectorRows::new(1);
+        for _ in 0..2 {
+            let mut pc0 = Vec::new();
+            let mut pcf = Vec::new();
+            for k in 0..3 {
+                let mut constant = t_make(0, 0);
+                let mut free = t_make(0, 0);
+                constant.c[0] = if k == 1 { 0.0 } else { -1.0 };
+                free.c[0] = if k == 1 { 0.0 } else { 1.0 };
+                pc0.push(vec![constant]);
+                pcf.push(vec![free]);
+            }
+            rows.add_patch(&[0.0, PI / 2.0, PI], 1.0, 1.0, 1e-12, pc0, pcf)
+                .unwrap();
+        }
+        assert_eq!(rows.slot_count(), 8);
+        let mut stats = QpStats::default();
+        let result = dual_qp_source(&[1.0], &[0.0], &rows, 1, 1e-13, false, &mut stats).unwrap();
+        assert_eq!(result, QpOutcome::Solved(vec![1.0 + 1e-12]));
+        assert_eq!(stats.peak_rows_held, 4);
+        assert_eq!(stats.steps, 3);
+    }
 }
