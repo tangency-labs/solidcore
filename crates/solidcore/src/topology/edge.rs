@@ -668,8 +668,10 @@ pub fn create_trimmed_nurbs_curve(k: &Kernel, b: &Brep, e: EdgeId) -> Result<Opt
     let mut ivl = b.edge(e)?.interval; // may snap sIvl by tol to existing knots
     match copy.trim(k, &mut ivl, TrimMode::Notify) {
         Ok(()) => Ok(Some(copy)),
-        Err(err) if err.is_unported() => Err(err),
-        Err(_) => Ok(None),
+        Err(err) => {
+            failed(err)?;
+            Ok(None)
+        }
     }
 }
 
@@ -726,7 +728,7 @@ pub struct RadialSector {
 /// An error a caller treats as a failed status: unported dependencies and
 /// cooperative cancellation propagate.
 fn failed(e: SolidError) -> Result<()> {
-    if e.is_unported() || e.is_cancelled() {
+    if e.is_unported_or_cancelled() {
         Err(e)
     } else {
         Ok(())
@@ -3063,12 +3065,12 @@ fn blend_edgeuse_unless(
             if let Err(err) =
                 eu2::evaluate_binormal_step_off_into(k, b, eu, test_param, step_off, &opts, ev)
             {
-                if matches!(
-                    err,
-                    SolidError::Unported { .. }
-                        | SolidError::InvalidInput { .. }
-                        | SolidError::NotFound { .. }
-                ) {
+                if err.is_unported_or_cancelled()
+                    || matches!(
+                        err,
+                        SolidError::InvalidInput { .. } | SolidError::NotFound { .. }
+                    )
+                {
                     return Err(err);
                 }
             }
@@ -3171,6 +3173,22 @@ pub(crate) mod notification_test_support {
 #[cfg(test)]
 mod tests {
 
+    use super::*;
+
+    #[test]
+    fn cancellation_status_failed_preserves_control_errors() {
+        for error in [
+            SolidError::cancelled("cancelled-callee"),
+            SolidError::unported("callee", "unit"),
+            SolidError::FaceTrimsUnavailable {
+                operation: "face-classification",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+        ] {
+            assert_eq!(failed(error.clone()), Err(error));
+        }
+    }
+
     #[test]
     fn cancellation_status_survives_failed_radial_classification() {
         let cancelled = SolidError::cancelled("radial-sector-classification");
@@ -3182,7 +3200,6 @@ mod tests {
         let unported = SolidError::unported("callee", "unit");
         assert_eq!(failed(unported.clone()), Err(unported));
     }
-    use super::*;
     use crate::curve::curve::Curve as C;
     use crate::nurbs::b_spline_curve::BSplineCurve;
     use crate::nurbs::crv_basic::Curve as NlCurve;

@@ -178,7 +178,7 @@ impl<T> MergeState<T> {
 fn ignore_failure<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() || e.is_cancelled() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -1059,6 +1059,22 @@ impl TemporaryBrepShift {
 #[cfg(test)]
 mod tests {
 
+    use super::*;
+
+    #[test]
+    fn cancellation_status_ignore_failure_preserves_control_errors() {
+        for error in [
+            SolidError::cancelled("cancelled-callee"),
+            SolidError::unported("callee", "unit"),
+            SolidError::FaceTrimsUnavailable {
+                operation: "face-classification",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+        ] {
+            assert_eq!(ignore_failure::<()>(Err(error.clone())), Err(error));
+        }
+    }
+
     #[test]
     fn cancellation_status_survives_ignored_merge_failure() {
         let cancelled = SolidError::cancelled("boolean-region-classification");
@@ -1071,7 +1087,6 @@ mod tests {
         let unported = SolidError::unported("callee", "unit");
         assert_eq!(ignore_failure::<()>(Err(unported.clone())), Err(unported));
     }
-    use super::*;
 
     #[test]
     fn audit_483_boxes_fail_before_temporary_translation() {
