@@ -1151,6 +1151,7 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
         "offset_faces",
         "thicken",
         "chamfer_sides",
+        "stitch",
     ] {
         let step = serde_json::json!({
             "op": op, "error": "expected edit refusal",
@@ -1203,6 +1204,7 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
         serde_json::json!({"op": "chamfer_sides", "params": {
             "distance": 1, "first": [0,0,1], "second": {"distance": 2}
         }}),
+        serde_json::json!({"op": "stitch", "params": {"tolerance": 1e-5}}),
     ] {
         step["error"] = serde_json::json!("expected refusal");
         match call(&step, &mut [input.clone()]) {
@@ -1270,6 +1272,49 @@ fn a_discarded_thicken_preserves_the_retained_sheet() {
         &serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 2.0}),
         serde_json::json!({"body_count": 1, "faces": 1, "edges": 4, "vertices": 4}),
     );
+}
+
+/// The corpus's stitch of two 10 x 10 sheets that share the edge x = 10, and its operand.
+fn two_squares() -> (PathBuf, Value, Slot) {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join("surfaces/cov-stitch-two-squares-along-a-shared-edge.json");
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    let record: Record = serde_json::from_value(records(&entry, &e)["b1"].clone()).unwrap();
+    let (body, order) = Body::from_record(&record, true).unwrap();
+    let input = Slot {
+        body: Arc::new(body),
+        order: Some(order),
+    };
+    (entry, e, input)
+}
+
+#[test]
+fn a_stitch_sews_a_copy_at_the_traced_tolerance() {
+    let (entry, e, input) = two_squares();
+    let stitch = &e["calls"][1];
+    assert_eq!(stitch["op"], "stitch");
+    let out = call(stitch, &mut [input.clone()]).unwrap().unwrap();
+    // the shared edge is one edge of both faces, and its two vertex pairs are one each
+    assert_eq!(out.body.counts().unwrap(), [2, 7, 6]);
+    assert_eq!(input.body.counts().unwrap(), [2, 8, 8]);
+    run_case(&entry, &e).unwrap();
+}
+
+#[test]
+fn a_stitch_refusal_is_the_operations_and_a_missing_tolerance_is_not() {
+    let (_, _, input) = two_squares();
+    let step = |params: Value| serde_json::json!({"op": "stitch", "params": params});
+    assert!(matches!(
+        call(
+            &step(serde_json::json!({"tolerance": 0.0})),
+            &mut [input.clone()]
+        ),
+        Ok(Err(_))
+    ));
+    assert!(matches!(
+        call(&step(serde_json::json!({})), &mut [input]),
+        Err(Stop::Fail(why)) if why.contains("tolerance")
+    ));
 }
 
 fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> Graded {
