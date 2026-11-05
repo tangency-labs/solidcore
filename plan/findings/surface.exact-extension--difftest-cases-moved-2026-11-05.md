@@ -1009,3 +1009,40 @@ operation does not make them.
   cylinders and cones: the mass difftest units and the bit-for-bit fork comparisons
   (`tests/fork_eb883ad_keep_features.rs`) would each need re-recording; a separate item.
   fc0016's volume is still negative (-877.59).
+
+### fc0016: a seamed face given a plane (2026-11-05, fc0016 item)
+
+- *Case.* `Solids/nurb_fillet.smb`, faces 17, 10 and 5 given their tangent planes at the UV
+  mid point (offset 0, no tilt). Face 10 is a plane and stays (its own plane). Face 17 is a
+  surface of revolution about the vertical line x = y = -2 that runs all the way round: its
+  loop is the bottom circle (edge 43), the seam (edge 44, both edge uses on face 17) and the
+  top edges 13/14. Face 5 is the r = 5 sphere, with seams 15 and 17.
+- *Root cause.* A moved face's edges are found again where the new surfaces on their two
+  sides meet. Across a seam both sides are the face itself, so an open surface has no
+  curve there. Before the merge (measured), face 17's offset already had a closed edge (one
+  vertex) on its plane with tolerance 13.03 at (2.77, 2.23, 3.08): the seam's ends collapsed
+  onto one vertex grown to the gap. The offset shell stayed open: after the merge, faces 5-14
+  and 17 had both sides in the infinite region and 18/19 both sides in the finite one, and
+  the glue grew vertex 16 to 20.56. `MakeManifold` kept the seven faces (0-4, 15, 16) that
+  separated the two regions, and `FindAndSetInfiniteRegion` then took the bounded side for
+  the infinite one: manifold, volume -877.59, check #82 at 20.56. (C++ gives the same body in
+  9 runs of 10, ND-493.) Not a mate or a mass-property defect.
+- *Fix (5836f2d32).* `local_operation` refuses, before anything changes, a face that meets
+  itself across an edge (more than its two sides' edge uses of one edge on the face) given a
+  surface that is not closed (`Surface::is_closed` in U or V; a plane never is):
+  `OffsetFailure::SeamOpened { face }` (kind Unsupported, comparison status SM_ERR). Lib test
+  `a_seamed_face_given_a_plane_is_refused_unchanged`.
+- *Same cause, same fix.* 53 of the 165 cases move a seamed face onto a plane: every cone
+  and sphere case, the cylinder side cases, and the nurb_fillet faces 3, 4, 5, 6, 7, 8, 17, 18
+  (fc0002/0003/0013/0020/0027 and face5/6/7_same among them: the "still not manifold" cases
+  of the circle item, and face5_same's 877.59 body, the same wrong side as fc0016).
+- *Probe (all 165, `notes-localop/sound-fc0016.tsv` vs `sound-volume.tsv`).* Sound 74 -> 109.
+  43 lines change, every one to the input unchanged (the refusal): the cone sheets and the
+  sphere and cylinder solids become sound (input), the nurb_fillet cases go from #61/#59/#82
+  and not manifold (or the -877.59/877.59 bodies) to the input's own 4 check lines. No case
+  is worse.
+- *Difftest.* 51 known-mismatch entries now give this reason; fc0029 (C++ fails too, status
+  SM_ERR, but leaves an edge tolerance its attempt grew: geometry[447] 5.238e-4 vs the input's
+  2.363e-4) gets an entry; the two ND-493 parked cases stay parked. Unit: cases=165,
+  failed 0, known 163, parked 2; it still fails the value-share gate (0 passing cases, as
+  before this item).
