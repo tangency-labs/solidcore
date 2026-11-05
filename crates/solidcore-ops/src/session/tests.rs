@@ -124,47 +124,52 @@ fn a_read_only_panic_leaves_the_body_usable() {
 /// body whose edit panicked is put back first, so it is written as it came in, and stays usable.
 #[test]
 fn a_failed_call_reaches_the_hook_with_its_consistent_inputs() {
-    type Seen = Vec<(
-        String,
-        String,
-        Vec<(&'static str, std::result::Result<Vec<u8>, String>)>,
-    )>;
-    let _turn = HOOKED.lock().unwrap_or_else(PoisonError::into_inner);
-    all_fixes();
-    let seen: Arc<Mutex<Seen>> = Arc::default();
-    let s = Arc::clone(&seen);
-    set_failure_hook(Some(Arc::new(move |f: &Failure<'_>| {
-        if f.call.starts_with("on purpose") {
-            s.lock()
-                .unwrap()
-                .push((f.call.to_owned(), f.why.to_owned(), f.inputs.clone()));
-        }
-    })));
-    let b = make_box([0.0; 3], [1.0; 3]).unwrap();
-    let r: Result<()> = with_body("on purpose: refused", &b, |_, _| {
-        Err(SolidError::invalid_input("test", "refused"))
-    });
-    assert_eq!(r, Err(Error::Status(crate::error::INVALID_INPUT)));
-    let edited = make_box([0.0; 3], [1.0; 3]).unwrap();
-    let r: Result<()> = with_body("on purpose: panics editing", &edited, |_, br| {
-        let v = br.vertex_list()[0];
-        br.vertex_mut(v)?.point = solidcore::Vec3::new(9.0, 9.0, 9.0);
-        panic!("half way")
-    });
-    set_failure_hook(None);
-    assert!(matches!(r, Err(Error::Internal(_))));
-    assert_eq!(edited.counts().unwrap(), [6, 12, 8]);
-    let seen = seen.lock().unwrap();
-    assert_eq!(seen.len(), 2);
-    let (call, why, inputs) = &seen[0];
-    assert_eq!(call, "on purpose: refused");
-    assert!(why.contains("1007") || why.contains("rejected"), "{why}");
-    assert_eq!(inputs[0].0, "brep");
-    let back = Body::from_smb(inputs[0].1.clone().unwrap(), false).unwrap();
-    assert_eq!(back.counts().unwrap(), [6, 12, 8]);
-    let unedited = make_box([0.0; 3], [1.0; 3]).unwrap().to_smb(false).unwrap();
-    assert_eq!(seen[1].2[0].1.as_ref().unwrap(), &unedited);
-    assert_eq!(edited.to_smb(false).unwrap(), unedited);
+    in_own_process(
+        "session::tests::a_failed_call_reaches_the_hook_with_its_consistent_inputs",
+        || {
+            type Seen = Vec<(
+                String,
+                String,
+                Vec<(&'static str, std::result::Result<Vec<u8>, String>)>,
+            )>;
+            let _turn = HOOKED.lock().unwrap_or_else(PoisonError::into_inner);
+            all_fixes();
+            let seen: Arc<Mutex<Seen>> = Arc::default();
+            let s = Arc::clone(&seen);
+            set_failure_hook(Some(Arc::new(move |f: &Failure<'_>| {
+                if f.call.starts_with("on purpose") {
+                    s.lock()
+                        .unwrap()
+                        .push((f.call.to_owned(), f.why.to_owned(), f.inputs.clone()));
+                }
+            })));
+            let b = make_box([0.0; 3], [1.0; 3]).unwrap();
+            let r: Result<()> = with_body("on purpose: refused", &b, |_, _| {
+                Err(SolidError::invalid_input("test", "refused"))
+            });
+            assert_eq!(r, Err(Error::Status(crate::error::INVALID_INPUT)));
+            let edited = make_box([0.0; 3], [1.0; 3]).unwrap();
+            let r: Result<()> = with_body("on purpose: panics editing", &edited, |_, br| {
+                let v = br.vertex_list()[0];
+                br.vertex_mut(v)?.point = solidcore::Vec3::new(9.0, 9.0, 9.0);
+                panic!("half way")
+            });
+            set_failure_hook(None);
+            assert!(matches!(r, Err(Error::Internal(_))));
+            assert_eq!(edited.counts().unwrap(), [6, 12, 8]);
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            let (call, why, inputs) = &seen[0];
+            assert_eq!(call, "on purpose: refused");
+            assert!(why.contains("1007") || why.contains("rejected"), "{why}");
+            assert_eq!(inputs[0].0, "brep");
+            let back = Body::from_smb(inputs[0].1.clone().unwrap(), false).unwrap();
+            assert_eq!(back.counts().unwrap(), [6, 12, 8]);
+            let unedited = make_box([0.0; 3], [1.0; 3]).unwrap().to_smb(false).unwrap();
+            assert_eq!(seen[1].2[0].1.as_ref().unwrap(), &unedited);
+            assert_eq!(edited.to_smb(false).unwrap(), unedited);
+        },
+    );
 }
 
 type Written = Vec<std::result::Result<Vec<u8>, String>>;
