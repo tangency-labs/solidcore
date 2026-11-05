@@ -735,10 +735,8 @@ impl OffsetExecutive {
     /// [`Self::offset_extension_margin`]: [`super::reach::extension_reach`]).
     ///
     /// Not upstream: upstream's `CreateExtendedSurface(.., SM_CT_G1R, ..)` extends by five
-    /// offset distances, fits a ruled extension and removes knots within a tolerance (the
-    /// WR-532 / WR-728 opt-ins `offset_extends_cones_as_themselves` and
-    /// `offset_extends_ball_patches_as_themselves` extended cones and ball patches as
-    /// themselves; the exact path always does, so the flags no longer change this).
+    /// offset distances, fits a ruled extension and removes knots within a tolerance, which
+    /// leaves a cylinder or a ball patch's sphere at once (WR-532, WR-728).
     ///
     /// `base_key` represents upstream pointer identity, including across Rust clones.
     /// Distinct source identities must use distinct keys. Failed extensions are not cached.

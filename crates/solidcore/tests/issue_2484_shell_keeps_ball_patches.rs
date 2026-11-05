@@ -5,7 +5,8 @@
 //! The shell's extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) used to
 //! extend those patches tangentially (`SM_CT_G1R`) into plain B-splines, and 7 of the 8
 //! inner corners lost their sphere; now each is a ball patch on its sphere (its own net
-//! continued, flag or not), the volume is the closed form's and the body checks clean.
+//! continued, on the default kernel too), the volume is the closed form's and the body
+//! checks clean.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -39,15 +40,10 @@ const WALL: f64 = 2.0;
 
 /// Every fix but `geometric_g2_continuity`.
 fn all_fixes() -> Kernel {
-    all_fixes_but("geometric_g2_continuity")
-}
-
-/// Every fix but `geometric_g2_continuity` and `off`.
-fn all_fixes_but(off: &str) -> Kernel {
     let mut k = Kernel::default();
     let mut f = UpstreamFixes::default();
     for &name in UpstreamFixes::NAMES {
-        if name != "geometric_g2_continuity" && name != off {
+        if name != "geometric_g2_continuity" {
             *f.flag_mut(name).unwrap() = true;
         }
     }
@@ -209,14 +205,13 @@ fn the_shell_has_the_closed_form_volume_and_checks_clean() {
     assert!(lines.is_empty(), "{lines:?}");
 }
 
-/// `offset_extends_ball_patches_as_themselves` no longer changes the extended offset: it
-/// always extends a ball patch as itself, its own net continued on its sphere
-/// (`Surface::extended_sides`), so with the flag off every inner corner still keeps its
-/// patch, on its sphere (before, a tangent extension into a plain B-spline kept only
-/// corner 1's).
+/// The extended offset always extends a ball patch as itself, its own net continued on
+/// its sphere (`Surface::extended_sides`), so on the default kernel, with no fix turned
+/// on, every inner corner keeps its patch on its sphere (upstream's tangent extension
+/// into a plain B-spline kept only corner 1's).
 #[test]
-fn without_the_fix_every_inner_corner_still_keeps_its_sphere() {
-    let mut k = all_fixes_but("offset_extends_ball_patches_as_themselves");
+fn on_the_default_kernel_every_inner_corner_keeps_its_sphere() {
+    let mut k = Kernel::default();
     let shell = shelled_box(&mut k);
     let mut kept = Vec::new();
     for corner in 0..8 {
