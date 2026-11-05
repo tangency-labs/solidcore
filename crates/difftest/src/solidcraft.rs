@@ -1765,9 +1765,6 @@ fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
             &mut k.fixes.boolean_wire_edge_keeps_faceuse_shell
         }
         "boolean_new_face_closure_both_sides" => &mut k.fixes.boolean_new_face_closure_both_sides,
-        "precise_properties_split_at_surface_knots" => {
-            &mut k.fixes.precise_properties_split_at_surface_knots
-        }
         "precise_properties_span_end_from_below" => {
             &mut k.fixes.precise_properties_span_end_from_below
         }

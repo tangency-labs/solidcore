@@ -20,9 +20,9 @@
 //! B-rep enumeration, bounding boxes, and region classification remain calls into
 //! their unported units. `boundary_properties` exposes the integration after trim
 //! construction for callers already holding oriented trim curves. Nested integration
-//! has a fixed two-level call structure, not input-driven recursion. With
-//! `UpstreamFixes::precise_properties_split_at_surface_knots` (WR-494) both levels split
-//! at the surface's knots, as the SolidCraft fork's tangency-labs/smlib@08d9a14 does.
+//! has a fixed two-level call structure, not input-driven recursion. Both levels split
+//! at the surface's knots, as the SolidCraft fork's tangency-labs/smlib@08d9a14 does
+//! (WR-494, #1435): upstream steps across them.
 //! With `UpstreamFixes::brep_area_between_solid_and_void` (WR-535) a volume-separating
 //! faceuse adds its volume only where it bounds a non void region and its area only
 //! where the area behaviour selects it (tangency-labs/smlib@d2d9586).
@@ -377,21 +377,14 @@ pub fn boundary_properties(
             face_thickness: thickness,
             layout: &layout,
         };
-        let ivl = trim.natural_interval();
 
-        // Integrate each knot span of the natural interval separately: the RK error
-        // estimate assumes a smooth integrand, so a step across a knot can hide a large
-        // error.
-        //
-        // With `fixes.precise_properties_split_at_surface_knots` (WR-494; the SolidCraft
-        // fork's tangency-labs/smlib@08d9a14) the pieces are those between the trim
-        // curve's knots and its crossings of the surface's knot lines u = k, where the
-        // integrand's derivatives jump too.
-        let knots = if k.fixes.precise_properties_split_at_surface_knots {
-            trim_curve_breaks(k, trim, surface)?
-        } else {
-            trim.knots(k, Some(&ivl))?.0
-        };
+        // Integrate piece by piece between the trim curve's knots and its crossings of the
+        // surface's knot lines u = k (WR-494; the SolidCraft fork's
+        // tangency-labs/smlib@08d9a14): at either the integrand's derivatives jump, and
+        // at a knot of multiplicity reaching the degree (a rational circle's double knot)
+        // the integrand itself does. A step's error estimate is the leading term of an
+        // expansion that holds only where the integrand is smooth across the step.
+        let knots = trim_curve_breaks(k, trim, surface)?;
 
         // A coarse first Runge-Kutta step can trip the integrator's abort guard for one
         // traversal direction, so a reversed cap loop fails where its twin succeeds. Try
@@ -404,9 +397,7 @@ pub fn boundary_properties(
                 continue;
             };
             // (`!(dB > dA)`: also an unordered pair)
-            if k.fixes.precise_properties_split_at_surface_knots
-                && b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater)
-            {
+            if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
                 continue; // a crossing at a knot
             }
             let mut status = Err(SolidError::sm_err(OP));

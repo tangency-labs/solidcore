@@ -1,6 +1,5 @@
-//! #2091 (WR-670): with `UpstreamFixes::precise_properties_split_at_surface_knots`
-//! (WR-494) each iso-u integral of `SmODEAreaIFEO` runs knot span by knot span, but
-//! every piece's last point was evaluated in the knot span above it (upstream's
+//! #2091 (WR-670): each iso-u integral of `SmODEAreaIFEO` runs knot span by knot span
+//! (WR-494), but every piece's last point was evaluated in the knot span above it (upstream's
 //! `bVFromLeft = TRUE`). Where the surface's derivatives jump at a v knot (a G2 but
 //! not C2 section, merged into one face under `geometric_g2_continuity`), the integrand
 //! jumped at each piece's end and the Runge-Kutta steps shrank toward every knot.
@@ -57,7 +56,6 @@ fn section(z: f64) -> Vec<Curve> {
 fn kernel(span_end_from_below: bool) -> Kernel {
     let mut k = Kernel::default();
     k.fixes.geometric_g2_continuity = true;
-    k.fixes.precise_properties_split_at_surface_knots = true;
     k.fixes.precise_properties_span_end_from_below = span_end_from_below;
     k
 }

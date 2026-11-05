@@ -2297,6 +2297,9 @@ impl OdeArea<'_> {
     /// stale value fits, and the accepted step keeps an error far above the requested
     /// accuracy (-5.1e-4 relative at 1e-4 on a quarter annulus).
     ///
+    /// Not upstream either: the iso-curve integral runs piece by piece between the
+    /// surface's v knots (WR-494, #1435), where upstream steps across them.
+    ///
     /// # Errors
     ///
     /// Those of the curve evaluation and the inner integration evaluator.
@@ -2328,58 +2331,46 @@ impl OdeArea<'_> {
 
         let mut dy = Vec::new();
         dy.resize(num_components, 0.0);
-        if k.fixes.precise_properties_split_at_surface_knots {
-            // Along the iso-u line the integrand is smooth only within each knot
-            // span of the surface: integrated span by span, as the trim curve is
-            // (WR-494; the SolidCraft fork's tangency-labs/smlib@08d9a14).
-            let mut breaks =
-                surface_knots_inside(k, self.surface, SurfParamType::V, self.min_v, p0.y)?;
-            breaks.insert(0, self.min_v);
-            breaks.push(p0.y);
-            let mut piece_y = Vec::new();
-            piece_y.resize(num_components, 0.0);
-            for pair in breaks.windows(2) {
-                let &[a, b] = pair else {
-                    continue;
-                };
-                piece_y.fill(0.0);
-                // With `fixes.precise_properties_span_end_from_below` (WR-670,
-                // #2091) each piece's end (a v knot, or the trim point) is evaluated
-                // in the piece's own span: upstream's `TRUE` takes the span above,
-                // so the integrand jumped at the piece's last point and the steps
-                // shrank toward every knot (about 5x the evaluations a piece).
-                let piece_eval = if k.fixes.precise_properties_span_end_from_below && b > a {
-                    eval.with_v_end_from_below(b)
-                } else {
-                    eval
-                };
-                // A failed inner integration is not a zero-area contribution.
-                runge_kutta_ode_integrate(
-                    &piece_eval,
-                    &mut piece_y,
-                    a,
-                    b,
-                    self.iso_curve_accuracy,
-                    (b - a) / 2.0,
-                    self.y_scale,
-                )?;
-                for (total, part) in dy.iter_mut().zip(piece_y.iter()) {
-                    *total += *part;
-                }
-            }
-        } else {
-            let step = p0.y - self.min_v;
-
+        // Along the iso-u line the integrand is smooth only within each knot span of
+        // the surface: built from first derivatives, it is C^(p-m-1) at a v knot of
+        // multiplicity m (p the degree), so discontinuous at a rational circle's double
+        // knot, and a step across any knot has an error its estimate does not measure.
+        // Integrated span by span, as the trim curve is (WR-494; the SolidCraft fork's
+        // tangency-labs/smlib@08d9a14).
+        let mut breaks =
+            surface_knots_inside(k, self.surface, SurfParamType::V, self.min_v, p0.y)?;
+        breaks.insert(0, self.min_v);
+        breaks.push(p0.y);
+        let mut piece_y = Vec::new();
+        piece_y.resize(num_components, 0.0);
+        for pair in breaks.windows(2) {
+            let &[a, b] = pair else {
+                continue;
+            };
+            piece_y.fill(0.0);
+            // With `fixes.precise_properties_span_end_from_below` (WR-670,
+            // #2091) each piece's end (a v knot, or the trim point) is evaluated
+            // in the piece's own span: upstream's `TRUE` takes the span above,
+            // so the integrand jumped at the piece's last point and the steps
+            // shrank toward every knot (about 5x the evaluations a piece).
+            let piece_eval = if k.fixes.precise_properties_span_end_from_below && b > a {
+                eval.with_v_end_from_below(b)
+            } else {
+                eval
+            };
             // A failed inner integration is not a zero-area contribution.
             runge_kutta_ode_integrate(
-                &eval,
-                &mut dy,
-                self.min_v,
-                p0.y,
+                &piece_eval,
+                &mut piece_y,
+                a,
+                b,
                 self.iso_curve_accuracy,
-                step / 2.0,
+                (b - a) / 2.0,
                 self.y_scale,
             )?;
+            for (total, part) in dy.iter_mut().zip(piece_y.iter()) {
+                *total += *part;
+            }
         }
         dydx.clear();
         dydx.push(0.0);
