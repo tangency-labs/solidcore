@@ -1980,6 +1980,96 @@ mod tests {
         assert_eq!((edges.len(), lamina), (15, 14), "{r:?}");
     }
 
+    /// (#2506) A strip 0.02 wide in y = 0, from x = 0 to 0.02, and two faces leaving its
+    /// long sides almost in its plane, one 0.01 above it and one 0.01 below (the
+    /// T-junction sliver of the difftest case `cov_tjunc11`). At a stitch tolerance of
+    /// 0.1 the strip's two long sides are one curve, and gluing them collapses the strip.
+    /// Round that curve the strip leaves it in both directions, so it has no place in a
+    /// radial order: the radial check must not hold the pair apart, though the faces'
+    /// angles alone would put one neighbour on each side of it.
+    #[test]
+    fn radial_glue_leaves_a_face_meeting_the_curve_twice_to_the_gluing() {
+        use crate::math::Point3;
+
+        let p = |x: f64, y: f64, z: f64| Point3::new(x, y, z);
+        let mut k = Kernel::default();
+        let mut b = crate::topology::brep::p3::new_brep(
+            &mut k,
+            crate::geom::tol::USE_DEFAULT,
+            crate::geom::tol::USE_DEFAULT,
+        )
+        .unwrap();
+        let faces = [
+            [
+                p(0.0, 0.0, 0.0),
+                p(0.02, 0.0, 0.0),
+                p(0.02, 0.0, 1.0),
+                p(0.0, 0.0, 1.0),
+            ],
+            [
+                p(0.0, 0.0, 0.0),
+                p(0.0, 0.0, 1.0),
+                p(-1.0, 0.01, 1.0),
+                p(-1.0, 0.01, 0.0),
+            ],
+            [
+                p(0.02, 0.0, 0.0),
+                p(1.02, -0.01, 0.0),
+                p(1.02, -0.01, 1.0),
+                p(0.02, 0.0, 1.0),
+            ],
+        ];
+        for corners in &faces {
+            add_planar_face(&mut k, &mut b, &polygon(corners));
+        }
+        // the edges from z = 0 to z = 1 at x = 0 or 0.02 in y = 0, by face
+        let on_line = |k: &Kernel, b: &Brep, f: FaceId| -> Vec<EdgeId> {
+            bp1::edges(b, None)
+                .unwrap()
+                .into_iter()
+                .filter(|&e| {
+                    let ivl = edge::interval(b, e).unwrap();
+                    let c = curve_of(b, e).unwrap();
+                    let (s, t) = (
+                        c.evaluate_point(k, ivl.min()).unwrap(),
+                        c.evaluate_point(k, ivl.max()).unwrap(),
+                    );
+                    edge::faces(b, e, None).unwrap() == [f]
+                        && s.y == 0.0
+                        && t.y == 0.0
+                        && s.x == t.x
+                        && s.z != t.z
+                })
+                .collect()
+        };
+        let all = bp1::faces(&b, None).unwrap();
+        let strip = on_line(&k, &b, all[0]);
+        let others: Vec<EdgeId> = all[1..].iter().flat_map(|&f| on_line(&k, &b, f)).collect();
+        assert_eq!((strip.len(), others.len()), (2, 2));
+        let ivl = edge::interval(&b, strip[0]).unwrap();
+        let pv = curve_of(&b, strip[0])
+            .unwrap()
+            .evaluate(&k, ivl.mid(), 1, true, true)
+            .unwrap();
+        let second = edge::interval(&b, strip[1]).unwrap().mid();
+        let glue = RadialGlue {
+            point: pv[0],
+            axis: pv[1],
+            tolerance: 0.1,
+            fast: true,
+        };
+        let crosses = glue
+            .crosses(
+                &mut k,
+                &mut b,
+                (strip[0], ivl.mid()),
+                (strip[1], second),
+                &others,
+            )
+            .unwrap();
+        assert!(!crosses);
+    }
+
     #[test]
     fn shell_without_tolerance_range_is_a_no_op() {
         let mut k = Kernel::default();
