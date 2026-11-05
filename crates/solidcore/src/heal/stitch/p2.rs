@@ -144,7 +144,8 @@ struct RadialGlue {
     point: crate::math::Point3,
     /// The first edge's tangent there.
     axis: Vec3,
-    /// The pair's gluing tolerance.
+    /// The stitch tolerance (`Stitch::stitch_tol_3d`), the floor of every pair's gluing
+    /// tolerance.
     tolerance: f64,
     /// `Stitch::fast_edge_compare`: whether the coincidence test stops at five samples.
     fast: bool,
@@ -206,11 +207,12 @@ impl RadialGlue {
     }
 
     /// The parameter of `o`'s curve at [`Self::point`] when `o` is coincident with the
-    /// first edge `e` (curve parameter `t` there) by the edge gluing's own test: its
-    /// curve passes the point within the tolerance and, unless both are lines between
-    /// the same vertices, stays within it over the whole edge (five samples, then the
-    /// precise distance unless [`Self::fast`]). A curve that only touches `e`'s at the
-    /// point is not on it.
+    /// first edge `e` (curve parameter `t` there) by the edge gluing's own test, at the
+    /// tolerance the gluing takes for `e` and `o` (the larger of [`Self::tolerance`] and
+    /// their edges' summed tolerances): its curve passes the point within that tolerance
+    /// and, unless both are lines between the same vertices, stays within it over the
+    /// whole edge (five samples, then the precise distance unless [`Self::fast`]). A
+    /// curve that only touches `e`'s at the point is not on it.
     fn coincident(
         &self,
         k: &mut Kernel,
@@ -218,6 +220,10 @@ impl RadialGlue {
         (e, t): (EdgeId, f64),
         o: EdgeId,
     ) -> Result<Option<f64>> {
+        let tol = smos_max(
+            self.tolerance,
+            edge::tolerance(b, o)? + edge::tolerance(b, e)?,
+        );
         let o_ivl = edge::interval(b, o)?;
         let o_curve = curve_of(b, o)?;
         let dropped = match o_curve.drop_point(
@@ -225,11 +231,11 @@ impl RadialGlue {
             &o_ivl,
             self.point,
             None,
-            self.tolerance,
+            tol,
             Some(o_ivl.mid()),
             SolverOperation::Minimize,
         ) {
-            Ok(d) if d.success && d.distance <= self.tolerance => d,
+            Ok(d) if d.success && d.distance <= tol => d,
             Err(err) if err.is_unported_or_cancelled() => return Err(err),
             // no drop point within the tolerance: not on the curve
             Ok(_) | Err(_) => return Ok(None),
@@ -252,17 +258,9 @@ impl RadialGlue {
         let samples: &[u64] = if self.fast { &[5] } else { &[5, 0] };
         for &n in samples {
             let d = e_curve
-                .curve_max_distance_between(
-                    k,
-                    &e_ivl,
-                    o_curve,
-                    o_start,
-                    o_end,
-                    n,
-                    Some(self.tolerance),
-                )?
+                .curve_max_distance_between(k, &e_ivl, o_curve, o_start, o_end, n, Some(tol))?
                 .distance;
-            if d > self.tolerance {
+            if d > tol {
                 return Ok(None);
             }
         }
@@ -1013,7 +1011,7 @@ impl Stitch<'_> {
                         let glue = RadialGlue {
                             point: mid_pnt,
                             axis: tangent(&pv)?,
-                            tolerance: this_tol,
+                            tolerance: tol_3d,
                             fast: self.fast_edge_compare,
                         };
                         if glue.crosses(
