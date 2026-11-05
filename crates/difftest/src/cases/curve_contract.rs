@@ -181,3 +181,23 @@ pub fn line(
 pub fn hermite(vs: [&[f64; 3]; 4], max: f64) -> bool {
     vs.iter().all(|v| vec3(v, max))
 }
+
+/// Whether one of at most `max_transforms` transforms applied to a curve keeps the
+/// contract: an origin within `max / max_transforms`, two non-parallel axes ([`frame`]) and,
+/// when given, scales in `[1e-3, 1]`.
+#[must_use]
+pub fn transform(
+    o: &[f64; 3],
+    x: &[f64; 3],
+    y: &[f64; 3],
+    scale: Option<[f64; 3]>,
+    max: f64,
+    max_transforms: u64,
+) -> bool {
+    let s = scale.unwrap_or([1.0; 3]);
+    vec3(o, max)
+        && o.iter().all(|c| c.abs() <= max / max_transforms as f64)
+        && frame(x, y, max)
+        && vec3(&s, max)
+        && (scale.is_none() || s.iter().all(|c| (1e-3..=1.0).contains(&c.abs())))
+}

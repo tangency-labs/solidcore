@@ -531,17 +531,11 @@ fn gps_vectors(sop: i32) -> Option<usize> {
 /// Transforms of a B-spline only, at most [`MAX_TRANSFORMS`], each with an origin within
 /// `MAX_COORD / MAX_TRANSFORMS`, two non-parallel axes and scales in `[1e-3, 1]`.
 fn transforms(xf: &[XformIn], bspline: bool) -> bool {
-    let max = LIMITS.max_coord;
     let nt: u64 = xf.iter().map(|t| t.repeat).sum();
     (nt == 0 || bspline)
         && nt <= MAX_TRANSFORMS
         && xf.iter().filter(|t| t.repeat > 0).all(|t| {
-            let s = t.scale.unwrap_or([1.0; 3]);
-            contract::vec3(&t.o, max)
-                && t.o.iter().all(|c| c.abs() <= max / MAX_TRANSFORMS as f64)
-                && contract::frame(&t.x, &t.y, max)
-                && contract::vec3(&s, max)
-                && (t.scale.is_none() || s.iter().all(|c| (1e-3..=1.0).contains(&c.abs())))
+            contract::transform(&t.o, &t.x, &t.y, t.scale, LIMITS.max_coord, MAX_TRANSFORMS)
         })
 }
 
