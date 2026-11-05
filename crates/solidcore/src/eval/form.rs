@@ -64,8 +64,8 @@ fn valid_interval([a0, a1]: [f64; 2]) -> bool {
 }
 
 /// The analytic forms cover a finite, positive interval of at most one turn.
-fn valid_angles(a: [f64; 2]) -> bool {
-    valid_interval(a) && a[1] - a[0] <= TAU * (1.0 + 1e-9)
+fn valid_angles([a0, a1]: [f64; 2]) -> bool {
+    valid_interval([a0, a1]) && a1 - a0 <= TAU * (1.0 + 1e-9)
 }
 
 /// The quarters an angle interval needs: the first one and how many. An end within `reach` (an
