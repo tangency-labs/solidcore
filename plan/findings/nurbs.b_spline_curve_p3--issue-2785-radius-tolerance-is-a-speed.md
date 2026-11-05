@@ -91,25 +91,30 @@ for a zero-speed tangent end at a vertex. Whether a radius minimum at a curve's 
 be skipped outright, waived as WR-668 does, or reported, is a separate question from the units,
 and is left out of this fix.
 
-**Any dimensionally correct fix flips this case.** The curve's radius is `8.9e-5` of the trim's
-own box, so a tolerance of `size/10000` reports it and a tolerance of `size/20000` does not; the
-corpus happens to accept it because the trim's domain length nearly equals its mapped size. The
-choice of fraction is therefore a design question, not a substitution — as #2785 says.
+**Any dimensionally correct fix flips this case.** The corpus's own expectations pin the
+fraction to a narrow window:
 
-## What this does to SolidCraft's reports
+| must report | radius / size | must accept | radius / size |
+|---|---|---|---|
+| `wr_668_zero_speed_tangent_end_is_no_kink` | 4.71e-5 | `countersink_asked_corner_is_certified_with_its_nets` | 8.96e-5 |
 
-The check is the one that refuses a body SolidCraft has just built ("SMLib's check refuses the
-result"). A report survives the fix iff `size_t > radius / old_tolerance`; the ratio is given
-per issue so triage can decide without re-running:
+A 1.90x window, and `1/10000` sits 11.6 % above its top. A window that narrow means the fraction
+is a fitted parameter, not a derived one, so the fix does not move it: `1/10000` is the fraction
+the function already used, applied to the right quantity. The balanced fitted value would be
+`1/15000` (6.50e-5), which keeps the corpus green but derives from nothing.
 
-| SolidCraft issue | test | radius | old tolerance | survives iff `size_t` > |
-|---|---|---|---|---|
-| #12059 | 13 | 9.3833822e-8 | 1.4354766e-4 | 6.54e-4 |
-| #12090 | 14 | 2.0557583e-3 | 9.403931e-3 | 0.2186 |
-| #12319 | 13 | 2.2940238e-5 | 5.0182638e-5 | 0.4571 |
-| #11582 | 13 | 2.6946122e-6 | 2.6884914e-3 | 1.00e-3 |
-| #11754 | 13 | 2.6946122e-6 / 1.3805233e-6 | 2.6884914e-3 / 4.0427811e-3 | 1.00e-3 / 3.41e-4 |
+The principled alternative is the **scale**, not the fraction. `docs/definitions-and-certificates.md`
+§5 asks for a gate "at part scale", and a UV trim's own box is not the part: this trim is 1.69 mm
+on a much larger face, so at the face's scale its 1.5e-4 radius is irrelevant and at its own it is
+not. A face-scale tolerance accepts this trim and still reports `issue_891`'s trim on a 600 x 3
+plane (whose 2D radius is 8.3e-6 against 0.06). It needs the face's size plumbed into
+`assert_valid`, which is an API change and is left as the follow-up.
 
-None of these is closed by this fix alone. What it changes is that the verdict no longer depends
-on the domain, so a report that survives is a real near-cusp in the geometry and can be fixed at
-the construction that made it, instead of appearing or vanishing with the parametrisation.
+**Tried and rejected: skipping a radius minimum on a natural boundary end.** The countersink
+trim's minimum is at parameter exactly `0` of `[0, 1.677]`, and the first-derivative loop above
+already skips a solution on a natural boundary end ("they are not a problem"), so the radius loop
+not skipping one looks like an asymmetry. It fixes this case, but it cannot be pinned with a test:
+no Bezier of the shape `(0,0) (h,0) (a,b) (1,1)` makes the solver return the domain end — with
+`h` from 1e-3 down to 1e-6 the reported minimum is at `1.22e-4`..`2.44e-4`, interior — so the
+skip only fires when the solver happens to land exactly on the end, which is incidental to this
+trim and not a rule. It is worth revisiting on its own evidence, not as part of this fix.
