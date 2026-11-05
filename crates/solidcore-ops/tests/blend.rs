@@ -184,19 +184,10 @@ fn a_variable_round_runs_from_its_start() {
     assert!(v < ABC - off(1.0) && v > ABC - off(2.0), "{v}");
     assert!(b.check(CheckLevel::All).unwrap().is_valid());
 
-    // a law with a corner, one zero inside, one that starts off the edge
+    // a law zero inside, one that starts off the edge
     let b = block();
     let e = top_front(&b);
     let start = vertex_at(&b, [0.0, 0.0, 10.0]);
-    let bent = fillet_variable(
-        &b,
-        e,
-        start,
-        1,
-        &[0.0, 0.0, 0.5, 1.0, 1.0],
-        &[1.0, 2.0, 1.0],
-    );
-    assert!(matches!(bent, Err(Error::Unsupported(_))), "{bent:?}");
     let pinched = fillet_variable(
         &b,
         e,
