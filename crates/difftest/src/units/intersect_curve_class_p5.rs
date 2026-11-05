@@ -16,11 +16,12 @@ use solidcore::curve::curve::p2::Curve;
 use solidcore::curve::ellipse::{Ellipse, EllipseOptions};
 use solidcore::curve::line::{BoundedLineOptions, Line};
 use solidcore::geom::extent1d::Extent1d;
+use solidcore::geom::tol::{xsect_tol3d, xsect_tol_3d_from_zones, zone_tol3d};
 use solidcore::geom::solution_array::{Solution, SolutionType};
 use solidcore::intersect::curve_class::p5::{insert_solutions, ExtractOptions};
 use solidcore::intersect::curve_class::{CurveClassification, CurveInterval};
 use solidcore::intersect::point_class::{
-    ClassGeometry, ClassObject, ClassObjectKind, PointClassType, PointClassification,
+    object_zone_tol_3d, ClassGeometry, ClassObject, ClassObjectKind, PointClassType, PointClassification,
 };
 use solidcore::kernel::Kernel;
 use solidcore::math::Vec3;
@@ -97,6 +98,119 @@ struct Input {
     /// A B-rep case (module `topo`); the fields above are then unused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     topo: Option<topo::TopoIn>,
+}
+
+impl Input {
+    /// The case as the flat record of its input contract ([`keeps_contract`]).
+    fn flat(&self) -> Vec<f64> {
+        let n = self.bounds.len().saturating_sub(1);
+        let other_bounds = self.other_bounds.as_ref().unwrap_or(&self.bounds);
+        let other_n = other_bounds.len().saturating_sub(1);
+        let mut out = vec![
+            self.op as f64,
+            self.shape as f64,
+            if self.dim2 { 0. } else { 1. },
+            f64::from(self.ignore),
+            f64::from(self.flag1),
+            f64::from(self.flag2),
+            f64::from(self.flag3),
+            self.target as f64,
+            self.index as f64,
+            self.scale,
+            self.tol,
+            self.angle,
+            n as f64,
+            self.solutions.len() as f64,
+            self.xsect_tol,
+            other_n as f64,
+        ];
+        out.extend(&self.bounds);
+        out.extend(other_bounds);
+        for (c, count) in [(&self.classes, n), (&self.other_classes, other_n)] {
+            if c.is_empty() {
+                out.extend(std::iter::repeat_n(100., 3 * count));
+            } else {
+                out.extend(c.iter().map(|x| f64::from(*x)));
+            }
+        }
+        out.extend(self.solutions.iter().flatten());
+        out
+    }
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/intersect_curve_class_p5.rs`, `validate`, and the
+/// shim's entry checks): finite bounded values, codes and counts in range, increasing
+/// interval bounds, classes of the target kind, no topology merge on a stand-in
+/// (ops 4 and 5), no solutions without intervals (ops 0 and 1), paired and non-empty
+/// classifications where both are read (ops 3 and 4), no vertex use on the stand-in vertex
+/// and no `IntersectVertices` into an empty classification (UB-109, op 6), solutions of a
+/// valid type with non-negative gaps, and no short range that stays a range
+/// ([`short_ranges_ok`]).
+fn keeps_contract(i: &Input) -> bool {
+    let k = Kernel::default();
+    static_contract(i) && build_pool(&k, i).is_ok_and(|pool| short_ranges_ok(&k, &pool, i).unwrap_or(true))
+}
+
+fn static_contract(i: &Input) -> bool {
+    let input = i.flat();
+    if input.iter().any(|x| !x.is_finite() || x.abs() > 1e21) {
+        return false;
+    }
+    let Some(&[op, shape, dim, ignore, flag1, flag2, flag3, target, index, scale, tol, _angle, n, ns, _opt_tol, other_n]) =
+        input.first_chunk::<16>()
+    else {
+        return false;
+    };
+    let int = |x: f64, max: u32| (x >= 0.0 && x <= f64::from(max) && x.fract() == 0.0).then_some(x as usize);
+    let (Some(op), Some(_), Some(_), Some(target), Some(_), Some(n), Some(ns), Some(other_n)) = (
+        int(op, 6),
+        int(shape, 4),
+        int(dim, 1),
+        int(target, 3),
+        int(index, 1),
+        int(n, 32),
+        int(ns, 32),
+        int(other_n, 32),
+    ) else {
+        return false;
+    };
+    if [ignore, flag1, flag2, flag3].iter().any(|f| int(*f, 1).is_none()) {
+        return false;
+    }
+    if input.len() != 18 + 4 * (n + other_n) + 7 * ns || scale <= 0.0 || scale > 1e6 || tol < 0.0 {
+        return false;
+    }
+    for (start, count) in [(16, n), (17 + n, other_n)] {
+        match input.get(start..start + count + 1) {
+            Some(bounds) if bounds.windows(2).all(|w| w.first() < w.last()) => {}
+            _ => return false,
+        }
+    }
+    let at = 18 + n + other_n;
+    let class_count = 3 * (n + other_n);
+    let Some(classes) = input.get(at..at + class_count) else { return false };
+    let classes_ok = classes.iter().all(|&class| {
+        let valid = class == 100.0
+            || class == 110.0
+            || (class == 106.0 && target == 0)
+            || (class == 107.0 && target == 1)
+            || (class == 104.0 && target == 2)
+            || (class == 102.0 && target == 3);
+        valid && !((op == 4 || op == 5) && (101.0..=104.0).contains(&class))
+    });
+    if !classes_ok
+        || ((op == 0 || op == 1) && n == 0 && ns > 0)
+        || (op == 3 && (n == 0 || other_n == 0))
+        || (op == 4 && n != other_n)
+        || (op == 6 && flag1 != 0.0 && flag2 != 0.0)
+        || (op == 6 && n == 0 && flag1 != 0.0)
+    {
+        return false;
+    }
+    input.get(at + class_count..).is_some_and(|sols| {
+        sols.as_chunks::<7>().0.iter().all(|s| int(s[0], 4).is_some() && s[5] >= 0.0 && s[6] >= 0.0)
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,8 +418,8 @@ fn stationary_curve(dim: u64, scale: f64, angle: f64) -> ScResult<Curve> {
     )?))
 }
 
-fn rust(i: &Input) -> ScResult<Output> {
-    let k = Kernel::default();
+/// The case's geometry.
+fn build_pool(k: &Kernel, i: &Input) -> ScResult<Pool> {
     let source = if i.shape == 2 || i.shape == 4 {
         stationary_curve(if i.dim2 { 2 } else { 3 }, i.scale, 0.)?
     } else if i.shape != 1 {
@@ -321,7 +435,7 @@ fn rust(i: &Input) -> ScResult<Output> {
         ))
     } else {
         Curve::from(Ellipse::new_circle(
-            &k,
+            k,
             Vec3::ZERO,
             Vec3::new(1., 0., 0.),
             Vec3::new(0., 1., 0.),
@@ -333,7 +447,7 @@ fn rust(i: &Input) -> ScResult<Output> {
             },
         )?)
     };
-    let pool = Pool {
+    Ok(Pool {
         source,
         target: if i.shape == 3 || i.shape == 4 {
             stationary_curve(if i.dim2 { 2 } else { 3 }, i.scale, i.angle)?
@@ -372,7 +486,41 @@ fn rust(i: &Input) -> ScResult<Output> {
             },
         )),
         vertex_tol: i.tol,
+    })
+}
+
+/// The run-time check of the C++ reference wrapper on `sm_InsertSolutions` (op 0) of a
+/// curve or plane target that ignores tangency: a short range solution (under 5 % of the
+/// classified interval) that does not turn into a point (its ends within the intersection
+/// tolerance and its six-segment length below it) reaches the missing edge curve of the
+/// tangency branch, undefined upstream.
+fn short_ranges_ok(k: &Kernel, pool: &Pool, i: &Input) -> ScResult<bool> {
+    if i.op != 0 || i.target > 1 || !i.ignore {
+        return Ok(true);
+    }
+    let (Some(first), Some(last)) = (i.bounds.first(), i.bounds.last()) else { return Ok(true) };
+    let xt = if i.xsect_tol < 0. {
+        xsect_tol_3d_from_zones(k, zone_tol3d(k, i.tol), object_zone_tol_3d(k, pool, Some(target(i)))?)
+    } else {
+        xsect_tol3d(k, i.xsect_tol)
     };
+    for &[typ, t0, _, t2, _, _, _] in &i.solutions {
+        if typ != 2. || t0 > t2 || (t2 - t0) / (last - first) >= 0.05 {
+            continue;
+        }
+        let ends = pool.source.evaluate_point(k, t0).and_then(|p0| Ok((p0, pool.source.evaluate_point(k, t2)?)));
+        let Ok((p0, p1)) = ends else { return Ok(false) };
+        let (length, _) = pool.source.approximate_length(k, &Extent1d::from_min_max(t0, t2), 6, false)?;
+        if !p0.closer_than(xt, p1) || length >= xt {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn rust(i: &Input) -> ScResult<Output> {
+    let k = Kernel::default();
+    let pool = build_pool(&k, i)?;
     let mut cc = setup(&k, &pool, i, false)?;
     let mut other = setup(&k, &pool, i, true)?;
     let mut solutions = Vec::new();
@@ -507,92 +655,97 @@ impl UnitDiff for Runner {
         "intersect.curve_class_p5"
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        let op = [0, 0, 0, 0, 0, 1, 1, 1, 3, 3, 6, 6, 2, 2, 4, 5]
-            .get(rng.below(16) as usize)
-            .copied()
-            .unwrap_or(0);
-        let n = 1 + rng.below(5) as usize;
-        let target = if op == 6 {
-            2
-        } else if op == 3 && rng.below(2) == 0 {
-            3
-        } else {
-            rng.below(2) as usize
-        };
-        let scale = [1e-6, 1., 1e6]
-            .get(rng.below(3) as usize)
-            .copied()
-            .unwrap_or(1.);
-        let mut i: Input =
-            serde_json::from_value(json!({"op":op,"target":target,"scale":scale})).ok()?;
-        i.shape = rng.below(2) as usize;
-        i.dim2 = rng.below(4) == 0;
-        i.ignore = rng.below(2) == 0;
-        i.angle = if rng.below(2) == 0 {
-            0.
-        } else {
-            rng.unit() * std::f64::consts::PI
-        };
-        i.bounds = (0..=n).map(|j| j as f64 / n as f64).collect();
-        i.tol = [0., 1e-9, 1e-6, 0.01]
-            .get(rng.below(4) as usize)
-            .copied()
-            .unwrap_or(1e-6);
-        i.flag1 = rng.below(2) == 0;
-        i.flag2 = rng.below(2) == 0;
-        i.flag3 = rng.below(2) == 0;
-        i.index = rng.below(2) as usize;
-        if op == 2 {
-            i.classes = (0..3 * n)
-                .map(|j| {
-                    if j % 3 == 1 {
-                        if target == 0 {
-                            106
-                        } else {
-                            107
-                        }
-                    } else {
-                        100
-                    }
-                })
-                .collect();
-        }
-        if op == 3 && target == 3 {
-            i.classes = vec![102; 3 * n];
-            i.other_classes.clone_from(&i.classes);
-        }
-        if op == 6 {
-            i.flag1 = true;
-            i.flag2 = false;
-            i.flag3 = true;
-            i.angle = if i.shape == 0 { rng.unit() } else { 1.0 };
-        }
-        if op == 0 || op == 1 {
-            i.xsect_tol = if rng.below(2) == 0 {
-                -1.
+        for _ in 0..64 {
+            let op = [0, 0, 0, 0, 0, 1, 1, 1, 3, 3, 6, 6, 2, 2, 4, 5]
+                .get(rng.below(16) as usize)
+                .copied()
+                .unwrap_or(0);
+            let n = 1 + rng.below(5) as usize;
+            let target = if op == 6 {
+                2
+            } else if op == 3 && rng.below(2) == 0 {
+                3
             } else {
-                rng.unit() * 0.01
+                rng.below(2) as usize
             };
-            for _ in 0..=rng.below(4) {
-                let a = rng.unit();
-                let b = if rng.below(2) == 0 {
-                    a + 1e-10
+            let scale = [1e-6, 1., 1e6]
+                .get(rng.below(3) as usize)
+                .copied()
+                .unwrap_or(1.);
+            let mut i: Input =
+                serde_json::from_value(json!({"op":op,"target":target,"scale":scale})).ok()?;
+            i.shape = rng.below(2) as usize;
+            i.dim2 = rng.below(4) == 0;
+            i.ignore = rng.below(2) == 0;
+            i.angle = if rng.below(2) == 0 {
+                0.
+            } else {
+                rng.unit() * std::f64::consts::PI
+            };
+            i.bounds = (0..=n).map(|j| j as f64 / n as f64).collect();
+            i.tol = [0., 1e-9, 1e-6, 0.01]
+                .get(rng.below(4) as usize)
+                .copied()
+                .unwrap_or(1e-6);
+            i.flag1 = rng.below(2) == 0;
+            i.flag2 = rng.below(2) == 0;
+            i.flag3 = rng.below(2) == 0;
+            i.index = rng.below(2) as usize;
+            if op == 2 {
+                i.classes = (0..3 * n)
+                    .map(|j| {
+                        if j % 3 == 1 {
+                            if target == 0 {
+                                106
+                            } else {
+                                107
+                            }
+                        } else {
+                            100
+                        }
+                    })
+                    .collect();
+            }
+            if op == 3 && target == 3 {
+                i.classes = vec![102; 3 * n];
+                i.other_classes.clone_from(&i.classes);
+            }
+            if op == 6 {
+                i.flag1 = true;
+                i.flag2 = false;
+                i.flag3 = true;
+                i.angle = if i.shape == 0 { rng.unit() } else { 1.0 };
+            }
+            if op == 0 || op == 1 {
+                i.xsect_tol = if rng.below(2) == 0 {
+                    -1.
                 } else {
-                    rng.unit()
+                    rng.unit() * 0.01
                 };
-                let typ = if rng.below(3) == 0 { 2. } else { 1. };
-                i.solutions.push([
-                    typ,
-                    a,
-                    rng.unit(),
-                    b.min(1.),
-                    rng.unit(),
-                    rng.unit() * 1e-7,
-                    rng.unit() * 1e-7,
-                ]);
+                for _ in 0..=rng.below(4) {
+                    let a = rng.unit();
+                    let b = if rng.below(2) == 0 {
+                        a + 1e-10
+                    } else {
+                        rng.unit()
+                    };
+                    let typ = if rng.below(3) == 0 { 2. } else { 1. };
+                    i.solutions.push([
+                        typ,
+                        a,
+                        rng.unit(),
+                        b.min(1.),
+                        rng.unit(),
+                        rng.unit() * 1e-7,
+                        rng.unit() * 1e-7,
+                    ]);
+                }
+            }
+            if keeps_contract(&i) {
+                return serde_json::to_value(i).ok();
             }
         }
-        serde_json::to_value(i).ok()
+        None
     }
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
         let context = CaseContext {

@@ -35,9 +35,13 @@
 //!
 //! Deferred cases: the zone tolerance of an edge, vertex or face classification on a bare
 //! stand-in next to a real B-rep (`topology.edge`, `topology.vertex`, `topology.face_p2`),
-//! `MergeIntoObject` and the 2D tolerance mapping that needs a surface point solve. Every
-//! generated script is a case, including those undefined upstream: their golden is the Rust
-//! result, refusal or deferral.
+//! `MergeIntoObject` and the 2D tolerance mapping that needs a surface point solve.
+//!
+//! Generated scripts keep the input contract upstream defines: before each op its
+//! preconditions are checked on the classifications the ops before it left
+//! ([`undefined_upstream`]: indices within the intervals, `FindInterval` defined, no point
+//! object where a zone tolerance is taken, no topology walk of a stand-in edge, ...), and
+//! the generator redraws a script with an op outside them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -47,8 +51,9 @@ use solidcore::curve::ellipse::{Ellipse, EllipseOptions};
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::curve::line::{BoundedLineOptions, Line};
 use solidcore::geom::extent1d::Extent1d;
-use solidcore::geom::tol::zone_tol3d;
+use solidcore::geom::tol::{eff_zero_param, zone_tol3d};
 use solidcore::geom::vector3d::Vec3;
+use solidcore::intersect::curve_class::p3::NO_INTERVAL;
 use solidcore::intersect::curve_class::{
     self as cc_mod, change_edge_point_class_to_near_vertex, fix_problems_by_squeezing,
     CurveClassification, CurveInterval, IntervalPosition,
@@ -74,7 +79,7 @@ use solidcore::topology::edge::NotifyEnv;
 use solidcore::topology::{Brep, EdgeId};
 
 use super::intersect_curve_class_p1::{BareTopology, PoolTopology};
-use super::intersect_curve_class_p4::{face_brep, gen_face, topology_entities, topology_kinds};
+use super::intersect_curve_class_p4::{face_keeps_contract, face_brep, gen_face, topology_entities, topology_kinds};
 use crate::units::heal_face_props::{self as hfp, FaceIn, LoopsIn};
 
 use crate::case::{CaseContext, CaseSource};
@@ -695,10 +700,12 @@ fn status(e: &SolidError) -> f64 {
 }
 
 /// A Rust failure: deferred for `Unported`, refused with the status of an operation
-/// upstream never fails on (its input is undefined upstream), a harness error otherwise.
+/// upstream never fails on, undefined upstream for an op outside its input contract
+/// ([`undefined_upstream`]), a harness error otherwise.
 enum Fail {
     Deferred(Box<Output>),
     Refused(f64),
+    Undefined(&'static str),
     Harness(HarnessError),
 }
 
@@ -824,6 +831,270 @@ fn build_pc(k: &Kernel, pool: &Pool, p: &PcIn) -> Result<PointClassification<H>,
     Ok(pc)
 }
 
+// ---- input contract ---------------------------------------------------------------------
+
+/// The shim's `Pool::get`: no object is fine, an index out of range or of a kind not in
+/// `want` (any kind for an empty `want`) is not.
+fn pool_get(pool: &Pool, i: Option<usize>, want: &[ClassObjectKind]) -> bool {
+    i.is_none_or(|i| pool.handles.get(i).is_some_and(|h| want.is_empty() || want.contains(&h.1)))
+}
+
+fn kind_of(o: Option<H>) -> Option<ClassObjectKind> {
+    o.map(|h| h.1)
+}
+
+/// Whether `o` is an entity of the one-face B-rep (not a stand-in).
+fn is_real(pool: &Pool, o: Option<H>) -> bool {
+    o.is_some_and(|h| pool.topo.as_ref().is_some_and(|t| h.0 >= t.first))
+}
+
+/// No interval end is an `SmPoint3d` (its zone tolerance would be taken of a non-object).
+fn pcs_ok(cc: &CurveClassification<H>) -> bool {
+    (0..cc.size()).all(|i| {
+        cc.at(i).is_ok_and(|v| {
+            kind_of(v.start.object()) != Some(ClassObjectKind::Point)
+                && kind_of(v.end.object()) != Some(ClassObjectKind::Point)
+        })
+    })
+}
+
+/// An edge classification on a bare stand-in edge (its topology walks are undefined).
+fn stand_in_edge(pool: &Pool, pc: &PointClassification<H>) -> bool {
+    pc.point_class() == PointClassType::Edge && !is_real(pool, pc.object())
+}
+
+fn has_stand_in_edge(pool: &Pool, cc: &CurveClassification<H>) -> bool {
+    (0..cc.size()).any(|i| {
+        cc.at(i).is_ok_and(|v| [&v.start, &v.mid, &v.end].into_iter().any(|pc| stand_in_edge(pool, pc)))
+    })
+}
+
+/// `FindInterval(param)` is defined: an interval and, unless the parameter snaps to an
+/// interval boundary within `SM_EFF_ZERO_PARAM` before the curve is used, a curve.
+fn find_ok(cc: &CurveClassification<H>, param: f64) -> bool {
+    let n = cc.size();
+    if n == 0 {
+        return false;
+    }
+    if cc.curve().is_some() {
+        return true;
+    }
+    let eps = eff_zero_param();
+    let ivl = |i: usize| cc.at(i).map(|v| v.interval);
+    let (Ok(first), Ok(last)) = (ivl(0), ivl(n - 1)) else { return false };
+    if param < first.min() - eps || param > last.max() + eps {
+        return false;
+    }
+    for i in 0..n {
+        let Ok(v) = ivl(i) else { return false };
+        if param > v.max() + if i == n - 1 { eps } else { 0.0 } {
+            continue;
+        }
+        if param > v.max() - eps {
+            return true;
+        }
+        return param >= v.min() - eps && param < v.min() + eps;
+    }
+    false
+}
+
+fn curve_dim(pool: &Pool, cc: &CurveClassification<H>) -> Option<u64> {
+    cc.curve().and_then(|h| pool.curve(h)).map(Curve::dim)
+}
+
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks
+/// of `harness/cpp/shim/intersect_curve_class_p3.cpp`, evaluated on the state the ops
+/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+#[allow(clippy::too_many_lines)]
+fn undefined_upstream(
+    k: &Kernel,
+    pool: &Pool,
+    ccs: &[CurveClassification<H>; 2],
+    x: &OpIn,
+) -> Result<Option<&'static str>, Fail> {
+    use ClassObjectKind as K;
+    let (_, t) = op_code(x);
+    let (Some(cc), Some(other)) = (ccs.get(t), 1usize.checked_sub(t).and_then(|o| ccs.get(o))) else {
+        return Ok(Some("target"));
+    };
+    let size = cc.size();
+    let srf = [K::Surface];
+    let bad = |b: bool, why: &'static str| Ok(b.then_some(why));
+    match x {
+        OpIn::SetSize { n, .. } => bad(*n > 64, "size"),
+        OpIn::RemoveAt { j, .. } => bad(size == 0 || *j > 64, "remove index"),
+        OpIn::IvlSet { j, .. }
+        | OpIn::IvlSetMin { j, .. }
+        | OpIn::IvlSetMax { j, .. }
+        | OpIn::IvlReset { j, .. }
+        | OpIn::IvlNew { j, .. } => bad(*j >= size, "interval index"),
+        OpIn::IvlAssign { j, k: kk, .. } => bad(*j >= size || *kk >= other.size(), "interval index"),
+        OpIn::PcSetClass { j, w, class, obj, .. } => {
+            if *j >= size || *w > 2 {
+                return bad(true, "interval index");
+            }
+            let want = match class {
+                100 | 110 => None,
+                102 => Some(K::Face),
+                103 => Some(K::Edge),
+                104 => Some(K::Vertex),
+                105 => Some(K::Point),
+                106 => Some(K::Curve),
+                107 => Some(K::Surface),
+                _ => return bad(true, "class"),
+            };
+            if !pool_get(pool, *obj, &[]) {
+                return bad(true, "object index");
+            }
+            let got = obj.and_then(|i| pool.handles.get(i)).map(|h| h.1);
+            bad(got.is_some() && got != want, "class object kind")
+        }
+        OpIn::PcSetT { j, w, .. }
+        | OpIn::PcSetUv { j, w, .. }
+        | OpIn::PcSetGap { j, w, .. }
+        | OpIn::PcSetSss { j, w, .. }
+        | OpIn::PcSetPresnap { j, w, .. }
+        | OpIn::PcSetSrcTol { j, w, .. } => bad(*j >= size || *w > 2, "interval index"),
+        OpIn::SetCurve { obj, .. } | OpIn::SetUvCurve1 { obj, .. } | OpIn::SetUvCurve2 { obj, .. } => {
+            bad(!pool_get(pool, *obj, &[K::Curve]), "object kind")
+        }
+        OpIn::SetSurface1 { obj, .. } | OpIn::SetSurface2 { obj, .. } => {
+            bad(!pool_get(pool, *obj, &srf), "object kind")
+        }
+        OpIn::SetFace { obj, .. } => bad(!pool_get(pool, *obj, &[K::Face]), "object kind"),
+        OpIn::SetIntersectData { s1, s2, uv2, ti, .. } => bad(
+            !(pool_get(pool, *s1, &srf)
+                && pool_get(pool, *s2, &srf)
+                && pool_get(pool, *uv2, &[K::Curve])
+                && pool_get(pool, *ti, &[K::Other])),
+            "object kind",
+        ),
+        OpIn::SetFilletData { obj, .. } => bad(!pool_get(pool, *obj, &[K::Other]), "object kind"),
+        OpIn::AddTgtLoop { obj, .. } => bad(obj.is_none() || !pool_get(pool, *obj, &[K::Loop]), "object kind"),
+        OpIn::FindInterval { prm, .. } | OpIn::FindPc { prm, .. } => bad(!find_ok(cc, *prm), "FindInterval"),
+        OpIn::IsCoincident { a, b: bb, tol, .. } => {
+            if !pcs_ok(cc) {
+                return bad(true, "point object tolerance");
+            }
+            let e = Extent1d::from_min_max(*a, *bb);
+            let (lo, hi) = (e.min(), e.max());
+            if size == 0 || !find_ok(cc, lo) || !find_ok(cc, hi) {
+                return bad(true, "FindInterval");
+            }
+            // the walk over [index1, index2] (index2 - 1 wraps unsigned) past the intervals
+            // a failed search leaves its initial index (no interval) and position (outside)
+            let tol = zone_tol3d(k, *tol);
+            let found = |p: f64| {
+                cc.find_interval(k, pool, p, BIG, tol)
+                    .map_or((NO_INTERVAL, IntervalPosition::Outside), |f| (f.index, f.position))
+            };
+            let ((i1, p1), (i2, p2)) = (found(lo), found(hi));
+            let i1 = i1.wrapping_add(usize::from(p1 == IntervalPosition::End));
+            let i2 = i2.wrapping_sub(usize::from(p2 == IntervalPosition::Start));
+            let mut ii = i1;
+            while ii <= i2 {
+                let Ok(v) = cc.at(ii) else { return bad(true, "coincidence walk") };
+                if v.mid.point_class() != PointClassType::Edge {
+                    break;
+                }
+                ii += 1;
+            }
+            Ok(None)
+        }
+        OpIn::Insert { pc, prm, last, force, .. } => {
+            if !pool_get(pool, pc.obj, &[]) {
+                return bad(true, "object index");
+            }
+            let new = build_pc(k, pool, pc)?;
+            if size == 0
+                || cc.curve().is_none()
+                || !pcs_ok(cc)
+                || kind_of(new.object()) == Some(K::Point)
+                || !find_ok(cc, *prm)
+            {
+                return bad(true, "insert");
+            }
+            if !*force {
+                let Ok(tol) = new.obj_zone_tol_3d(k, pool) else { return Ok(None) };
+                if let Ok(f) = cc.find_interval(k, pool, *prm, *last, tol) {
+                    let at = match f.position {
+                        IntervalPosition::Start => cc.at(f.index).ok().map(|v| v.start),
+                        IntervalPosition::End => cc.at(f.index).ok().map(|v| v.end),
+                        _ => None,
+                    };
+                    if let Some(b) = at {
+                        let (bt, nt) = (b.point_class(), new.point_class());
+                        let pair = matches!(
+                            (bt, nt),
+                            (PointClassType::Vertex, PointClassType::Edge) | (PointClassType::Edge, PointClassType::Vertex)
+                        );
+                        if pair && !(is_real(pool, b.object()) && is_real(pool, new.object())) {
+                            return bad(true, "vertex/edge walk of a stand-in edge");
+                        }
+                    }
+                }
+            }
+            Ok(None)
+        }
+        OpIn::RemovePc { j, .. } => bad(*j > 64, "index"),
+        OpIn::Merge { index, .. } => {
+            if size == 0 || *index > size || cc.curve().is_none() || !pcs_ok(cc) {
+                return bad(true, "merge");
+            }
+            let pc = if *index == size { cc.at(size - 1).map(|v| v.end) } else { cc.at(*index).map(|v| v.start) };
+            let c = pc.map_or(-1, |p| p.point_class().code());
+            bad(!matches!(c, 100 | 110 | 105 | 106 | 107), "merge into topology")
+        }
+        OpIn::Cleanup { .. } => {
+            let dims = |c: &CurveClassification<H>| curve_dim(pool, c) == Some(3);
+            if size > 0 {
+                bad(
+                    other.size() < size
+                        || !dims(cc)
+                        || !dims(other)
+                        || !pcs_ok(cc)
+                        || !pcs_ok(other)
+                        || has_stand_in_edge(pool, cc)
+                        || has_stand_in_edge(pool, other),
+                    "cleanup",
+                )
+            } else {
+                bad(!dims(cc), "cleanup")
+            }
+        }
+        OpIn::NearVertex { index, .. } => {
+            if size == 0 || *index > size || cc.curve().is_none() || !pcs_ok(cc) {
+                return bad(true, "near vertex");
+            }
+            let pc = if *index == size { cc.at(size - 1).map(|v| v.end) } else { cc.at(*index).map(|v| v.start) };
+            bad(pc.is_ok_and(|p| stand_in_edge(pool, &p)), "stand-in edge walk")
+        }
+        OpIn::Squeeze { .. } => {
+            if size > 0 && (other.size() == 0 || other.curve().is_none()) {
+                return bad(true, "squeeze");
+            }
+            if !pcs_ok(cc) || !pcs_ok(other) {
+                return bad(true, "point object tolerance");
+            }
+            let ok = (0..size).all(|j| {
+                cc.at(j).is_ok_and(|v| find_ok(other, v.interval.min()) && find_ok(other, v.interval.max()))
+            });
+            bad(!ok, "FindInterval")
+        }
+        OpIn::SetIsCurveCurrent { .. }
+        | OpIn::SetIgnoreTangency { .. }
+        | OpIn::SetIsCurveOwned { .. }
+        | OpIn::SetOkToSetTol { .. }
+        | OpIn::SetTgtLoopsOnly { .. }
+        | OpIn::SetSrcTol { .. } => Ok(None),
+    }
+}
+
+/// Whether every op of `s` keeps its input contract ([`undefined_upstream`]).
+fn keeps_contract(s: &Script) -> bool {
+    s.face.as_ref().is_none_or(face_keeps_contract) && !matches!(rust_run(s), Err(Fail::Undefined(_)))
+}
+
 #[allow(clippy::too_many_lines)]
 fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
     let mut k = Kernel::default();
@@ -836,6 +1107,9 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
     let mut o: Vec<f64> = Vec::new();
     let mut deferred: Option<Box<Output>> = None;
     for (n_op, x) in s.ops.iter().enumerate() {
+        if let Some(why) = undefined_upstream(&k, &pool, &ccs, x)? {
+            return Err(Fail::Undefined(why));
+        }
         let mut step = || -> Result<(), Fail> {
             let (code, t) = op_code(x);
             if t > 1 {
@@ -1081,7 +1355,7 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                 deferred = Some(d);
                 break;
             }
-            Err(Fail::Refused(s)) => return Err(Fail::Refused(s)),
+            Err(e @ (Fail::Refused(_) | Fail::Undefined(_))) => return Err(e),
             Err(Fail::Harness(e)) => {
                 return Err(Fail::Harness(harness(format!("op {n_op} ({x:?}): {e}"))))
             }
@@ -1098,6 +1372,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
         Err(Fail::Refused(s)) => Ok(refused(s)),
+        Err(Fail::Undefined(why)) => Ok(Output::err(format!("undefined_upstream: {why}"))),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -1995,7 +2270,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_script(rng)).ok()
+        for _ in 0..64 {
+            let s = gen_script(rng);
+            if keeps_contract(&s) {
+                return serde_json::to_value(s).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {

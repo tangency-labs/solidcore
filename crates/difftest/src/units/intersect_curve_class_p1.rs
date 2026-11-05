@@ -36,10 +36,9 @@
 //! cases check the status, not a classification; so do points too far from the one-face
 //! B-rep's surface.
 //!
-//! Every generated script is a case, including those undefined upstream (surface point
-//! solves, `SmTol::MapTo2d` for a curve of dimension other than 2 or 3 on a surface, an
-//! `SmCrvOnSurf` over a plane, a face whose UV domain has zero size): their golden is the
-//! Rust result, refusal or deferral.
+//! Generated scripts keep the input contract upstream defines ([`keeps_contract`]: indices in
+//! range, objects of the kinds an op takes, no member of a stand-in object, ...); the
+//! generator redraws the others.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -75,7 +74,7 @@ use solidcore::topology::vertex as topo_vertex;
 use solidcore::topology::{Brep, Edge, Face, Vertex, VertexId};
 use solidcore::{EntityRef, SolidError};
 
-use super::intersect_curve_class_p4::{face_brep, gen_face, topology_entities, topology_kinds};
+use super::intersect_curve_class_p4::{face_keeps_contract, face_brep, gen_face, topology_entities, topology_kinds};
 use crate::units::heal_face_props::{self as hfp, FaceIn, LoopsIn};
 
 use crate::case::{CaseContext, CaseSource};
@@ -919,6 +918,8 @@ pub(crate) fn status(e: &SolidError) -> f64 {
 pub(crate) enum Fail {
     Deferred(Box<Output>),
     Refused(f64),
+    /// An op outside its input contract (undefined upstream).
+    Undefined(&'static str),
     Harness(HarnessError),
 }
 
@@ -1655,6 +1656,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
         Err(Fail::Refused(s)) => Ok(refused(s)),
+        Err(Fail::Undefined(why)) => Ok(Output::err(format!("undefined_upstream: {why}"))),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -2516,6 +2518,423 @@ pub(crate) fn add_face(k: &Kernel, pool: &mut Pool, face: &FaceIn) -> Result<(),
     Ok(())
 }
 
+// ---- input contract ---------------------------------------------------------------------
+
+/// What a script's ops may know about a pool object.
+pub(crate) struct ContractPool {
+    pub(crate) kinds: Vec<usize>,
+    /// Script objects first, then the one-face B-rep's topology (`real`).
+    pub(crate) n_script: usize,
+    /// Per object: `(is a B-spline curve, curve dimension)` (`(false, 0)` for others).
+    pub(crate) curves: Vec<(bool, u64)>,
+    /// Per object: an edge has a curve, a face a surface (true for every other object).
+    pub(crate) geometry: Vec<bool>,
+}
+
+impl ContractPool {
+    pub(crate) fn new(objects: &[ObjIn], face: Option<&FaceIn>) -> Self {
+        Self::with_extra_curves(objects, 0, face)
+    }
+
+    /// The pool with `extra` 3D curves (curves on surfaces) between the objects and the
+    /// face's topology.
+    pub(crate) fn with_extra_curves(objects: &[ObjIn], extra: usize, face: Option<&FaceIn>) -> Self {
+        let mut kinds: Vec<usize> = objects.iter().map(obj_kind).collect();
+        let mut curves: Vec<(bool, u64)> = objects
+            .iter()
+            .map(|o| match o {
+                ObjIn::Curve(c) => curve_shape(c),
+                _ => (false, 0),
+            })
+            .collect();
+        let mut geometry: Vec<bool> = objects
+            .iter()
+            .map(|o| match o {
+                ObjIn::Edge(c) => c.is_some(),
+                ObjIn::Face(s) => s.is_some(),
+                _ => true,
+            })
+            .collect();
+        kinds.extend(std::iter::repeat_n(kind::CURVE, extra));
+        curves.extend(std::iter::repeat_n((false, 3), extra));
+        geometry.extend(std::iter::repeat_n(true, extra));
+        let n_script = kinds.len();
+        if let Some(f) = face {
+            let topo = topology_kinds(f);
+            curves.extend(topo.iter().map(|_| (false, 0)));
+            geometry.extend(topo.iter().map(|_| true));
+            kinds.extend(topo);
+        }
+        Self { kinds, n_script, curves, geometry }
+    }
+
+    /// The shim's `Pool::get`: `None` (the object, or none) is fine, an index out of range
+    /// or of a kind not in `want` (any kind for an empty `want`) is not.
+    pub(crate) fn get(&self, i: Option<usize>, want: &[usize]) -> bool {
+        match i {
+            None => true,
+            Some(i) => self.kinds.get(i).is_some_and(|k| want.is_empty() || want.contains(k)),
+        }
+    }
+
+    pub(crate) fn kind(&self, i: Option<usize>) -> Option<usize> {
+        i.and_then(|i| self.kinds.get(i).copied())
+    }
+
+    /// `i` is set, of a kind in `want` and has its geometry (an edge's curve, a face's
+    /// surface).
+    pub(crate) fn with_geometry(&self, i: Option<usize>, want: &[usize]) -> bool {
+        i.is_some_and(|i| self.get(Some(i), want) && self.geometry.get(i) == Some(&true))
+    }
+
+    pub(crate) fn is_real(&self, i: Option<usize>) -> bool {
+        i.is_some_and(|i| i >= self.n_script && i < self.kinds.len())
+    }
+}
+
+/// `(is a B-spline curve, dimension)` of a pool curve.
+pub(crate) fn curve_shape(c: &CurveIn) -> (bool, u64) {
+    match c {
+        CurveIn::Bspline(b) => (true, b.dim),
+        CurveIn::Hermite(h) => (false, h.dim),
+        CurveIn::Line(_) | CurveIn::Conic(_) => (false, 3),
+    }
+}
+
+/// A point classification as far as the inputs decide it (`None`: an op the kernel ran
+/// may have changed it).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ContractPc {
+    pub(crate) obj: Option<usize>,
+    pub(crate) class: i32,
+    pub(crate) sss: bool,
+}
+
+/// An interval of a classification: its three point classifications and its owner
+/// (`Some(t)` classification `t`).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ContractIvl {
+    pub(crate) pcs: [Option<ContractPc>; 3],
+    pub(crate) owner: Option<usize>,
+}
+
+impl ContractIvl {
+    pub(crate) fn fresh() -> Self {
+        let pc = Some(ContractPc { obj: None, class: 100, sss: false });
+        Self { pcs: [pc; 3], owner: None }
+    }
+}
+
+/// A classification as far as the inputs decide it.
+#[derive(Clone, Default)]
+pub(crate) struct ContractCc {
+    pub(crate) ivls: Vec<ContractIvl>,
+    pub(crate) allocated: bool,
+    /// The classification curve (a pool index).
+    pub(crate) curve: Option<usize>,
+}
+
+impl ContractCc {
+    /// `SetSize(n)` of classification `t`: fresh intervals when nothing is allocated, else
+    /// reset ones; the classification owns them.
+    pub(crate) fn set_size(&mut self, t: usize, n: usize) {
+        let ivl = ContractIvl { owner: Some(t), ..ContractIvl::fresh() };
+        if n == 0 {
+            self.ivls.clear();
+            self.allocated = false;
+        } else if !self.allocated {
+            self.ivls = vec![ivl; n];
+            self.allocated = true;
+        } else {
+            self.ivls.resize(n, ivl);
+        }
+    }
+
+    /// `RemoveAt(j)` on a non-empty classification: past the end it drops the last.
+    pub(crate) fn remove_at(&mut self, j: usize) {
+        if j < self.ivls.len() {
+            self.ivls.remove(j);
+        } else {
+            self.ivls.pop();
+        }
+    }
+}
+
+/// The class code's pool kind (`SetClassObject`): `Ok(None)` for no object, `Err` for a
+/// code the shim does not take.
+pub(crate) fn kind_of_class(c: i32) -> Result<Option<usize>, ()> {
+    Ok(Some(match c {
+        100 | 110 => return Ok(None),
+        102 => kind::FACE,
+        103 => kind::EDGE,
+        104 => kind::VERTEX,
+        105 => kind::POINT,
+        106 => kind::CURVE,
+        107 => kind::BSURF,
+        _ => return Err(()),
+    }))
+}
+
+/// Whether `pc` may be given to `ComputePointParameters` (not a point or stand-in).
+pub(crate) fn computable(pool: &ContractPool, pc: &ContractPc) -> bool {
+    !matches!(pool.kind(pc.obj), Some(kind::POINT | kind::LOOP | kind::OTHER))
+}
+
+/// Whether a script keeps the input contract of the C++ reference wrapper: the run-time
+/// checks of `harness/cpp/shim/intersect_curve_class_p1.cpp`, evaluated on the script's
+/// inputs alone (an op whose effect depends on what the kernel computes leaves the state it
+/// may change undecided, and an undecided check passes). Inputs outside the contract are
+/// undefined upstream.
+fn keeps_contract(s: &Script) -> bool {
+    s.face.as_ref().is_none_or(face_keeps_contract) && contract_breach(s).is_none()
+}
+
+/// The first op of `s` outside the contract.
+fn contract_breach(s: &Script) -> Option<usize> {
+    let pool = ContractPool::new(&s.objects, s.face.as_ref());
+    let mut ccs = [ContractCc::default(), ContractCc::default()];
+    s.ops.iter().position(|x| !contract_op(&pool, &mut ccs, x))
+}
+
+fn contract_op(pool: &ContractPool, ccs: &mut [ContractCc; 2], x: &OpIn) -> bool {
+    use kind::{BSURF, CURVE, EDGE, FACE, LOOP, OTHER, PLANE, POINT};
+    let (_, t) = op_code(x);
+    if t > 1 {
+        return false;
+    }
+    let [c0, c1] = ccs;
+    let (cc, other) = if t == 0 { (c0, c1) } else { (c1, c0) };
+    let size = cc.ivls.len();
+    let other_size = other.ivls.len();
+    let srf = [PLANE, BSURF];
+    match x {
+        OpIn::SetSize { n, .. } => {
+            if *n > 64 {
+                return false;
+            }
+            cc.set_size(t, *n);
+        }
+        OpIn::RemoveAt { j, .. } => {
+            if size == 0 || *j > 64 {
+                return false;
+            }
+            cc.remove_at(*j);
+        }
+        OpIn::IvlSet { j, .. } | OpIn::IvlSetMin { j, .. } | OpIn::IvlSetMax { j, .. } => {
+            if *j >= size {
+                return false;
+            }
+        }
+        OpIn::IvlReset { j, .. } => {
+            let Some(ivl) = cc.ivls.get_mut(*j) else { return false };
+            ivl.pcs = ContractIvl::fresh().pcs;
+        }
+        OpIn::IvlAssign { j, k, .. } => {
+            if *j >= size || *k >= other_size {
+                return false;
+            }
+            let (Some(src), Some(dst)) = (other.ivls.get(*k).copied(), cc.ivls.get_mut(*j)) else {
+                return false;
+            };
+            *dst = src;
+        }
+        OpIn::IvlNew { j, owner, .. } => {
+            let Some(ivl) = cc.ivls.get_mut(*j) else { return false };
+            *ivl = ContractIvl { owner: owner.then_some(t), ..ContractIvl::fresh() };
+        }
+        OpIn::PcSetClass { j, w, class, obj, .. } => {
+            if *j >= size || *w > 2 {
+                return false;
+            }
+            let Ok(want) = kind_of_class(*class) else { return false };
+            if !pool.get(*obj, &[]) {
+                return false;
+            }
+            if let Some(k) = pool.kind(*obj) {
+                if !(Some(k) == want || (want == Some(BSURF) && k == PLANE)) {
+                    return false;
+                }
+            }
+            if let Some(Some(pc)) = cc.ivls.get_mut(*j).and_then(|i| i.pcs.get_mut(*w)) {
+                pc.class = *class;
+                pc.obj = *obj;
+            }
+        }
+        OpIn::PcSetSss { j, w, .. } => {
+            if *j >= size || *w > 2 {
+                return false;
+            }
+            if let Some(Some(pc)) = cc.ivls.get_mut(*j).and_then(|i| i.pcs.get_mut(*w)) {
+                pc.sss = true;
+            }
+        }
+        OpIn::PcSetT { j, w, .. }
+        | OpIn::PcSetUv { j, w, .. }
+        | OpIn::PcSetGap { j, w, .. }
+        | OpIn::PcSetPresnap { j, w, .. }
+        | OpIn::PcSetSrcTol { j, w, .. } => {
+            if *j >= size || *w > 2 {
+                return false;
+            }
+        }
+        OpIn::SetCurve { obj, .. } => {
+            if !pool.get(*obj, &[CURVE]) {
+                return false;
+            }
+            cc.curve = *obj;
+        }
+        OpIn::SetSurface1 { obj, .. } | OpIn::SetSurface2 { obj, .. } => {
+            return pool.get(*obj, &srf);
+        }
+        OpIn::SetFace { obj, .. } => return pool.get(*obj, &[FACE]),
+        OpIn::SetIntersectData { s1, s2, uv2, ti, .. } => {
+            return pool.get(*s1, &srf)
+                && pool.get(*s2, &srf)
+                && pool.get(*uv2, &[CURVE])
+                && pool.get(*ti, &[OTHER]);
+        }
+        OpIn::SetFilletData { obj, .. } => return pool.get(*obj, &[OTHER]),
+        OpIn::AddTgtLoop { obj, .. } => return obj.is_some() && pool.get(*obj, &[LOOP]),
+        OpIn::SetUvCurve1 { obj, .. } | OpIn::SetUvCurve2 { obj, .. } => {
+            return pool.get(*obj, &[CURVE]);
+        }
+        OpIn::SubInterval { j, .. } | OpIn::SqueezeEnd { j, .. } => return *j < size,
+        OpIn::ClassifyCrvLoc { j, w, .. } => {
+            if *j >= size || *w > 2 {
+                return false;
+            }
+            if let Some(pc) = cc.ivls.get(*j).and_then(|i| i.pcs.get(*w)).copied().flatten() {
+                if !pc.sss && cc.curve.is_none() {
+                    return false;
+                }
+            }
+        }
+        OpIn::SetPcParams { mids, .. } => {
+            if size > 0 && cc.curve.is_none() {
+                return false;
+            }
+            let ok = |pc: &Option<ContractPc>| pc.is_none_or(|pc| computable(pool, &pc));
+            if !cc.ivls.iter().all(|i| ok(&i.pcs[0]) && ok(&i.pcs[2]) && (!*mids || ok(&i.pcs[1]))) {
+                return false;
+            }
+        }
+        OpIn::IsReferenced { obj, .. } | OpIn::ObjDim { obj, .. } => {
+            if !pool.get(*obj, &[]) {
+                return false;
+            }
+            if matches!(x, OpIn::ObjDim { .. }) && pool.kind(*obj) == Some(POINT) {
+                return false;
+            }
+        }
+        OpIn::MakeConsistent { .. } => {
+            let curve_3d = cc.curve.is_some_and(|c| pool.curves.get(c).is_some_and(|s| s.1 == 3));
+            for ivl in &cc.ivls {
+                let Some(mid) = ivl.pcs[1] else { continue };
+                if mid.class != 103 {
+                    continue;
+                }
+                for end in [ivl.pcs[0], ivl.pcs[2]].into_iter().flatten() {
+                    if end.class == 104 && !(pool.is_real(mid.obj) && pool.is_real(end.obj)) {
+                        return false;
+                    }
+                }
+                if !curve_3d {
+                    return false;
+                }
+            }
+            // the consistency edits change point classifications
+            for ivl in &mut cc.ivls {
+                ivl.pcs = [None; 3];
+            }
+        }
+        OpIn::Type { types, .. } => return types.len() <= 8,
+        OpIn::IvlTols { j, .. } => {
+            let Some(ivl) = cc.ivls.get(*j) else { return false };
+            if let Some(mid) = ivl.pcs[1] {
+                if pool.kind(mid.obj) == Some(POINT) {
+                    return false;
+                }
+            }
+            if ivl.owner != Some(t) {
+                return false;
+            }
+        }
+        OpIn::XsectCurve { c, uvc, srf: srfs, uv, .. } => {
+            if c.is_none() || !pool.get(*c, &[CURVE]) || uvc.len() > 8 || srfs.len() > 8 || uv.len() > 8 {
+                return false;
+            }
+            let uv_ok = |u: &Option<usize>| {
+                u.is_some_and(|u| pool.get(Some(u), &[CURVE]) && pool.curves.get(u) == Some(&(true, 2)))
+            };
+            if !uvc.iter().all(uv_ok) || !srfs.iter().all(|s| s.is_some() && pool.get(*s, &srf)) {
+                return false;
+            }
+            if srfs.len() >= 2 && uv.len() < 2 {
+                return false;
+            }
+        }
+        OpIn::Apply { use_cc, edge, emate, srf: srfs, .. } => {
+            if !pool.get(*edge, &[EDGE]) || !pool.get(*emate, &[EDGE]) || !srfs.iter().all(|s| pool.get(*s, &srf)) {
+                return false;
+            }
+            let src = *use_cc && cc.curve.is_some();
+            let edge_eval = (edge.is_some() || emate.is_some()) && srfs[2].is_some();
+            if src && (srfs[0].is_none() != srfs[1].is_none()) {
+                return false;
+            }
+            if src && srfs[0].is_none() && edge_eval {
+                return false;
+            }
+            if edge.is_some() {
+                return false;
+            }
+        }
+        OpIn::Angle { c1, c2, .. } => return pool.get(*c1, &[CURVE]) && pool.get(*c2, &[CURVE]),
+        OpIn::Cull { s, uvc, c2, sols, .. } => {
+            return s.is_some()
+                && uvc.is_some()
+                && c2.is_some()
+                && pool.get(*s, &srf)
+                && pool.get(*uvc, &[CURVE])
+                && pool.get(*c2, &[CURVE])
+                && sols.len() <= 16
+                && uvc.is_some_and(|u| pool.curves.get(u).is_some_and(|c| c.1 == 2));
+        }
+        OpIn::TolPair { c, s, .. } => return c.is_some() && pool.get(*c, &[CURVE]) && pool.get(*s, &srf),
+        OpIn::Gaps { pairs, .. } => {
+            return pairs.len() <= 8
+                && pairs
+                    .iter()
+                    .all(|(s, u)| s.is_some() && pool.get(*s, &srf) && pool.get(*u, &[CURVE]));
+        }
+        OpIn::TouchConnected { c, touches, .. } => {
+            return pool.get(*c, &[]) && touches_ok(pool, touches);
+        }
+        OpIn::TouchWinding { touches, .. } => {
+            return touches_ok(pool, touches) && touches.len() % 2 == 0;
+        }
+        OpIn::EdgeThrough { e, srf: srfs, .. } => {
+            return pool.with_geometry(*e, &[EDGE]) && srfs.iter().all(|x| x.is_some() && pool.get(*x, &srf));
+        }
+        OpIn::CciGeometry { e, .. } => return e.is_some() && pool.get(*e, &[EDGE]),
+        OpIn::FacePointClass { f, .. } => {
+            return pool.with_geometry(*f, &[FACE]);
+        }
+        OpIn::SetIsCurveCurrent { .. }
+        | OpIn::SetIgnoreTangency { .. }
+        | OpIn::SetIsCurveOwned { .. }
+        | OpIn::SetOkToSetTol { .. }
+        | OpIn::SetTgtLoopsOnly { .. }
+        | OpIn::SetSrcTol { .. }
+        | OpIn::SrcTol { .. } => {}
+    }
+    true
+}
+
+fn touches_ok(pool: &ContractPool, touches: &[TouchIn]) -> bool {
+    touches.len() <= 64 && touches.iter().all(|t| pool.get(t.c, &[]) && pool.get(t.pc, &[]))
+}
+
 // ---- fixtures built in code ---------------------------------------------------------------
 
 /// Edge cases: empty / huge-scale / tiny-scale classifications, boundary indices, every
@@ -2669,7 +3088,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_script(rng)).ok()
+        for _ in 0..64 {
+            let s = gen_script(rng);
+            if keeps_contract(&s) {
+                return serde_json::to_value(s).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {

@@ -782,9 +782,11 @@ fn status(e: &SolidError) -> f64 {
     }
 }
 
-/// A Rust failure: deferred for `Unported`, a harness error otherwise.
+/// A Rust failure: deferred for `Unported`, undefined upstream for an op outside its input
+/// contract ([`undefined_upstream`]), a harness error otherwise.
 enum Fail {
     Deferred(Box<Output>),
+    Undefined(&'static str),
     Harness(HarnessError),
 }
 
@@ -874,6 +876,282 @@ fn pc_mut(ivl: &mut CurveInterval<H>, w: usize) -> Result<&mut PointClassificati
     }
 }
 
+// ---- input contract ---------------------------------------------------------------------
+
+fn finite(v: impl IntoIterator<Item = f64>) -> bool {
+    v.into_iter().all(f64::is_finite)
+}
+
+fn sq_len(a: [f64; 3]) -> f64 {
+    a[0] * a[0] + a[1] * a[1] + a[2] * a[2]
+}
+
+fn sq_dist(a: [f64; 3], b: [f64; 3]) -> f64 {
+    sq_len([a[0] - b[0], a[1] - b[1], a[2] - b[2]])
+}
+
+fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+/// Whether a circle `c x y d r` (`d` in degrees) makes a well-formed edge or generator.
+fn circle_ok(c: [f64; 3], x: [f64; 3], y: [f64; 3], d: [f64; 2], r: f64) -> bool {
+    finite(c.into_iter().chain(x).chain(y).chain(d).chain([r]))
+        && sq_len(cross3(x, y)) >= 1e-6
+        && r >= 1e-3
+        && d[1] - d[0] >= 1.0
+        && d[1] - d[0] <= 360.0
+}
+
+/// Most loops of the one-face B-rep.
+const FACE_MAX_LOOPS: usize = 4;
+/// Most corner points of an edge loop.
+const FACE_MAX_LOOP_POINTS: usize = 8;
+
+/// Whether a one-face B-rep description is one upstream's `SmBrepConstructor` builds: a
+/// positive finite tolerance, a plane with independent axes over a non-empty domain or a
+/// surface of revolution with a usable axis, sweep and generator, and loops of distinct
+/// corner points or well-formed circles.
+pub(crate) fn face_keeps_contract(f: &FaceIn) -> bool {
+    if !f.tol.is_finite() || f.tol <= 0.0 || f.tol > 1e9 {
+        return false;
+    }
+    let surface_ok = match &f.surf {
+        None => {
+            finite(f.o.into_iter().chain(f.x).chain(f.y).chain(f.domain))
+                && sq_len(cross3(f.x, f.y)) >= 1e-6
+                && f.domain[2] > f.domain[0]
+                && f.domain[3] > f.domain[1]
+        }
+        Some(FaceSurfIn::Revolution { gen, point, axis, sweep, .. }) => {
+            finite(point.iter().chain(axis).copied().chain([*sweep]))
+                && sq_len(*axis) >= 1e-6
+                && (1.0..=360.0).contains(sweep)
+                && match gen {
+                    GenIn::Line { a, b } => finite(a.iter().chain(b).copied()) && sq_dist(*a, *b) >= 1e-6,
+                    GenIn::Circle { c, x, y, d, r } => circle_ok(*c, *x, *y, *d, *r),
+                }
+        }
+    };
+    surface_ok
+        && match &f.loops {
+            None => true,
+            Some(LoopsIn::Vertex { at }) => finite(*at),
+            Some(LoopsIn::Edges { loops }) => {
+                !loops.is_empty()
+                    && loops.len() <= FACE_MAX_LOOPS
+                    && loops.iter().all(|l| {
+                        (3..=FACE_MAX_LOOP_POINTS).contains(&l.len())
+                            && l.iter().zip(l.iter().cycle().skip(1)).all(|(p, q)| finite(*p) && sq_dist(*p, *q) >= 1e-6)
+                    })
+            }
+            Some(LoopsIn::Circles { circles }) => {
+                !circles.is_empty()
+                    && circles.len() <= FACE_MAX_LOOPS
+                    && circles.iter().all(|c| circle_ok(c.c, c.x, c.y, c.d, c.r))
+            }
+        }
+}
+
+/// The state upstream keeps and the port does not: each interval's back pointer to the
+/// classification that owns it (`Some(t)`), per classification.
+type Owners = [Vec<Option<usize>>; 2];
+
+/// The shim's `Pool::get` on the pool kinds.
+fn kind_ok(kinds: &[usize], i: Option<usize>, want: &[usize]) -> bool {
+    i.is_none_or(|i| kinds.get(i).is_some_and(|k| want.is_empty() || want.contains(k)))
+}
+
+/// A face props seed `[field, index, value]` the props take: a field id below 26, an index
+/// up to 3 and a finite value in the field's range (enumerations, flags, unsigned counts).
+fn seed_ok(sd: [f64; 3]) -> bool {
+    let [field, idx, v] = sd;
+    let int = |x: f64, max: f64| x >= 0.0 && x <= max && x.fract() == 0.0;
+    if !int(field, 25.0) || !int(idx, 3.0) || !v.is_finite() || v.abs() > 1e9 {
+        return false;
+    }
+    match field as i64 {
+        0 => (0.0..=6.0).contains(&v),
+        7 | 8 => (0.0..=5.0).contains(&v),
+        21 => (0.0..=3.0).contains(&v),
+        5 | 6 | 10 | 11 | 16 | 20 | 22 | 23 | 25 => (0.0..=2.0).contains(&v),
+        3 | 9 | 12..=15 | 17..=19 => v >= 0.0,
+        _ => true,
+    }
+}
+
+/// Whether the seeded props make `SetProps_Stage2` dereference the null `m_pFace` that
+/// `SetProps_Gaps` leaves (UB-131): a stage at `GAPSa` or `GAPS` (1, 2) without the face
+/// pointer flag (field 24).
+fn stage2_derefs_null_face(seeds: &[[f64; 3]]) -> bool {
+    let (mut stage, mut face) = (0.0, false);
+    for sd in seeds {
+        match sd[0] as i64 {
+            0 => stage = sd[2].trunc(),
+            24 => face = sd[2] != 0.0,
+            _ => {}
+        }
+    }
+    (1.0..=2.0).contains(&stage) && !face
+}
+
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks
+/// of `harness/cpp/shim/intersect_curve_class_p4.cpp`, evaluated on the state the ops
+/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+fn undefined_upstream(
+    kinds: &[usize],
+    owners: &Owners,
+    ccs: &[CurveClassification<H>; 2],
+    x: &OpIn,
+) -> Option<&'static str> {
+    use kind::{BSURF, CURVE, FACE, LOOP, OTHER, PLANE};
+    let (_, t) = op_code(x);
+    let (cc, other) = (ccs.get(t)?, ccs.get(1usize.checked_sub(t)?)?);
+    let size = cc.size();
+    let srf = [PLANE, BSURF];
+    let bad = |b: bool, why: &'static str| b.then_some(why);
+    match x {
+        OpIn::SetSize { n, .. } => bad(*n > 64, "size"),
+        OpIn::RemoveAt { j, .. } => bad(size == 0 || *j > 64, "remove index"),
+        OpIn::IvlSet { j, .. }
+        | OpIn::IvlSetMin { j, .. }
+        | OpIn::IvlSetMax { j, .. }
+        | OpIn::IvlReset { j, .. }
+        | OpIn::IvlNew { j, .. }
+        | OpIn::PcSetT { j, .. }
+        | OpIn::PcSetUv { j, .. }
+        | OpIn::PcSetGap { j, .. }
+        | OpIn::PcSetSss { j, .. }
+        | OpIn::PcSetPresnap { j, .. }
+        | OpIn::PcSetSrcTol { j, .. } => bad(*j >= size, "interval index"),
+        OpIn::IvlAssign { j, k, .. } => bad(*j >= size || *k >= other.size(), "interval index"),
+        OpIn::PcSetClass { j, w, class, obj, .. } => {
+            if *j >= size || *w > 2 {
+                return Some("interval index");
+            }
+            let Ok(want) = super::intersect_curve_class_p1::kind_of_class(*class) else {
+                return Some("class");
+            };
+            if !kind_ok(kinds, *obj, &[]) {
+                return Some("object index");
+            }
+            let got = obj.and_then(|i| kinds.get(i).copied());
+            bad(
+                got.is_some_and(|k| !(Some(k) == want || (want == Some(BSURF) && k == PLANE))),
+                "class object kind",
+            )
+        }
+        OpIn::SetCurve { obj, .. } | OpIn::SetUvCurve1 { obj, .. } | OpIn::SetUvCurve2 { obj, .. } => {
+            bad(!kind_ok(kinds, *obj, &[CURVE]), "object kind")
+        }
+        OpIn::SetSurface1 { obj, .. } | OpIn::SetSurface2 { obj, .. } => bad(!kind_ok(kinds, *obj, &srf), "object kind"),
+        OpIn::SetFace { obj, .. } => bad(!kind_ok(kinds, *obj, &[FACE]), "object kind"),
+        OpIn::SetIntersectData { s1, s2, uv2, ti, .. } => bad(
+            !(kind_ok(kinds, *s1, &srf)
+                && kind_ok(kinds, *s2, &srf)
+                && kind_ok(kinds, *uv2, &[CURVE])
+                && kind_ok(kinds, *ti, &[OTHER])),
+            "object kind",
+        ),
+        OpIn::SetFilletData { obj, .. } => bad(!kind_ok(kinds, *obj, &[OTHER]), "object kind"),
+        OpIn::AddTgtLoop { obj, .. } => bad(obj.is_none() || !kind_ok(kinds, *obj, &[LOOP]), "object kind"),
+        // FindBestSqueezeEnd(0) reads m_pData[0]
+        OpIn::Squeeze { .. } => bad(size == 0, "squeeze of an empty classification"),
+        OpIn::IvlBound { j, do_min, .. } => {
+            let Ok(ivl) = cc.at(*j) else { return Some("interval index") };
+            if owners.get(t).and_then(|o| o.get(*j)).copied().flatten() != Some(t) {
+                return Some("interval back pointer");
+            }
+            // UB-124: the face's upward face use and surface before its NULL check
+            if cc.face().is_none() {
+                return Some("no face");
+            }
+            let pc = if *do_min { ivl.start } else { ivl.end };
+            bad(pc.edge_object().is_some() && cc.curve().is_none(), "no classification curve")
+        }
+        OpIn::LoopCrossings { loops, seeds, with_props, .. }
+        | OpIn::LoopTouches { loops, seeds, with_props, .. } => {
+            if loops.len() > 8 || seeds.len() > 32 || !loops.iter().all(|l| kind_ok(kinds, Some(*l), &[LOOP])) {
+                return Some("loops");
+            }
+            if !seeds.iter().all(|sd| seed_ok(*sd)) {
+                return Some("face props seed");
+            }
+            if *with_props && stage2_derefs_null_face(seeds) {
+                return Some("seeded props dereference the null face of SetProps_Stage2 (UB-131)");
+            }
+            // UB-124 (GetNaturalInterval of no curve); GetPointClassifiesConnectedTo reads
+            // m_pData[0]
+            bad(!loops.is_empty() && (cc.curve().is_none() || size == 0), "loop crossings")
+        }
+        OpIn::Construct { curve, uv, s1, s2, uv2, data_size, .. } => bad(
+            !(kind_ok(kinds, *curve, &[CURVE])
+                && kind_ok(kinds, *uv, &[CURVE])
+                && kind_ok(kinds, *s1, &srf)
+                && kind_ok(kinds, *s2, &srf)
+                && kind_ok(kinds, *uv2, &[CURVE]))
+                || *data_size > 64,
+            "construct",
+        ),
+        OpIn::SetIsCurveCurrent { .. }
+        | OpIn::SetIgnoreTangency { .. }
+        | OpIn::SetIsCurveOwned { .. }
+        | OpIn::SetOkToSetTol { .. }
+        | OpIn::SetTgtLoopsOnly { .. }
+        | OpIn::SetSrcTol { .. } => None,
+    }
+}
+
+/// The interval back pointers after op `x` (on the state before it).
+fn track_owners(owners: &mut Owners, ccs: &[CurveClassification<H>; 2], x: &OpIn) {
+    let (_, t) = op_code(x);
+    let (Some(cc), Some(src_owners)) = (ccs.get(t), 1usize.checked_sub(t).and_then(|o| owners.get(o)).cloned()) else {
+        return;
+    };
+    let Some(mine) = owners.get_mut(t) else { return };
+    match x {
+        OpIn::SetSize { n, .. } => mine.resize(*n, Some(t)),
+        OpIn::RemoveAt { j, .. } => {
+            if *j < mine.len() {
+                mine.remove(*j);
+            } else {
+                mine.pop();
+            }
+        }
+        OpIn::IvlNew { j, owner, .. } => {
+            if let Some(o) = mine.get_mut(*j) {
+                *o = owner.then_some(t);
+            }
+        }
+        OpIn::IvlAssign { j, k, .. } => {
+            let src = src_owners.get(*k).copied().flatten();
+            if let Some(o) = mine.get_mut(*j) {
+                *o = src;
+            }
+        }
+        // the smallest interval is squeezed out (ConnectIntervals removes it)
+        OpIn::Squeeze { .. } => {
+            let len = |j: usize| cc.at(j).map_or(f64::NAN, |v| v.interval.length());
+            let mut smallest = 0;
+            for j in 1..cc.size() {
+                if len(j) < len(smallest) {
+                    smallest = j;
+                }
+            }
+            if smallest < mine.len() {
+                mine.remove(smallest);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether every op of `s` keeps its input contract ([`undefined_upstream`]) and its
+/// face is one upstream builds ([`face_keeps_contract`]).
+fn keeps_contract(s: &Script) -> bool {
+    s.face.as_ref().is_none_or(face_keeps_contract) && !matches!(rust_run(s), Err(Fail::Undefined(_)))
+}
+
 #[allow(clippy::too_many_lines)]
 fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
     let k = Kernel::default();
@@ -882,7 +1160,13 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
         [CurveClassification::new(&k), CurveClassification::new(&k)];
     let mut o: Vec<f64> = Vec::new();
     let mut deferred: Option<Box<Output>> = None;
+    let kinds = pool_kinds(&s.objects, s.face.as_ref());
+    let mut owners: Owners = [Vec::new(), Vec::new()];
     for (n_op, x) in s.ops.iter().enumerate() {
+        if let Some(why) = undefined_upstream(&kinds, &owners, &ccs, x) {
+            return Err(Fail::Undefined(why));
+        }
+        track_owners(&mut owners, &ccs, x);
         let mut step = || -> Result<(), Fail> {
             let (code, t) = op_code(x);
             if t > 1 {
@@ -1148,7 +1432,18 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
             put_cc(&mut o, &k, &pool, &cc);
             Ok(())
         };
-        match step() {
+        let done = step();
+        // a constructed classification owns its intervals; kernel edits keep the counts
+        if matches!(x, OpIn::Construct { .. }) {
+            let (_, t) = op_code(x);
+            if let (Some(o), Some(cc)) = (owners.get_mut(t), ccs.get(t)) {
+                *o = vec![Some(t); cc.size()];
+            }
+        }
+        for (o, cc) in owners.iter_mut().zip(&ccs) {
+            o.resize(cc.size(), None);
+        }
+        match done {
             Ok(()) => {}
             Err(Fail::Deferred(d)) => {
                 // the classification is not changed by the unported callee: later ops would
@@ -1156,6 +1451,7 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                 deferred = Some(d);
                 break;
             }
+            Err(e @ Fail::Undefined(_)) => return Err(e),
             Err(Fail::Harness(e)) => {
                 return Err(Fail::Harness(harness(format!("op {n_op} ({x:?}): {e}"))))
             }
@@ -1171,6 +1467,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
     match rust_run(s) {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
+        Err(Fail::Undefined(why)) => Ok(Output::err(format!("undefined_upstream: {why}"))),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -2187,7 +2484,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_script(rng)).ok()
+        for _ in 0..64 {
+            let s = gen_script(rng);
+            if keeps_contract(&s) {
+                return serde_json::to_value(s).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -2260,28 +2563,13 @@ mod tests {
         assert!(n > 0);
     }
 
-    /// On the scripts undefined upstream the Rust side reports an error status (or defers)
-    /// instead of reading past its data.
+    /// The scripts undefined upstream are outside the input contract, and the generator
+    /// never draws them.
     #[test]
     fn undefined_scripts_are_rejected() {
-        for (name, s, guard) in rejected_cases() {
-            if guard {
-                // Rust reports the null dereference instead of carrying on: the last op
-                // (the loop crossings) records SM_ERR_NULL_POINTER (InvalidInput, 1007) right
-                // after the record of the ops before it
-                let mut before = s.clone();
-                assert!(matches!(before.ops.pop(), Some(OpIn::LoopCrossings { .. })), "{name}");
-                let Ok(prefix) = rust_run(&before) else { panic!("{name}: setup failed") };
-                let Ok(full) = rust_run(&s) else { panic!("{name}: no record") };
-                assert_eq!(full.get(..prefix.len()), Some(prefix.as_slice()), "{name}");
-                assert_eq!(
-                    full.get(prefix.len()..prefix.len() + 2),
-                    Some([op::LOOP_CROSSINGS as f64, 1007.0].as_slice()),
-                    "{name}"
-                );
-                continue;
-            }
-            assert!(rust_run(&s).is_ok() || matches!(rust_run(&s), Err(Fail::Deferred(_))), "{name}");
+        for (name, s, _) in rejected_cases() {
+            assert!(!keeps_contract(&s), "{name}");
         }
     }
+
 }

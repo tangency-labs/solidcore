@@ -31,7 +31,8 @@
 //! tolerance upstream takes from the system (the port asks their topology units).
 //! Scripts never call a member of a stand-in object or of an `SmPoint3d` cast to
 //! `SmObject` (undefined behaviour upstream): the Rust side rejects those ops, and the
-//! generator drops scripts the Rust side fails on.
+//! generator redraws scripts the Rust side fails on and those outside the static input
+//! contract ([`keeps_contract`]).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1490,6 +1491,62 @@ fn gen_script(k: &Kernel, rng: &mut Rng) -> Script {
     }
 }
 
+// ---- input contract ---------------------------------------------------------------------
+
+/// The object kind a classification type (code) needs (`Ok(None)` for `UNKNOWN` and
+/// `NOTHING`).
+fn kind_of_class(class: i32) -> Result<Option<usize>, ()> {
+    Ok(Some(match class {
+        100 | 110 => return Ok(None),
+        101 => kind::REGION,
+        102 => kind::FACE,
+        103 => kind::EDGE,
+        104 => kind::VERTEX,
+        105 => kind::POINT,
+        106 => kind::CURVE,
+        107 => kind::PLANE,
+        108 => kind::VOLUME,
+        109 => kind::EDGEUSE,
+        _ => return Err(()),
+    }))
+}
+
+/// Whether a script keeps the static input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/intersect_point_class.rs`, `validate`): edges on curves
+/// and faces on planes, class objects of their class's kind, `SetFace` of a face,
+/// `GetGap3d` of a plane, `LoadFromIntersection` of an object (not a point) whose parameters
+/// stay inside the 10 of an `SmSolutionEnd`, and connection targets that are topology.
+fn keeps_contract(s: &Script) -> bool {
+    let kinds: Vec<usize> = s.objects.iter().map(obj_kind).collect();
+    let kind = |j: usize| kinds.get(j).copied();
+    let geometry_ok = s.objects.iter().enumerate().all(|(i, o)| match o {
+        ObjIn::Edge(Some(c)) => *c < i && kind(*c) == Some(kind::CURVE),
+        ObjIn::Face(Some(p)) => *p < i && kind(*p) == Some(kind::PLANE),
+        _ => true,
+    });
+    let topo = |j: usize| matches!(kind(j), Some(kind::VERTEX | kind::EDGE | kind::FACE));
+    geometry_ok
+        && s.ops.iter().all(|x| match x {
+            OpIn::SetClassObject { class, obj, .. } => {
+                kind_of_class(*class).is_ok_and(|want| obj.is_none_or(|j| kind(j).is_some() && kind(j) == want))
+            }
+            OpIn::SetFace { obj, .. } => obj.is_none_or(|j| kind(j) == Some(kind::FACE)),
+            OpIn::Gap { s: srf, .. } => srf.is_none_or(|j| kind(j) == Some(kind::PLANE)),
+            OpIn::Load { obj, offset, .. } => {
+                let read = match kind(*obj) {
+                    Some(kind::CURVE | kind::EDGE) => 1,
+                    Some(kind::PLANE | kind::FACE) => 2,
+                    Some(kind::VOLUME) => 3,
+                    _ => 0,
+                };
+                kind(*obj).is_some_and(|k| k != kind::POINT) && *offset <= 9 && offset + read <= 10
+            }
+            OpIn::Connected { j, .. } => topo(*j),
+            OpIn::ConnectedAny { js, .. } => js.len() <= 16 && js.iter().all(|j| topo(*j)),
+            _ => true,
+        })
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "intersect.point_class"
@@ -1499,6 +1556,9 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let s = gen_script(k, rng);
+            if !keeps_contract(&s) {
+                continue;
+            }
             if let Err(Fail::Harness(_)) = rust_run(&s) {
                 continue;
             }

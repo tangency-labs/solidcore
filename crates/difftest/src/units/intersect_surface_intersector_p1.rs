@@ -1579,6 +1579,102 @@ fn edge_cases() -> Vec<(String, Value)> {
     v
 }
 
+// ---- input contract ---------------------------------------------------------------------
+
+/// Largest input magnitude.
+const MAX_COORD: f64 = 1e9;
+
+/// Every number of a JSON value is at most [`MAX_COORD`] in magnitude.
+fn bounded(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.as_f64().is_some_and(|x| x.is_finite() && x.abs() <= MAX_COORD),
+        Value::Array(a) => a.iter().all(bounded),
+        Value::Object(o) => o.values().all(bounded),
+        _ => true,
+    }
+}
+
+/// Clamped, non-decreasing knots with interior multiplicity at most `p`.
+fn knots_ok(knots: &[f64], ncp: usize, p: usize) -> bool {
+    let (Some(&k0), Some(&km)) = (knots.first(), knots.last()) else { return false };
+    if knots.len() != ncp + p + 1
+        || knots.windows(2).any(|w| w.first() > w.last())
+        || km <= k0
+        || knots.iter().take(p + 1).any(|&k| k != k0)
+        || knots.iter().rev().take(p + 1).any(|&k| k != km)
+    {
+        return false;
+    }
+    let (mut run, mut last) = (0usize, f64::NAN);
+    knots.iter().filter(|&&k| k != k0 && k != km).all(|&k| {
+        run = if k == last { run + 1 } else { 1 };
+        last = k;
+        run <= p
+    })
+}
+
+/// Control points with coordinates, and weights all absent (non-rational) or all positive.
+fn cpts_ok<'a>(mut c: impl Iterator<Item = &'a [Option<f64>; 4]>) -> bool {
+    let Some(first) = c.next() else { return false };
+    let rational = first[3].is_some();
+    std::iter::once(first).chain(c).all(|p| {
+        p[..3].iter().all(Option::is_some) && p[3].is_some() == rational && p[3].is_none_or(|w| w > 0.0)
+    })
+}
+
+fn surface_ok(s: &SurfaceIn) -> bool {
+    match s {
+        SurfaceIn::Plane { .. } => true,
+        SurfaceIn::BSpline { p, q, net, u, v } => {
+            let (nu, nv) = (net.len(), net.first().map_or(0, Vec::len));
+            (1..=8).contains(p)
+                && (1..=8).contains(q)
+                && (2..=17).contains(&nu)
+                && (2..=17).contains(&nv)
+                && *p < nu
+                && *q < nv
+                && net.iter().all(|r| r.len() == nv)
+                && knots_ok(u, nu, *p)
+                && knots_ok(v, nv, *q)
+                && cpts_ok(net.iter().flatten())
+        }
+    }
+}
+
+fn curve_ok(c: &CurveIn) -> bool {
+    match c {
+        CurveIn::Segment { a, b } => a != b,
+        CurveIn::BSpline { dim, p, cpts, knots } => {
+            (2..=3).contains(dim)
+                && (1..=8).contains(p)
+                && (2..=33).contains(&cpts.len())
+                && *p < cpts.len()
+                && knots_ok(knots, cpts.len(), *p)
+                && cpts_ok(cpts.iter())
+        }
+    }
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/intersect_surface_intersector_p1.rs`, `encode`): values
+/// at most [`MAX_COORD`] in magnitude, B-spline surfaces and curves of bounded degree and
+/// size with clamped knots and consistent weights, non-degenerate segments, at most 64 ops,
+/// 8 curves and 64 points, and points of [`POINT_LEN`] values with valid type codes.
+fn keeps_contract(i: &Inputs) -> bool {
+    let point_ok = |p: &Vec<f64>| {
+        p.len() == POINT_LEN
+            && p.iter().take(5).enumerate().all(|(k, &t)| t >= 0.0 && t <= if k == 0 { 7.0 } else { 5.0 } && t.fract() == 0.0)
+    };
+    i.ops.len() <= 64
+        && i.curves.len() <= 8
+        && i.points.len() <= 64
+        && serde_json::to_value(i).is_ok_and(|v| bounded(&v))
+        && surface_ok(&i.a)
+        && i.b.as_ref().is_none_or(surface_ok)
+        && i.curves.iter().all(curve_ok)
+        && i.points.iter().all(point_ok)
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "intersect.surface_intersector_p1"
@@ -1586,7 +1682,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
-            if let Some(i) = gen_case(rng) {
+            if let Some(i) = gen_case(rng).filter(keeps_contract) {
                 return serde_json::to_value(i).ok();
             }
         }

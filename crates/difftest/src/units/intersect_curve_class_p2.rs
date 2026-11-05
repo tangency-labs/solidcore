@@ -33,9 +33,9 @@
 //! records answer (zone tolerances, edge curve / interval, face surface) are recorded too.
 //!
 //! Deferred cases: members on the bare vertex and edge stand-ins (no B-rep behind them:
-//! `topology.vertex`, `topology.edge`, `topology.brep_p1`). Every generated script is a case,
-//! including those undefined upstream and topology walks over the bare stand-ins: their golden
-//! is the Rust result, refusal or deferral.
+//! `topology.vertex`, `topology.edge`, `topology.brep_p1`). Generated scripts keep the input
+//! contract upstream defines ([`keeps_contract`]: before each op its preconditions are
+//! checked on the classifications the ops before it left); the generator redraws the others.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -44,7 +44,7 @@ use solidcore::curve::crv_on_surf::CrvOnSurf;
 use solidcore::curve::curve::p2::Curve;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::solution_array::{Solution, SolutionObject, SolutionType};
-use solidcore::geom::tol::zone_tol3d;
+use solidcore::geom::tol::{are_same, zone_tol3d};
 use solidcore::intersect::curve_class::{
     self as cc_mod, CurveClassification, CurveInterval, IntervalPosition, ResetOptions,
 };
@@ -64,8 +64,10 @@ use super::intersect_curve_class_p1::{
     b, build_pool, gen_bspline, gen_objects, gen_tol, id, must, of_kind, put_pc, rp, st,
     BSplineIn, CurveIn, Fail, LineIn, ObjIn, Pool, PoolObj, H, NOW, NOZ, USE_DEFAULT,
 };
-use super::intersect_curve_class_p1::{add_face, kind};
-use super::intersect_curve_class_p4::{gen_face, topology_kinds};
+use super::intersect_curve_class_p1::{
+    add_face, kind, kind_of_class, ContractPool,
+};
+use super::intersect_curve_class_p4::{face_keeps_contract, gen_face, topology_kinds};
 use crate::units::heal_face_props::{FaceIn, LoopsIn};
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -87,6 +89,13 @@ mod op {
     pub const MAX_UV: usize = 11;
     pub const REFINE: usize = 12;
 }
+
+/// Most intervals of a classification.
+const MAX_IVLS: usize = 16;
+/// Most target loops of a classification.
+const MAX_LOOPS: usize = 4;
+/// Most curves on surfaces.
+const MAX_COS: usize = 4;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
@@ -402,7 +411,11 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
     }
     let mut ccs = [build_cc(&k, &pool, &s.cc[0])?, build_cc(&k, &pool, &s.cc[1])?];
     let mut o: Vec<f64> = Vec::new();
+    let view = ContractPool::with_extra_curves(&s.objects, s.cos.len(), s.face.as_ref());
     for x in &s.ops {
+        if let Some(why) = undefined_upstream(&view, s.face.is_some(), &ccs, x) {
+            return Err(Fail::Undefined(why));
+        }
         let (code, t) = x.code_t();
         if t > 1 {
             return Err(harness("bad target").into());
@@ -519,6 +532,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
         Err(Fail::Refused(s)) => Ok(refused(s)),
+        Err(Fail::Undefined(why)) => Ok(Output::err(format!("undefined_upstream: {why}"))),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -935,6 +949,148 @@ fn add_face_topology(rng: &mut Rng, s: &mut Script) {
     s.face = Some(face);
 }
 
+// ---- input contract ---------------------------------------------------------------------
+
+/// Whether a point classification `class obj` is one the shim's `read_pc` takes: a class
+/// code it knows and an object of that class's kind (or none).
+fn pc_keeps_contract(pool: &ContractPool, pc: &PcIn) -> bool {
+    let Ok(want) = kind_of_class(pc.class) else { return false };
+    pool.get(pc.obj, &[])
+        && pool
+            .kind(pc.obj)
+            .is_none_or(|k| Some(k) == want || (want == Some(kind::BSURF) && k == kind::PLANE))
+}
+
+fn ivl_keeps_contract(pool: &ContractPool, ivl: &IvlIn) -> bool {
+    ivl.pcs.iter().all(|pc| pc_keeps_contract(pool, pc))
+}
+
+/// The shim's `read_cc`: objects of the kinds a classification takes, at most
+/// [`MAX_LOOPS`] target loops and [`MAX_IVLS`] intervals.
+fn cc_keeps_contract(pool: &ContractPool, c: &CcIn) -> bool {
+    let srf = [kind::PLANE, kind::BSURF];
+    pool.get(c.curve, &[kind::CURVE])
+        && pool.get(c.s1, &srf)
+        && pool.get(c.uv1, &[kind::CURVE])
+        && pool.get(c.s2, &srf)
+        && pool.get(c.uv2, &[kind::CURVE])
+        && pool.get(c.face, &[kind::FACE])
+        && pool.get(c.ti, &[kind::OTHER])
+        && pool.get(c.other, &[kind::OTHER])
+        && c.loops.len() <= MAX_LOOPS
+        && c.loops.iter().all(|l| pool.get(Some(*l), &[kind::LOOP]))
+        && c.ivls.len() <= MAX_IVLS
+        && c.ivls.iter().all(|i| ivl_keeps_contract(pool, i))
+}
+
+/// The input checks of `ReSet`: objects of the kinds it takes, and a new curve needs its
+/// interval.
+fn reset_ok(pool: &ContractPool, r: &ResetIn) -> bool {
+    let srf = [kind::PLANE, kind::BSURF];
+    pool.get(r.curve, &[kind::CURVE])
+        && pool.get(r.uv, &[kind::CURVE])
+        && pool.get(r.s1, &srf)
+        && pool.get(r.s2, &srf)
+        && pool.get(r.uv2, &[kind::CURVE])
+        && pool.get(r.ti, &[kind::OTHER])
+        && (r.curve.is_none() && r.uv.is_none() || r.ivl.is_some())
+}
+
+fn is_point(pc: &PointClassification<H>) -> bool {
+    pc.object().is_some_and(|h| h.1 == ClassObjectKind::Point)
+}
+
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks
+/// of `harness/cpp/shim/intersect_curve_class_p2.cpp`, evaluated on the state the ops
+/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+fn undefined_upstream(
+    pool: &ContractPool,
+    has_face: bool,
+    ccs: &[CurveClassification<H>; 2],
+    x: &OpIn,
+) -> Option<&'static str> {
+    let (_, t) = x.code_t();
+    let cc = ccs.get(t)?;
+    let size = cc.size();
+    let bad = |b: bool, why: &'static str| b.then_some(why);
+    match x {
+        OpIn::Assign { .. } => None,
+        OpIn::ObjTol { j, .. } | OpIn::CrvLoc { j, .. } => {
+            if size == 0 || *j > size {
+                return Some("boundary index");
+            }
+            let (pc, _) = cc.point_class_by_index(*j).ok()?;
+            if matches!(x, OpIn::ObjTol { .. }) {
+                return bad(is_point(pc), "zone tolerance of a point object");
+            }
+            bad(!pc.sss_point_flag() && cc.curve().is_none(), "no classification curve")
+        }
+        OpIn::Dead { live, .. } => bad(*live && !has_face, "no B-rep"),
+        OpIn::Insert { j, ivl, .. } => bad(
+            !ivl_keeps_contract(pool, ivl) || *j > MAX_IVLS || (*j == 0 && size > 0),
+            "insert",
+        ),
+        OpIn::Reset { r, .. } => bad(!reset_ok(pool, r), "reset"),
+        OpIn::Connect { j, end, .. } => bad(*j > MAX_IVLS || *end > 4, "index"),
+        OpIn::UpdatePc { j, pc, .. } => {
+            if !pc_keeps_contract(pool, pc) || size == 0 || *j > size {
+                return Some("boundary index");
+            }
+            // the mate of the first and last boundary needs the curve
+            bad((*j == 0 || *j == size) && cc.curve().is_none(), "no classification curve")
+        }
+        OpIn::EditMin { j, param, .. } | OpIn::EditMax { j, param, .. } => {
+            if *j > MAX_IVLS {
+                return Some("index");
+            }
+            if *j >= size {
+                return None;
+            }
+            // an edit within the allowed range evaluates the curve and takes the end
+            // objects' zone tolerances
+            let ivl = |i: usize| cc.at(i).ok().map(|v| v.interval);
+            let (lo, hi) = if matches!(x, OpIn::EditMin { .. }) {
+                let lo = if *j > 0 { ivl(*j - 1)?.min() } else { cc.interval().min() };
+                (lo, ivl(*j)?.max())
+            } else {
+                let hi = if *j + 1 < size { ivl(*j + 1)?.max() } else { cc.interval().max() };
+                (ivl(*j)?.min(), hi)
+            };
+            let ends_ok = (0..size).all(|i| cc.at(i).is_ok_and(|v| !is_point(&v.start) && !is_point(&v.end)));
+            bad(
+                Extent1d::from_min_max(lo, hi).contains_value(*param, 0.0) && (cc.curve().is_none() || !ends_ok),
+                "edit",
+            )
+        }
+        OpIn::MinUv { j, .. } | OpIn::MaxUv { j, .. } => bad(*j >= size || cc.curve().is_none(), "min/max UV"),
+        OpIn::Refine { sol, edge, count, .. } => {
+            if !pool.get(*edge, &[kind::EDGE]) || sol.ty > 4 || *count > 100 {
+                return Some("refine input");
+            }
+            // past the entry checks the bare stand-in edge's topology is walked
+            let point = sol.ty == 1 || are_same(sol.s[0], sol.e[0]) || are_same(sol.s[1], sol.e[1]);
+            bad(
+                *count <= 5 && point && cc.surface1().is_some() && cc.surface2().is_some(),
+                "refinement past its entry checks",
+            )
+        }
+    }
+}
+
+/// Whether a script keeps the input contract of the C++ reference wrapper: its face is
+/// one upstream builds, its curves on surfaces are UV curves on B-spline surfaces, its
+/// classifications are well-formed ([`cc_keeps_contract`]) and every op keeps
+/// [`undefined_upstream`].
+fn keeps_contract(s: &Script) -> bool {
+    let pool = ContractPool::with_extra_curves(&s.objects, s.cos.len(), s.face.as_ref());
+    let base = ContractPool::new(&s.objects, None);
+    s.face.as_ref().is_none_or(face_keeps_contract)
+        && s.cos.len() <= MAX_COS
+        && s.cos.iter().all(|[uv, sf]| base.get(Some(*uv), &[kind::CURVE]) && base.get(Some(*sf), &[kind::BSURF]))
+        && s.cc.iter().all(|c| cc_keeps_contract(&pool, c))
+        && !matches!(rust_run(s), Err(Fail::Undefined(_)))
+}
+
 // ---- fixtures built in code ---------------------------------------------------------------
 
 fn pc(class: i32, obj: Option<usize>, t: f64, gap: f64) -> PcIn {
@@ -1100,7 +1256,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_script(rng)).ok()
+        for _ in 0..64 {
+            let s = gen_script(rng);
+            if keeps_contract(&s) {
+                return serde_json::to_value(s).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {

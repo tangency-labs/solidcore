@@ -16,7 +16,7 @@
 //!
 //! Half the generated scripts add a real one-face B-rep (`face`, as in unit
 //! `intersect.curve_class_p4`: `heal_face_props::rust_brep` plus its down face use's side,
-//! [`hfp::add_down_side`]) whose face, loops, edges,
+//! `heal_face_props::add_down_side`) whose face, loops, edges,
 //! vertices and edge uses follow the objects in the pool; their classifications and targets
 //! usually name its real topology, so the `SmVertex` / `SmEdge` connection tests, intervals,
 //! curves, points and tolerances run the ported topology members through the
@@ -44,15 +44,17 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use solidcore::curve::curve::p2::Curve;
+use solidcore::curve::curve::p2::{Curve, BSPLINE_CURVE_TYPE};
 use solidcore::geom::extent1d::Extent1d;
-use solidcore::geom::tol::zone_tol3d;
+use solidcore::geom::tol::{xsect_tol_3d_from_zones, zone_tol3d};
 use solidcore::intersect::curve_class::{
     self as cc_mod, CurveClassification, CurveInterval, PartialCoincidence,
 };
 use solidcore::geom::vector3d::Vec3;
 use solidcore::intersect::curve_class::p5::ClassGeometryMut;
-use solidcore::intersect::point_class::{ClassGeometry, ClassObjectKind, PointClassType};
+use solidcore::intersect::point_class::{
+    ClassGeometry, ClassObjectKind, PointClassType, PointClassification,
+};
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
 use solidcore::topology::Brep;
@@ -65,8 +67,10 @@ use super::intersect_curve_class_p1::{
     put_curve, put_pc, rp, st, BSplineIn, ConicIn, CurveIn, Fail, LineIn, ObjIn, Pool, H, NOW,
     USE_DEFAULT,
 };
-use super::intersect_curve_class_p4::{gen_face, topology_kinds};
-use crate::units::heal_face_props::{self as hfp, FaceIn};
+use super::intersect_curve_class_p1::{kind_of_class, ContractPool};
+use super::intersect_curve_class_p4::{face_keeps_contract, gen_face, topology_kinds};
+use crate::units::heal_face_props::{FaceIn, LoopsIn};
+use solidcore::topology::edge as topo_edge;
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -318,6 +322,234 @@ fn put_state(o: &mut Vec<f64>, cc: &CurveClassification<H>) {
     }
 }
 
+// ---- input contract ---------------------------------------------------------------------
+
+/// Most intervals of a classification.
+const MAX_IVLS: usize = 16;
+
+/// The shim's `read_cc`: objects of the kinds the classification takes and point
+/// classifications whose object matches their class.
+fn cc_keeps_contract(pool: &ContractPool, c: &CcIn) -> bool {
+    let pc_ok = |pc: &PcIn| {
+        let Ok(want) = kind_of_class(pc.class) else { return false };
+        pool.get(pc.obj, &[])
+            && pool
+                .kind(pc.obj)
+                .is_none_or(|k| Some(k) == want || (want == Some(kind::BSURF) && k == kind::PLANE))
+    };
+    pool.get(c.curve, &[kind::CURVE])
+        && pool.get(c.s1, &[kind::PLANE, kind::BSURF])
+        && pool.get(c.uv1, &[kind::CURVE])
+        && c.ivls.len() <= MAX_IVLS
+        && c.ivls.iter().all(|i| i.pcs.iter().all(pc_ok))
+}
+
+/// The contract's view of the objects: their kinds, which are the one-face B-rep's, and
+/// the pool curve of each stand-in edge.
+struct ContractView {
+    pool: ContractPool,
+    edge_curves: Vec<Option<usize>>,
+}
+
+impl ContractView {
+    fn new(s: &Script) -> Self {
+        let pool = ContractPool::new(&s.objects, s.face.as_ref());
+        let edge_curves = s
+            .objects
+            .iter()
+            .map(|o| match o {
+                ObjIn::Edge(c) => *c,
+                _ => None,
+            })
+            .collect();
+        Self { pool, edge_curves }
+    }
+
+    fn kind(&self, o: Option<H>) -> Option<usize> {
+        self.pool.kind(o.map(|h| h.0))
+    }
+
+    fn real(&self, o: Option<H>) -> bool {
+        self.pool.is_real(o.map(|h| h.0))
+    }
+}
+
+/// The curve of the edge an edge classification names: a stand-in's pool curve, or the
+/// one-face B-rep edge's.
+fn edge_curve<'a>(v: &ContractView, pool: &'a Pool, pc: &PointClassification<H>) -> Option<&'a Curve> {
+    let h = pc.object()?;
+    if h.0 < v.pool.n_script {
+        let c = v.edge_curves.get(h.0).copied().flatten()?;
+        return pool.curve(*pool.handles.get(c)?);
+    }
+    match pool.topology_entity(h)? {
+        (b, EntityRef::Edge(e)) => topo_edge::curve(b, e).ok().flatten(),
+        _ => None,
+    }
+}
+
+fn is_ve(pc: &PointClassification<H>) -> bool {
+    matches!(pc.point_class(), PointClassType::Vertex | PointClassType::Edge)
+}
+
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks
+/// of `harness/cpp/shim/intersect_curve_class_p7.cpp`, evaluated on the state the ops
+/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+#[allow(clippy::too_many_lines)]
+fn undefined_upstream(
+    k: &Kernel,
+    v: &ContractView,
+    pool: &Pool,
+    ccs: &[CurveClassification<H>; 2],
+    x: &OpIn,
+) -> Option<&'static str> {
+    let (_, t) = x.code_t();
+    let (cc, other_cc) = (ccs.get(t)?, ccs.get(1usize.checked_sub(t)?)?);
+    let size = cc.size();
+    let at = |c: &CurveClassification<H>, j: usize| c.at(j).ok().copied();
+    let bad = |b: bool, why: &'static str| b.then_some(why);
+    match x {
+        OpIn::PcByIndex { j, .. } => bad(size == 0 || *j > size, "boundary index"),
+        OpIn::Mate { j, .. } => {
+            if *j > size {
+                return Some("boundary index");
+            }
+            let curve = cc.curve().and_then(|h| pool.curve(h));
+            if (*j == 0 || *j == size) && curve.is_none() {
+                return Some("no classification curve");
+            }
+            if size == 0 {
+                let z = cc_mod::src_zone_tol_3d_of(k, Some(cc));
+                let closed = curve.is_some_and(|c| {
+                    c.is_closed(k, &cc.interval(), xsect_tol_3d_from_zones(k, z, z)).unwrap_or(false)
+                });
+                return bad(closed, "mate of an empty closed classification");
+            }
+            None
+        }
+        OpIn::Collapse { j, .. } => {
+            if *j > MAX_IVLS {
+                return Some("index");
+            }
+            if *j < size && size >= 2 {
+                let ivl = at(cc, *j)?;
+                let point = |pc: &PointClassification<H>| v.kind(pc.object()) == Some(kind::POINT);
+                return bad(cc.curve().is_none() || point(&ivl.start) || point(&ivl.end), "collapse");
+            }
+            None
+        }
+        OpIn::Touches { targets, .. } => {
+            if targets.len() > 8 || size == 0 {
+                return Some("touches");
+            }
+            if !targets.iter().all(|i| v.pool.get(Some(*i), &[kind::VERTEX, kind::EDGE])) {
+                return Some("target kind");
+            }
+            if targets.is_empty() {
+                return None;
+            }
+            let check = |pc: &PointClassification<H>| {
+                if !is_ve(pc) {
+                    return true;
+                }
+                let kd = v.kind(pc.object());
+                let real = v.real(pc.object());
+                targets.iter().all(|&q| v.pool.kind(Some(q)) == kd || (real && v.pool.is_real(Some(q))))
+            };
+            let ends = std::iter::once(at(cc, 0).map(|i| i.start))
+                .chain((0..size).map(|q| at(cc, q).map(|i| i.end)));
+            bad(!ends.flatten().all(|pc| check(&pc)), "connection test across kinds")
+        }
+        OpIn::FindVertex { target, .. } => bad(!v.pool.get(*target, &[kind::VERTEX]) || size == 0, "find vertex"),
+        OpIn::FindEdge { target, flag, .. } => {
+            bad(!v.pool.get(*target, &[kind::EDGE]) || size == 0 || *flag > 3, "find edge")
+        }
+        OpIn::CrossingFace { face, .. } => bad(!v.pool.get(*face, &[kind::FACE]), "face kind"),
+        OpIn::CoinMaybe { j, own, .. } => {
+            let other = if *own { cc } else { other_cc };
+            if *j >= size || *j >= other.size() {
+                return Some("interval index");
+            }
+            if cc.curve().is_none() || other.curve().is_none() {
+                let edgy = |i: CurveInterval<H>| {
+                    i.mid.point_class() == PointClassType::Edge
+                        && (i.end.point_class() == PointClassType::Edge || i.start.point_class() == PointClassType::Edge)
+                };
+                return bad(edgy(at(cc, *j)?) || edgy(at(other, *j)?), "no classification curve");
+            }
+            None
+        }
+        OpIn::ClassifyFace { j, do_point, face, old, real, .. } => {
+            if !v.pool.get(*face, &[kind::FACE]) || !v.pool.get(*old, &[kind::FACE]) || *j >= size || face.is_none() {
+                return Some("classify face");
+            }
+            let ivl = at(cc, *j)?;
+            let mc = ivl.mid.point_class();
+            let mid_face = ivl.mid.face_object().map(|h| h.0);
+            let early = !(mc == PointClassType::Unknown || (old.is_some() && mc == PointClassType::Face))
+                || (old.is_some() && mid_face.is_some() && *old != mid_face);
+            let real_ok = |pc: &PointClassification<H>| !is_ve(pc) || v.real(pc.object());
+            let real = *real
+                && v.pool.is_real(*face)
+                && cc.curve().is_some()
+                && real_ok(&ivl.start)
+                && real_ok(&ivl.end);
+            bad(!early && !real && (is_ve(&ivl.start) || is_ve(&ivl.end) || *do_point), "face query of a stand-in face")
+        }
+        OpIn::Partial { own, .. } => {
+            let other = if *own { cc } else { other_cc };
+            let os = other.size();
+            if size == 0 || os == 0 {
+                return None;
+            }
+            let bad_edge = |a: &PointClassification<H>, b: &PointClassification<H>| {
+                if a.point_class() != PointClassType::Edge || b.point_class() != PointClassType::Edge {
+                    return false;
+                }
+                // `SM_CAST_PTR(SmBSplineCurve, pEdge->GetCurve())` of the first edge, after
+                // both edges' curves are checked
+                match (edge_curve(v, pool, a), edge_curve(v, pool, b)) {
+                    (Some(c), Some(_)) => !c.is_kind_of(BSPLINE_CURVE_TYPE),
+                    _ => true,
+                }
+            };
+            let (a0, b0, a1, b1) = (at(cc, 0)?, at(other, 0)?, at(cc, size - 1)?, at(other, os - 1)?);
+            bad(bad_edge(&a0.mid, &b0.mid) || bad_edge(&a1.mid, &b1.mid), "edge curve not a B-spline")
+        }
+        OpIn::Fillet { j, todo, .. } => {
+            if *j > MAX_IVLS || *todo > 7 {
+                return Some("index");
+            }
+            if cc.doing_fillets() && cc.other_classification().is_some() {
+                let other = other_cc;
+                if *j >= size || *j >= other.size() {
+                    return Some("interval index");
+                }
+                let (a, b) = (at(cc, *j)?, at(other, *j)?);
+                let vx = PointClassType::Vertex;
+                let v1 = todo & 1 == 0 || (a.start.point_class() == vx && b.start.point_class() == vx);
+                let v2 = todo & 2 == 0 || (a.end.point_class() == vx && b.end.point_class() == vx);
+                let e = PointClassType::Edge;
+                return bad(
+                    todo & 4 != 0 && v1 && v2 && a.mid.point_class() == e && b.mid.point_class() == e,
+                    "fillet edge curve replacement",
+                );
+            }
+            None
+        }
+        OpIn::CrossedByEdge { .. } | OpIn::NearMisses { .. } => None,
+    }
+}
+
+/// Whether a script keeps its input contract: its face is one upstream builds, its
+/// classifications are well-formed and every op keeps [`undefined_upstream`].
+fn keeps_contract(s: &Script) -> bool {
+    let v = ContractView::new(s);
+    s.face.as_ref().is_none_or(face_keeps_contract)
+        && s.cc.iter().all(|c| cc_keeps_contract(&v.pool, c))
+        && !matches!(rust_run(s), Err(Fail::Undefined(_)))
+}
+
 #[allow(clippy::too_many_lines)]
 fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
     let k = Kernel::default();
@@ -327,7 +559,11 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
     }
     let mut ccs = [build_cc(&k, &pool, &s.cc[0])?, build_cc(&k, &pool, &s.cc[1])?];
     let mut o: Vec<f64> = Vec::new();
+    let view = ContractView::new(s);
     for x in &s.ops {
+        if let Some(why) = undefined_upstream(&k, &view, &pool, &ccs, x) {
+            return Err(Fail::Undefined(why));
+        }
         let geo = Geo(&pool);
         let (code, t) = x.code_t();
         if t > 1 {
@@ -447,6 +683,7 @@ fn rust(s: &Script) -> Result<Output, HarnessError> {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(d)) => Ok(*d),
         Err(Fail::Refused(s)) => Ok(refused(s)),
+        Err(Fail::Undefined(why)) => Ok(Output::err(format!("undefined_upstream: {why}"))),
         Err(Fail::Harness(e)) => Err(e),
     }
 }
@@ -855,7 +1092,7 @@ fn real_endpoint_cases() -> Vec<(String, Value)> {
         y: [0.0, 1.0, 0.0],
         domain: [0.0, 0.0, 1.0, 1.0],
         surf: None,
-        loops: Some(hfp::LoopsIn::Edges { loops: vec![vec![
+        loops: Some(LoopsIn::Edges { loops: vec![vec![
             [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
             [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
         ]] }),
@@ -964,7 +1201,7 @@ fn real_twin(s: &Script, variant: RealVariant) -> Option<Script> {
         uv_ok: point,
         real: true,
     }];
-    Some(twin)
+    keeps_contract(&twin).then_some(twin)
 }
 
 impl UnitDiff for Runner {
@@ -973,7 +1210,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_script(rng)).ok()
+        for _ in 0..64 {
+            let s = gen_script(rng);
+            if keeps_contract(&s) {
+                return serde_json::to_value(s).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
