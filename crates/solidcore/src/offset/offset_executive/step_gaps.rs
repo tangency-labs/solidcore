@@ -120,8 +120,8 @@ impl OffsetExecutive {
     /// # Errors
     ///
     /// [`SolidError::InvalidInput`] for missing topology; [`SolidError::PortInvariant`]
-    /// for a kept edge without a 3D curve or an edge use of one that has no offset, nor
-    /// its mate; those of the curve and vertex edits.
+    /// for a kept edge without a 3D curve, or an edge use of one that has no offset, nor
+    /// its mate, on a face whose offset is there; those of the curve and vertex edits.
     pub(super) fn restore_kept_edges(
         &mut self,
         kernel: &mut Kernel,
@@ -158,13 +158,19 @@ impl OffsetExecutive {
             let interval = edge::interval(original, e)?;
             let tolerance = edge::tolerance(original, e)?;
             for u in edge::edgeuses(original, e, None, None)? {
-                // of an edge use and its mate (the other side of its face), one is related
-                // to its offset, which restores both
                 let Some(offset_u) = self.offset_edgeuse(u) else {
-                    if self.offset_edgeuse(required_mate(original, u)?).is_none() {
+                    // of an edge use and its mate (the two sides of one face), one is related
+                    // to its offset, which restores both; neither is, only when the face's
+                    // offset closed to nothing and was deleted with its edges
+                    // (`remove_closed_faces`): the edge has no offset on that face
+                    let mate = required_mate(original, u)?;
+                    if self.offset_edgeuse(mate).is_none()
+                        && !self.offset_face_deleted(original, [u, mate])?
+                    {
                         return Err(SolidError::port_invariant(
                             OP,
-                            "neither a kept edge use nor its mate has an offset",
+                            "a kept edge use, nor its mate, has an offset, and its face's \
+                             offset is there",
                         ));
                     }
                     continue;
@@ -221,6 +227,19 @@ impl OffsetExecutive {
             }
         }
         Ok(())
+    }
+
+    /// Whether the offset face of the original face of edge uses `uses` (an edge use and
+    /// its mate) was deleted: neither side's face use is related to an offset face any
+    /// more ([`OffsetExecutive::remove_closed_faces`] forgets them).
+    fn offset_face_deleted(&self, original: &Brep, uses: [EdgeuseId; 2]) -> Result<bool> {
+        for u in uses {
+            let fu = eu::faceuse(original, u)?.ok_or_else(|| null("edge use without face use"))?;
+            if !self.faceuse_to_faces.seconds(fu).is_empty() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// `CloseLoopGaps` (fork, opt-in `Kernel::fixes.local_operation_step_walls` for a
