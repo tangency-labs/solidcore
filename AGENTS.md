@@ -37,7 +37,7 @@ is open before starting anything new.
 4. **Blends:** the certificate's root cause (#2690) and the G2 setback corner (#2697).
 5. **The shell, offset and thicken rebuild** (#2350).
 
-Issues and pull requests for these carry the `urgent` label (the only priority label for now).
+Issues and pull requests for these carry the `urgent` label. Those open for anyone to take also carry `help wanted`: start there.
 
 **What not to work on.**
 - **Defects you think you found** in code no user reaches: an overflow from an impossible input,
@@ -210,7 +210,7 @@ Every ported file starts with:
 
 Unit list and states: `plan/units/<unit id>.toml`, one file per unit (format:
 `plan/modules.schema.md`, order: `plan/order.md`). **The [checklist](https://tangency-labs.github.io/solidcore/PROGRESS.md)** is generated
-from `main` by the Pages workflow (`harness/plan/progress.py`; not committed). **Any `todo` unit or unclaimed completion task can be claimed**, after the `priority: high` work above. A claim reserves
+from `main` by the Pages workflow (`harness/plan/progress.py`; not committed). **Any `todo` unit or unclaimed completion task can be claimed**, after the work §0 lists. A claim reserves
 its stated scope, not every future change to the unit. Missing functions, back-edge
 wiring, exact runner imports, fixtures and demonstrated parity bugs remain useful
 work in `partial` and `green` units; inspect source and reports, not status alone.
