@@ -223,14 +223,25 @@ fn faces(slot: &mut Slot, pick: &Value) -> Result<(Vec<usize>, Order), Stop> {
 
 /// Runs one traced call: its output, or the operation's error as text.
 fn call(c: &Value, ins: &mut [Slot]) -> Result<Result<Slot, String>, Stop> {
+    call_with_copy(c, ins, Slot::copied)
+}
+
+fn call_with_copy(
+    c: &Value,
+    ins: &mut [Slot],
+    copy: impl Fn(&Slot) -> Result<Result<Slot, String>, Stop>,
+) -> Result<Result<Slot, String>, Stop> {
     let p = &c["params"];
     let bad = |what: &str| Stop::Fail(format!("{}: parameter {what}", c["op"]));
     let op = c["op"].as_str().unwrap();
     let first = || ins.first().cloned().ok_or_else(|| bad("input"));
+    // An internal preparation failure is not a refusal of the traced edit.
+    let copy_for_edit =
+        |s: &Slot| copy(s)?.map_err(|why| Stop::Fail(format!("copy before {op}: {why}")));
     let in_place =
         |slot: Slot, r: solidcore_ops::Result<()>| r.map(|()| slot).map_err(|e| e.to_string());
     Ok(match op {
-        "copy" => return first()?.copied(),
+        "copy" => return copy(&first()?),
         "tagged" => Ok(first()?),
         "transform" => {
             let s = first()?;
@@ -239,13 +250,9 @@ fn call(c: &Value, ins: &mut [Slot]) -> Result<Result<Slot, String>, Stop> {
             for (row, v) in matrix.iter_mut().zip(m) {
                 *row = f64s::<4>(v).ok_or_else(|| bad("matrix"))?;
             }
-            match s.copied()? {
-                Ok(out) => {
-                    let r = out.body.transform(&matrix);
-                    in_place(out, r)
-                }
-                Err(e) => Err(e),
-            }
+            let out = copy_for_edit(&s)?;
+            let r = out.body.transform(&matrix);
+            in_place(out, r)
         }
         "make_sphere" => {
             let center = f64s::<3>(&p["center"]).ok_or_else(|| bad("center"))?;
@@ -258,30 +265,21 @@ fn call(c: &Value, ins: &mut [Slot]) -> Result<Result<Slot, String>, Stop> {
                 .map_err(|e| e.to_string())
         }
         "shell" => {
-            let mut s = match first()?.copied()? {
-                Ok(s) => s,
-                Err(e) => return Ok(Err(e)),
-            };
+            let mut s = copy_for_edit(&first()?)?;
             let (open, order) = faces(&mut s, &p["open_faces"])?;
             let t = p["thickness"].as_f64().ok_or_else(|| bad("thickness"))?;
             let r = offset::shell(&s.body, &order, &open, t);
             in_place(Slot { order: None, ..s }, r)
         }
         "offset_faces" => {
-            let mut s = match first()?.copied()? {
-                Ok(s) => s,
-                Err(e) => return Ok(Err(e)),
-            };
+            let mut s = copy_for_edit(&first()?)?;
             let (picked, order) = faces(&mut s, &p["faces"])?;
             let d = p["distance"].as_f64().ok_or_else(|| bad("distance"))?;
             let r = offset::offset_faces(&s.body, &order, &picked, d);
             in_place(Slot { order: None, ..s }, r)
         }
         "thicken" => {
-            let s = match first()?.copied()? {
-                Ok(s) => s,
-                Err(e) => return Ok(Err(e)),
-            };
+            let s = copy_for_edit(&first()?)?;
             let t = p["thickness"].as_f64().ok_or_else(|| bad("thickness"))?;
             let sym = p["symmetric"].as_bool().ok_or_else(|| bad("symmetric"))?;
             let r = offset::thicken(&s.body, t, sym);
@@ -704,6 +702,35 @@ fn a_copied_edit_preserves_the_supplied_face_pick_order() {
         .fold(f64::NEG_INFINITY, f64::max);
     assert!((max_z - 12.0).abs() <= 12.0 * 1e-9, "top is at {max_z}");
     assert!((body.volume(1e-9).unwrap() - 6000.0).abs() <= 6000.0 * 1e-9);
+}
+
+#[test]
+fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
+    let input = Slot {
+        body: Arc::new(solidcore_ops::make_box([0.0; 3], [1.0; 3]).unwrap()),
+        order: None,
+    };
+    for op in ["copy", "transform", "shell", "offset_faces", "thicken"] {
+        let step = serde_json::json!({
+            "op": op, "error": "expected edit refusal",
+            "params": {"matrix": [
+                [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]
+            ]}
+        });
+        // Inject failure at the copy boundary: no edit has been attempted yet.
+        let result = call_with_copy(&step, &mut [input.clone()], |_| {
+            Ok(Err("input copy failed".to_owned()))
+        });
+        match result {
+            Ok(Err(why)) if op == "copy" => assert_eq!(why, "input copy failed"),
+            Err(Stop::Fail(why)) if op != "copy" => {
+                assert!(why.contains("input copy failed"), "{why}");
+            }
+            Err(other) => panic!("{op}: wrong copy failure: {other:?}"),
+            Ok(Err(why)) => panic!("{op}: copy failure became the edit's refusal: {why}"),
+            Ok(Ok(_)) => panic!("{op}: failed copy accepted"),
+        }
+    }
 }
 
 #[test]
