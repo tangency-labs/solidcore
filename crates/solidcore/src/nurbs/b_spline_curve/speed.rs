@@ -14,7 +14,7 @@ const OP: &str = "nurbs::b_spline_curve::speed";
 /// The span's control points and the length of its knot span.
 struct Span<'a> {
     points: &'a [CPoint],
-    knot_span: f64,
+    length: f64,
     degree: usize,
 }
 
@@ -40,7 +40,7 @@ impl BSplineCurve {
         let first = j.checked_sub(degree).ok_or_else(missing)?;
         Ok(Span {
             points: points.get(first..=j).ok_or_else(missing)?,
-            knot_span: hi - lo,
+            length: hi - lo,
             degree,
         })
     }
@@ -129,9 +129,9 @@ impl BSplineCurve {
             if lo.is_nan() || lo <= 0.0 {
                 return Err(SolidError::invalid_input(OP, "a weight is not positive"));
             }
-            4.0 * p * (hi / lo) / span.knot_span
+            4.0 * p * (hi / lo) / span.length
         } else {
-            2.0 * p / span.knot_span
+            2.0 * p / span.length
         };
         let n = u32::try_from(span.degree)
             .ok()

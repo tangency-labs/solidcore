@@ -11,7 +11,7 @@
 //!   degree 3 that vanishes where `g''''` changes sign; they are now accepted on the
 //!   larger of it and the fifth divided difference (`OdeOptions::quadrature`, as the
 //!   precise-property integrals).
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use solidcore::curve::curve::Curve;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::nurbs::b_spline_curve::BSplineCurve;
