@@ -840,3 +840,37 @@ the input's). Measured with `difftest::soundness` (main / 2.5R / derived):
   2260, wr_530 ×2, wr650, fork_a96ce9f, 1061).
 
 With the revert, the branch's local-op results are as recorded above (2.5R), unchanged.
+
+## Kept edges under the derived reach (2026-11-05, localop agent; work in progress)
+
+Owner's decision: faces that keep their surfaces keep their shared edges; only edges with a
+moved side are intersected again; the derived reach replaces the 2.5 radii (deleted). Branch
+`localop/keep-unmoved-edges`. A face given its own plane again (proved exactly: error-free
+determinants, `local_operation::is_own_plane`) keeps a copy of its surface. An edge is kept when
+its faces and every face at its vertices stay (`OffsetExecutive::keep_unmoved_edges`):
+`EdgeuseOffset` leaves it and the merge does not intersect its faces again. A corner of faces that
+all stay adds no reach.
+
+Suite: every local-op test passes, wr_566 ×3 and wr_648 ×3 among them. `wr_534_default_*` now
+asserts the closed box (the derived reach reaches the far top). Difftest
+`topology.brep_local_operation` against the 2.5R report: 72 of 165 cases move. `fc0029` (no face
+replaced) fails as a new mismatch: `values.geometry[447]` C++ 5.238277689001029e-4, Rust
+5.321193916485071e-4. The body is the same (manifold, the input's volume). Soundness, 2.5R → kept:
+- *Better, 5*: `gen0044`, `gen0075`, `gen0083` and `gen0091` become sound (volume
+  983422.1665753094); `gen0055` becomes manifold (795.85, not sound).
+- `box_face0_same` and its `attributed_` copy stay manifold, now of volume exactly 1000.0.
+  (2.5R gave 1000.0000000032. The 24 check lines are the same in every box case, before and after.)
+  `gen0002` and `gen0082` stay manifold (756.28). `gen0054` stays manifold, but its check goes
+  from 4 lines to 30.
+- *Worse, 11 (not manifold)*: on `Solids/nurb_fillet.smb`, `fc0000`, `fc0002`, `fc0003`, `fc0013`,
+  `fc0014`, `fc0020`, `fc0025` and `fc0027`, and `nurb_fillet_face6_same` and `face7_same` with
+  their `attributed_` copies. Under 2.5R these returned the input body unchanged (the input's
+  volume), so the move was lost, but the body was manifold. Every one now has an edge of tolerance
+  0.0060698687 over the body's 0.005 (check #59), two bad edges (#61) and one edge too many.
+  Seen in fc0000 and fc0014: in fc0000 the "same" face 14 is proved unmoved, and the kept edges
+  are 45 of 47. Not yet found: whether the 0.006 edge is a kept edge whose two offsets (each lifted
+  from its own face's UV curve) are 0.006 apart and are not stitched. The fix to try next is to
+  give a kept edge's offsets the original edge's 3D curve, interval, tolerance and UV curves.
+- The others keep their state: the box volumes agree within 6e-11, the generated cases within
+  3e-6, `gen0007` within 2.4e-4 and `fc0008` within 1.3e-3. The listing is
+  `notes-localop/moved-cases.tsv`.
