@@ -2398,6 +2398,7 @@ pub fn face_intersect_breps_cached(
                 uv_curves1.push(None);
                 uv_curves2.push(None);
                 curve_types.push(TsectCurveType::RegionBoundary);
+                k.work_counters.add_coincident_curve_classified();
             }
         }
     }

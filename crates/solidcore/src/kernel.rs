@@ -162,6 +162,7 @@ pub struct WorkCounters {
     face_pairs: Cell<u64>,
     loops_classified: Cell<u64>,
     wall_body_copies: Cell<u64>,
+    coincident_curves_classified: Cell<u64>,
 }
 
 impl WorkCounters {
@@ -190,11 +191,20 @@ impl WorkCounters {
         self.wall_body_copies.get()
     }
 
+    /// Edge curves of two coincident faces that `FaceIntersect` classifies on both: those
+    /// of each face within reach of the other face's box. Not upstream (the fork's counters
+    /// have none).
+    #[must_use]
+    pub fn coincident_curves_classified(&self) -> u64 {
+        self.coincident_curves_classified.get()
+    }
+
     /// Zeroes every count (`SmWorkCounters::Reset`).
     pub fn reset(&self) {
         self.face_pairs.set(0);
         self.loops_classified.set(0);
         self.wall_body_copies.set(0);
+        self.coincident_curves_classified.set(0);
     }
 
     /// Counts one face pair examined for intersection.
@@ -212,6 +222,12 @@ impl WorkCounters {
     pub(crate) fn add_wall_body_copy(&self) {
         self.wall_body_copies
             .set(self.wall_body_copies.get().saturating_add(1));
+    }
+
+    /// Counts one edge curve of coincident faces classified on both.
+    pub(crate) fn add_coincident_curve_classified(&self) {
+        self.coincident_curves_classified
+            .set(self.coincident_curves_classified.get().saturating_add(1));
     }
 }
 
