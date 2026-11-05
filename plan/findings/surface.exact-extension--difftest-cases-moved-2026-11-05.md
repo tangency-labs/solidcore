@@ -1037,7 +1037,7 @@ operation does not make them.
   (fc0002/0003/0013/0020/0027 and face5/6/7_same among them: the "still not manifold" cases
   of the circle item, and face5_same's 877.59 body, the same wrong side as fc0016).
 - *Probe (all 165, `notes-localop/sound-fc0016.tsv` vs `sound-volume.tsv`).* Sound 74 -> 109.
-  43 lines change, every one to the input unchanged (the refusal): the cone sheets and the
+  46 lines change, every one to the input unchanged (the refusal): the cone sheets and the
   sphere and cylinder solids become sound (input), the nurb_fillet cases go from #61/#59/#82
   and not manifold (or the -877.59/877.59 bodies) to the input's own 4 check lines. No case
   is worse.
