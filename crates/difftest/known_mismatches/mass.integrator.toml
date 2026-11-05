@@ -784,29 +784,29 @@ why = "a curve's length: each span's end is evaluated in its own knot span and t
 [[mismatch]]
 unit = "mass.integrator"
 case = "review_edge_constant_0.001_[0.1, 0.9]_1"
-why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::is_point_on), and its steps are accepted at the rounding of the computed speed (BSplineCurve::speed_rounding_bound) (values.out[0]: cpp=2.869137949964774e-17 rust=0e0; exact 0)"
+why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::span_speed gives None), and its steps are accepted at the rounding of the computed speed (SpanSpeed::rounding_bound) (values.out[0]: cpp=2.869137949964774e-17 rust=0e0; exact 0)"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "review_edge_constant_1e-06_[0, 1]_1"
-why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::is_point_on), and its steps are accepted at the rounding of the computed speed (BSplineCurve::speed_rounding_bound) (values.out[0]: cpp=5.1892366649254e-17 rust=0e0; exact 0)"
+why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::span_speed gives None), and its steps are accepted at the rounding of the computed speed (SpanSpeed::rounding_bound) (values.out[0]: cpp=5.1892366649254e-17 rust=0e0; exact 0)"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "review_edge_constant_1e-06_[0.1, 0.9]_1"
-why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::is_point_on), and its steps are accepted at the rounding of the computed speed (BSplineCurve::speed_rounding_bound) (values.out[0]: cpp=3.8879599162417425e-17 rust=0e0; exact 0)"
+why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::span_speed gives None), and its steps are accepted at the rounding of the computed speed (SpanSpeed::rounding_bound) (values.out[0]: cpp=3.8879599162417425e-17 rust=0e0; exact 0)"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "review_edge_constant_1e-09_[0, 1]_1"
-why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::is_point_on), and its steps are accepted at the rounding of the computed speed (BSplineCurve::speed_rounding_bound) (values.out[0]: cpp=4.5176520155805236e-17 rust=0e0; exact 0)"
+why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::span_speed gives None), and its steps are accepted at the rounding of the computed speed (SpanSpeed::rounding_bound) (values.out[0]: cpp=4.5176520155805236e-17 rust=0e0; exact 0)"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "review_edge_constant_1e-09_[0.1, 0.9]_1"
-why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::is_point_on), and its steps are accepted at the rounding of the computed speed (BSplineCurve::speed_rounding_bound) (values.out[0]: cpp=3.334745134151084e-17 rust=0e0; exact 0)"
+why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::span_speed gives None), and its steps are accepted at the rounding of the computed speed (SpanSpeed::rounding_bound) (values.out[0]: cpp=3.334745134151084e-17 rust=0e0; exact 0)"
 
 [[mismatch]]
 unit = "mass.integrator"
 case = "review_edge_constant_0.001_[0, 1]_1"
-why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::is_point_on), and its steps are accepted at the rounding of the computed speed (BSplineCurve::speed_rounding_bound) (values.out[0]: cpp=7.119288733715064e-17 rust=0e0; exact 0)"
+why = "a point curve (three equal control points): its length is exactly 0. C++ integrates |C'|, which is rounding noise, and returns noise; Rust gives exactly 0, since a span whose control points are one point has length 0 (BSplineCurve::span_speed gives None), and its steps are accepted at the rounding of the computed speed (SpanSpeed::rounding_bound) (values.out[0]: cpp=7.119288733715064e-17 rust=0e0; exact 0)"

@@ -61,6 +61,13 @@ integrand's own rounding (about ε·max|P|·p/Δknot, not ε·|C'|). Choosing th
 a span that is a point to rounding exact zero, is left for a decision.
 
 Resolved (same branch, follow-on commits). The fix does both:
+Superseded later the same day: the length is integrated with
+`integrate_rounded_with_kernel`; `speed_rounding_bound` and `is_point_on` below were replaced by
+`BSplineCurve::span_speed` (the speed in difference form and its own bound, `None` for a point
+span), and a floor-accepted step owes its error to the integral (`E`, now
+`(1 + gamma_16) |h| sum |w_j| (delta + gamma_11 |g_j|)`). See
+plan/findings/curve.curve_p5--speed-in-difference-form-moves-cases-2026-11-05.md.
+
 - **A floor at the integrand's rounding.** A step's error scale is floored at the rounding
   of its error estimates over the accuracy. That rounding is
   `E = |h| sum |w_j| (delta + gamma_8 |g_j|)`, where `delta` bounds each sample's absolute
