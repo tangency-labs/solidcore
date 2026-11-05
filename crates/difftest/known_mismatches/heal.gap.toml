@@ -1,0 +1,34 @@
+[[mismatch]]
+unit = "heal.gap"
+case = "gap_array_append"
+why = "Append maximum state changed by WR-90 default fix (plan/findings/heal.gap--default-append-state-changes.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0017"
+why = "Append maximum state changed by WR-90 default fix (plan/findings/heal.gap--default-append-state-changes.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0179"
+why = "Append maximum state changed by WR-90 default fix (plan/findings/heal.gap--default-append-state-changes.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0289"
+why = "Append maximum state changed by WR-90 default fix (plan/findings/heal.gap--default-append-state-changes.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0369"
+why = "Append maximum state changed by WR-90 default fix (plan/findings/heal.gap--default-append-state-changes.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0389"
+why = "Append maximum state changed by WR-90 default fix (plan/findings/heal.gap--default-append-state-changes.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0393"
+why = "Append maximum state changed by WR-90 default fix (plan/findings/heal.gap--default-append-state-changes.md)"
