@@ -568,6 +568,21 @@ pub mod properties;
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A nonzero scalar interval must evaluate and integrate a constant in either direction.
+    #[test]
+    fn short_scalar_interval_integrates_constant() {
+        for (a, b, expected) in [(0.0, 1e-11, 10.0), (1e-11, 0.0, -10.0)] {
+            for propagate in [false, true] {
+                let mut calls = 0;
+                let result = integrate_opt_in(a, b, IntegrationAlgorithm::Romberg, 1e-8, propagate, |_| {
+                    calls += 1;
+                    Ok(1e12)
+                }).unwrap();
+                assert!((result - expected).abs() < 1e-12, "{result} vs {expected}");
+                assert!(calls > 0);
+            }
+        }
+    }
     #[test]
     fn unused_initial_and_infinite_controls_follow_upstream() {
         let integrator = OdeIntegrator::default();
