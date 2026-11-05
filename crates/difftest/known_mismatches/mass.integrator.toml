@@ -734,3 +734,74 @@ unit = "mass.integrator"
 case = "gen1191"
 why = "precise-property steps are accepted on the larger of the embedded estimate and the fifth-order one, the fifth divided difference of the step's samples (#1556; plan/findings/mass.integrator--quadrature-step-estimate-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy (values.out[6]: cpp=7.940216416280623e-21 rust=7.940238009987348e-21)"
 
+# A curve's length: span ends from their own knot span, steps on the quadrature estimate (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md).
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_surface_area_kind3_eps0.001"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=6.172008456445699e-1 (error 1.66e-5) rust=6.172008961967692e-1 (error 1.66e-5))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_edge_rational_1e-06_[0.1, 0.9]_1"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.3518616866401674e0 (error 4.04e-9) rust=2.351861689282625e0 (error 5.16e-9))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "gen0054"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.4798720694305123e0 (error 6.28e-9) rust=2.4798720750258814e0 (error 8.54e-9))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "gen0237"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=2.1864449009187074e5 (error 3.00e-9) rust=2.1864449043031014e5 (error 4.55e-9))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "gen0509"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=3.0319740513317933e5 (error 9.30e-9) rust=3.031974056807959e5 (error 1.11e-8))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "gen1177"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=1.47755888032351e5 (error -7.27e-8) rust=1.4775588852330315e5 (error -6.94e-8))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "gen0339"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=-3.432429768168192e-1 (error -2.04e-8 (closed form)) rust=-3.432429771810604e-1 (error -1.93e-8 (closed form)))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "gen0426"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=9.447298764782703e-1 (error -2.36e-7 (closed form)) rust=9.447298599441718e-1 (error -2.54e-7 (closed form)))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "gen0994"
+why = "a curve's length: each span's end is evaluated in its own knot span and the steps are accepted on the larger of the embedded estimate and the fifth divided difference (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md): the same integral by other steps, so the value moves within the requested accuracy; error against a composite Gauss-Legendre reference (values.out[0]: cpp=9.756913811407506e-17 (error -4.39e-6 (closed form; the integrand's amplitude is 4.7e-16, its value rounding)) rust=9.75691082970234e-17 (error -4.70e-6 (closed form)))"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_edge_constant_0.001_[0.1, 0.9]_1"
+why = "a point curve (three equal control points): its length is 0 and |C'| is rounding noise, so both sides return noise of 1e-17; the quadrature step estimate (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md) takes other steps over the noise (values.out[0]: cpp=2.869137949964774e-17 rust=3.3053665339340445e-17; exact 0)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_edge_constant_1e-06_[0, 1]_1"
+why = "a point curve (three equal control points): its length is 0 and |C'| is rounding noise, so both sides return noise of 1e-17; the quadrature step estimate (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md) takes other steps over the noise (values.out[0]: cpp=5.1892366649254e-17 rust=5.171813764287927e-17; exact 0)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_edge_constant_1e-06_[0.1, 0.9]_1"
+why = "a point curve (three equal control points): its length is 0 and |C'| is rounding noise, so both sides return noise of 1e-17; the quadrature step estimate (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md) takes other steps over the noise (values.out[0]: cpp=3.8879599162417425e-17 rust=4.3380890269610454e-17; exact 0)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_edge_constant_1e-09_[0, 1]_1"
+why = "a point curve (three equal control points): its length is 0 and |C'| is rounding noise, so both sides return noise of 1e-17; the quadrature step estimate (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md) takes other steps over the noise (values.out[0]: cpp=4.5176520155805236e-17 rust=0e0; exact 0)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_edge_constant_1e-09_[0.1, 0.9]_1"
+why = "a point curve (three equal control points): its length is 0 and |C'| is rounding noise, so both sides return noise of 1e-17; the quadrature step estimate (plan/findings/curve.curve_p5--curve-length-honest-acceptance-moves-cases-2026-11-05.md) takes other steps over the noise (values.out[0]: cpp=3.334745134151084e-17 rust=3.3431776141368414e-17; exact 0)"
