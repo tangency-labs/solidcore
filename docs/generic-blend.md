@@ -148,6 +148,22 @@ and continuity grading are solved on S. B is never an operand, so error does not
 booleans: every edge on a blend face lies within its own tolerance of S, however many operations
 follow [22, 20]. Only export flattens to B and carries ε, once.
 
+**Kept as data ([#2388](https://github.com/tangency-labs/solidcore/issues/2388)).** A round
+outlives the kernel's body as plain data, `surface::procedural_blend::record`: its supports by
+value (a support as its NURBS form, the one its stations are solved on, labelled with its kind:
+plane, cylinder, cone, sphere, torus or free; a round on a round as its own record, three deep at
+most), sides, radius or law, order, thumbweight, leader, seeds, ε, the
+map from the net's parameters, and the net, every number as stored. The record holds no maths and
+moves into `solidcore-record` as it is (`docs/layers.md`). The record keeps no analytic parameters:
+rebuilding derives a labelled support's analytic surface from its form (its corners for a plane,
+the circles of its rational quadratic rows for a surface of revolution: exact, as rational NURBS
+represent these surfaces exactly), refusing a form whose implicit equation does not vanish on it,
+coefficient by coefficient on each Bézier patch, naming the face. Rebuilding is exact, and the
+net is certified again (§2.4) before the round is an operand; a net not proved within ε is
+refused, naming its face. Evaluating S is a pure function of the definition: the station memo
+keys a definition by its own identity, never by a kernel's count, so kernels on other threads
+evaluating the same rounds agree with one kernel bit for bit.
+
 Rounds of the exact classes (§4) are stored as their analytic or rational surface, with no
 definition.
 
@@ -159,9 +175,46 @@ and between grid points it is bounded by the interpolation remainder with second
 enclosed rigorously, S's from interval evaluation over the span box. Existence and uniqueness of the
 station's root over the span box are proved by Moore's interval test on the Krawczyk operator
 [32, 28, 33]: K(X) ⊆ X proves a root in X, and K(X) ⊆ X with ‖I − Y F′(X)‖ < 1 proves it unique.
-Knots are inserted until the bound reaches a tenth of the zone tolerance; the achieved bound is
-stored as ε. Where plain intervals over-estimate, the remedy is a tighter enclosure [3, 4, 31], never
-a sampled check.
+Knots are inserted until the bound reaches a tenth of the zone tolerance. The bound stored as ε is
+the achieved one, plus how far the stored net is from the Hermite rows it was made of (its control
+points are divided out of the rows and rounded), plus three floors E, a forward error bound of
+computing the rows (two floors cover rows computed again, one the rows the net was made of):
+
+E = G (D + γ_K M), γ_K = K u / (1 − K u), u = 2⁻⁵³,
+
+- D, the stations: Newton stops once its last step in each foot parameter x is at most
+  10⁻¹² (1 + |x|); converging quadratically, the root is within that step, so a foot is within
+  L_u η_u + L_v η_v of it in space, η = 10⁻¹² (1 + max |knot|) of the support, L its derivative
+  bounds (the degree times the largest control point difference over its knot span, times the
+  square of the weights' ratio when rational [48]); the jets and the centre move with the feet to
+  first order;
+- γ_K M, the rows: a control point of the net is a sum of at most 2(n + 1) products of the section's
+  coefficients with the jets, a Hermite point (two operations), its division by its weight and the
+  weight's scale (two): K = 2(n + 1) + 6 operations on coordinates of at most M, the net's size about
+  the centre of its box (the round's own frame, below);
+- G = w_max / w_min of the net: a homogeneous error divided by the weight.
+
+E does not depend on where the round lies. At part scale (a round and knots of tens of millimetres)
+it is about 10⁻¹⁰, all but 10⁻¹⁴ of it the stations' term: exact to rounding. A transform scales the
+bound and adds the motion's rounding where the round now lies (six operations per homogeneous
+coordinate, on its coordinates there). Where plain
+intervals over-estimate, the remedy is a tighter enclosure [3, 4, 31], never a sampled check.
+
+**Certified again.** A round rebuilt from its record proves its net within ε anew
+(`blend::fillet_section::recertify`), as the Ball's sphere patch is checked to lie on its sphere.
+The stations are the seeds' knots. On each span between two stations the stations are solved again
+from the definition and the span's Hermite rows H rebuilt, as the construction builds them; the
+certificate bounds |H − S| on the span, asked for what ε leaves; and |B − H| on each piece of the net
+over the span is bounded by the two rational Bézier patches' control nets [48]: with points P_i, Q_i
+and weights w_i, v_i, |B − H| ≤ max |P_i − Q_i| + max |Q_i − c| · max |w_i v_j − v_i w_j| / (min w ·
+min v) for any point c. A net cut or reparametrized after it was built is a piece of the same
+Hermite net, cut in homogeneous coordinates before the nets are compared. All of it is taken in the
+round's own frame: the round (supports, leader, net) is moved by minus the centre of its net's box,
+which rounds each coordinate once by at most u |x − c|, so the certificate's enclosures, |B − H| and
+the floor follow the round's size and not its distance from the origin; a round moved, patterned or
+mirrored is certified again within its bound. The net is refused where
+the sum with one floor passes ε, where a piece runs across a station, or where a foot crosses a support's knot line
+between two stations (the construction puts a station there).
 
 ## 3. Events of the trace
 
@@ -217,6 +270,7 @@ never returns "no kind": a configuration the table does not name is a Setback.
 | **Join** | two blends meeting G1 and continuing each other | one shared section |
 | **Turn** | two blends sharing a face, turning at a sharp unrounded side edge (a boss base, a pocket's floor or rim) | **Mitre** (default) or **Swept** (option) |
 | **Ball** | three equal rounds of one convexity at a vertex of three faces | the corner ball's sphere |
+| **Chamfer** | every edge at the vertex chamfered, each chamfer a plane between two planes | **Mitre** (default): the chamfer planes run on to their common point; or **Facet** (option): one plane through the rails' crossings |
 | **Setback** | everything else: unequal radii, four or more blends, mixed convexity, and any corner where G2 is selected | the setback hole and its certified convex fill |
 
 ![Plan views of the four corner kinds: mitre crease, swept torus, ball sphere patch, setback hole.](generic-blend/corner-events.svg)
@@ -238,6 +292,20 @@ ball's sphere. Setback: the rounds stop short and a 2n-sided hole is filled.*
 - **Ball.** Three equal rounds at three faces end on the corner ball's sphere [37, 6]. The corner
   face is always one rational patch exactly on the sphere, of degree (4, 2) by stereographic
   construction [8], with no analytic sphere special case: one code path.
+- **Chamfer.** Where every edge at the vertex is chamfered and every chamfer is a plane, the
+  chamfer planes close the corner exactly. The Mitre runs each plane on until it meets the others:
+  three meet at one point M (a 3x3 solve), pairwise along the exact lines from the rails' crossings
+  X_i to M, with no corner face. The Facet cuts the corner off with the plane through the X_i; its
+  edges are the chamfers' end sections. Validity is sign tests on linear forms at the part-scale
+  rounding gate. A mitre point outside the corner is refused, naming the largest size of the
+  too-wide chamfer that keeps it inside. Four or more chamfers build the facet where their
+  crossings are coplanar (their mitre is refused, naming why); where they are not, the corner is a
+  patch whichever type was asked: the chamfers stop at their crossings and n bilinear
+  quadrilaterals round the crossings' centroid close the skew polygon of their end sections, G0
+  to each other and to each chamfer (at four sides, the one bilinear patch of the crossings).
+  Chamfer planes so nearly coplanar
+  that the points where they meet are not determined to the part's rounding are refused, naming
+  that. The corner keeps its definition: its chamfers and the points they meet in (opt-in, WR-716).
 - **Setback** [44, 43]. Each blend stops at a setback distance from the vertex. The hole has 2n
   sides: n profile curves (the blends' end sections) alternating with n spring curves on the faces.
   Plain trimlines that simply meet give poor shapes for unequal radii, edges far from 90° and
@@ -256,8 +324,11 @@ ball's sphere. Setback: the rounds stop short and a 2n-sided hole is filled.*
   - uses no least squares and no averaging.
 
   The default setback is the larger of 1.5 r and the contact-line minimum plus 0.25 r. Where that
-  does not certify, the automatic setback grows to the smallest common scale that certifies (found by
-  bisection; certification is monotone in scale), up to 2×. A setback the user gives explicitly that
+  does not certify, the automatic setback grows to the smallest common scale that certifies, up to 2×.
+  That scale is found by bisecting in steps of a thousandth, within a fixed budget of attempts, and
+  the search assumes certification is monotone in scale (every scale above one that certifies
+  certifies too). That assumption is checked on a grid of cases, not proved; replacing the budgeted
+  search with a proved rule is open work. A setback the user gives explicitly that
   does not fit or does not certify is refused, naming the size that does. No uncertified fill is ever
   returned. At a convex edge meeting concave ones, any setback blend dips under the faces' planes
   regardless of representation [44]; there the spring curve between adjacent convex and concave
@@ -300,6 +371,18 @@ continued cliff face, so the rim moves down.*
 Keeping the edge instead (the ball rolling on the rim, the spine continuing as the other offset
 meeting the rim's pipe) is a possible future option, never the default.
 
+A round bigger than the wall it rolls on ends on the body's outline (#2541, opt-in
+`fillet_round_ends_on_outline`, WR-730). This applies where the round on the continued wall
+would pass inside the wall's rim, cutting into the material beyond the face it leaves. The
+ball then touches the rim and stays tangent to the face it keeps. It rolls on the surface
+tangent to it along the rim: the wall's plane turned about the rim, or its cylinder leaned
+into a cone. Where the kept face is too narrow as well, the ball touches both rims.
+
+This is built for a lone round along a straight edge between planes, or along a circular
+edge between a plane square to its axis and a coaxial cylinder
+(`crate::blend::fillet_outline`). A round that passes the rim within the tolerance, or
+whose rail stays on its wall, is trimmed at its crease as above.
+
 ### 3.5 Refusals name the size that fits
 
 ![Left: offsets of a concave face collapse at its curvature radius. Right: a ball in a slot fits up to half the width.](generic-blend/refusal-size.svg)
@@ -313,6 +396,26 @@ one exists, else by solving that cause's geometry, never by building again. Wher
 open (a size at it would leave a face or an edge of no extent), it is the bound less a thousand of the
 edge's tolerances. The fillet session returns it next to the reason: `fit_size()` gives a `FitSize`, the size and
 its `FitKind` (a radius, a setback or a setback scale; `blend::fillet_executive`).
+
+Each cause is decided from its own geometry, before the construction that it would make fail
+(#2401):
+- **A polygon face taken whole.** A plane face bounded by straight edges, every one blended, is taken
+  whole once the balls reach its deepest point (`NoteFitOfPolygonsTakenWhole`'s bound). This is
+  judged before the corners and the trace, whose rails would have no length. The refusal names
+  that depth, open.
+- **A collapsed offset.** A ball as wide as a face it rolls on (a cylinder or sphere of its radius,
+  with the ball inside) has its offset of that face collapsed onto the axis or centre, so its centre
+  is fixed. The zone it sweeps ends in a section of the ball only where the plane through an end of
+  the edge, square to it, holds that centre. A tray's seam and a cornered block's rim hold it at
+  both ends and build. The middle edge of an arc's tangent chain, rounded at its round's radius,
+  does not: refused, naming that radius, open. A larger ball that does not fit that face names it
+  open the same way. An end where the chain runs on into another blended edge closes the zone:
+  the Join there places the next round's section through the centre,
+  and the piece is the ball's triangle (#2403). So the same middle edge in a chain with the
+  upright and the arc's top edge builds at that radius.
+- **An open end of an overflow.** An overflow's open end whose end face does not cut the blend,
+  and a trimmed blend that keeps no length where no corner takes any, names where the blend stays
+  on its faces (`LargestSizeOnItsFaces`, open).
 
 The application shows the refusal and offers that size; it does not search by retrying builds.
 
@@ -330,6 +433,7 @@ classification replaced the old try-and-fall-through chain.
 | two cones with two touching points | a pair of conics | (6, 2) [9, Thms 16–18] |
 | two cones or cylinders with one touching point | a singular quartic | (12, 2) [9, Thms 19–21] |
 | cone/sphere (sphere/cylinder) with one touching point | a singular quartic | (8, 2) [9, Thm 22] |
+| a round of the ball's radius (its offset collapsed onto its spine, a line or a circle) and a face whose offset crosses that spine (solidcore #2403) | a point | the ball's triangle, (4, 2) |
 
 A rational spine with a rational radius gives a real rational canal surface [35, Thm 5.1], and a
 rolling ball on a surface with rational offsets along a rational rail is rational [35, §4]; minimal
@@ -672,7 +776,7 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 | <img src="generic-blend/cases/5300-fillet-tube-rim-as-wide-as-its-wall.jpg" width="240" alt="5300-fillet-tube-rim-as-wide-as-its-wall"> | `5300-fillet-tube-rim-as-wide-as-its-wall`<br>the outer top edge of a tube with a 1 mm wall (r 9..10, 20 high) filleted 1 mm: the round spans the whole wall top and meets the inner wall at its edge; truck refused it | **passes** |
 | <img src="generic-blend/cases/556-fillet-edge-ending-on-curved-boss.jpg" width="240" alt="556-fillet-edge-ending-on-curved-boss"> | `556-fillet-edge-ending-on-curved-boss`<br>an R0.5 round on a single straight bottom edge of a box whose end runs out against a cylindrical boss wall | **passes** |
 | <img src="generic-blend/cases/851-fillet-arc-and-upright.jpg" width="240" alt="851-fillet-arc-and-upright"> | `851-fillet-arc-and-upright`<br>on #851's knife-edge part (tessellation/1263): the arc's top edge and the front upright at the arc, R2 together | **passes** |
-| <img src="generic-blend/cases/851-fillet-arc-then-top-front.jpg" width="240" alt="851-fillet-arc-then-top-front"> | `851-fillet-arc-then-top-front`<br>on #851's knife-edge part (tessellation/1263): the arc's top edge R2, then the top front edge R2 as a fillet of its own | **known failing**: SMLib status 1001: the top front edge's tangent chain (the edge, the arc round's end curve on the front face, the upright under it) rounded R2; along the end curve the R2 ball sits on the arc round's own centre circle, so that piece is the ball about (39.2538, -19, 8) touching front, top and wall … |
+| <img src="generic-blend/cases/851-fillet-arc-then-top-front.jpg" width="240" alt="851-fillet-arc-then-top-front"> | `851-fillet-arc-then-top-front`<br>on #851's knife-edge part (tessellation/1263): the arc's top edge R2, then the top front edge R2 as a fillet of its own | **passes** on solidcore (solidcore #2403): the round along the arc round's end curve is the ball about (39.2538, -19, 8) touching front, top and wall, the shape and volume of the three edges rounded together (9524.343669 here, 9524.343665 together); on SMLib 5e8c9c1 known failing, status 1001 |
 | <img src="generic-blend/cases/851-fillet-arc-top-edge-9-5.jpg" width="240" alt="851-fillet-arc-top-edge-9-5"> | `851-fillet-arc-top-edge-9-5`<br>the top edge of #851's concave R21 wall rounded R 9.5, just under its height | **passes** |
 | <img src="generic-blend/cases/851-fillet-arc-top-edge-full-wall-height.jpg" width="240" alt="851-fillet-arc-top-edge-full-wall-height"> | `851-fillet-arc-top-edge-full-wall-height`<br>the top edge of #851's concave R21 wall rounded R10, its full height: the round uses the wall up, its contact the bottom arc | **passes** |
 | <img src="generic-blend/cases/851-fillet-knife-edge-tip-r2.jpg" width="240" alt="851-fillet-knife-edge-tip-r2"> | `851-fillet-knife-edge-tip-r2`<br>the knife edge where #851's concave R21 wall runs out tangent into the back face, rounded R2: the ball that fits 2 from both faces, 13 back from the tip | **passes** |
@@ -680,7 +784,7 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 | <img src="generic-blend/cases/851-fillet-top-front-and-front-left-upright.jpg" width="240" alt="851-fillet-top-front-and-front-left-upright"> | `851-fillet-top-front-and-front-left-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge and the front-left upright, R2 together | **passes** |
 | <img src="generic-blend/cases/851-fillet-top-front-and-upright.jpg" width="240" alt="851-fillet-top-front-and-upright"> | `851-fillet-top-front-and-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge and the front upright at the arc, R2 together | **passes** |
 | <img src="generic-blend/cases/851-fillet-top-front-then-front-left-upright.jpg" width="240" alt="851-fillet-top-front-then-front-left-upright"> | `851-fillet-top-front-then-front-left-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge R2, then the front-left upright R2 with its tangent chain: up the first round's end arc and along the left top edge | **passes** |
-| <img src="generic-blend/cases/851-fillet-top-front-then-upright.jpg" width="240" alt="851-fillet-top-front-then-upright"> | `851-fillet-top-front-then-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge R2, then the front upright at the arc R2 as a fillet of its own | **known failing**: SMLib status 1001: the upright's tangent chain (the upright, the first round's end curve on the wall, the arc's top edge) rounded R2; along the end curve the R2 ball sits on the first round's axis, so that piece is the ball about (39.2538, -19, 8) touching front, top and wall (a torus of … |
+| <img src="generic-blend/cases/851-fillet-top-front-then-upright.jpg" width="240" alt="851-fillet-top-front-then-upright"> | `851-fillet-top-front-then-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge R2, then the front upright at the arc R2 as a fillet of its own | **passes** on solidcore (solidcore #2403): the round along the first round's end curve is the ball about (39.2538, -19, 8) touching front, top and wall, the shape and volume of the three edges rounded together (9524.343665); on SMLib 5e8c9c1 known failing, status 1001 |
 | <img src="generic-blend/cases/854-fillet-revolved-disc-both-rims-full-round.jpg" width="240" alt="854-fillet-revolved-disc-both-rims-full-round"> | `854-fillet-revolved-disc-both-rims-full-round`<br>a disc r15 x 5 revolved from a sketch, both rims rounded R2.5 in one fillet: a full round of its 5 mm wall (robustness seed 33) | **passes** |
 | <img src="generic-blend/cases/926-fillet-top-edge-ending-on-boss-wall-above-it.jpg" width="240" alt="926-fillet-top-edge-ending-on-boss-wall-above-it"> | `926-fillet-top-edge-ending-on-boss-wall-above-it`<br>the top edge x = 40, z = 20 of #556's box (40x40x20 joined with an R12 boss 40 high on its side) rounded R 0.8: it runs into the boss's wall, which rises above the box, and ends on it | **passes** |
 | <img src="generic-blend/cases/cov-fillet-arc-edge-on-an-oblique-cut-of-a-bar.jpg" width="240" alt="cov-fillet-arc-edge-on-an-oblique-cut-of-a-bar"> | `cov-fillet-arc-edge-on-an-oblique-cut-of-a-bar`<br>a thin bar with a 3 mm concave arc in its profile, its end cut by a plane tilted 21 deg (examples/regressions/oblique_cut_of_cylinder): the edge where the arc's cylinder meets the cut (part of an ellipse) rounded R0.1 … | **passes** |
@@ -762,15 +866,16 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 **Origin.** The blend was designed and first built in the SolidCraft fork of SMLib (2026-10 to
 2026-11-02, v1.1.0-alpha), where its constructions replaced SMLib's fillet code. solidcore is based on
 SMLib and continues from there on its own path: new construction is designed on its solidcore issue
-and lands here. The fork's results are the baseline the brought-over steps match, bit for bit, and
-the difftest shows it when the maintainers run it; the issues below link back to where each step
-started.
+and lands here. A step brought over from the fork unchanged keeps the fork's results bit for bit;
+a step written or changed in solidcore sets its own baseline, graded by closed forms, geometric
+checks and invariants, with the fork's numbers at most a cross-check. The issues below link back to
+where each step started.
 
 **The new construction replaces the old one; the old code is deleted.**
-- A step lands behind its `UpstreamFixes` flag only while it is being brought over, so its results can
-  be checked case by case.
-- Once it is in and matches, the flag becomes the default, and the old path is deleted along with
-  the flags and patches made to it. Nothing is kept as a fallback.
+- A step lands as the default, with no `UpstreamFixes` flag (`AGENTS.md` §4b): the cases whose
+  results change are listed in its pull request with why the new result is right.
+- The old path is deleted in the same change, along with the flags and patches made to it. Nothing
+  is kept as a fallback.
 - Don't extend an old path; improve the construction that replaces it. Where the old path is still
   reached, bring over what changes behaviour now and name the pending deletion in the pull request.
 
@@ -857,3 +962,4 @@ Titles, pages or DOIs are given only where the project's reading notes record th
 45. T. Várady, A. Rockwood, P. Salvi. Transfinite surface interpolation over irregular n-sided domains. *Computer-Aided Design* 43 (2011) 1330–1340. doi:10.1016/j.cad.2011.08.028
 46. J. Vida, R. R. Martin, T. Várady. A survey of blending methods that use parametric surfaces. *Computer-Aided Design* 26(5) (1994) 341–365. doi:10.1016/0010-4485(94)90023-X
 47. X. Ye, H. Nowacki. Ensuring compatibility of G²-continuous surface patches around a nodepoint. *Computer Aided Geometric Design* 13(9) (1996) 931–949.
+48. G. Farin. *Curves and Surfaces for CAGD: A Practical Guide*, 5th ed. Morgan Kaufmann (2002): rational Bézier patches, their convex hull and subdivision.

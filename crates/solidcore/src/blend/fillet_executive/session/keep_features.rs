@@ -44,6 +44,9 @@
 //!   re-owned its faces' geometry under the notification naming, whose keys the target's own
 //!   geometry can carry (a body read or converted under that naming), and the merge refused the
 //!   ambiguous owner (`SM_ERR_INVALID_INPUT`).
+//! - **The walls swept apart (#2404).** A boss's continued walls are swept in a body of their
+//!   own and copied into the sheet; the fork sweeps them in the sheet, and the sweep's stitch
+//!   glued the sheet's own edges to them (`sweep_walls`).
 //! - **The trace.** The fork's `SM_ERR_MESSAGE` naming a reached feature isn't kept: the
 //!   port's kernel has no message channel for a step that goes on.
 //! - **Merging on a face.** The fork's `MergeCurvesOnSurface` takes the face's surface; the
@@ -308,6 +311,45 @@ fn merge_on_face(
     })
 }
 
+/// A boss's walls continued down: `profile` (its footprint's rim curves, in halves) swept by
+/// `distance` along `direction`, as faces of `sheet`; the new faces.
+///
+/// Not the fork's (#2404): the fork sweeps them in the sheet itself. The sweep ends by
+/// stitching the body it builds in (`StitchAndOrient`, whose second pass runs at twenty
+/// times the first while laminar edges are left), so there it also glued the sheet's own
+/// edges to the walls': the round's rail to a wall's top edge, the footprint, where the rail
+/// ran within that of it (a round leaving a 0.001 wide annulus of top round a boss, #2404).
+/// When the band did not reach the boss, the walls were deleted and the rail with them. Here
+/// the walls are swept in a body of their own, at the sheet's tolerance, so the sweep
+/// stitches only them, and are copied into the sheet with the topology between them.
+fn sweep_walls(
+    k: &mut Kernel,
+    sheet: &mut Brep,
+    profile: Vec<Curve>,
+    direction: Vec3,
+    distance: f64,
+) -> Result<Vec<FaceId>> {
+    let mut walls = crate::topology::brep::p3::new_brep(
+        k,
+        crate::geom::tol::USE_DEFAULT,
+        crate::geom::tol::USE_DEFAULT,
+    )?;
+    crate::topology::brep::p2::set_tolerance(k, &mut walls, sheet.tolerance(), false, true)?;
+    let mut sweep = PrimitiveCreation::new(walls.infinite_region(), 0, true);
+    sweep.create_linear_sweep(k, &mut walls, profile, direction, distance, false)?;
+    let faces = crate::topology::brep::p1::faces(&walls, None)?;
+    // the copy leaves the sheet open to editing as it was: it is edited on below
+    let editing = sheet.editing_enabled();
+    let copied =
+        crate::blend::feature_executive::copy_faces_carrying(k, &mut walls, &faces, sheet, true);
+    sheet.set_editing_enabled(editing);
+    let (made, all) = copied?;
+    if !all || made.len() != faces.len() {
+        return Err(SolidError::sm_err(OP));
+    }
+    Ok(made)
+}
+
 /// `DeleteFace(face, TRUE)`.
 fn delete(k: &mut Kernel, b: &mut Brep, f: FaceId) -> Result<()> {
     with_kernel_callbacks(k, b, |k, b, env| {
@@ -427,10 +469,13 @@ impl FilletSession<'_> {
     /// # Errors
     /// The refusals as `SM_ERR`; those of the steps.
     pub(super) fn keep_features_in_bands(&mut self, k: &mut Kernel) -> Result<bool> {
-        let saved = (*self.objects.target).clone();
+        crate::profile::profile_scope!(k, "blend::session::keep_features");
+        // a snapshot, not a clone: the target put back must still own its geometry
+        // (#2715; a clone's surfaces have no owner, so the caller's body would save none)
+        let saved = self.objects.target.snapshot()?;
         let result = self.keep_features_steps(k);
         if result.is_err() {
-            *self.objects.target = saved;
+            self.objects.target.restore(saved);
         }
         result
     }
@@ -650,20 +695,9 @@ impl FilletSession<'_> {
                         profile.push(half);
                     }
                 }
-                let before: BTreeSet<FaceId> = crate::topology::brep::p1::faces(sheet, None)?
-                    .into_iter()
-                    .collect();
-                // the sweep leaves the B-rep it builds in closed to editing: the sheet is
-                // edited on below
-                let editing = sheet.editing_enabled();
-                let mut sweep = PrimitiveCreation::new(sheet.infinite_region(), 0, true);
-                let swept = sweep.create_linear_sweep(k, sheet, profile, -up, depth, false);
-                sheet.set_editing_enabled(editing);
-                swept?;
-                let walls = crate::topology::brep::p1::faces(sheet, None)?
-                    .into_iter()
-                    .filter(|f| !before.contains(f))
-                    .collect();
+                // Not the fork's (#2404): the walls are swept in a body of their own and
+                // copied into the sheet with their own topology (`sweep_walls`).
+                let walls = sweep_walls(k, sheet, profile, -up, depth)?;
                 features.push(Feature {
                     rim_curves,
                     boss,
@@ -711,9 +745,9 @@ impl FilletSession<'_> {
             }
             for wall in feature.walls.clone() {
                 let wall_body: Brep = if feature.boss {
-                    sheet.clone()
+                    sheet.clone_standing_for_self()?
                 } else {
-                    (*self.objects.target).clone()
+                    self.objects.target.clone_standing_for_self()?
                 };
                 let wall_box =
                     crate::query::api_queries::face_bounding_box(k, &wall_body, wall, false)?;

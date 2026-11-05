@@ -4,7 +4,8 @@
 //!
 //! Upstream: none (pinned SMLib builds these corners with `SmFilletNx2Corner`). The
 //! fork's `source/SMLib/src/SmBlendCorner.cpp`, `source/SMLib/inc/SmBlendCorner.h`
-//! (tangency-labs/smlib `f9b49d9`, `74e9beb`, `48a8a9f`, `32fd80a`; smlib#79 step 4).
+//! (tangency-labs/smlib `f9b49d9`, `74e9beb`, `48a8a9f`, `32fd80a`; smlib#79 step 4; the End and the
+//! Join, step 4d: `794946e`, `3e26f76`, `68e039c`, `543d25a`, `53c47b8`).
 //!
 //! | Rust                         | Fork                                        |
 //! |------------------------------|---------------------------------------------|
@@ -17,9 +18,15 @@
 //! | `foot_on_surface` (private)  | `sm_FootOnSurface`                          |
 //! | `bernstein_product_21` (private) | `sm_BernsteinProduct21`                 |
 //! | [`ball`]                     | the Ball (`ClassifyBall`, `BuildBallSurface`, `CreateBallPatch`; 79d4763, a6243fa, f8e6709, 4241a1b) |
+//! | [`BlendEnd`], [`BlendCorner::is_end_on_end_face`] | `SmBlendEnd`, `IsEndOnEndFace` (53c47b8) |
+//! | [`BlendCorner::is_closed_join`] | `IsClosedJoin` (543d25a) |
+//! | [`FilletCorner::make_join_topology`] | `MakeJoinTopology`, `sm_JoinSides` (`SmBlendCornerJoin.cpp`, 68e039c, 543d25a) |
+//! | `FilletBrep::calc_join_section` | `SmFilletVertex::CalcJoinSection` (543d25a) |
+//! | `FilletBrep::calc_rail_int_end_surface` | `SmFilletVertex::CalcRailIntEndSurface` (`SmBlendCornerEnd.cpp`, 3e26f76) |
 //! | [`mixed`]                    | the Mixed corner (`ClassifyMixed`, `MakeMixedTopology`, `CalcMixedVertGeom`, `CalcMixedEdgeGeom`, `CreateMixedPatches`; 6fd0411, 6e79de5, e1a2153) |
 //! | [`setback`]                  | the Setback (`ClassifySetBack`, `MakeSetBackTopology`, `BuildSetBackFill`, `CreateSetBackPatches`; 61547af, 1506e2f, f1d81f4) |
 //! | [`swept`]                    | the Swept turn (`Classify`'s Swept part, `BuildSweptSurface`, `CreateSweptPatch`) |
+//! | [`BlendChamferCorner`], [`chamfer`] | not the fork's: chamfers meeting at a vertex, closed by their planes (WR-716, #2345) |
 //!
 //! Deviations: the blend corner is not its own corner kind here. The fork's `SmBlendCorner`
 //! builds the Join, the corners of four edges and the Mitre turn with the two-blend
@@ -27,8 +34,11 @@
 //! the Mitre turn of three edges bit for bit as before, per its notes), and everything that
 //! keyed on `SM_FCR_N_x_2` keys on `SM_FCR_BLEND` one for one; so a blend corner is an
 //! [`FilletCornerKind::NByTwo`](crate::blend::fillet_corner::p3::FilletCornerKind::NByTwo)
-//! corner with [`FilletCorner::blend`] set, built by the existing Nx2 port. Opt-in:
-//! `Kernel::fixes.fillet_blend_corner` (WR-697). Out-params are return values.
+//! corner with [`FilletCorner::blend`] set, built by the existing Nx2 port. The End
+//! (53c47b8) keeps the pinned corner kind whose construction it moved unchanged
+//! (`NByOne`, `Open`, `Degenerate`) with `blend` set; every blend corner's type is
+//! `SM_FCR_BLEND`, which is `FilletCornerType::NByTwo` here (WR-697). Out-params are return
+//! values.
 
 use crate::blend::fillet_corner::p1::{
     check_face_complimentary_corner_concavity, test_g1_continuity,
@@ -55,6 +65,8 @@ use crate::topology::face::p2 as face2;
 use crate::topology::{edge, Brep, EdgeId, EdgeuseId, VertexId};
 
 pub mod ball;
+pub mod chamfer;
+pub mod end;
 pub mod mixed;
 pub mod setback;
 pub mod swept;
@@ -75,12 +87,36 @@ pub enum BlendCornerEvent {
     /// `SM_BCE_BALL` (the fork's 79d4763): three rounds of one radius and convexity, the
     /// common ball's sphere between them ([`ball`]).
     Ball,
+    /// `SM_BCE_END` (the fork's 53c47b8): one blend ends at the vertex, its side faces there
+    /// not blended ([`BlendEnd`]).
+    End,
     /// `SM_BCE_SETBACK` (the fork's 61547af): three or more blends, every edge there
     /// blended, each set back and the hole filled by the setback split ([`setback`]).
     Setback,
     /// `SM_BCE_MIXED` (the fork's 6fd0411, smlib#82): a convex and a concave blend
     /// continuing each other G1 across a tangent seam ([`mixed`]).
     Mixed,
+    /// Not the fork's (WR-716, #2345): chamfers meeting at a vertex where every edge is
+    /// chamfered, closed by their planes ([`chamfer`]).
+    Chamfer,
+}
+
+/// `SmBlendEnd` (the fork's 53c47b8): how an End ends, chosen when the corner is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BlendEnd {
+    /// `SM_BEND_ON_END_FACE`: on the end face(s) between its side edges (an end rib), capped
+    /// at a mixed convexity (the pinned Nx1 corner's construction).
+    #[default]
+    OnEndFace,
+    /// `SM_BEND_OPEN`: at a lamina edge (a sheet), its end section (the pinned open
+    /// corner's).
+    Open,
+    /// `SM_BEND_RUNS_OUT`: its side faces continue each other through the vertex, its rails
+    /// meet there (the pinned degenerate corner's).
+    RunsOut,
+    /// `SM_BEND_AT_SMOOTH` (smlib 41a39ec): its edge runs on tangentially into an edge not
+    /// blended, cut square to the edge there ([`end`]).
+    AtSmooth,
 }
 
 /// `SmBlendTurn`: a Turn's two modes.
@@ -93,13 +129,29 @@ pub enum BlendTurn {
     Swept,
 }
 
-/// The blend corner's own members (`m_eEvent`, `m_eTurn`) on a corner built as one.
+/// The two ways the blend corner closes chamfers meeting at a vertex
+/// ([`chamfer`], `Kernel::fixes.fillet_chamfer_corner`), as [`BlendTurn`] is a Turn's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BlendChamferCorner {
+    /// Each chamfer plane runs on until it meets the others: three meet at one point,
+    /// pairwise along lines to it, and there is no corner face (the default).
+    #[default]
+    Mitre,
+    /// One plane through the rails' crossings cuts the corner off: one new planar face.
+    Facet,
+}
+
+/// The blend corner's own members (`m_eEvent`, `m_eTurn`, `m_eEnd`) on a corner built as
+/// one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BlendCorner {
     /// `m_eEvent`.
     pub event: BlendCornerEvent,
     /// `m_eTurn`.
     pub turn: BlendTurn,
+    /// `m_eEnd`: an End's kind (`SM_BEND_ON_END_FACE` unless set, as the fork's
+    /// constructor).
+    pub end: BlendEnd,
 }
 
 impl BlendCorner {
@@ -107,6 +159,32 @@ impl BlendCorner {
     #[must_use]
     pub fn is_ball(self) -> bool {
         self.event == BlendCornerEvent::Ball
+    }
+
+    /// `m_eEvent == SM_BCE_JOIN` (the fork's 543d25a): the Join, built on its shared
+    /// section ([`FilletCorner::make_join_topology`]).
+    #[must_use]
+    pub fn is_join(self) -> bool {
+        self.event == BlendCornerEvent::Join
+    }
+
+    /// `m_eEvent == SM_BCE_END` (the fork's 53c47b8): the End ([`BlendEnd`]).
+    #[must_use]
+    pub fn is_end(self) -> bool {
+        self.event == BlendCornerEvent::End
+    }
+
+    /// `IsEndOnEndFace` (the fork's 53c47b8): an End on its end face(s).
+    #[must_use]
+    pub fn is_end_on_end_face(self) -> bool {
+        self.event == BlendCornerEvent::End && self.end == BlendEnd::OnEndFace
+    }
+
+    /// `IsClosedJoin` (the fork's 543d25a): a Join of one closed blended edge meeting
+    /// itself (`solver_eus`, the corner's `m_pSolverEUs`).
+    #[must_use]
+    pub fn is_closed_join(self, solver_eus: Option<&[EdgeuseId]>) -> bool {
+        self.event == BlendCornerEvent::Join && solver_eus.is_some_and(|eus| eus.len() == 1)
     }
 
     /// `IsSetBack`: the Setback (the fork's 61547af).
@@ -119,6 +197,12 @@ impl BlendCorner {
     #[must_use]
     pub fn is_mixed(self) -> bool {
         self.event == BlendCornerEvent::Mixed
+    }
+
+    /// The chamfer event ([`chamfer`]; WR-716).
+    #[must_use]
+    pub fn is_chamfer(self) -> bool {
+        self.event == BlendCornerEvent::Chamfer
     }
 
     /// `IsSwept`: a Turn, Swept.
@@ -708,6 +792,7 @@ mod tests {
         let turn = BlendCorner {
             event: BlendCornerEvent::Turn,
             turn: BlendTurn::Mitre,
+            end: BlendEnd::OnEndFace,
         };
         let e = EdgeuseId::from_index(0);
         assert!(turn.is_mitre_turn(Some(&[e, e, e])));

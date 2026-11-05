@@ -3192,6 +3192,7 @@ fn transformed_surface_base(
             let base = pb.net();
             Some(base.clone())
         }
+        SurfaceKind::BallPatch(bp) => Some(bp.net().clone()),
         SurfaceKind::Plane(plane) => {
             if plane.base().gw_nurb().is_none() {
                 crate::error::ignore_status(plane.make_nurb())?;
@@ -3340,8 +3341,14 @@ mod tests {
             b.face_mut(f).expect("face").surface = None;
             let mut lamina = 0;
             let tolerance = initial_stitch_tolerance(b.tolerance(), 0.0);
-            let stitched =
-                stitch_faces(&mut k, &mut b.clone(), tolerance, false, &mut lamina, None);
+            let stitched = stitch_faces(
+                &mut k,
+                &mut b.clone_standing_for_self().unwrap(),
+                tolerance,
+                false,
+                &mut lamina,
+                None,
+            );
             let r = stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default());
             let box_error = |r: &Result<()>| {
                 matches!(

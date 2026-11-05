@@ -25,6 +25,7 @@
 //! | [`local_curve_sector`]       | `SmBrep::LocalCurveSector`                |
 //! | [`ray_fire`], [`RayFireResult`] | `SmBrep::RayFire`                      |
 //! | [`replace_surface`], [`OldSurface`] | `SmBrep::ReplaceSurface`           |
+//! | [`replace_curve`]            | `SmBrep::ReplaceCurve`                    |
 //! | [`make_shell_vertex_topology`] | `SmBrep::MakeShellVertexTopology`       |
 //! | [`make_edge_vertex_topology`] | `SmBrep::MakeEdgeVertexTopology`         |
 //! | [`make_edge_topology`]       | `SmBrep::MakeEdgeTopology`                |
@@ -91,6 +92,7 @@ use crate::geom::object::{NotifyOperation, ObjectRef};
 use crate::geom::solution_array::Solution;
 use crate::geom::tol::{zone_tol3d, ZONE_TOL_3D};
 use crate::geom::tree::NodeGeomType;
+use crate::heal::gap::{EdgeEdgeGap, VertexEdgeGap};
 use crate::intersect::curve_class::p1::{CurveClassification, IntervalPosition};
 use crate::intersect::curve_class::p6::MergeIntervalBrep;
 use crate::intersect::curve_class::p7::CoincidentMaybe;
@@ -112,7 +114,9 @@ use crate::surface::surface::{Surface, SurfaceKind};
 use crate::surface::trim_srf_cache::TrimSrfCache;
 use crate::topology::brep::p1;
 use crate::topology::brep_cache::{self, BrepCache, CacheObject, CacheSource};
-use crate::topology::edge::{self, AttributeFilter, NotifyEnv, SetCurveOptions};
+use crate::topology::edge::{
+    self, AttributeFilter, NotificationStores, NotifyEnv, NotifyState, SetCurveOptions,
+};
 use crate::topology::edgeuse::p1::{self as eu1, UvTrimCurveArg};
 use crate::topology::edgeuse::p2 as eu2;
 use crate::topology::edgeuse::p3 as eu3;
@@ -181,6 +185,17 @@ pub fn shell_vertices(b: &Brep, attribute: Option<&AttributeFilter<'_>>) -> Resu
 ///
 /// [`SolidError::NotFound`] for a dangling id.
 pub fn is_manifold_solid(b: &Brep) -> Result<bool> {
+    is_closed_where(b, edge::is_manifold)
+}
+
+/// [`is_manifold_solid`]'s walk with its edge test given: at least two regions, no shell
+/// vertices and `edge_ok` for every edge (not upstream: shared with the closed-body tests
+/// that allow other edges, `query::api_queries::brep_is_closed_touching_solids`).
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling id; those of `edge_ok`.
+pub fn is_closed_where(b: &Brep, edge_ok: impl Fn(&Brep, EdgeId) -> Result<bool>) -> Result<bool> {
     if brep_regions(b)?.len() < 2 {
         return Ok(false);
     }
@@ -190,7 +205,7 @@ pub fn is_manifold_solid(b: &Brep) -> Result<bool> {
     }
 
     for e in brep_edges(b)? {
-        if !edge::is_manifold(b, e)? {
+        if !edge_ok(b, e)? {
             return Ok(false);
         }
     }
@@ -1780,8 +1795,33 @@ pub(crate) fn ray_fire_with_solver(
         TopologySolveOptions<'_>,
     ) -> Result<crate::geom::solution_array::SolutionArray<CacheObject>>,
 ) -> Result<RayFireResult> {
-    // get Brep BoundingBox and BoundingSphere
     let bbox = qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default())?;
+    ray_fire_with_bbox_and_solver(
+        k,
+        b,
+        bbox,
+        start,
+        direction,
+        ray_zone_tol_3d,
+        answer_limit,
+        solve,
+    )
+}
+
+pub(crate) fn ray_fire_with_bbox_and_solver(
+    k: &Kernel,
+    b: &mut Brep,
+    bbox: Extent3d,
+    start: Point3,
+    direction: Vec3,
+    ray_zone_tol_3d: f64,
+    answer_limit: Option<f64>,
+    solve: impl FnOnce(
+        &mut Brep,
+        Point3,
+        TopologySolveOptions<'_>,
+    ) -> Result<crate::geom::solution_array::SolutionArray<CacheObject>>,
+) -> Result<RayFireResult> {
     let sphere = bbox.sphere_bound();
     let radius = sphere.radius;
 
@@ -1989,6 +2029,56 @@ pub fn replace_surface(
 
     // all done
     Ok((kept, modified))
+}
+
+/// `ReplaceCurve(pEdge, pNewCurve)`: the B-rep's pre-edit notification,
+/// `SmEdge::Replace3DCurve` (`SetCurve(curve, TRUE)`: the curve owned by the edge and
+/// the edge's interval the curve's natural interval) and `SmEdge::RemoveUVTrimCurves`
+/// (`ClearUVCaches`: the edge's pre-edit notification, every edge use's UV trim curve
+/// deleted and its gap to the next edge use reset, every vertex use's vertex/edge gap
+/// reset). The notifications go through the kernel's context with `stores`' records
+/// and attributes.
+///
+/// # Errors
+///
+/// Those of the notifications and of `SmEdge::Replace3DCurve`;
+/// [`SolidError::InvalidInput`] for an edge use without vertex use (upstream
+/// dereferences it).
+pub fn replace_curve(
+    k: &mut Kernel,
+    b: &mut Brep,
+    e: EdgeId,
+    curve: Curve,
+    stores: &mut NotificationStores<'_>,
+) -> Result<()> {
+    NotifyState::from_kernel_stores(stores).with_kernel_env(k, |_k, env| {
+        // notify the Brep
+        let this = Some(NotifyArg::Object(brep_ref(b)));
+        notify(b, env, None, NotifyOperation::PreEdit, [this, None, None])?;
+
+        // change the edge (Replace3DCurve)
+        edge::replace_3d_curve(b, e, Some(curve), env)?;
+
+        // remove existing UVTrimCurves (ClearUVCaches)
+        let edge_ref = (env.key_of)(EntityRef::Edge(e));
+        let body = brep_ref(b);
+        edge::notify(
+            b,
+            e,
+            env,
+            NotifyOperation::PreEdit,
+            [Some(edge_ref), Some(body), None],
+        )?;
+        for eu in edge::edgeuses(b, e, None, None)? {
+            let _ = eu1::set_uv_trim_curve(b, eu, UvTrimCurveArg::Null, 0.0, true, None)?;
+            b.edgeuse_mut(eu)?.edge_ccw_edge_gap = EdgeEdgeGap::new();
+        }
+        for vu in edge::vertexuses(b, e, None)? {
+            let vu = vu.ok_or(null_deref("edge use without vertex use"))?;
+            b.vertexuse_mut(vu)?.vertex_edge_gap = VertexEdgeGap::new();
+        }
+        Ok(())
+    })
 }
 
 /// The identity `surface` is notified under through `context` ([`Surface::notify_key`];
@@ -2822,7 +2912,13 @@ pub fn mate_lamina_edge_to_surface(
                 "negative surface extension distance",
             ));
         }
-        surf.create_extended_surface(k, ext_dist, ContinuityType::G1R)?
+        surf.extended_sides(
+            k,
+            &crate::surface::side::BoxSide::ALL,
+            crate::surface::extend::Continuity::Ruled,
+            ext_dist,
+        )?
+        .surface
     };
     let ext_domain = ext_surface.natural_uv_domain_with_nurb(k)?;
 

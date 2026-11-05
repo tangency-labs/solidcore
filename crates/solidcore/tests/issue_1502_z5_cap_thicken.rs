@@ -265,19 +265,13 @@ fn z5_cap_half_rims_thicken_with_the_wr463_option() {
     assert_sound((k, shell), 4);
 }
 
-/// Characterize the Rust default on the same half-rim shape: no manifold solid and zero
-/// volume. The enabled-policy test above demonstrates the existing option's correction;
-/// neither test diagnoses the default's internal failure mechanism.
+/// The same half rims at the defaults: each half's offset ends at its vertices' images
+/// (WR-736, #2611, the only path since #2769), one manifold solid of the sector's volume.
 #[test]
-fn z5_cap_half_rims_are_non_manifold_at_the_default() {
+fn z5_cap_half_rims_thicken_at_the_default() {
     let mut k = Kernel::default();
-    assert!(!k.fixes.offset_closed_curve_trim_arc);
     let sheet = cap_sheet(&mut k, true);
     assert_half_rims(&k, &sheet);
-    let mut shell = thicken(&mut k, sheet, 1.0).unwrap();
-    assert!(
-        !brep_is_manifold_solid(&shell).unwrap(),
-        "default half-rim characterization changed: now a manifold solid"
-    );
-    assert_eq!(volume_at(&k, &mut shell, 1e-8), 0.0, "a void, not a sector");
+    let shell = thicken(&mut k, sheet, 1.0).unwrap();
+    assert_sound((k, shell), 4);
 }

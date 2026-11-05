@@ -35,9 +35,9 @@
 //! [`MixedCorner`] with the blends' solvers' identities; the fork reads it again in
 //! each step from the same unchanged ring. The two faces' surfaces and loops are kept in
 //! [`MixedCorner`] from the edge geometry until the patches take them. `SER_MSG` texts
-//! are in comments; their status is `SM_ERR`. Opt-in: `Kernel::fixes.fillet_blend_corner`
-//! (WR-697, its 2026-11-02 Mixed addendum). No recursion here; [`algebra`]'s root
-//! search recurses at most 61 deep.
+//! are in comments; their status is `SM_ERR` (WR-697, its 2026-11-02 Mixed addendum; `leaving` follows the fork's b785227, its
+//! 2026-11-02 leaving-tangent addendum). No recursion here; [`algebra`]'s root search
+//! recurses at most 61 deep.
 
 pub mod algebra;
 
@@ -68,6 +68,7 @@ use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::crv_adv::p1::CurveEnd;
 use crate::nurbs::knots::Side as KnotSide;
+use crate::surface::procedural_blend::corner::CornerDefinition;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep::p7::{make_face_with_curves, FaceCurvesInput};
 use crate::topology::edgeuse::p1 as eu1;
@@ -394,14 +395,34 @@ impl SolutionObject for MxObject {
 }
 
 /// `sm_MixedLeaving`: the unit tangent of an edge leaving a vertex.
+///
+/// An edge's start vertex is its curve's start (its interval's least parameter), so the
+/// curve's derivative taken inside the edge points into it at its start and out of it at
+/// its end, where it is turned. Inside the edge means one-sided: from the interval above
+/// the start (`from_left` true) and from the interval below the end (`from_left` false);
+/// [`edge::end_tangent`] takes both from above, which at the end reads past the edge. A
+/// closed edge leaves its vertex at its start (fork b785227).
 fn leaving(k: &Kernel, b: &Brep, e: EdgeId, vertex: VertexId, op: &'static str) -> Result<Vec3> {
     let at_start = edge::start_vertex(b, e)? == Some(vertex);
-    let mut d = edge::end_tangent(k, b, e, at_start)?.unitize()?;
-    // into the edge: towards its point a little way in from the vertex
+    if !at_start && edge::end_vertex(b, e)? != Some(vertex) {
+        // the edge does not meet the vertex
+        return Err(SolidError::sm_err(op));
+    }
     let curve = edge::curve(b, e)?.ok_or_else(|| SolidError::null_pointer(op))?;
     let ivl = edge::interval(b, e)?;
-    let inside = curve.evaluate_point(k, ivl.evaluate(if at_start { 1e-3 } else { 1.0 - 1e-3 }))?;
-    if d.dot(inside - b.vertex(vertex)?.point) < 0.0 {
+    let pv = curve.evaluate(
+        k,
+        if at_start { ivl.min() } else { ivl.max() },
+        1,
+        at_start,
+        true,
+    )?;
+    let mut d = pv
+        .get(1)
+        .copied()
+        .ok_or_else(|| SolidError::sm_err(op))?
+        .unitize()?;
+    if !at_start {
         d = -d;
     }
     Ok(d)
@@ -1337,7 +1358,40 @@ pub fn calc_mixed_edge_geom(
             of2m(&mut state.uv_curves, f).push(Curve::from(uv));
             of2m(&mut state.orients, f).push(*nth(&orients, kk, OP_EDGE)?);
         }
-        *of2m(&mut state.surfaces, f) = Some(Surface::from(patch));
+        let mut patch_surface = Surface::from(patch);
+        if k.fixes.fillet_round_as_definition {
+            // (#2488) the face keeps its rule: its sides from the trimmed blends and the
+            // conic in T; L's trimline is its side c0 on B1 and the conic its d0, U's the
+            // conic its c0 and the trimline its d0 on B2
+            let blends = [
+                pseudo
+                    .geom(geoms[0])?
+                    .fillet_surface(None)?
+                    .ok_or_else(nul)?
+                    .clone(),
+                pseudo
+                    .geom(geoms[1])?
+                    .fillet_surface(None)?
+                    .ok_or_else(nul)?
+                    .clone(),
+            ];
+            let common = crate::topology::face::p2::surface(target, ring.t)?.ok_or_else(nul)?;
+            let local: [Side; 4] = [s(0)?.clone(), s(1)?.clone(), s(2)?.clone(), s(3)?.clone()];
+            let (trim_side, conic_side) = if f == 0 { (0, 2) } else { (2, 0) };
+            let definition = CornerDefinition::mixed(
+                k,
+                [&blends[0], &blends[1]],
+                common,
+                local,
+                (chamfer, turn),
+                (f, trim_side, of2(&pcs, f).clone()),
+                conic_side,
+                tol,
+            )?;
+            definition.recertify(k, &patch_surface)?;
+            patch_surface.set_corner_definition(definition);
+        }
+        *of2m(&mut state.surfaces, f) = Some(patch_surface);
     }
 
     // the edges' curves, from the faces' isos: X-A L c0, A-P L d1, P-V L c1 reversed,
@@ -1423,4 +1477,59 @@ pub fn create_mixed_patches(
         corner.surface_faces.push(face);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nurbs::nurbs_crv::allocate_nurb_curve;
+
+    /// A unit box's first edge, its curve replaced by the polyline from its start
+    /// vertex P0 through its end vertex P1 on to P1 + n, n square to the edge, with the
+    /// edge on the first half: the curve turns a right angle at the edge's end vertex.
+    /// Also a vertex off the edge.
+    fn kinked_edge() -> (Brep, EdgeId, VertexId, VertexId, VertexId) {
+        let mut k = Kernel::default();
+        let mut b = crate::primitive::api_primitives::create_box(&mut k, Vec3::ZERO, 1.0, 1.0, 1.0)
+            .unwrap();
+        let e = b.edges().ids().next().unwrap();
+        let (v0, v1) = edge::start_end_vertices(&b, e).unwrap();
+        let (v0, v1) = (v0.unwrap(), v1.unwrap());
+        let off = b.vertices().ids().find(|&v| v != v0 && v != v1).unwrap();
+        let (p0, p1) = (b.vertex(v0).unwrap().point, b.vertex(v1).unwrap().point);
+        let along = p1 - p0;
+        let n = if along.cross(Vec3::Z).length() > 0.5 {
+            along.cross(Vec3::Z)
+        } else {
+            along.cross(Vec3::X)
+        };
+        let mut cur = allocate_nurb_curve(2, 1, 4).unwrap();
+        for (d, s) in cur.cpts_mut().iter_mut().zip([p0, p1, p1 + n]) {
+            d.x = s.x;
+            d.y = s.y;
+            d.z = s.z;
+            d.w = -f64::MAX;
+        }
+        cur.knots_mut().copy_from_slice(&[0.0, 0.0, 0.5, 1.0, 1.0]);
+        let rec = b.edge_mut(e).unwrap();
+        rec.curve = Some(Curve::from(BSplineCurve::from_nurb(cur, 3, false)));
+        rec.interval = Extent1d::from_min_max(0.0, 0.5);
+        (b, e, v0, v1, off)
+    }
+
+    /// Fork b785227: the tangent leaving the end vertex is the edge's own, taken from
+    /// below its end and turned: from P1 to P0 here. Before it, the curve's tangent from above (the
+    /// next segment's, along n) was kept, since it is square to the way to the 1e-3 sample.
+    #[test]
+    fn leaving_end_vertex_takes_the_edge_sense_from_inside() {
+        let k = Kernel::default();
+        let (b, e, v0, v1, off) = kinked_edge();
+        let (p0, p1) = (b.vertex(v0).unwrap().point, b.vertex(v1).unwrap().point);
+        let at_end = leaving(&k, &b, e, v1, "test").unwrap();
+        assert_eq!(at_end, (p0 - p1).unitize().unwrap());
+        let at_start = leaving(&k, &b, e, v0, "test").unwrap();
+        assert_eq!(at_start, (p1 - p0).unitize().unwrap());
+        // an edge that does not meet the vertex is an error
+        assert!(leaving(&k, &b, e, off, "test").is_err());
+    }
 }

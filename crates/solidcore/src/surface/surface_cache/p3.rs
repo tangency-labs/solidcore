@@ -716,7 +716,9 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
             // (SM_CAST_PTR(SmBSplineSurface, ..): the fork's SmProceduralBlend halves too)
             let is_bspline = matches!(
                 half.kind(),
-                SurfaceKind::BSpline(_) | SurfaceKind::ProceduralBlend(_)
+                SurfaceKind::BSpline(_)
+                    | SurfaceKind::ProceduralBlend(_)
+                    | SurfaceKind::BallPatch(_)
             );
             self.subdivision_surfaces_mut().push((h, half));
             *slot = is_bspline.then_some(h);
@@ -998,6 +1000,10 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
             SurfaceKind::BSpline(b) => Some(std::borrow::Cow::Borrowed(b)),
             SurfaceKind::ProceduralBlend(pb) => {
                 let b = pb.net();
+                Some(std::borrow::Cow::Borrowed(b))
+            }
+            SurfaceKind::BallPatch(bp) => {
+                let b = bp.net();
                 Some(std::borrow::Cow::Borrowed(b))
             }
             SurfaceKind::Plane(p) => Some(p.base_with_nurb()?),
@@ -1346,7 +1352,7 @@ fn ignore<T>(r: Result<T>) -> Result<Option<T>> {
 
 /// `sm_DefinitionBound` (the fork's 729f893): how far a surface may be off its net, a blend
 /// by its definition's certified bound, 0 for any other surface (its net is it).
-fn definition_bound(surface: &Surface) -> f64 {
+pub(crate) fn definition_bound(surface: &Surface) -> f64 {
     match surface.kind() {
         SurfaceKind::ProceduralBlend(p) => p.bound(),
         _ => 0.0,
@@ -1682,6 +1688,7 @@ mod tests {
             leader: &leader,
             seeds: [&seed, &seed],
             bound: 1e-3,
+            chamfer: None,
         };
         let pb = Surface::from(
             ProceduralBlend::create(&k, &square(0.5), &input, |_, w| w < 1.0).unwrap(),

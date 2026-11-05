@@ -15,12 +15,17 @@
 //! | [`FilletBrep::calc_rail_int_edgeuse`], [`FilletBrep::calc_rail_int_edgeuse_with_solver`] | `SmFilletVertex::CalcRailIntEdgeuse`         |
 //! | [`FilletBrep::calc_vert_on_cross_section`]        | `SmFilletVertex::CalcVertOnCrossSection`     |
 //! | [`FilletBrep::calc_set_back_vert`]                | `SmFilletVertex::CalcSetBackVert`            |
+//! | [`FilletBrep::calc_join_section`]                 | the fork's `SmFilletVertex::CalcJoinSection` (`SmBlendCornerJoin.cpp`, 543d25a; WR-697) |
 //! | [`FilletBrep::new_fillet_edge`](super::p1::FilletBrep::new_fillet_edge) (in `p1`) | `SmFilletEdge::SmFilletEdge` |
 //! | [`FilletBrep::calc_rail_rail_interpolation`]      | `SmFilletEdge::CalcRailRailInterpolation`    |
 //! | [`FilletBrep::update_edge_split_face`]            | `SmFilletEdge::UpdateSplitFace`              |
 //! | [`FilletBrep::destroy_geom`]                      | `SmFilletGeom::~SmFilletGeom`                |
 //!
 //! Deviations:
+//! - **A blend's net to the intersection's tolerance (#2510).** `SrfSrfIntersection`
+//!   evaluates a blend by its definition as its certified net where the net's bound is
+//!   within its approximation tolerance
+//!   ([`crate::surface::procedural_blend::NetScope::within`]).
 //! - **Rail end on the continued surface (WR-630, #960).** With
 //!   `fixes.fillet_rail_end_on_continued_surface`, `CalcRailIntEdgeuse` evaluates the
 //!   rail's end on its base surface with out-of-bounds evaluation on (the fork's
@@ -110,7 +115,10 @@
 //!   pseudo B-rep has no notification environment); `SetOwner` of the new curve is
 //!   implied by the edge holding it.
 //! - **Arguments.** Out-params become return values; `iDebugLevel` and debug drawing
-//!   are dropped. No input-driven recursion.
+//!   are dropped. One input-driven recursion: `calc_rail_int_edgeuse_with_solvers`
+//!   continues a missed rail end on the next side edge across a seam's vertex (the fork's
+//!   63c7962) by calling itself, at most `SIDE_EDGE_CHAIN_STEPS` (64) deep, then `SM_ERR`
+//!   (the fork has no bound; a chain of seam vertices is a few edges long).
 //! - **Eased corners (the fork's, tangency-labs/smlib `e74bbd3`, #1376).** At a corner
 //!   with an ease (`FilletCorner::ease_dist > 0`, never by default)
 //!   `calc_rail_rail_interpolation` takes at least two derivatives and the G2/G3 fairing
@@ -144,6 +152,7 @@ use crate::nurbs::crv_fit::p1::ParamMethod;
 use crate::nurbs::knots::Side;
 use crate::query::brep::BrepFaceServices;
 use crate::surface::plane::Plane;
+use crate::surface::procedural_blend::NetScope;
 use crate::surface::surface::p1::SurfaceSolveContext;
 use crate::surface::surface::p2::SurfaceIntersection;
 use crate::surface::surface::p4::NoObject;
@@ -173,6 +182,7 @@ const OP_RAIL_RAIL: &str = "blend::fillet_geom::p2::FilletBrep::calc_rail_int_ra
 const OP_RAIL_EU: &str = "blend::fillet_geom::p2::FilletBrep::calc_rail_int_edgeuse";
 const OP_CROSS: &str = "blend::fillet_geom::p2::FilletBrep::calc_vert_on_cross_section";
 const OP_SETBACK: &str = "blend::fillet_geom::p2::FilletBrep::calc_set_back_vert";
+const OP_JOIN: &str = "blend::fillet_geom::p2::FilletBrep::calc_join_section";
 const OP_INTERP: &str = "blend::fillet_geom::p2::FilletBrep::calc_rail_rail_interpolation";
 const OP_SPLIT: &str = "blend::fillet_geom::p2::FilletBrep::update_edge_split_face";
 const OP_DESTROY: &str = "blend::fillet_geom::p2::FilletBrep::destroy_geom";
@@ -999,6 +1009,9 @@ pub fn srf_srf_intersection_with_context(
 ) -> Result<SrfSrfCurves> {
     // SmApproxTol3d dApproxTol: the double converts at the call
     let approx_tol = approx_tol3d(k, approx_tol);
+    // the intersection is to `approx_tol`: a blend by its definition whose net's bound is
+    // within it evaluates as its net (#2510)
+    let _scope = NetScope::within(k, approx_tol);
 
     // surface and surf/surf intersection locals
     let mut curves_3d: Vec<Curve> = Vec::new();
@@ -1670,6 +1683,8 @@ impl FilletBrep {
             corners,
             &mut RailSolvers::Indexed(solvers),
             target,
+            None,
+            0,
         )
     }
 
@@ -1696,6 +1711,8 @@ impl FilletBrep {
             corners,
             &mut RailSolvers::Single(solver_id, solver),
             target,
+            None,
+            0,
         )
     }
 
@@ -1721,6 +1738,8 @@ impl FilletBrep {
             corners,
             &mut RailSolvers::Live(solver_id, solver),
             target,
+            None,
+            0,
         )
     }
 
@@ -1747,10 +1766,18 @@ impl FilletBrep {
             corners,
             &mut RailSolvers::LiveSet(solvers),
             target,
+            None,
+            0,
         )
     }
 
     #[allow(clippy::too_many_lines)] // one upstream routine
+    /// `near` (the fork's `cpNear`, 63c7962): the side edge's end the search starts from,
+    /// `None` for the corner's vertex, else where the side edge continues a missed one;
+    /// `depth` counts those continuations (at most
+    /// [`crate::blend::blend_corner::end::SIDE_EDGE_CHAIN_STEPS`], then `SM_ERR`; the fork
+    /// has no bound).
+    #[allow(clippy::too_many_arguments)]
     fn calc_rail_int_edgeuse_with_solvers(
         &mut self,
         k: &Kernel,
@@ -1759,6 +1786,8 @@ impl FilletBrep {
         corners: CornerLookup<'_>,
         solvers: &mut RailSolvers<'_>,
         target: &mut Brep,
+        near: Option<VertexId>,
+        depth: usize,
     ) -> Result<()> {
         const OP: &str = OP_RAIL_EU;
         let corner = self
@@ -1766,8 +1795,11 @@ impl FilletBrep {
             .fillet_corner()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
 
-        // get original Brep vertex
-        let cp_vertex = corners.corner(corner)?.filleted_vertex();
+        // get original Brep vertex (or the side edge's near end)
+        let cp_vertex = match near {
+            Some(near) => Some(near),
+            None => corners.corner(corner)?.filleted_vertex(),
+        };
 
         // get this filletVertex->filletEdgeuse[type == SM_FE_RAIL]->FilletGeom(s)
         let geoms = self.vertex_fillet_geoms(v)?;
@@ -1932,6 +1964,47 @@ impl FilletBrep {
                 }
             }
             self.fillet_vertexuse_mut(vu1)?.set_tsect_pnt(&tsect1);
+
+            // SolidCraft change (the fork's 63c7962): a side edge
+            // split only by a seam ending on it (a cylinder's seam on its rim) continues
+            // across that vertex: the rail that runs past the edge's far end ends on the next
+            // edge, between the same two faces. Its end is looked for there, from that vertex
+            // on.
+            if !found && !is_closed {
+                let far = if edge::start_vertex(target, side_edge)? == cp_vertex {
+                    edge::end_vertex(target, side_edge)?
+                } else if edge::end_vertex(target, side_edge)? == cp_vertex {
+                    edge::start_vertex(target, side_edge)?
+                } else {
+                    None
+                };
+                let tol_deg = crate::math::rad_to_deg(corners.corner(corner)?.tangency_tol_radians);
+                let next = match far {
+                    Some(far) => crate::blend::blend_corner::end::side_edgeuse_across_seam_vertex(
+                        k, target, side_eu1, far, tol_deg,
+                    )?,
+                    None => None,
+                };
+                if let (Some(next), Some(far)) = (next, far) {
+                    if depth >= crate::blend::blend_corner::end::SIDE_EDGE_CHAIN_STEPS {
+                        return Err(SolidError::sm_err(OP));
+                    }
+                    self.fillet_vertex_mut(v)?.set_point_class(
+                        crate::intersect::point_class::PointClassType::Edgeuse,
+                        Some(EntityRef::Edgeuse(next)),
+                    );
+                    return self.calc_rail_int_edgeuse_with_solvers(
+                        k,
+                        v,
+                        opt_fg,
+                        corners,
+                        solvers,
+                        target,
+                        Some(far),
+                        depth + 1,
+                    );
+                }
+            }
 
             // when still not found
             if !found {
@@ -2381,6 +2454,180 @@ impl FilletBrep {
         Ok(())
     }
 
+    /// The fork's `SmFilletVertex::CalcJoinSection` (`SmBlendCornerJoin.cpp`, 543d25a;
+    /// WR-697): a Join's shared section (`SM_FV_JOIN_SECTION` `v` and its mate), each
+    /// blend's section in the plane through the corner's vertex square to the first
+    /// blend's edge there. Each blend's section is its ball's: `PointOnPlaneSolve` on the
+    /// blend's own faces, started from the ball's feet at the vertex (the vertex stepped
+    /// the ball's radius along each face's binormal of the edge). It sets the blend's rail
+    /// end here (and a closed blend's other one). The section's ends are the first
+    /// blend's feet, on `v`'s face and on its mate's.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR_NULL_POINTER` without corner, mate, faces, filleted vertex, solver, edge
+    /// use, edge, curve, offset or base surface or rail-end vertex use; `SM_ERR` without a
+    /// fillet geometry and, after setting `SM_FV_SOLVER_NOT_CONVERGE`, when a blend has
+    /// no ball in the plane; those of the evaluations and solves.
+    pub fn calc_join_section(
+        &mut self,
+        k: &Kernel,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        solvers: &mut [FilletSolver],
+        target: &mut Brep,
+    ) -> Result<()> {
+        self.calc_join_section_with_solvers(
+            k,
+            v,
+            corners,
+            &mut RailSolvers::Indexed(solvers),
+            target,
+        )
+    }
+
+    /// [`Self::calc_join_section`] with the live session's concrete solvers of the
+    /// vertex's geometries (`PointOnPlaneSolve` is the concrete solver's virtual).
+    ///
+    /// # Errors
+    /// As [`Self::calc_join_section`]; an unresolved geometry solver.
+    pub fn calc_join_section_with_live_solvers(
+        &mut self,
+        k: &Kernel,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        solvers: Vec<(FilletSolverId, &mut dyn FilletSolverOps)>,
+        target: &mut Brep,
+    ) -> Result<()> {
+        self.calc_join_section_with_solvers(
+            k,
+            v,
+            corners,
+            &mut RailSolvers::LiveSet(solvers),
+            target,
+        )
+    }
+
+    #[allow(clippy::too_many_lines)] // one fork routine
+    fn calc_join_section_with_solvers(
+        &mut self,
+        k: &Kernel,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        solvers: &mut RailSolvers<'_>,
+        target: &mut Brep,
+    ) -> Result<()> {
+        const OP: &str = OP_JOIN;
+        let nul = || SolidError::null_pointer(OP);
+        let corner = self.fillet_vertex(v)?.fillet_corner().ok_or_else(nul)?;
+        let mate = self.fillet_vertex(v)?.mate(0).ok_or_else(nul)?;
+        let first_face =
+            as_face(self.fillet_vertex(v)?.point_class_object(), OP)?.ok_or_else(nul)?;
+        let other_face =
+            as_face(self.fillet_vertex(mate)?.point_class_object(), OP)?.ok_or_else(nul)?;
+        let cp_vertex = corners.corner(corner)?.filleted_vertex().ok_or_else(nul)?;
+
+        let geoms = self.vertex_fillet_geoms(v)?;
+        if geoms.is_empty() {
+            return Err(SolidError::sm_err(OP));
+        }
+
+        // the plane: through the vertex, square to the first blend's edge
+        let mut plane_orig = Point3::default();
+        let mut plane_normal = Vec3::default();
+        for (gg, &g) in geoms.iter().enumerate() {
+            let sid = self.geom_solver_id(g, OP)?;
+            let fs = solvers.solver(sid)?;
+            let eu = solver_edgeuse(fs, 0, OP)?;
+            let e = eu1::edge(target, eu)?.ok_or_else(nul)?;
+            let curve = edge::curve(target, e)?.ok_or_else(nul)?.clone();
+            let ivl = edge::interval(target, e)?;
+            let param = if edge::start_vertex(target, e)? == Some(cp_vertex) {
+                ivl.min()
+            } else {
+                ivl.max()
+            };
+            if gg == 0 {
+                let pv = curve.evaluate(k, param, 1, true, true)?;
+                plane_orig = pv.first().copied().ok_or_else(|| SolidError::sm_err(OP))?;
+                plane_normal = pv.get(1).copied().ok_or_else(|| SolidError::sm_err(OP))?;
+            }
+
+            // the ball's feet at the vertex, on each of the blend's faces
+            let mut uvs = [Point2::new(0.0, 0.0); 2];
+            for (ii, slot) in uvs.iter_mut().enumerate() {
+                let fs = solvers.solver(sid)?;
+                let side_eu = solver_edgeuse(fs, ii, OP)?;
+                let offset = solver_surface(fs, ii, OP)?;
+                let distance = offset.offset_distance().abs();
+                let base = offset.base_surface().clone();
+                let b = evaluate_binormal(
+                    k,
+                    target,
+                    side_eu,
+                    param,
+                    false,
+                    &BinormalOptions::default(),
+                )?;
+                let bin = b.binormal * distance;
+                let uv_dir = crate::surface::surface::p7::drop_vectors_at(
+                    k,
+                    &base,
+                    b.uv,
+                    Side::Left,
+                    Side::Left,
+                    &[bin],
+                )?
+                .first()
+                .copied()
+                .ok_or_else(|| SolidError::sm_err(OP))?;
+                *slot = Point2::new(b.uv.x + uv_dir.x, b.uv.y + uv_dir.y);
+            }
+
+            let (vu, tsect) = self.rail_end_tsect(v, Some(g), None, OP)?;
+            let fs = solvers.solver(sid)?;
+            let domain1 = solver_surface(fs, 0, OP)?.natural_uv_domain_with_nurb(k)?;
+            let domain2 = solver_surface(fs, 1, OP)?.natural_uv_domain_with_nurb(k)?;
+            let [uv0, uv1] = uvs;
+            let (found, tsect) = point_on_plane_solve(
+                k,
+                solvers.solver_ops_mut(sid)?,
+                plane_orig,
+                plane_normal,
+                &domain1,
+                &domain2,
+                uv0,
+                uv1,
+                &tsect,
+            )?;
+            self.fillet_vertexuse_mut(vu)?.set_tsect_pnt(&tsect);
+            if !found {
+                self.fillet_vertex_mut(v)?
+                    .set_status(FilStatus::SolverNotConverge);
+                // SER_MSG: no ball of the blend lies in the shared section's plane
+                return Err(SolidError::sm_err(OP));
+            }
+            // a closed blend's other rail end here
+            if let Some(other_vu) = self.vu_at_rail_end(v, Some(g), Some(vu), None)? {
+                self.fillet_vertexuse_mut(other_vu)?.set_tsect_pnt(&tsect);
+            }
+
+            if gg == 0 {
+                // the section's ends: the first blend's feet
+                let first = usize::from(eu1::face(target, eu)? != Some(first_face));
+                let uv_first = tsect.uv_pos(srf(first, OP)?);
+                let uv_other = tsect.uv_pos(other_srf(first, OP)?);
+                let p_first =
+                    face_surface(target, Some(first_face), OP)?.evaluate_point(k, uv_first)?;
+                let p_other =
+                    face_surface(target, Some(other_face), OP)?.evaluate_point(k, uv_other)?;
+                self.set_processed(v, uv_first, p_first)?;
+                self.set_processed(mate, uv_other, p_other)?;
+            }
+        }
+        Ok(())
+    }
+
     /// `SmFilletVertex::CalcSetBackVert`: the vertex on the plane normal to the
     /// filleted edge at the corner's set-back distance from the corner vertex, solved by
     /// `PointOnPlaneSolve` from the plane origin's closest points on the solver's
@@ -2447,7 +2694,6 @@ impl FilletBrep {
             .fillet_corner()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
         let cp_vertex = corners.corner(corner)?.filleted_vertex();
-        let set_back_dist = corners.corner(corner)?.set_back_dist();
 
         let geoms = self.vertex_fillet_geoms(v)?;
         if geoms.len() != 1 {
@@ -2458,6 +2704,9 @@ impl FilletBrep {
         let fs = solvers.solver(si)?;
         let eu = solver_edgeuse(fs, 0, OP)?;
         let e = eu1::edge(target, eu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+        // each edge's own (the fork's 61547af, GetSetBackDistAlong; the corner's one setback
+        // elsewhere)
+        let set_back_dist = corners.corner(corner)?.set_back_dist_along(target, e)?;
         let (plane_orig, plane_normal) =
             set_back_frame(k, target, e, cp_vertex, set_back_dist, OP)?;
 
@@ -3438,7 +3687,7 @@ mod tests {
             })
         ));
         let corners = [FilletCorner::new(
-            crate::blend::fillet_corner::p3::FilletCornerKind::OneByOne,
+            crate::blend::fillet_corner::p3::FilletCornerKind::FourByThree,
             None,
             None,
             None,

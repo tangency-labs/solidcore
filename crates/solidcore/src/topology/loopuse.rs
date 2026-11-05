@@ -1555,6 +1555,48 @@ pub fn is_loopuse_side_in_surface(
     Ok(out)
 }
 
+/// The box of loop `l` in its face's surface parameters: the union of the tight boxes of its
+/// first loop use's edge uses' UV trim curves (made where the face has none yet), each the
+/// trim's 3D box's first two coordinates. `None` when a trim curve can't be made or bounded
+/// (an upstream status), or the box isn't finite with some width both ways.
+///
+/// # Errors
+///
+/// Those of the loop and edge use lookups, other than an upstream status.
+pub fn loop_uv_span(k: &Kernel, b: &mut Brep, l: LoopId) -> Result<Option<Extent2d>> {
+    use crate::topology::edgeuse::p3::get_or_create_uv_trim_curve;
+    let upstream = |e: &SolidError| e.sm_status().is_some();
+    let (lu, _) = loop_loopuses(b, l)?;
+    let mut span: Option<Extent2d> = None;
+    for eu in eu1::loopuse_edgeuses(b, lu)? {
+        let fetched = match get_or_create_uv_trim_curve(k, b, eu, false, false, true) {
+            Ok(f) => f,
+            Err(e) if upstream(&e) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        if fetched.status.is_err() {
+            return Ok(None);
+        }
+        let (Some(uv), _) = eu1::uv_trim_curve(b, eu)? else {
+            return Ok(None);
+        };
+        let e = match uv.calculate_tight_bounding_box(k, &uv.natural_interval()) {
+            Ok(e) => e,
+            Err(e) if upstream(&e) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let e = Extent2d::from_bounds(e.min().x, e.min().y, e.max().x, e.max().y);
+        span = Some(match span {
+            Some(s) => s.union(&e),
+            None => e,
+        });
+    }
+    Ok(span.filter(|s| {
+        let (lo, hi) = (s.min(), s.max());
+        [lo.x, lo.y, hi.x, hi.y].iter().all(|x| x.is_finite()) && hi.x > lo.x && hi.y > lo.y
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2007,8 +2049,14 @@ mod tests {
             b.edgeuse_mut(eu(bad)).unwrap().uv_trim_curve = Some(Curve::from(BSplineCurve::new(2)));
             let bad_edge = eu1::edge(&b, eu(bad)).unwrap();
             let mut k = Kernel::default();
-            let off = uv_corner_boundaries(&k, &mut b.clone(), LoopId::from_index(0), &dom, 1e-6)
-                .unwrap();
+            let off = uv_corner_boundaries(
+                &k,
+                &mut b.clone_standing_for_self().unwrap(),
+                LoopId::from_index(0),
+                &dom,
+                1e-6,
+            )
+            .unwrap();
             k.fixes.topology_failed_evaluations_propagate = true;
             let on = uv_corner_boundaries(&k, &mut b, LoopId::from_index(0), &dom, 1e-6).unwrap();
             assert!(!on.on_edges.contains(&bad_edge), "bad={bad}: {on:?}");

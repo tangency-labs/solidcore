@@ -28,6 +28,7 @@
 //! | [`BSplineCurve::create_degenerate_curve`]    | `CreateDegenerateCurve`                           |
 //! | [`BSplineCurve::create_line_segment`]        | `CreateLineSegment`                               |
 //! | [`BSplineCurve::create_mirror_curve`]        | `CreateMirrorCurve`                               |
+//! | [`BSplineCurve::create_transposed_curve`]    | (not upstream, WR-729)                            |
 //! | [`BSplineCurve::create_plane_projection`]    | `CreatePlaneProjection`                           |
 //! | [`BSplineCurve::edit_parameterization`]      | `EditParameterization`                            |
 //! | [`BSplineCurve::edit_end_point`]             | `EditEndPoint`                                    |
@@ -1311,6 +1312,20 @@ impl BSplineCurve {
         Ok(bsc)
     }
 
+    /// A copy with its coordinates `x` and `y` swapped exactly: the mirror about the
+    /// plane `x = y` that [`BSplineCurve::create_mirror_curve`] makes with a rounded
+    /// matrix (not upstream, WR-729). The copy keeps this curve's dimension; a 2D NURB
+    /// is made 3D, as the mirror makes it.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` without a NURB.
+    pub fn create_transposed_curve(&self) -> Result<Self> {
+        let mut bsc = self.copy();
+        bsc.get_or_create_gw_nurb()?.swap_xy();
+        Ok(bsc)
+    }
+
     /// The 3D projection of this curve onto the plane through `plane_point` with
     /// normal `plane_normal` (`CreatePlaneProjection`): along the direction
     /// `dir_or_center` ([`ProjectionType::Parallel`]) or from the eye point
@@ -1797,7 +1812,7 @@ impl BSplineCurve {
 }
 
 /// A 4x4 [`RealMatrix`] (`N_SetRealMatrix(.., 3, 3, NL_MT_FULL, 3)`) filled from `m`.
-fn matrix_of(m: &[[f64; 4]; 4]) -> Result<RealMatrix> {
+pub(crate) fn matrix_of(m: &[[f64; 4]; 4]) -> Result<RealMatrix> {
     let mut rma = RealMatrix::new(3, 3, MatrixType::Full, 3)?;
     for (i, row) in m.iter().enumerate() {
         for (j, &v) in row.iter().enumerate() {

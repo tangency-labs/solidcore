@@ -26,7 +26,7 @@
 //! | [`Surface::reverse`] / [`Surface::reversed`] | `N_SrfReverse` (in place / into a new surface; knots by `NI_ReverseKnots`) |
 //! | [`Surface::surface_type`], [`SurfaceType`], [`SurfaceKind`] | `N_SrfType`            |
 //! | [`Surface::reparam`]                         | `N_SrfReparam`                        |
-//! | [`Surface::is_closed_smooth`], [`Surface::is_closed_smooth_flag`] | `N_SrfIsClosedSmooth` |
+//! | [`Surface::is_closed_smooth`], [`Surface::is_closed_smooth_flag`], `_with_fixes` forms | `N_SrfIsClosedSmooth` |
 //! | [`Surface::eval_pt_deriv_normal_pole`]       | `N_SrfEvalPtPtDerivNormalPole`        |
 //! | [`Surface::eval_pt_normal_at_pole`]          | `N_SrfEvalPtNormalAtPole`             |
 //! | [`cone_elliptic_ends`], [`EllipticCone`]     | `N_ConeEllipticEnds`                  |
@@ -66,6 +66,12 @@
 //!   `usize` (`n < 0` cannot be expressed), missing tolerances are `InvalidInput`.
 //!   `N_SrfIsClosedSmooth` returns its error flag after a failed `N_VectorsAngle`
 //!   when no later evaluation clears it; the port returns that error.
+//! - `N_SrfIsClosedSmooth` with
+//!   [`UpstreamFixes::closed_smooth_pole_tangent_limit`] (opt-in, WR-725, #2521): at a
+//!   station where the derivative across the seam vanishes (a pole on the seam) the
+//!   G1 test takes its limit, the mixed derivative, instead of the angle of two
+//!   vanishing vectors; the stations are then evaluated with the mixed derivative
+//!   (the lower orders are the same bits).
 //! - `NL_MTOL` is [`MODEL_TOL`] and `NL_LTOL` is [`LINE_TOL`]
 //!   ([`Surface::is_closed_smooth`] passes its G0 tolerance to
 //!   [`Surface::is_closed_tol`] instead of overriding the global).
@@ -79,6 +85,7 @@
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::geom::a_object::reverse_knots;
+use crate::kernel::UpstreamFixes;
 use crate::math::Vec3;
 use crate::nurbs::crv_basic::{curves_are_coincident, ConicType, Curve};
 use crate::nurbs::crv_nurb::{line_from_pt_and_vector, CurveType};
@@ -480,6 +487,84 @@ fn univariate_derivs<const N: usize>(
     Ok(ku)
 }
 
+/// [`univariate_derivs`] for `dr = 1`: the span index, with the basis functions and
+/// their first derivatives (`du[0]`, `du[1]`) for degree `pu < N`. The same arithmetic in
+/// the same order (`compute_basis_functions`, then `compute_derivatives` at `k = 1`, then
+/// the factor `p`), on unchecked-free stack tables: every index is below `N`, which the
+/// caller has checked.
+fn univariate_first<const N: usize>(
+    uk: &[f64],
+    m: usize,
+    pu: usize,
+    t: f64,
+    side: Side,
+    op: &'static str,
+) -> Result<(usize, [f64; N], [f64; N])> {
+    if pu >= N {
+        return Err(oob(op));
+    }
+    let knt = KnotVector::new(uk, m)?;
+    let ku = knt.find_span(pu, t, side)?;
+    let at = |i: usize| uk.get(i).copied();
+    let g = |a: &[[f64; N]; N], i: usize, j: usize| {
+        a.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0.0)
+    };
+    let put = |a: &mut [[f64; N]; N], i: usize, j: usize, v: f64| {
+        if let Some(x) = a.get_mut(i).and_then(|r| r.get_mut(j)) {
+            *x = v;
+        }
+    };
+    // `left[j] = t - U[ku + 1 - j]`, `right[j] = U[ku + j] - t` (rows of upstream's `a`).
+    let mut left = [0.0_f64; N];
+    let mut right = [0.0_f64; N];
+    let mut ndu = [[0.0_f64; N]; N];
+    put(&mut ndu, 0, 0, 1.0);
+    for j in 1..=pu {
+        let lo = (ku + 1)
+            .checked_sub(j)
+            .and_then(at)
+            .ok_or_else(|| oob(op))?;
+        let hi = at(ku + j).ok_or_else(|| oob(op))?;
+        if let (Some(l), Some(r)) = (left.get_mut(j), right.get_mut(j)) {
+            *l = t - lo;
+            *r = hi - t;
+        }
+        let mut saved = 0.0;
+        for r in 0..j {
+            let rt = right.get(r + 1).copied().unwrap_or(0.0);
+            let lf = left.get(j - r).copied().unwrap_or(0.0);
+            put(&mut ndu, j, r, rt + lf);
+            let temp = g(&ndu, r, j - 1) / g(&ndu, j, r);
+            put(&mut ndu, r, j, saved + rt * temp);
+            saved = lf * temp;
+        }
+        put(&mut ndu, j, j, saved);
+    }
+    let mut d0 = [0.0_f64; N];
+    let mut d1 = [0.0_f64; N];
+    for (j, x) in d0.iter_mut().enumerate().take(pu + 1) {
+        *x = g(&ndu, j, pu);
+    }
+    if pu >= 1 {
+        // `compute_derivatives` at k = 1: `a[s1][0] = 1`, so `a[s2][0] = 1 / ndu[p][r-1]`
+        // and `a[s2][1] = -1 / ndu[p][r]`; then the factor `p`.
+        let p = pu - 1;
+        for (r, x) in d1.iter_mut().enumerate().take(pu + 1) {
+            let mut d = 0.0;
+            if r >= 1 {
+                let v = 1.0 / g(&ndu, p + 1, r - 1);
+                d = v * g(&ndu, r - 1, p);
+            }
+            if r <= p {
+                let v = -1.0 / g(&ndu, p + 1, r);
+                d += v * g(&ndu, r, p);
+            }
+            *x = d * pu as f64;
+        }
+    }
+    Ok((ku, d0, d1))
+}
+
 // ---- specialised point helpers ----------------------------------------------------
 
 /// `NI_VectorBlendCPt_specialized`: `b += alpha * a` with `z` / `w` dropped by the
@@ -566,6 +651,14 @@ fn derivative_matrix<const N: usize, R: AsMut<[Vec3]>, A: Fn(usize) -> Result<f6
         }
     }
     Ok(())
+}
+
+/// A surface's control points divided by their weights, with the weights, row by row
+/// ([`Surface::euclid_net`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EuclidNet {
+    points: Vec<Vec<Vec3>>,
+    weights: Vec<Vec<f64>>,
 }
 
 impl Surface {
@@ -952,6 +1045,44 @@ impl Surface {
         upper: bool,
         sd: &mut [[Vec3; 2]; 2],
     ) -> Result<()> {
+        self.first_derivs_net_into(None, u, v, ufl, vfl, upper, sd)
+    }
+
+    /// The Euclidean control points and weights of the net, as
+    /// [`Surface::first_derivs_into`] reads them: made once for a surface that is evaluated
+    /// many times ([`Surface::first_derivs_net_into`]).
+    ///
+    /// Errors when the net is malformed.
+    pub fn euclid_net(&self) -> Result<EuclidNet> {
+        let p00 = self.cpt(0, 0)?;
+        let (no_w, no_z) = (p00.w == NOW, p00.z == NOZ);
+        let (n, _, _, _) = self.array_sizes();
+        let mut points = Vec::with_capacity(n + 1);
+        let mut weights = Vec::with_capacity(n + 1);
+        for i in 0..=n {
+            let row = self.row(i)?;
+            points.push(row.iter().map(|c| to_euclid_spec(no_z, no_w, *c)).collect());
+            weights.push(row.iter().map(|c| c.w).collect());
+        }
+        Ok(EuclidNet { points, weights })
+    }
+
+    /// [`Surface::first_derivs_into`] reading the control points from `euclid`, this
+    /// surface's [`Surface::euclid_net`] when given: the same bits, without dividing every
+    /// control point of the span by its weight on each call.
+    ///
+    /// Errors as [`Surface::first_derivs_into`].
+    #[allow(clippy::too_many_arguments)] // the evaluation arguments plus the net
+    pub fn first_derivs_net_into(
+        &self,
+        euclid: Option<&EuclidNet>,
+        u: f64,
+        v: f64,
+        ufl: Side,
+        vfl: Side,
+        upper: bool,
+        sd: &mut [[Vec3; 2]; 2],
+    ) -> Result<()> {
         const OP: &str = "nurbs::srf_nurb::Surface::derivs";
         const BD_OP: &str = "nurbs::srf_nurb::Surface::basis_derivs";
         let (pu, qu) = self.degrees();
@@ -966,30 +1097,23 @@ impl Surface {
             }
             return Ok(());
         }
-        if self.is_rational() {
-            return if pu < TINY_NP && qu < TINY_NP {
-                self.first_derivs_rational_n::<TINY_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
-            } else if pu < SMALL_NP && qu < SMALL_NP {
-                self.first_derivs_rational_n::<SMALL_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
-            } else {
-                self.first_derivs_rational_n::<NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
-            };
-        }
         if pu < TINY_NP && qu < TINY_NP {
-            self.first_derivs_n::<TINY_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<TINY_NP>(u, v, ufl, vfl, upper, sd, euclid, OP, BD_OP)
         } else if pu < SMALL_NP && qu < SMALL_NP {
-            self.first_derivs_n::<SMALL_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<SMALL_NP>(u, v, ufl, vfl, upper, sd, euclid, OP, BD_OP)
         } else {
-            self.first_derivs_n::<NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<NP>(u, v, ufl, vfl, upper, sd, euclid, OP, BD_OP)
         }
     }
 
-    /// [`Surface::first_derivs_into`] for a rational surface, scratch width `N`: the
-    /// steps of [`Surface::basis_derivs_n`] and [`Surface::derivs`] in their order, with
-    /// the basis derivatives `BD[k][l]` (`k, l <= 1`) in a stack table instead of a
-    /// heap [`BasisDerivs`], and the result written into `sd` directly.
+    /// [`Surface::first_derivs_into`] for degrees below `N`, rational or not: the
+    /// arithmetic of [`Surface::basis_derivs_n`] (its rational recurrence for orders
+    /// `k, l <= 1`, each product and sum in its order) and of `derivative_matrix`, fused
+    /// into one pass over the span's control points, so the same bits
+    /// (`first_derivs_into_matches_derivs_bit_for_bit`) without the per-entry checked
+    /// tables.
     #[allow(clippy::too_many_arguments)] // the evaluation arguments plus both names
-    fn first_derivs_rational_n<const N: usize>(
+    fn first_derivs_span<const N: usize>(
         &self,
         u: f64,
         v: f64,
@@ -997,94 +1121,143 @@ impl Surface {
         vfl: Side,
         upper: bool,
         sd: &mut [[Vec3; 2]; 2],
+        euclid: Option<&EuclidNet>,
         op: &'static str,
         bd_op: &'static str,
     ) -> Result<()> {
         let (pu, qu) = self.degrees();
+        if pu >= N || qu >= N {
+            return Err(oob(op));
+        }
         let (_, _, s1u, s2u) = self.array_sizes();
-        let mut du: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let mut dv: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let ku = univariate_derivs::<N>(self.u_knots(), s1u, pu, u, ufl, 1, &mut du, bd_op)?;
-        let kv = univariate_derivs::<N>(self.v_knots(), s2u, qu, v, vfl, 1, &mut dv, bd_op)?;
+        let (ku, du0, du1) = univariate_first::<N>(self.u_knots(), s1u, pu, u, ufl, bd_op)?;
+        let (kv, dv0, dv1) = univariate_first::<N>(self.v_knots(), s2u, qu, v, vfl, bd_op)?;
+        let p00 = self.cpt(0, 0)?;
+        let no_w = p00.w == NOW;
+        let no_z = p00.z == NOZ;
+        let first_u = ku.checked_sub(pu).ok_or_else(|| oob(op))?;
+        let first_v = kv.checked_sub(qu).ok_or_else(|| oob(op))?;
 
-        // `BD[k][l][i][j]` at `[2 * k + l][i][j]`; with `upper` the `[1][1]` block stays
-        // zero, as `BasisDerivs` leaves it
-        let mut bd = [[[0.0_f64; N]; N]; 4];
-        self.rational_basis_derivs::<N>(ku, kv, &du, &dv, upper, 1, 1, |k, l, n, m, x| {
-            *bd.get_mut(2 * k + l)
-                .and_then(|b| b.get_mut(n))
-                .and_then(|r| r.get_mut(m))
-                .ok_or_else(|| oob(bd_op))? = x;
-            Ok(())
-        })?;
-        let bd = &bd;
-        // (as `BasisDerivs::row_u`: the row of `i <= p`, read for `j <= q`)
-        let alpha = |k: usize, l: usize, i: usize| {
-            let row = bd
-                .get(2 * k + l)
-                .filter(|_| k <= 1 && l <= 1 && i <= pu)
-                .and_then(|b| b.get(i))
+        // The span's (p+1) x (q+1) control points: weights and Euclidean points.
+        let mut w = [[0.0_f64; N]; N];
+        let mut pe = [[Vec3::ZERO; N]; N];
+        for (i, (w_row, p_row)) in w.iter_mut().zip(pe.iter_mut()).take(pu + 1).enumerate() {
+            if let Some(net) = euclid {
+                // (made by `to_euclid_spec` on these points: the same values)
+                let (points, weights) = net
+                    .points
+                    .get(first_u + i)
+                    .zip(net.weights.get(first_u + i))
+                    .and_then(|(p, w)| {
+                        Some((
+                            p.get(first_v..=first_v + qu)?,
+                            w.get(first_v..=first_v + qu)?,
+                        ))
+                    })
+                    .ok_or_else(|| oob(op))?;
+                for ((wij, pij), (p, wt)) in w_row
+                    .iter_mut()
+                    .zip(p_row.iter_mut())
+                    .zip(points.iter().zip(weights))
+                {
+                    *wij = *wt;
+                    *pij = *p;
+                }
+                continue;
+            }
+            let net_row = self
+                .row(first_u + i)?
+                .get(first_v..=first_v + qu)
                 .ok_or_else(|| oob(op))?;
-            Ok(move |j: usize| -> Result<f64> {
-                if j > qu {
-                    return Err(oob(op));
+            for ((wij, pij), c) in w_row.iter_mut().zip(p_row.iter_mut()).zip(net_row) {
+                *wij = c.w;
+                *pij = to_euclid_spec(no_z, no_w, *c);
+            }
+        }
+
+        let mut s = [[Vec3::ZERO; 2]; 2];
+        let add = |s: &mut Vec3, alpha: f64, pt: Vec3| {
+            s.x += alpha * pt.x; // upstream: alpha * P.x + sd.x
+            s.y += alpha * pt.y; // upstream: alpha * P.y + sd.y
+            if !no_z {
+                s.z += alpha * pt.z; // upstream: alpha * P.z + sd.z
+            }
+        };
+        if no_w {
+            for (i, p_row) in pe.iter().enumerate().take(pu + 1) {
+                let (a0, a1) = (
+                    du0.get(i).copied().unwrap_or(0.0),
+                    du1.get(i).copied().unwrap_or(0.0),
+                );
+                for ((pt, b0), b1) in p_row.iter().zip(&dv0).zip(&dv1).take(qu + 1) {
+                    let [[s00, s01], [s10, s11]] = &mut s;
+                    add(s00, a0 * b0, *pt);
+                    add(s01, a0 * b1, *pt);
+                    add(s10, a1 * b0, *pt);
+                    if !upper {
+                        add(s11, a1 * b1, *pt);
+                    }
                 }
-                row.get(j).copied().ok_or_else(|| oob(op))
-            })
-        };
-
-        let (p, q) = (sx(pu, op)?, sx(qu, op)?);
-        let l2 = ku - p;
-        let l3 = kv - q;
-        let p00 = self.cpt(0, 0)?;
-        let no_w = p00.w == NOW;
-        let no_z = p00.z == NOZ;
-        derivative_matrix::<N, _, _>(self, no_w, no_z, upper, p, q, 1, 1, l2, l3, alpha, sd, op)
-    }
-
-    /// [`Surface::first_derivs_into`] for a non-rational surface, scratch width `N`:
-    /// the steps of [`Surface::basis_derivs_n`] and [`Surface::derivs`] in their order.
-    #[allow(clippy::too_many_arguments)] // the evaluation arguments plus both names
-    fn first_derivs_n<const N: usize>(
-        &self,
-        u: f64,
-        v: f64,
-        ufl: Side,
-        vfl: Side,
-        upper: bool,
-        sd: &mut [[Vec3; 2]; 2],
-        op: &'static str,
-        bd_op: &'static str,
-    ) -> Result<()> {
-        let (pu, qu) = self.degrees();
-        let (_, _, s1u, s2u) = self.array_sizes();
-        let mut du: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let mut dv: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let ku = univariate_derivs::<N>(self.u_knots(), s1u, pu, u, ufl, 1, &mut du, bd_op)?;
-        let kv = univariate_derivs::<N>(self.v_knots(), s2u, qu, v, vfl, 1, &mut dv, bd_op)?;
-        let at2u = |a: &Derivatives<N>, i: usize, j: usize| -> Result<f64> {
-            a.get(i)
-                .and_then(|r| r.get(j))
-                .copied()
-                .ok_or_else(|| oob(bd_op))
-        };
-        let (du, dv, at2u) = (&du, &dv, &at2u);
-        let alpha = |k: usize, l: usize, i: usize| {
-            Ok(move |j: usize| -> Result<f64> {
-                if i > pu || j > qu {
-                    return Err(oob(op));
+            }
+        } else {
+            // Derivatives of the denominator, `d[k][l]`.
+            let mut d = [[0.0_f64; 2]; 2];
+            for (l, dvl) in [&dv0, &dv1].into_iter().enumerate() {
+                let mut tu = [0.0_f64; N];
+                for (t, w_row) in tu.iter_mut().zip(&w).take(pu + 1) {
+                    for (wij, dvlj) in w_row.iter().zip(dvl).take(qu + 1) {
+                        *t += wij * dvlj;
+                    }
                 }
-                Ok(at2u(du, k, i)? * at2u(dv, l, j)?)
-            })
-        };
-
-        let (p, q) = (sx(pu, op)?, sx(qu, op)?);
-        let l2 = ku - p;
-        let l3 = kv - q;
-        let p00 = self.cpt(0, 0)?;
-        let no_w = p00.w == NOW;
-        let no_z = p00.z == NOZ;
-        derivative_matrix::<N, _, _>(self, no_w, no_z, upper, p, q, 1, 1, l2, l3, alpha, sd, op)
+                for (duk, dk) in [&du0, &du1].into_iter().zip(d.iter_mut()) {
+                    let mut x = 0.0;
+                    for (t, duki) in tu.iter().zip(duk).take(pu + 1) {
+                        x += t * duki;
+                    }
+                    if let Some(slot) = dk.get_mut(l) {
+                        *slot = x;
+                    }
+                }
+            }
+            let [[d00, d01], [d10, d11]] = d;
+            if float_op_is_bad(1.0, d00, FloatOp::Division) {
+                return Err(SolidError::nlib(bd_op, NlibCode::Convergence));
+            }
+            let inv_w00 = 1.0 / d00;
+            let t11 = pascal_entry(1, 1).ok_or_else(|| oob(bd_op))?;
+            let (c0, c1, c2) = (t11 * d01, t11 * d10, t11 * d11);
+            for (i, (w_row, p_row)) in w.iter().zip(&pe).enumerate().take(pu + 1) {
+                let (a0, a1) = (
+                    du0.get(i).copied().unwrap_or(0.0),
+                    du1.get(i).copied().unwrap_or(0.0),
+                );
+                for (((wnm, pt), b0), b1) in
+                    w_row.iter().zip(p_row).zip(&dv0).zip(&dv1).take(qu + 1)
+                {
+                    // The rational basis function's derivatives, upstream's recurrence.
+                    let r00 = (wnm * a0 * b0) * inv_w00;
+                    let r01 = (wnm * a0 * b1 - c0 * r00) * inv_w00;
+                    let mut v10 = wnm * a1 * b0;
+                    v10 -= c1 * r00;
+                    v10 -= t11 * 0.0;
+                    let r10 = v10 * inv_w00;
+                    let [[s00, s01], [s10, s11]] = &mut s;
+                    add(s00, r00, *pt);
+                    add(s01, r01, *pt);
+                    add(s10, r10, *pt);
+                    if !upper {
+                        let mut v11 = wnm * a1 * b1;
+                        v11 -= c0 * r10;
+                        v11 -= c1 * r01;
+                        let v2 = 0.0 + c2 * r00;
+                        v11 -= t11 * v2;
+                        add(s11, v11 * inv_w00, *pt);
+                    }
+                }
+            }
+        }
+        *sd = s;
+        Ok(())
     }
 
     /// Min-max box of the Euclidean control net (`N_SrfGetBBox`).
@@ -1371,7 +1544,25 @@ impl Surface {
         tols: &[f64],
         dflg: Direction,
     ) -> Result<Option<Direction>> {
-        match self.is_closed_smooth_flag(level, tols, dflg)? {
+        self.is_closed_smooth_with_fixes(&UpstreamFixes::default(), level, tols, dflg)
+    }
+
+    /// [`Surface::is_closed_smooth`] with `fixes`: with
+    /// [`UpstreamFixes::closed_smooth_pole_tangent_limit`], a station where the
+    /// derivative across the seam vanishes (a pole on the seam) is tested by its limit
+    /// direction (WR-725).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::is_closed_smooth`].
+    pub fn is_closed_smooth_with_fixes(
+        &self,
+        fixes: &UpstreamFixes,
+        level: usize,
+        tols: &[f64],
+        dflg: Direction,
+    ) -> Result<Option<Direction>> {
+        match self.is_closed_smooth_flag_with_fixes(fixes, level, tols, dflg)? {
             (_, Some(e)) => Err(e),
             (closed, None) => Ok(closed),
         }
@@ -1391,7 +1582,24 @@ impl Surface {
         tols: &[f64],
         dflg: Direction,
     ) -> Result<(Option<Direction>, Option<SolidError>)> {
+        self.is_closed_smooth_flag_with_fixes(&UpstreamFixes::default(), level, tols, dflg)
+    }
+
+    /// [`Surface::is_closed_smooth_flag`] with `fixes` (see
+    /// [`Surface::is_closed_smooth_with_fixes`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::is_closed_smooth_flag`].
+    pub fn is_closed_smooth_flag_with_fixes(
+        &self,
+        fixes: &UpstreamFixes,
+        level: usize,
+        tols: &[f64],
+        dflg: Direction,
+    ) -> Result<(Option<Direction>, Option<SolidError>)> {
         const OP: &str = "nurbs::srf_nurb::Surface::is_closed_smooth";
+        let pole_limit = fixes.closed_smooth_pole_tangent_limit;
         let tol = |i: usize| -> Result<f64> {
             tols.get(i)
                 .copied()
@@ -1428,6 +1636,10 @@ impl Surface {
         let vk = self.v_knots();
         let (t0, t1) = (tol(0)?, tol(1)?);
         let mut pending: Option<SolidError> = None;
+        // The mixed derivative is the limit direction at a pole (WR-725): evaluate it
+        // too then (`upper` leaves it zero; the lower orders are the same either way).
+        let upper = !pole_limit;
+        let dom = self.parameter_bounds();
 
         // Loop through knot spans and check continuity.
         if do_u {
@@ -1436,20 +1648,20 @@ impl Surface {
                 let dv = (get(vk, succ(ii, OP)?, OP)? - get(vk, ii, OP)?) / q as f64;
                 let mut broke = false;
                 for jj in 0..=q {
-                    let (d1, d2) = if jj == q {
+                    let (x, d1, d2) = if jj == q {
                         let v = get(vk, ii + 1, OP)?;
                         let d1 =
-                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Right, true, 1, 1)?;
+                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Right, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Right, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Right, upper, 1, 1)?;
+                        (v, d1, d2)
                     } else {
                         let v = get(vk, ii, OP)? + jj as f64 * dv;
                         let d1 =
-                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Left, true, 1, 1)?;
+                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Left, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Left, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Left, upper, 1, 1)?;
+                        (v, d1, d2)
                     };
                     pending = None;
 
@@ -1461,7 +1673,16 @@ impl Surface {
                     }
 
                     // check G1
-                    match vectors_angle(sd_at(&d1, 1, 0, OP)?, sd_at(&d2, 1, 0, OP)?) {
+                    let (a, b) = if pole_limit {
+                        let end = x == dom.vt;
+                        (
+                            seam_tangent(&d1, Direction::U, end, OP)?,
+                            seam_tangent(&d2, Direction::U, end, OP)?,
+                        )
+                    } else {
+                        (sd_at(&d1, 1, 0, OP)?, sd_at(&d2, 1, 0, OP)?)
+                    };
+                    match vectors_angle(a, b) {
                         Err(e) => {
                             pending = Some(e);
                             broke = true;
@@ -1498,20 +1719,20 @@ impl Surface {
                 let du = (get(uk, succ(ii, OP)?, OP)? - get(uk, ii, OP)?) / p as f64;
                 let mut broke = false;
                 for jj in 0..=p {
-                    let (d1, d2) = if jj == p {
+                    let (x, d1, d2) = if jj == p {
                         let u = get(uk, ii + 1, OP)?;
                         let d1 =
-                            self.derivs(u, get(vk, 0, OP)?, Side::Right, Side::Left, true, 1, 1)?;
+                            self.derivs(u, get(vk, 0, OP)?, Side::Right, Side::Left, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(u, get(vk, s, OP)?, Side::Right, Side::Right, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(u, get(vk, s, OP)?, Side::Right, Side::Right, upper, 1, 1)?;
+                        (u, d1, d2)
                     } else {
                         let u = get(uk, ii, OP)? + jj as f64 * du;
                         let d1 =
-                            self.derivs(u, get(vk, 0, OP)?, Side::Left, Side::Left, true, 1, 1)?;
+                            self.derivs(u, get(vk, 0, OP)?, Side::Left, Side::Left, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(u, get(vk, s, OP)?, Side::Left, Side::Right, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(u, get(vk, s, OP)?, Side::Left, Side::Right, upper, 1, 1)?;
+                        (u, d1, d2)
                     };
                     pending = None;
 
@@ -1523,7 +1744,16 @@ impl Surface {
                     }
 
                     // check G1
-                    match vectors_angle(sd_at(&d1, 0, 1, OP)?, sd_at(&d2, 0, 1, OP)?) {
+                    let (a, b) = if pole_limit {
+                        let end = x == dom.ur;
+                        (
+                            seam_tangent(&d1, Direction::V, end, OP)?,
+                            seam_tangent(&d2, Direction::V, end, OP)?,
+                        )
+                    } else {
+                        (sd_at(&d1, 0, 1, OP)?, sd_at(&d2, 0, 1, OP)?)
+                    };
+                    match vectors_angle(a, b) {
                         Err(e) => {
                             pending = Some(e);
                             broke = true;
@@ -1668,6 +1898,32 @@ impl Surface {
 /// out is outside every array upstream would read).
 fn succ(i: isize, op: &'static str) -> Result<isize> {
     i.checked_add(1).ok_or_else(|| oob(op))
+}
+
+/// Shortest partial derivative that is not a pole: `N_SrfEvalPtNormalAtPole` takes a
+/// shorter one as vanishing (`0.001 * NL_MTOL`).
+const POLE_DERIV_TOL: f64 = 0.001 * MODEL_TOL;
+
+/// The direction across the seam of `seam` (`U`: the u seam, `S_u`; `V`: `S_v`) from
+/// the first derivatives `sd` (with the mixed one) at a station of
+/// [`Surface::is_closed_smooth_flag_with_fixes`]. Where it vanishes (shorter than
+/// [`POLE_DERIV_TOL`]: a row collapsed to a pole) it is its limit along the seam,
+/// the mixed derivative `S_uv`, negated at the end of the domain along the seam
+/// (`end`), where the row is approached from below (WR-725; the pole normal of
+/// [`Surface::eval_pt_normal_at_pole`] takes the same limit).
+fn seam_tangent(sd: &[Vec<Vec3>], seam: Direction, end: bool, op: &'static str) -> Result<Vec3> {
+    let across = match seam {
+        Direction::V => sd_at(sd, 0, 1, op)?,
+        _ => sd_at(sd, 1, 0, op)?,
+    };
+    if across.length() > POLE_DERIV_TOL {
+        return Ok(across);
+    }
+    let mut mixed = sd_at(sd, 1, 1, op)?;
+    if end {
+        mixed *= -1.0;
+    }
+    Ok(mixed)
 }
 
 /// `SD[k][l]`.
@@ -2423,6 +2679,28 @@ mod tests {
                                 let full = s.derivs_general(u, v, ufl, vfl, upper, 1, 1);
                                 let mut block = [[Vec3::new(9.0, 9.0, 9.0); 2]; 2];
                                 let r = s.first_derivs_into(u, v, ufl, vfl, upper, &mut block);
+                                let net = s.euclid_net().unwrap();
+                                let mut by_net = [[Vec3::new(7.0, 7.0, 7.0); 2]; 2];
+                                let rn = s.first_derivs_net_into(
+                                    Some(&net),
+                                    u,
+                                    v,
+                                    ufl,
+                                    vfl,
+                                    upper,
+                                    &mut by_net,
+                                );
+                                assert_eq!(r.is_ok(), rn.is_ok());
+                                if r.is_ok() {
+                                    for (a, b) in
+                                        block.iter().flatten().zip(by_net.iter().flatten())
+                                    {
+                                        assert_eq!(
+                                            [a.x.to_bits(), a.y.to_bits(), a.z.to_bits()],
+                                            [b.x.to_bits(), b.y.to_bits(), b.z.to_bits()]
+                                        );
+                                    }
+                                }
                                 match full {
                                     Ok(full) => {
                                         assert!(r.is_ok());
@@ -2505,5 +2783,669 @@ mod tests {
         )
         .unwrap();
         assert!(s.is_closed_smooth(1, &[1e-6, 1.0], Direction::UV).is_err());
+    }
+    /// `nlib.srf_nurb` case `gen0652` (tols [0.001, 1.0]): rows `[wx, wy, wz, w]`.
+    // The weights are the generator's 1/sqrt(2), as the case has them.
+    #[allow(clippy::approx_constant)]
+    const GEN0652: [[[f64; 4]; 5]; 9] = [
+        [
+            [
+                -1.703002701750313,
+                0.7735448152843192,
+                1.4722476397469413,
+                1.0,
+            ],
+            [
+                -0.41389769497987433,
+                0.7880282835525899,
+                1.5942309418007503,
+                0.7071067811865476,
+            ],
+            [
+                0.2618622986480523,
+                0.8260514062216804,
+                1.169912816597166,
+                1.0,
+            ],
+            [
+                0.7842269092021439,
+                0.3801848183434774,
+                0.06027563022506944,
+                0.7071067811865476,
+            ],
+            [
+                -0.008598637103206852,
+                0.19676705546035284,
+                -0.6970927659576331,
+                1.0,
+            ],
+        ],
+        [
+            [
+                -1.204204758786658,
+                0.5469787844392374,
+                1.0410362896509515,
+                0.7071067811865476,
+            ],
+            [
+                -0.34392190291123537,
+                1.223938038897442,
+                0.9099951779012391,
+                0.5000000000000001,
+            ],
+            [
+                0.11268328259677719,
+                1.5269880415085346,
+                0.519949866494209,
+                0.7071067811865476,
+            ],
+            [
+                0.5032801294123179,
+                0.9355491589854588,
+                -0.1746750249510484,
+                0.5000000000000001,
+            ],
+            [
+                -0.0060801546046398165,
+                0.13913531923012498,
+                -0.4929190219247293,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                -1.703002701750313,
+                0.7735448152843192,
+                1.4722476397469413,
+                1.0,
+            ],
+            [
+                -1.2766860833010154,
+                1.4898602749997385,
+                0.7337328701322507,
+                0.7071067811865476,
+            ],
+            [
+                -0.9583047415737298,
+                1.8185917270335559,
+                -0.04701522675232139,
+                1.0,
+            ],
+            [
+                -0.07856147911899733,
+                1.082016809790626,
+                -0.80022244144343,
+                0.7071067811865476,
+            ],
+            [
+                -0.008598637103206852,
+                0.19676705546035284,
+                -0.6970927659576331,
+                1.0,
+            ],
+        ],
+        [
+            [
+                -1.204204758786658,
+                0.5469787844392374,
+                1.0410362896509515,
+                0.7071067811865476,
+            ],
+            [
+                -1.4615848709860477,
+                0.8830425680480978,
+                0.127659798198727,
+                0.5000000000000001,
+            ],
+            [
+                -1.46793084501679,
+                1.04488904328183,
+                -0.5864394378053883,
+                0.7071067811865476,
+            ],
+            [
+                -0.6143828386624944,
+                0.5946536881361144,
+                -0.9570104046535606,
+                0.5000000000000001,
+            ],
+            [
+                -0.0060801546046398165,
+                0.13913531923012498,
+                -0.4929190219247293,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                -1.703002701750313,
+                0.7735448152843192,
+                1.4722476397469413,
+                1.0,
+            ],
+            [
+                -1.9945118225934413,
+                0.3059292853258852,
+                0.4878416375011528,
+                0.7071067811865476,
+            ],
+            [
+                -1.9734636375015722,
+                0.1442604645229919,
+                -0.3947579428078579,
+                1.0,
+            ],
+            [
+                -0.7963872184114235,
+                -0.10191417988322726,
+                -1.046113674074528,
+                0.7071067811865476,
+            ],
+            [
+                -0.008598637103206852,
+                0.19676705546035284,
+                -0.6970927659576331,
+                1.0,
+            ],
+        ],
+        [
+            [
+                -1.204204758786658,
+                0.5469787844392374,
+                1.0410362896509515,
+                0.7071067811865476,
+            ],
+            [
+                -1.3590807988390778,
+                -0.4503932236131225,
+                0.5622524618457024,
+                0.5000000000000001,
+            ],
+            [
+                -1.322968195988075,
+                -0.8408739378391721,
+                0.02816740123201294,
+                0.7071067811865476,
+            ],
+            [
+                -0.5118787665155248,
+                -0.7387821035251056,
+                -0.522417741006585,
+                0.5000000000000001,
+            ],
+            [
+                -0.0060801546046398165,
+                0.13913531923012498,
+                -0.4929190219247293,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                -1.703002701750313,
+                0.7735448152843192,
+                1.4722476397469413,
+                1.0,
+            ],
+            [
+                -1.1317234342723004,
+                -0.39590270612126355,
+                1.348339709169652,
+                0.7071067811865476,
+            ],
+            [
+                -0.7532965972797901,
+                -0.8482798562888838,
+                0.8221701005416294,
+                1.0,
+            ],
+            [
+                0.06640116990971762,
+                -0.803746171330376,
+                -0.18561560240602865,
+                0.7071067811865476,
+            ],
+            [
+                -0.008598637103206852,
+                0.19676705546035284,
+                -0.6970927659576331,
+                1.0,
+            ],
+        ],
+        [
+            [
+                -1.204204758786658,
+                0.5469787844392374,
+                1.0410362896509515,
+                0.7071067811865476,
+            ],
+            [
+                -0.2414178307642656,
+                -0.1094977527637783,
+                1.3445878415482146,
+                0.5000000000000001,
+            ],
+            [
+                0.2576459316254921,
+                -0.3587749396124676,
+                1.1345567055316106,
+                0.7071067811865476,
+            ],
+            [
+                0.6057842015592876,
+                -0.39788663267576163,
+                0.25991763869592716,
+                0.5000000000000001,
+            ],
+            [
+                -0.0060801546046398165,
+                0.13913531923012498,
+                -0.4929190219247293,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                -1.703002701750313,
+                0.7735448152843192,
+                1.4722476397469413,
+                1.0,
+            ],
+            [
+                -0.41389769497987433,
+                0.7880282835525899,
+                1.5942309418007503,
+                0.7071067811865476,
+            ],
+            [
+                0.2618622986480523,
+                0.8260514062216804,
+                1.169912816597166,
+                1.0,
+            ],
+            [
+                0.7842269092021439,
+                0.3801848183434774,
+                0.06027563022506944,
+                0.7071067811865476,
+            ],
+            [
+                -0.008598637103206852,
+                0.19676705546035284,
+                -0.6970927659576331,
+                1.0,
+            ],
+        ],
+    ];
+    /// `nlib.srf_nurb` case `gen1542` (tols [0.001, 0.5]): rows `[wx, wy, wz, w]`.
+    // The weights are the generator's 1/sqrt(2), as the case has them.
+    #[allow(clippy::approx_constant)]
+    const GEN1542: [[[f64; 4]; 5]; 9] = [
+        [
+            [
+                1.077244833001874,
+                -1.5395190829686578,
+                0.9352518981944178,
+                1.0,
+            ],
+            [
+                1.7337094283962637,
+                -0.3885814088404935,
+                1.4707584596208803,
+                0.7071067811865476,
+            ],
+            [
+                1.2858539145941201,
+                1.1290816531093006,
+                2.02837710590835,
+                1.0,
+            ],
+            [
+                0.08476261685327637,
+                1.9853439956943004,
+                1.397799953161796,
+                0.7071067811865476,
+            ],
+            [
+                -1.2547181115140909,
+                1.8177184201864842,
+                0.8320729888694953,
+                1.0,
+            ],
+        ],
+        [
+            [
+                0.7617271264137951,
+                -1.088604383333233,
+                0.6613229593308635,
+                0.7071067811865476,
+            ],
+            [
+                0.7434958877813607,
+                -0.5838437568478878,
+                1.8865797084223954,
+                0.5000000000000001,
+            ],
+            [
+                0.22698856229753112,
+                0.3612829430262547,
+                2.6315473569192878,
+                0.7071067811865476,
+            ],
+            [
+                -0.422485584476622,
+                1.0947749947296834,
+                1.834990253759934,
+                0.5000000000000001,
+            ],
+            [
+                -0.8872196851291925,
+                1.2853210212015613,
+                0.5883644528717789,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                1.077244833001874,
+                -1.5395190829686578,
+                0.9352518981944178,
+                1.0,
+            ],
+            [
+                0.07947966608655625,
+                -1.525702733733882,
+                1.8585911098588126,
+                0.7071067811865476,
+            ],
+            [
+                -1.0535802505454896,
+                -0.4790507466185918,
+                2.576855299805935,
+                1.0,
+            ],
+            [
+                -1.569467145456431,
+                0.8482226708009123,
+                1.7856326033997283,
+                0.7071067811865476,
+            ],
+            [
+                -1.2547181115140909,
+                1.8177184201864842,
+                0.8320729888694953,
+                1.0,
+            ],
+        ],
+        [
+            [
+                0.7617271264137951,
+                -1.088604383333233,
+                0.6613229593308635,
+                0.7071067811865476,
+            ],
+            [
+                -0.6310946660688678,
+                -1.5738257413482755,
+                0.7418650460460011,
+                0.5000000000000001,
+            ],
+            [
+                -1.716976041667406,
+                -1.0387630059592243,
+                1.012676356339253,
+                0.7071067811865476,
+            ],
+            [
+                -1.7970761383268505,
+                0.10479301022929591,
+                0.6902755913835399,
+                0.5000000000000001,
+            ],
+            [
+                -0.8872196851291925,
+                1.2853210212015613,
+                0.5883644528717789,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                1.077244833001874,
+                -1.5395190829686578,
+                0.9352518981944178,
+                1.0,
+            ],
+            [
+                -0.21025517556867354,
+                -1.7886273578259726,
+                -0.1481125409591538,
+                0.7071067811865476,
+            ],
+            [
+                -1.4633271931063367,
+                -0.8508823158914741,
+                -0.26105221884443697,
+                1.0,
+            ],
+            [
+                -1.8592019871116612,
+                0.5852980467088217,
+                -0.22107104741823824,
+                0.7071067811865476,
+            ],
+            [
+                -1.2547181115140909,
+                1.8177184201864842,
+                0.8320729888694953,
+                1.0,
+            ],
+        ],
+        [
+            [
+                0.7617271264137951,
+                -1.088604383333233,
+                0.6613229593308635,
+                0.7071067811865476,
+            ],
+            [
+                0.3337489452205133,
+                -0.9556753261207703,
+                -0.9513278102279767,
+                0.5000000000000001,
+            ],
+            [
+                -0.3524811210129288,
+                -0.16456630515792675,
+                -1.3818599447166455,
+                0.7071067811865476,
+            ],
+            [
+                -0.8322325270374694,
+                0.722943425456801,
+                -1.002917264890438,
+                0.5000000000000001,
+            ],
+            [
+                -0.8872196851291925,
+                1.2853210212015613,
+                0.5883644528717789,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                1.077244833001874,
+                -1.5395190829686578,
+                0.9352518981944178,
+                1.0,
+            ],
+            [
+                1.4439745867410338,
+                -0.6515060329325844,
+                -0.5359451911970862,
+                0.7071067811865476,
+            ],
+            [
+                0.8761069720332727,
+                0.7572500838364181,
+                -0.8095304127420219,
+                1.0,
+            ],
+            [
+                -0.20497222480195365,
+                1.7224193716022098,
+                -0.6089036976561706,
+                0.7071067811865476,
+            ],
+            [
+                -1.2547181115140909,
+                1.8177184201864842,
+                0.8320729888694953,
+                1.0,
+            ],
+        ],
+        [
+            [
+                0.7617271264137951,
+                -1.088604383333233,
+                0.6613229593308635,
+                0.7071067811865476,
+            ],
+            [
+                1.7083394990707421,
+                0.03430665837961711,
+                0.19338685214841647,
+                0.5000000000000001,
+            ],
+            [
+                1.5914834829520086,
+                1.2354796438275524,
+                0.2370110558633886,
+                0.7071067811865476,
+            ],
+            [
+                0.5423580268127594,
+                1.7129254099571884,
+                0.14179739748595524,
+                0.5000000000000001,
+            ],
+            [
+                -0.8872196851291925,
+                1.2853210212015613,
+                0.5883644528717789,
+                0.7071067811865476,
+            ],
+        ],
+        [
+            [
+                1.077244833001874,
+                -1.5395190829686578,
+                0.9352518981944178,
+                1.0,
+            ],
+            [
+                1.7337094283962637,
+                -0.3885814088404935,
+                1.4707584596208803,
+                0.7071067811865476,
+            ],
+            [
+                1.2858539145941201,
+                1.1290816531093006,
+                2.02837710590835,
+                1.0,
+            ],
+            [
+                0.08476261685327637,
+                1.9853439956943004,
+                1.397799953161796,
+                0.7071067811865476,
+            ],
+            [
+                -1.2547181115140909,
+                1.8177184201864842,
+                0.8320729888694953,
+                1.0,
+            ],
+        ],
+    ];
+
+    /// The gen0652 / gen1542 nets of `nlib.srf_nurb`: rational biquadratic spheres whose
+    /// first and last u rows are the seam and whose v = 0 and v = 1 columns are poles.
+    fn sphere(net: &[[[f64; 4]; 5]; 9]) -> Surface {
+        let net = net
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|c| CPoint::new(c[0], c[1], c[2], c[3]))
+                    .collect()
+            })
+            .collect();
+        let u = vec![
+            0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
+        ];
+        let v = vec![0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0];
+        Surface::new(net, 2, 2, u, v).unwrap()
+    }
+
+    fn pole_fix() -> UpstreamFixes {
+        UpstreamFixes {
+            closed_smooth_pole_tangent_limit: true,
+            ..UpstreamFixes::default()
+        }
+    }
+
+    /// #2521 (WR-725): at the poles `S_u` is exactly zero on both sides of the seam,
+    /// so upstream fails the angle with `NL_GEO_ERR`; by its limit `S_uv` the seam is
+    /// smooth there as everywhere else.
+    #[test]
+    fn closed_smooth_pole_of_sphere_is_smooth() {
+        for (net, tols) in [(&GEN0652, [0.001, 1.0]), (&GEN1542, [0.001, 0.5])] {
+            let s = sphere(net);
+            let d = s
+                .derivs(0.0, 0.0, Side::Left, Side::Left, true, 1, 1)
+                .unwrap();
+            assert_eq!(d[1][0], Vec3::ZERO);
+            let upstream = s.is_closed_smooth(1, &tols, Direction::U);
+            assert!(matches!(
+                upstream,
+                Err(SolidError::Nlib {
+                    code: NlibCode::Geometry,
+                    ..
+                })
+            ));
+            let fixed = s.is_closed_smooth_with_fixes(&pole_fix(), 1, &tols, Direction::U);
+            assert_eq!(fixed.unwrap(), Some(Direction::U));
+            let flag = s.is_closed_smooth_flag_with_fixes(&pole_fix(), 1, &tols, Direction::UV);
+            assert_eq!(flag.unwrap(), (Some(Direction::U), None));
+        }
+    }
+
+    /// #2521 (WR-725): the gen1542 sphere turned about an axis leaves `S_u` at the pole
+    /// as rounding noise (1.8e-15, opposite on the two sides), so upstream measures 180
+    /// degrees and reports the seam not smooth; by its limit it is smooth.
+    #[test]
+    fn closed_smooth_pole_noise_does_not_decide() {
+        let mut s = sphere(&GEN1542);
+        s.rotate_at_pt(
+            Vec3::new(0.8023059287187584, -0.8849950821048629, 1.3585098475056792),
+            Vec3::new(0.6152973741302618, 0.6277831403618859, 0.47675724437681416),
+            -158.12925138258618,
+        )
+        .unwrap();
+        let tols = [0.001, 0.5];
+        let d1 = s
+            .derivs(0.0, 0.0, Side::Left, Side::Left, true, 1, 1)
+            .unwrap();
+        let d2 = s
+            .derivs(1.0, 0.0, Side::Right, Side::Left, true, 1, 1)
+            .unwrap();
+        let (a, b) = (d1[1][0], d2[1][0]);
+        assert!(a != Vec3::ZERO && a.length() < 1e-14 && b.length() < 1e-14);
+        assert!(vectors_angle(a, b).unwrap() > 90.0);
+        assert_eq!(s.is_closed_smooth(1, &tols, Direction::U).unwrap(), None);
+        let fixed = s.is_closed_smooth_with_fixes(&pole_fix(), 1, &tols, Direction::U);
+        assert_eq!(fixed.unwrap(), Some(Direction::U));
     }
 }

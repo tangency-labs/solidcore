@@ -43,6 +43,19 @@ checklist is [`PROGRESS.md`](https://tangency-labs.github.io/solidcore/PROGRESS.
 [`plan/STATUS.md`](plan/STATUS.md). The progress site is built by
 [`site/build.py`](site/README.md) (`python3 site/build.py` -> `bin/site/`).
 
+## Reference docs
+
+How the kernel's constructions work, the theory behind them and the invariants they keep, with
+schematics. Start with the first; each ends with "If you're stuck".
+
+| Doc | What it covers |
+|-----|----------------|
+| [Definitions and certificates](docs/definitions-and-certificates.md) | A surface is its definition and its B-spline a certified approximation; the certificate; exactness classes; the exact extension; the invariants every construction keeps |
+| [The generic blend](docs/generic-blend.md) | Fillets, chamfers, corners and setbacks |
+| [The procedural sweep](docs/procedural-sweep.md) | Swept surfaces, their rotation-minimizing frames, threads |
+| [Surface-surface intersection](docs/ssi.md) | The SSI pipeline, its exact classes, and what the boolean takes from it |
+| [Layers](docs/layers.md) | Which layer each job lives in |
+
 ## Layout
 
 | Path                    | Contents                                                     |
@@ -50,6 +63,7 @@ checklist is [`PROGRESS.md`](https://tangency-labs.github.io/solidcore/PROGRESS.
 | `crates/solidcore`      | The kernel library                                           |
 | `crates/solidcore-ffi`  | `extern "C"` bindings to the upstream C++ (feature `cpp`)    |
 | `crates/difftest`       | Runs Rust and C++ side by side on the same inputs           |
+| `crates/diagnostics`    | `solidcore-diag`: a shaded picture and a tolerance report of one `.smb` body |
 | `harness/cpp`           | Builds the upstream C++ reference into `bin/cpp`; FFI shims  |
 | `plan/`                 | Unit list, port order, status, findings                      |
 | `site/`                  | Generator for the GitHub Pages progress site                 |
@@ -133,7 +147,7 @@ and fixing bugs.
 3. Describe the intended behavior, affected paths, related PRs and validation, and
    list independent follow-ups others can take. Compare against C++ and rerun affected
    units with existing tolerances and coverage. CI is the merge gate. See
-   [AGENTS.md, section 4](AGENTS.md#4-porting-a-unit-pr-workflow) for the claim template,
+   [AGENTS.md §4](AGENTS.md#4-pull-requests) for the claim template,
    handoffs and inactivity rules.
 
 To keep parallel PRs from conflicting: edit only your unit's `plan/units/<unit id>.toml`,

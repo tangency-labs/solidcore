@@ -15,6 +15,7 @@
 //! | [`FilletBrep::calc_fillet_int_side_face`]         | `SmFilletEdge::CalcFilletIntSideFace`            |
 //! | [`FilletBrep::calc_edge_on_extended_edge`]        | `SmFilletEdge::CalcEdgeOnExtendedEdge`           |
 //! | `calc_edge_on_tangent_seam` (private)             | `SmFilletEdge::CalcEdgeOnTangentSeam` (fork 856b54e) |
+//! | `definition_section_in_plane` (private)           | none (#2406: an End's rib on a round by its definition, its section in the End's plane) |
 //! | [`FilletBrep::make_fillet_edge`]                  | `SmFilletEdge::MakeFilletEdge`                   |
 //! | [`FilletGeom::new`] (in `blend.fillet_geom_p1`)   | `SmFilletGeom(SmFilletSolver*, SmFilletGeomType)` (CO-PORTED there) |
 //! | [`FilletBrep::copy_fillet_geom`]                  | `SmFilletGeom(SmFilletGeom*)`                    |
@@ -26,9 +27,8 @@
 //! | [`FilletBrep::update_geom_split_face`]            | `SmFilletGeom::UpdateSplitFace`                  |
 //!
 //! Deviations:
-//! - **Tangent ends (opt-in, WR-600's flag).** With
-//!   `fixes.fillet_nx1_tangent_side_edge_same_convexity` (the fork's
-//!   tangency-labs/smlib@856b54e), `CalcFilletIntSideFace` builds the end rib of a
+//! - **Tangent ends (WR-600, the fork's tangency-labs/smlib@856b54e).**
+//!   `CalcFilletIntSideFace` builds the end rib of a
 //!   fillet with a tangent end vertex from that end outward
 //!   ([`super::tangent_end_rib`]) instead of intersecting the surfaces, and
 //!   `CalcEdgeOnExtendedEdge` takes the cap edge on a tangent seam as the seam's own curve
@@ -140,6 +140,163 @@ use crate::topology::brep_cache::CacheObject;
 const OP_INT_FILLET: &str = "blend::fillet_geom::p5::FilletBrep::calc_fillet_int_fillet";
 const OP_CROSS: &str = "blend::fillet_geom::p5::FilletBrep::calc_cross_section";
 const OP_SIDE: &str = "blend::fillet_geom::p5::FilletBrep::calc_fillet_int_side_face";
+
+/// Not the fork's (#2406; with `fixes.fillet_round_as_definition`): where the plane `end` holds a section of the round
+/// `fillet` by its definition (a [`SurfaceKind::ProceduralBlend`]) that runs from one of
+/// `ends` (the rib's start, then its end) to the other, the end rib is that section: the
+/// definition's rational quadratic arc of the ball's circle (`EvaluateDefinition`, order 1)
+/// between its feet, its uv on the round the line along the section's t at its s, and on
+/// the plane the arc's image. The section's s is the one whose middle lies on the plane
+/// (Newton on the definition from the start's foot); it is taken when its feet are
+/// within `tol` of the rib's ends and its points lie within `tol` of the plane. `None`
+/// otherwise (the rib is then the surfaces' intersection, as the fork's).
+///
+/// # Errors
+///
+/// Those of the drop, the definition's evaluations and the curve constructions.
+fn definition_section_in_plane(
+    k: &Kernel,
+    fillet: &Surface,
+    end: &Surface,
+    ends: [Point3; 2],
+    tol: f64,
+) -> Result<Option<SrfSrfCurves>> {
+    use crate::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
+    let (SurfaceKind::ProceduralBlend(pb), SurfaceKind::Plane(plane)) = (fillet.kind(), end.kind())
+    else {
+        return Ok(None);
+    };
+    if pb.order() != 1 {
+        return Ok(None);
+    }
+    let [start, finish] = ends;
+    let (origin, normal, _) = plane.is_planar();
+    let domain = fillet.natural_uv_domain_with_nurb(k)?;
+    let foot = fillet.drop_point::<crate::surface::surface::p4::NoObject>(
+        k,
+        start,
+        &domain,
+        &crate::surface::surface::p5::DropPointOptions::default(),
+    )?;
+    if !foot.success {
+        return Ok(None);
+    }
+    // the s whose section's middle is on the plane (at most 16 Newton steps)
+    let mut s = pb.definition_parameters(foot.result_uv).x;
+    for _ in 0..16 {
+        let d = pb.evaluate_definition(k, s, 0.5, 1, 0)?;
+        let (Some(p), Some(ds)) = (
+            d.first().and_then(|r| r.first()).copied(),
+            d.get(1).and_then(|r| r.first()).copied(),
+        ) else {
+            return Ok(None);
+        };
+        let slope = ds.dot(normal);
+        if slope.abs() <= EFF_ZERO {
+            return Ok(None);
+        }
+        let step = (p - origin).dot(normal) / slope;
+        s -= step;
+        if step.abs() <= EFF_ZERO * (1.0 + s.abs()) {
+            break;
+        }
+    }
+    let at = |t: f64| -> Result<Point3> {
+        pb.evaluate_definition(k, s, t, 0, 0)?
+            .first()
+            .and_then(|r| r.first())
+            .copied()
+            .ok_or_else(|| SolidError::null_pointer(OP_SIDE))
+    };
+    let (a, mid, b) = (at(0.0)?, at(0.5)?, at(1.0)?);
+    let forward = a.distance(start) <= tol && b.distance(finish) <= tol;
+    if !(forward || (b.distance(start) <= tol && a.distance(finish) <= tol)) {
+        return Ok(None);
+    }
+    for t in [0.25, 0.75] {
+        if (at(t)? - origin).dot(normal).abs() > tol {
+            return Ok(None);
+        }
+    }
+    for p in [a, mid, b] {
+        if (p - origin).dot(normal).abs() > tol {
+            return Ok(None);
+        }
+    }
+    // the ball's circle through the feet and the middle: its centre, the angle between the
+    // feet, the arc's middle control point and weight cos(theta / 2)
+    let (u, v) = (a - mid, b - mid);
+    let w_axis = u.cross(v);
+    let area = w_axis.dot(w_axis);
+    if area <= EFF_ZERO {
+        return Ok(None);
+    }
+    let centre = mid + (w_axis.cross(u) * v.dot(v) + v.cross(w_axis) * u.dot(u)) / (2.0 * area);
+    let (ra, rb) = (a - centre, b - centre);
+    let cos_theta = ra.dot(rb) / (ra.length() * rb.length());
+    let half = 0.5 * (1.0 + cos_theta);
+    if half <= EFF_ZERO {
+        return Ok(None);
+    }
+    let weight = half.sqrt();
+    let middle = centre + ((a + b) * 0.5 - centre) / half;
+    let arc_mid = (a * 0.25 + middle * (0.5 * weight) + b * 0.25) / (0.5 + 0.5 * weight);
+    if arc_mid.distance(mid) > tol {
+        return Ok(None);
+    }
+    // from the rib's start: t runs with it, or against it
+    let (p0, p2, t0, t1) = if forward {
+        (a, b, 0.0, 1.0)
+    } else {
+        (b, a, 1.0, 0.0)
+    };
+    let arc = |dim: u64, cps: &[Point3]| -> Result<BSplineCurve> {
+        BSplineCurve::create_canonical(&CanonicalData {
+            dim,
+            degree: 2,
+            control_points: cps,
+            form: BSplineCurveForm::Unspecified,
+            knot_multiplicities: &[3, 3],
+            knots: &[0.0, 1.0],
+            knot_type: KnotType::Unspecified,
+            weights: Some(&[1.0, weight, 1.0]),
+            trim: None,
+        })
+    };
+    let curve_3d = arc(3, &[p0, middle, p2])?;
+    let on_plane = |p: Point3| {
+        let uv = plane.project_point_to_uv_domain(p);
+        Point3::new(uv.x, uv.y, 0.0)
+    };
+    let end_uv = arc(2, &[on_plane(p0), on_plane(middle), on_plane(p2)])?;
+    // the round's (u, v) at the section's (s, t): the inverse of its definition map
+    let (map_a, map_b, swapped) = pb.definition_map();
+    let uv_at = |t: f64| -> Point3 {
+        let p = (s - map_a[0]) / map_b[0];
+        let q = (t - map_a[1]) / map_b[1];
+        if swapped {
+            Point3::new(q, p, 0.0)
+        } else {
+            Point3::new(p, q, 0.0)
+        }
+    };
+    let fillet_uv = BSplineCurve::create_canonical(&CanonicalData {
+        dim: 2,
+        degree: 1,
+        control_points: &[uv_at(t0), uv_at(t1)],
+        form: BSplineCurveForm::Unspecified,
+        knot_multiplicities: &[2, 2],
+        knots: &[0.0, 1.0],
+        knot_type: KnotType::Unspecified,
+        weights: None,
+        trim: None,
+    })?;
+    Ok(Some(SrfSrfCurves {
+        curve_3d: Some(Curve::from(curve_3d)),
+        uv_curve1: Some(Curve::from(fillet_uv)),
+        uv_curve2: Some(Curve::from(end_uv)),
+    }))
+}
 /// The `SmBSplineCurve` of a curve that is one (`SM_CAST_PTR(SmBSplineCurve, ..)`).
 fn b_spline_part(c: &Curve) -> Option<&BSplineCurve> {
     match c.kind() {
@@ -153,6 +310,55 @@ fn b_spline_part(c: &Curve) -> Option<&BSplineCurve> {
 }
 
 const OP_EXT_EDGE: &str = "blend::fillet_geom::p5::FilletBrep::calc_edge_on_extended_edge";
+
+/// Whether two faces of `faces` can meet tangentially at `vertex`: the angle between their
+/// surfaces' normal lines at the vertex (dropped onto each surface, read only) is at most
+/// `bound_deg`. A necessary condition of `check_tangential_edgeuse_at_vertex` with a margin
+/// in `bound_deg`, cheap enough to run before copying the B-rep for it; `true` wherever it
+/// cannot tell (fewer than two faces, a missing surface, a drop that fails).
+fn may_meet_tangentially(
+    k: &Kernel,
+    target: &Brep,
+    faces: &[FaceId],
+    vertex: VertexId,
+    bound_deg: f64,
+) -> Result<bool> {
+    let (Some(&f1), Some(&f2)) = (faces.first(), faces.get(1)) else {
+        return Ok(true);
+    };
+    let point = target.vertex(vertex)?.point;
+    let mut normals = [Vec3::ZERO; 2];
+    for (f, n) in [f1, f2].into_iter().zip(normals.iter_mut()) {
+        let face = target.face(f)?;
+        let Some(surface) = face.surface.as_ref() else {
+            return Ok(true);
+        };
+        let dropped = surface.drop_point::<crate::surface::surface::p4::NoObject>(
+            k,
+            point,
+            &face.uv_domain,
+            &crate::surface::surface::p5::DropPointOptions::default(),
+        );
+        let Ok(dropped) = dropped else {
+            return Ok(true);
+        };
+        if !dropped.success {
+            return Ok(true);
+        }
+        match surface.evaluate_normal(k, dropped.result_uv, Side::Left, Side::Left) {
+            Ok(normal) => *n = normal,
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+            Err(_) => return Ok(true),
+        }
+    }
+    let [n1, n2] = normals;
+    let (l1, l2) = (n1.length(), n2.length());
+    if l1 <= EFF_ZERO || l2 <= EFF_ZERO {
+        return Ok(true);
+    }
+    let cos = (n1.dot(n2) / (l1 * l2)).abs().min(1.0);
+    Ok(crate::math::rad_to_deg(cos.acos()) <= bound_deg)
+}
 const OP_MAKE_EDGE: &str = "blend::fillet_geom::p5::FilletBrep::make_fillet_edge";
 const OP_COPY: &str = "blend::fillet_geom::p5::FilletBrep::copy_fillet_geom";
 const OP_RAIL_EDGE: &str = "blend::fillet_geom::p5::FilletBrep::make_rail_edge";
@@ -248,6 +454,7 @@ fn is_b_spline_surface(s: &Surface) -> bool {
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
     )
 }
 
@@ -859,6 +1066,11 @@ impl FilletBrep {
                     let the_corner = corners.corner(corner)?;
                     let filleted_vertex = the_corner.filleted_vertex();
                     match the_corner.corner_type() {
+                        // the fork's SM_FCR_BLEND (WR-697): a closed Join's one blend
+                        // meets itself, its start its end (543d25a)
+                        FilletCornerType::NByTwo if the_corner.is_closed_join() => {
+                            check_connectivity = true;
+                        }
                         FilletCornerType::NByTwo => {
                             at_start_of_geom1 = fs1.vertex(target.brep(), 0)? == filleted_vertex;
                             // pFilSolver2 stays NULL when both uses share the geometry
@@ -871,9 +1083,6 @@ impl FilletBrep {
                                     .ok_or_else(|| SolidError::null_pointer(OP_CROSS))?,
                             )?;
                             at_start_of_geom2 = fs2.vertex(target.brep(), 0)? == filleted_vertex;
-                            check_connectivity = true;
-                        }
-                        FilletCornerType::NByOneClosed if the_corner.is_blending_corner() => {
                             check_connectivity = true;
                         }
                         _ => {}
@@ -945,9 +1154,9 @@ impl FilletBrep {
         let closed_blending = match corner {
             Some(c) => {
                 let c = corners.corner(c)?;
-                c.corner_type() == FilletCornerType::NByOneClosed
-                    && g1 == g2
-                    && c.is_blending_corner()
+                // the fork's closed Join (543d25a, smlib#113 2ac7a17; WR-697): a closed edge
+                // meeting itself G1, where upstream's closed Nx1 corner blends
+                c.is_closed_join() && g1 == g2 && c.is_blending_corner()
             }
             None => false,
         };
@@ -998,7 +1207,9 @@ impl FilletBrep {
         // Need second UV curve when we had a closed fillet surface
         let closed = match corner {
             Some(c) => {
-                corners.corner(c)?.corner_type() == FilletCornerType::NByOneClosed && g1 == g2
+                let c = corners.corner(c)?;
+                // the fork's closed Join (543d25a, smlib#113 2ac7a17; WR-697)
+                c.is_closed_join() && g1 == g2
             }
             None => false,
         };
@@ -1172,7 +1383,14 @@ impl FilletBrep {
             // failure branch below
             let the_corner = corners.corner(corner)?;
             let (surface, surface2_id): (Option<Surface>, Option<ExecutiveErrorObject>) =
-                if the_corner.is_extended_surface_patch() {
+                if let Some(cap) = the_corner.end_cap.as_ref() {
+                    // SolidCraft change (the fork's 41a39ec): an End at a smooth vertex is
+                    // cut by its plane square to its edge there
+                    (
+                        Some(exact_surface(cap)?),
+                        Some(ExecutiveErrorObject::EndCap(e)),
+                    )
+                } else if the_corner.is_extended_surface_patch() {
                     let face = self
                         .fillet_edge(e)?
                         .original_face()
@@ -1231,16 +1449,14 @@ impl FilletBrep {
             // do Surface/surface xSect
             let ang_tol = fs1.ang_tol_rad;
             let mut dir = end_pnt - start_pnt;
-            // With `fixes.fillet_nx1_tangent_side_edge_same_convexity` (WR-600's flag; the
-            // fork's tangency-labs/smlib@856b54e): at a tangent end
+            // WR-600 (the fork's tangency-labs/smlib@856b54e, the blend corner's End): at a
+            // tangent end
             // (`make_nx1_corner_topology`) the fillet surface and the end face touch where
             // the rail crosses the seam, and the end rib is built from that end outward
             // (`tangent_end_rib`), never intersected into it.
             let start_tangent = self.fillet_vertex(start_fv)?.is_tangent_end();
             let end_tangent = self.fillet_vertex(end_fv)?.is_tangent_end();
-            let intersection = if k.fixes.fillet_nx1_tangent_side_edge_same_convexity
-                && (start_tangent || end_tangent)
-            {
+            let intersection = if start_tangent || end_tangent {
                 if start_tangent && end_tangent {
                     // an end rib between two tangent ends
                     return Err(SolidError::sm_err(OP_SIDE));
@@ -1294,6 +1510,23 @@ impl FilletBrep {
                     // NER(pEnd)
                     None => Err(SolidError::null_pointer(OP_SIDE)),
                 }
+            } else if let Some(section) = match &surface {
+                // Not the fork's (#2406): an End's plane that holds a section of a round
+                // by its definition through both rail ends cuts the round in that section
+                Some(surface)
+                    if k.fixes.fillet_round_as_definition && the_corner.end_cap.is_some() =>
+                {
+                    definition_section_in_plane(
+                        k,
+                        &fillet_surface1,
+                        surface,
+                        [start_pnt, end_pnt],
+                        approx_tol,
+                    )?
+                }
+                _ => None,
+            } {
+                Ok(section)
             } else {
                 match &surface {
                     Some(surface) => {
@@ -1442,27 +1675,31 @@ impl FilletBrep {
             return Err(SolidError::sm_err(OP_EXT_EDGE));
         }
         let the_corner = corners.corner(corner)?;
-        // With `fixes.fillet_nx1_tangent_side_edge_same_convexity` (WR-600's flag; the
-        // fork's tangency-labs/smlib@856b54e): a tangent seam T, the edge whose faces meet
+        // WR-600 (the fork's tangency-labs/smlib@856b54e, the blend corner's End): a
+        // tangent seam T, the edge whose faces meet
         // tangentially, where a tangent end's rail crosses it
         // (`make_nx1_corner_topology`). The cap edge from that end to the corner's vertex
         // is a piece of T, on the edge or on its continuation past the vertex: the edge's
         // own curve, continued as itself. Its faces' surfaces touch along T, so it is
         // never their intersection.
-        if k.fixes.fillet_nx1_tangent_side_edge_same_convexity {
-            if let (Some(&seam_eu), Some(vertex)) = (
-                edge::edgeuses(target, orig_edge, None, None)?.first(),
-                the_corner.vertex,
-            ) {
-                // `EvaluateBinormal` may build a missing UV trim (a cached member upstream);
-                // the check runs on a scratch copy so the target stays as it is.
-                let mut scratch = target.clone();
+        if let (Some(&seam_eu), Some(vertex)) = (
+            edge::edgeuses(target, orig_edge, None, None)?.first(),
+            the_corner.vertex,
+        ) {
+            let tol_deg = crate::math::rad_to_deg(the_corner.tangency_tol_radians);
+            // `EvaluateBinormal` may build a missing UV trim (a cached member upstream), so
+            // the check runs on a scratch copy of the target, which stays as it is. Only
+            // where the faces can meet tangentially at the vertex at all: their surfaces'
+            // normal lines there within the tolerance and a degree more, the margin for
+            // the trim's accuracy the check's normals come from.
+            if may_meet_tangentially(k, target, &faces, vertex, tol_deg + 1.0)? {
+                let mut scratch = target.clone_standing_for_self()?;
                 if crate::blend::fillet_corner::topology::check_tangential_edgeuse_at_vertex(
                     k,
                     &mut scratch,
                     seam_eu,
                     vertex,
-                    crate::math::rad_to_deg(the_corner.tangency_tol_radians),
+                    tol_deg,
                 )? {
                     return self.calc_edge_on_tangent_seam(k, e, the_corner, target, orig_edge);
                 }
@@ -1538,8 +1775,8 @@ impl FilletBrep {
         Ok(())
     }
 
-    /// `SmFilletEdge::CalcEdgeOnTangentSeam` (the fork's tangency-labs/smlib@856b54e, under
-    /// WR-600's `fillet_nx1_tangent_side_edge_same_convexity`): the curve of an
+    /// `SmFilletEdge::CalcEdgeOnTangentSeam` (the fork's tangency-labs/smlib@856b54e,
+    /// WR-600): the curve of an
     /// `SM_FE_ON_EXTEND_EDGE` fillet edge `e` on a tangent seam T, the cap edge from a
     /// tangent end (where a rail crosses T) to the corner's vertex. It is T's own curve
     /// (`orig_edge`'s) between the edge's two vertices, continued as itself
@@ -3058,7 +3295,7 @@ mod tests {
         ));
         // a corner in the table: no fillet/fillet edge at the vertex
         let corners = [FilletCorner::new(
-            crate::blend::fillet_corner::p3::FilletCornerKind::TwoByTwo,
+            crate::blend::fillet_corner::p3::FilletCornerKind::FourByThree,
             None,
             None,
             None,
@@ -3211,5 +3448,48 @@ mod tests {
         assert_eq!(snap(&to_knot, true, 1.0 - 1e-8), 1.0 - 1e-8);
         let from_knot = Extent1d::from_min_max(1.0, 2.0);
         assert_eq!(snap(&from_knot, false, 1.0 + 1e-8), 1.0 + 1e-8);
+    }
+
+    /// The read-only pre-filter of the tangent-seam check on an extended edge: a box's
+    /// edge meets its faces at 90 degrees, so it never can be a tangent seam and the
+    /// B-rep is not copied for it; the edge where a round runs tangentially into a face
+    /// can, and is checked in full.
+    #[test]
+    fn only_faces_meeting_near_tangentially_are_checked_in_full() {
+        let mut k = Kernel::default();
+        let mut b =
+            crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 4.0, 3.0, 2.0)
+                .unwrap();
+        let top_x = crate::topology::brep::p1::edges(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&e| {
+                let [s, f] = b.edge(e).unwrap().vertices;
+                let (s, f) = (b.vertex(s).unwrap().point, b.vertex(f).unwrap().point);
+                s.z == 2.0 && f.z == 2.0 && s.y == 0.0 && f.y == 0.0
+            })
+            .unwrap();
+        let sharp = |k: &Kernel, b: &Brep, e: EdgeId| {
+            let faces = edge::faces(b, e, None).unwrap();
+            let v = b.edge(e).unwrap().vertices[0];
+            may_meet_tangentially(k, b, &faces, v, 11.0).unwrap()
+        };
+        assert!(!sharp(&k, &b, top_x));
+        crate::blend::fillet_executive::api::fillet_edges(&mut k, &mut b, &[top_x], 0.5, 1, 1, 1.0)
+            .unwrap();
+        // the round's edge on the top face z = 2 (the line y = 0.5) meets it tangentially
+        let seam = crate::topology::brep::p1::edges(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&e| {
+                let [s, f] = b.edge(e).unwrap().vertices;
+                let (s, f) = (b.vertex(s).unwrap().point, b.vertex(f).unwrap().point);
+                (s.z - 2.0).abs() < 1e-9
+                    && (f.z - 2.0).abs() < 1e-9
+                    && (s.y - 0.5).abs() < 1e-9
+                    && (f.y - 0.5).abs() < 1e-9
+            })
+            .unwrap();
+        assert!(sharp(&k, &b, seam));
     }
 }

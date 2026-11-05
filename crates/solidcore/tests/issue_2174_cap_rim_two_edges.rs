@@ -55,7 +55,6 @@ use solidcore::topology::brep::p5::{remove_faces, transform};
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::topology::{Brep, FaceId};
-use solidcore::SolidError;
 
 /// The issue's flags: every fix on except `geometric_g2_continuity`, with or without
 /// this one.
@@ -241,28 +240,25 @@ fn intersected_cap_thickens_with_this_fix_alone() {
     assert_sound(only_this_fix(), intersected_cap, -1.0);
 }
 
-/// Upstream behaviour, with every other fix on: the loop gap is refused (1043).
+/// Without this fix the gap is closed too: each rim half's offset ends at its vertices'
+/// images (WR-736, #2611, the only path since #2769), never at the first trim point's twin.
+/// Upstream refused the loop gap there (1043).
 #[test]
-fn flag_off_refuses_the_gap() {
-    for distance in [1.0, -1.0] {
-        let mut k = issue_kernel(false);
-        let s = intersected_cap(&mut k);
-        match thicken(&mut k, &s, distance) {
-            Err(SolidError::Upstream { code, .. }) => assert_eq!(code, 1043, "{distance}"),
-            other => panic!("{distance}: {other:?}"),
+fn flag_off_closes_the_gap_at_the_vertex_images() {
+    let sheets: [fn(&mut Kernel) -> Brep; 3] = [intersected_cap, turned_cap, solidcraft_cap];
+    for sheet in sheets {
+        for distance in [1.0, -1.0] {
+            assert_sound(issue_kernel(false), sheet, distance);
         }
     }
 }
 
-/// Upstream behaviour at the defaults (the pinned C++ inward): a body that is no manifold
-/// solid.
+/// At the defaults the sheet thickens to the sector both ways (upstream, the pinned C++
+/// inward, gave a body that is no manifold solid: the rim halves' corners missed).
 #[test]
-fn defaults_give_no_manifold_solid() {
+fn defaults_thicken_the_sector() {
     for distance in [1.0, -1.0] {
-        let mut k = Kernel::default();
-        let s = intersected_cap(&mut k);
-        let r = thicken(&mut k, &s, distance).unwrap();
-        assert!(!is_manifold_solid(&r).unwrap(), "{distance}");
+        assert_sound(Kernel::default(), intersected_cap, distance);
     }
 }
 

@@ -451,9 +451,14 @@ pub enum FilletVertexType {
     /// `SM_FV_UNKNOWN`.
     #[default]
     Unknown = 13,
-    /// The fork's `SM_FV_PRECOMPUTED` (61547af; smlib#104): placed by its corner's own
-    /// build (a setback fill's base point). Not in the pinned enum, so it has no upstream
-    /// code ([`Self::from_code`]); its discriminant follows the pinned ones.
+    /// The fork's `SM_FV_JOIN_SECTION` (543d25a; WR-697): a Join's shared section, its end
+    /// on the first blend's side (`CalcJoinSection`). Fork `SM_FV_JOIN_SECTION` = 13;
+    /// renumbered to 16 because 13 is the pinned `SM_FV_UNKNOWN`. Not in the pinned enum,
+    /// so it has no upstream code ([`Self::from_code`]).
+    JoinSection = 16,
+    /// = fork `SM_FV_PRECOMPUTED` (61547af; smlib#104; fork value 14): placed by its
+    /// corner's own build (a setback fill's base point). Not in the pinned enum, so it has
+    /// no upstream code ([`Self::from_code`]).
     Precomputed = 14,
 }
 
@@ -849,9 +854,8 @@ pub struct FilletVertex {
     pub status: FilStatus,
     /// `m_cpCorner`: the corner this vertex belongs to.
     pub corner: Option<FilletCornerId>,
-    /// `m_bTangentEnd` (the fork's tangency-labs/smlib@856b54e, under WR-600's
-    /// `fillet_nx1_tangent_side_edge_same_convexity`): a rail's tangent end, where it
-    /// crosses a tangent seam into the end face. Always `false` without the fix.
+    /// `m_bTangentEnd` (the fork's tangency-labs/smlib@856b54e, WR-600): a rail's tangent
+    /// end, where it crosses a tangent seam into the end face.
     pub tangent_end: bool,
 }
 
@@ -1285,6 +1289,11 @@ pub struct FilletGeom {
     pub ref_eus: Vec<EdgeuseId>,
     /// `m_vSideEUs`: the side curves' edge uses (excluding rails).
     pub side_eus: Vec<EdgeuseId>,
+    /// Not upstream (tangency-labs/solidcore#2489): the surface was built by the round's
+    /// exact class ([`crate::blend::fillet_exact::calc_exact_fillet_geom`]), not traced.
+    /// Read only by the check that every blend face is a definition
+    /// ([`crate::blend::definition_check`]).
+    pub exact_class: bool,
 }
 
 impl FilletGeom {
@@ -1335,6 +1344,7 @@ impl FilletGeom {
             vertices: Vec::new(),
             ref_eus: Vec::new(),
             side_eus: Vec::new(),
+            exact_class: false,
         })
     }
 
@@ -1509,6 +1519,8 @@ impl FilletGeom {
     /// `SetFilletSurface`.
     pub fn set_fillet_surface(&mut self, surface: Option<Surface>) {
         self.fillet_surface = surface.map(|surface| FilletSurfaceStorage::Owned(Box::new(surface)));
+        // (not upstream, #2489) a new surface is traced unless its exact class marks it
+        self.exact_class = false;
     }
 
     /// `SetFilletGeomType`.
@@ -1530,7 +1542,7 @@ impl FilletGeom {
 /// The pseudo B-rep holding the fillet edges and vertices (`SmFilletBrep`), with the
 /// fillet members of its topology records and the fillet geometries referenced from
 /// them.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FilletBrep {
     /// The topology records (`SmBrep`).
     brep: Brep,
@@ -2743,6 +2755,7 @@ pub fn evaluate_mate(k: &Kernel, brep: &Brep, face: FaceId, uv: Point2) -> Resul
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
     ) {
         return Err(SolidError::null_pointer(OP_EVALUATE_MATE));
     }
@@ -2760,6 +2773,8 @@ pub fn evaluate_mate(k: &Kernel, brep: &Brep, face: FaceId, uv: Point2) -> Resul
             SurfaceKind::Torus(s) => s.base().base().evaluate_point_on_extended_surface(uv),
             // (the fork's SmProceduralBlend: the net's extension, NLib on its NURB)
             SurfaceKind::ProceduralBlend(pb) => pb.net().evaluate_point_on_extended_surface(uv),
+            // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+            SurfaceKind::BallPatch(pb) => pb.net().evaluate_point_on_extended_surface(uv),
             _ => Err(SolidError::null_pointer(OP_EVALUATE_MATE)),
         }
     }
@@ -3837,6 +3852,8 @@ fn b_spline_net_mut(surface: &mut Surface) -> Option<&mut BSplineSurface> {
         SurfaceKind::SurfOfExtrusion(s) => Some(s.base_mut()),
         // (the fork's SmProceduralBlend: its net's control points)
         SurfaceKind::ProceduralBlend(pb) => Some(pb.net_mut()),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(pb) => Some(pb.net_mut()),
         _ => None,
     }
 }

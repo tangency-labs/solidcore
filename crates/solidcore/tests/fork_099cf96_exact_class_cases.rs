@@ -28,10 +28,27 @@
 //! vertex on the sphere's seam (the ball). Only the status is checked here: which step of
 //! the fillet returned it isn't visible through `fillet_edges`.
 //!
-//! The left column is checked on the default kernel and the right one with
-//! `fillet_exact_round_classes` alone. With every current SolidCraft fix enabled,
-//! the exact cases keep their marks, while the tee must be a valid procedural
-//! round within 1e-9 mm of its rolling ball, rather than the old fitted surface.
+//! Those two columns were checked on the default kernel and with `fillet_exact_round_classes`
+//! alone while the default was the pinned corner; the blend corner, always built since #2400,
+//! builds `sphere_plane` (its End at a smooth vertex, as the fork since smlib#124) and, on
+//! the default kernel with the exact classes but no other fix, builds the pipes (traced, and
+//! failing a validity test), so neither profile has these marks now. With SolidCraft's
+//! current section fixes, the fitted tee meets its original tolerance even with procedural rounds off.
+//! With `fillet_round_as_definition` enabled (#2274), a fitted round is instead a
+//! `ProceduralBlend`: check its definition's ball contact to 1e-9, and its stored net
+//! against the unchanged fitted tolerance. The historical 1.47e-3 mark describes the
+//! earlier fitted surface, not this definition.
+//!
+//! `sphere_plane` with every fix: the fork at b785227 (before smlib#124) still returns 1001;
+//! at 63c7962 and 18e96f1 (smlib#124) the same round (`SmApiFilletEdges`, r 2, section 1,
+//! continuity 1, thumbweight 1) returns success with 5 faces and volume 3272.764885312161
+//! (`SmApiBrepComputeVolume` at 1e-7), which the port matches (its round revolved, on the
+//! ball to 1e-14, valid at level 2). That is not the closed form: the ball R 10 below z = 4
+//! is 4000 pi / 3 - 288 pi = 3284.011520552530, and the round r 2 (the ball's centre ring
+//! at z = 2, radius sqrt 60) takes away pi (40.5 - 2 sqrt 60 (pi - sqrt 3.75 / 4 - 2 asin
+//! 1 / 4)) = 22.492758031488, which leaves 3261.518762521043 (the case's `want`, the fork's
+//! capi figure). The fork's round and the port's take away 11.246635240 only.
+//! Tracked in tangency-labs/solidcore#2441.
 //! One difference from the fork: the two pipes' union itself fails 1001 here without
 //! `ssi_split_curves_at_singular_points` (WR-77), so the pipes get that flag wherever the
 //! fork's mark is about their round.
@@ -121,7 +138,7 @@ enum RoundKind {
     Revolved,
     /// A B-spline within the fillet's tolerance of the canal surface.
     Fitted,
-    /// A later round evaluated by its rolling-ball definition, not a fitted net.
+    /// A procedural canal definition, with a certified approximating net.
     Procedural,
 }
 
@@ -419,8 +436,12 @@ enum Graded {
     Body(String),
     /// The round returned an error.
     Round(String),
-    /// The round built: what's wrong with it, and how far it lies off the ball.
-    Built { problems: Vec<String>, off: f64 },
+    /// The round built: what's wrong with it, how far it lies off the ball, and its volume.
+    Built {
+        problems: Vec<String>,
+        off: f64,
+        volume: f64,
+    },
 }
 
 fn grade(case: &Case, k: &mut Kernel) -> Graded {
@@ -460,7 +481,7 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
         let Some(s) = face::surface(&b, f).unwrap() else {
             continue;
         };
-        let (spline, revolved, procedural, degrees, rational) = match s.kind() {
+        let (spline, revolved, definition, degrees, rational) = match s.kind() {
             SurfaceKind::BSpline(bs) => (
                 true,
                 false,
@@ -471,7 +492,21 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
             SurfaceKind::SurfOfRevolution(_) | SurfaceKind::Torus(_) => {
                 (false, true, false, (0, 0), false)
             }
-            SurfaceKind::ProceduralBlend(_) => (false, false, true, (0, 0), false),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let net_off = off_ball(k, &pb.net().clone().into(), case.r, &case.faces);
+                if !pb.bound().is_finite() || pb.bound() < 0.0 || pb.bound() > fitted_tol {
+                    problems.push(format!(
+                        "definition net bound {} exceeds {fitted_tol}",
+                        pb.bound()
+                    ));
+                }
+                if !net_off.is_finite() || net_off > fitted_tol {
+                    problems.push(format!(
+                        "definition net {net_off:.3e} off the ball (allowed {fitted_tol:.3e})"
+                    ));
+                }
+                (false, false, true, (0, 0), false)
+            }
             _ => continue,
         };
         rounds += 1;
@@ -481,11 +516,11 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
             }
             RoundKind::Revolved => revolved,
             RoundKind::Fitted => spline,
-            RoundKind::Procedural => procedural,
+            RoundKind::Procedural => definition,
         };
         if !kind_ok {
             problems.push(format!(
-                "round face of the wrong kind: degrees {degrees:?}, rational {rational}"
+                "round face of the wrong kind: degrees {degrees:?}, rational {rational}, definition {definition}"
             ));
         }
         off = off.max(off_ball(k, s, case.r, &case.faces));
@@ -496,7 +531,11 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
     if off > allowed {
         problems.push(format!("{off:.3e} off the ball (allowed {allowed:.3e})"));
     }
-    Graded::Built { problems, off }
+    Graded::Built {
+        problems,
+        off,
+        volume: v,
+    }
 }
 
 /// A mark of the fork's.
@@ -505,10 +544,10 @@ enum Mark {
     Passes,
     /// Status 1001 from the round.
     Status1001,
-    /// A polynomial (3, 3) B-spline, this far off the ball, where an exact round is wanted.
-    Traced(f64),
     /// The kind is right, but it lies this far off the ball, over the tolerance.
     OverTolerance(f64),
+    /// Built, valid and on the ball, but of this volume, not the case's (rel 1e-9).
+    WrongVolume(f64),
 }
 
 /// The fork's figures have three digits.
@@ -520,29 +559,20 @@ fn holds(mark: Mark, got: &Graded) -> bool {
     match (mark, got) {
         (Mark::Passes, Graded::Built { problems, .. }) => problems.is_empty(),
         (Mark::Status1001, Graded::Round(e)) => e.contains("code: 1001"),
-        (Mark::Traced(m), Graded::Built { problems, off }) => {
-            about(*off, m)
-                && problems
-                    .iter()
-                    .any(|p| p.contains("degrees (3, 3), rational false"))
-        }
-        (Mark::OverTolerance(m), Graded::Built { problems, off }) => {
+        (Mark::OverTolerance(m), Graded::Built { problems, off, .. }) => {
             about(*off, m) && problems.len() == 1 && problems[0].contains("off the ball")
         }
+        (
+            Mark::WrongVolume(m),
+            Graded::Built {
+                problems, volume, ..
+            },
+        ) => {
+            (volume - m).abs() <= 1e-9 * m
+                && problems.len() == 1
+                && problems[0].starts_with("volume")
+        }
         _ => false,
-    }
-}
-
-/// The fork's mark at 099cf96, before the exact classes.
-fn mark_before(name: &str) -> Mark {
-    match name {
-        "cone_cylinder_sharing_a_ball" => Mark::Traced(3.96e-4),
-        "oblique_plane_cone" => Mark::Traced(9.4e-4),
-        "oblique_plane_cylinder" => Mark::Traced(2.26e-3),
-        "sphere_coaxial_cone" => Mark::Traced(1.47e-3),
-        "cylinders_touching_at_a_point" | "sphere_plane" => Mark::Status1001,
-        "tee_is_fitted" => Mark::OverTolerance(1.47e-3),
-        _ => Mark::Passes,
     }
 }
 
@@ -555,24 +585,26 @@ fn mark_after(name: &str) -> Mark {
     }
 }
 
-/// Current procedural rounds improve on the historical fitted tee.
-fn mark_current(name: &str) -> Mark {
-    if name == "tee_is_fitted" {
-        Mark::Passes
-    } else {
-        mark_after(name)
+/// The current section construction fixes the fitted tee; the ball cut flat builds as the
+/// fork's does since smlib#124 (63c7962, 18e96f1), to the fork's volume, not the closed
+/// form (#2441). The other marks are unchanged.
+fn mark_with_section_fixes(name: &str) -> Mark {
+    match name {
+        "tee_is_fitted" => Mark::Passes,
+        "sphere_plane" => Mark::WrongVolume(3_272.764_885_312_161),
+        _ => mark_after(name),
     }
 }
 
 const PIPES: &str = "cylinders_touching_at_a_point";
 
-fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel) {
+fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel, fitted_kind: RoundKind) {
     let mut wrong = Vec::new();
     for mut case in cases() {
-        let mut k = kernel();
-        if case.kind == RoundKind::Fitted && k.fixes.fillet_round_as_definition {
-            case.kind = RoundKind::Procedural;
+        if case.kind == RoundKind::Fitted {
+            case.kind = fitted_kind;
         }
+        let mut k = kernel();
         if case.name == PIPES {
             k.fixes.ssi_split_curves_at_singular_points = true;
         }
@@ -608,19 +640,28 @@ fn exact_kernel() -> Kernel {
     k
 }
 
-#[test]
-fn without_the_flag_the_cases_have_the_fork_s_marks_before_the_exact_classes() {
-    check_all(mark_before, Kernel::default);
+fn solidcraft_before_definitions() -> Kernel {
+    let mut k = solidcraft_kernel();
+    k.fixes.fillet_round_as_definition = false;
+    k
 }
 
 #[test]
-fn with_current_fixes_exact_classes_keep_their_marks_and_the_tee_is_procedural() {
-    check_all(mark_current, solidcraft_kernel);
+fn with_solidcraft_s_fixes_without_definitions_the_fitted_round_meets_tolerance() {
+    check_all(
+        mark_with_section_fixes,
+        solidcraft_before_definitions,
+        RoundKind::Fitted,
+    );
 }
 
 #[test]
-fn the_flag_alone_gives_the_fork_s_marks_after_the_exact_classes() {
-    check_all(mark_after, exact_kernel);
+fn with_solidcraft_s_fixes_the_fitted_round_is_its_definition() {
+    check_all(
+        mark_with_section_fixes,
+        solidcraft_kernel,
+        RoundKind::Procedural,
+    );
 }
 
 #[test]
@@ -655,5 +696,35 @@ fn the_grading_refuses_a_wrong_volume_and_a_wrong_kind() {
     ] {
         assert!(!holds(Mark::Passes, &got), "{got:?}");
         assert!(!holds(Mark::Status1001, &got), "{got:?}");
+    }
+}
+
+/// A procedural face is required explicitly: neither its net nor another surface kind
+/// can satisfy the definition check, and the existing volume gate still applies.
+#[test]
+fn the_grading_distinguishes_a_definition_from_a_fitted_surface() {
+    let graded = |kernel: &mut Kernel, kind: RoundKind, volume_factor: f64| {
+        let mut case = cases()
+            .into_iter()
+            .find(|c| c.name == "tee_is_fitted")
+            .unwrap();
+        case.kind = kind;
+        case.want *= volume_factor;
+        grade(&case, kernel)
+    };
+    assert!(holds(
+        Mark::Passes,
+        &graded(&mut solidcraft_kernel(), RoundKind::Procedural, 1.0)
+    ));
+    for got in [
+        graded(&mut solidcraft_kernel(), RoundKind::Fitted, 1.0),
+        graded(&mut solidcraft_kernel(), RoundKind::Procedural, 1.00001),
+        graded(
+            &mut solidcraft_before_definitions(),
+            RoundKind::Procedural,
+            1.0,
+        ),
+    ] {
+        assert!(!holds(Mark::Passes, &got), "{got:?}");
     }
 }

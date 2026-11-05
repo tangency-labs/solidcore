@@ -158,7 +158,6 @@ fn sc_fixes(k: &mut Kernel) {
     k.fixes.analytic_copy_keeps_parameterization = true;
     k.fixes.fillet_point_bigger_step_retry = true;
     k.fixes.fillet_tangent_point_one_sided_step = true;
-    k.fixes.fillet_through_extended_rail_end = true;
     k.fixes.precise_properties_body_length_scale = true;
     k.fixes.precise_properties_split_at_surface_knots = true;
     k.fixes.brep_area_between_solid_and_void = true;
@@ -170,7 +169,6 @@ fn sc_fixes(k: &mut Kernel) {
     k.fixes.fillet_nx1_opposite_continuation_side_edge = true;
     k.fixes.fillet_rails_meet_at_one_end_point = true;
     k.fixes.fillet_nx1_tangent_corner_edge = true;
-    k.fixes.fillet_nx1_tangent_side_edge_same_convexity = true;
     k.fixes.fillet_3x2_mixed_concave_side_edge = true;
     k.fixes.offset_closed_curve_trim_arc = true;
     k.fixes.offset_analytic_mate_edges = true;
@@ -245,7 +243,16 @@ fn edge_by(k: &Kernel, b: &Brep, pts: &[[f64; 3]; 5]) -> EdgeId {
 }
 
 fn run(nd_fix: bool) -> (usize, usize, usize, f64, Vec<String>) {
+    run_memo(nd_fix, None)
+}
+
+/// [`run`] with `Kernel::memoize_curve_caches` set to `memo` (left at its default for
+/// `None`).
+fn run_memo(nd_fix: bool, memo: Option<bool>) -> (usize, usize, usize, f64, Vec<String>) {
     let mut k = Kernel::new(&solidcore::kernel::KernelOptions::default());
+    if let Some(memo) = memo {
+        k.memoize_curve_caches = memo;
+    }
     sc_fixes(&mut k);
     k.fixes.fillet_trace_reaches_rails = true;
     k.fixes.oscillating_skips_failed_guesses = nd_fix;
@@ -318,19 +325,40 @@ fn step4_round_matches_the_fork_and_checks_clean() {
     assert!(lines.is_empty(), "{lines:#?}");
 }
 
-/// Without it (upstream's `SolveIt`): the rail's UV trim keeps its short span (test #15).
-/// With SolidCraft's tangent end (WR-600's flag, the fork's tangency-labs/smlib@856b54e)
-/// the end rib on the boss is no longer marched into its tangential start, and the
-/// upstream solve leaves a near cusp in a 2D curve instead (test #13): the body is still
-/// refused.
+/// Without the N-D opt-in this case builds the same body: since
+/// tangency-labs/solidcore#2574 the one-dimensional solve takes no value from a failed
+/// evaluation by default, and `oscillating_skips_failed_guesses` no longer changes the
+/// result here — the fork's topology and volume, bit for bit what `run(true)` builds, and
+/// a clean check. Before #2574 the rail's UV trim kept its short span (test #15), and
+/// with SolidCraft's tangent end (WR-600's flag, the fork's tangency-labs/smlib@856b54e)
+/// the upstream solve left a false near cusp in a straight 2D trim instead (test #13), so
+/// the body was refused.
 #[test]
-fn step4_round_upstream_solve_keeps_short_trim_span() {
-    let (_, _, _, _, lines) = run(false);
-    assert!(!lines.is_empty());
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.contains("#15") || l.contains("Repeated CPts") || l.contains("#13")),
-        "{lines:#?}"
+fn step4_round_without_the_nd_opt_in_builds_the_same_body() {
+    let (f, e, v, vol, lines) = run(false);
+    assert_eq!((f, e, v), (11, 25, 16));
+    let fork = 49712.42808748303;
+    assert!((vol - fork).abs() <= 1e-9 * fork, "V {vol} vs fork {fork}");
+    assert!(lines.is_empty(), "{lines:#?}");
+    let (_, _, _, with_opt_in, _) = run(true);
+    assert_eq!(
+        vol.to_bits(),
+        with_opt_in.to_bits(),
+        "V {vol} vs {with_opt_in}"
     );
+}
+
+/// #2568: the check's curve analysis shortcuts change no report. Without the fix the
+/// body has a straight UV trim on which the radius search returns a radius of 0 (its
+/// objective fails to evaluate there); the shortcut once skipped that search and lost
+/// the report.
+#[test]
+fn step4_checks_the_same_with_and_without_the_curve_analysis_shortcuts() {
+    for nd_fix in [false, true] {
+        let full = run_memo(nd_fix, Some(false));
+        let fast = run_memo(nd_fix, Some(true));
+        assert_eq!(fast.4, full.4, "nd_fix {nd_fix}");
+        assert_eq!((fast.0, fast.1, fast.2), (full.0, full.1, full.2));
+        assert_eq!(fast.3.to_bits(), full.3.to_bits());
+    }
 }

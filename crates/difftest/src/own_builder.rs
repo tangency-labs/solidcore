@@ -1857,6 +1857,8 @@ pub(crate) fn counts(b: &Brep) -> [usize; 10] {
 pub(crate) fn build_status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
+        // a failure in solidcore's terms (#2615): its C++ comparison status
+        e @ SolidError::Failed(_) => f64::from(e.sm_status().unwrap_or(solidcore::error::SM_ERR)),
         SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => {
             f64::from(solidcore::error::SM_ERR_INVALID_INPUT)
         }
@@ -1917,6 +1919,11 @@ mod tests {
         use solidcore::topology::edgeuse::p1::{set_uv_trim_curve, UvTrimCurveArg};
         let root = crate::case::repo_root();
         let Ok(path) = crate::fixtures::upstream_test_file(&root, "Solids/box.smb") else {
+            assert!(
+                std::env::var_os("SOLIDCORE_REQUIRE_UPSTREAM").is_none(),
+                "SOLIDCORE_REQUIRE_UPSTREAM is set and the upstream test file is missing: {}",
+                "Solids/box.smb"
+            );
             eprintln!("unavailable upstream test file: Solids/box.smb");
             return;
         };

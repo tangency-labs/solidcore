@@ -34,6 +34,14 @@
 //! `|R_uu|^2 + 2 |R_uv|^2 + |R_vv|^2`), at the least degree whose conditions can be met: the
 //! conditions are met exactly, the energy only chooses among the maps that meet them.
 //!
+//! [`fill_hole_to`] takes the order at the rounds (and between the fill's own parts) and the
+//! order at the faces apart ([`FillOrders`]): a circular round meets its faces only to G1, so no
+//! regular patch through its end section is G2 to a face where the two meet (Meusnier). A fill
+//! of a higher order at the rounds than at the faces takes the rounds' rows from their geometry,
+//! the arc about the ball's centre (`geometric_rows`), not their parametrization. A fill G2 to
+//! the faces as well takes rounds eased into a curvature-continuous section first
+//! ([`ease_surface`]).
+//!
 //! Faces are planes (a curved face is not filled here yet). Every patch lies in the convex
 //! hull of its control points (all weights positive), so [`containment`]'s bound is certified.
 //!
@@ -72,8 +80,12 @@
 //! Deviations: out-params are return values; a refusal's status and reason are one
 //! [`Refusal`] (the fork's `Fill` is cleared on refusal, so no fill is returned then);
 //! `SER`/`NER` of a call is that call's error, with no reason. The context argument of
-//! `EaseSurface` and `FillHole` is dropped (they use it only to copy and build surfaces). A
-//! round's surface is a [`BSplineSurface`] (the fork takes one and casts its copy back). The
+//! `EaseSurface` is dropped (it uses it only to copy and build surfaces); `FillHole`,
+//! `FillHoleProbe` and `CertifiedScale` take the kernel (smlib#104 evaluates the rounds
+//! through it). A round's surface is a [`Surface`] that has a B-spline part (the fork's
+//! `const SmBSplineSurface *`, of which an exact round's cylinder, cone or torus and a
+//! procedural blend are kinds): its evaluations are its own kind's, as the fork's virtual
+//! calls are, and its jets come from a copy of its B-spline part. The
 //! orientation test of `sm_EaseSurface` evaluates the B-spline (#1376). Where the fork's
 //! unsigned arithmetic would wrap into an out-of-bounds read (an index or row below what it
 //! subtracts) the port returns `SM_ERR`, and a least-squares system with fewer rows than
@@ -96,6 +108,20 @@ use crate::nurbs::b_spline_surface::{
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
 use crate::surface::surface::{Surface, SurfaceKind};
+
+mod certify;
+mod convexity;
+mod curved;
+mod graph;
+mod qp;
+mod scale;
+mod spring;
+
+pub use curved::{no_more_concave, round_end_curvature};
+pub use spring::{spring_curve, SpringCurve, SpringHalf};
+
+pub(crate) use scale::bisect_thousandths;
+pub use scale::{certified_scale, CertifiedScale};
 
 const OP: &str = "blend::blend_setback";
 
@@ -682,6 +708,15 @@ fn ease_nets(
 // ---- the setback distances ------------------------------------------------------------
 
 /// `smos_Max`: the larger, `b` when they compare false (NaN).
+/// `smos_Max` on sizes.
+fn smax_usize(a: usize, b: usize) -> usize {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
 fn smax(a: f64, b: f64) -> f64 {
     if a > b {
         a
@@ -752,14 +787,111 @@ impl Refusal {
     }
 }
 
+/// `SmBlendSetback::Kind`: what a face at the corner is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FaceKind {
+    /// `SM_SB_PLANE`: a plane through the face's point, its normal the face's.
+    #[default]
+    Plane,
+    /// `SM_SB_CYLINDER`: about the axis through the face's point along its unit axis, of
+    /// its radius.
+    Cylinder,
+    /// `SM_SB_CONE`: about the axis through the face's point along its unit axis, of radius
+    /// `radius + slope h` at `h` along the axis.
+    Cone,
+    /// `SM_SB_SPHERE`: about the face's point, of its radius.
+    Sphere,
+}
+
 /// `SmBlendSetback::Face`: a face at the corner, a plane through `point`, `normal` its unit
-/// normal out of the material.
+/// normal out of the material; or a natural quadric ([`FaceKind`]): a cylinder or cone about
+/// the axis through `point` along the unit `axis`, of `radius` there and `radius + slope h`
+/// at `h` along the axis (a cylinder's slope 0), or a sphere about `point` of `radius`;
+/// `side` `+1` where the material is inside it, `-1` outside. (`normal` is a curved face's
+/// normal out of the material at the corner's vertex.)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Face {
-    /// A point of the plane (`m_sPoint`).
+    /// A point of the plane; a quadric's axis point or centre (`m_sPoint`).
     pub point: Point3,
-    /// Its unit normal out of the material (`m_sNormal`).
+    /// Its unit normal out of the material (`m_sNormal`; a quadric's at the vertex).
     pub normal: Vec3,
+    /// What it is (`m_eKind`).
+    pub kind: FaceKind,
+    /// A cylinder's or cone's unit axis (`m_sAxis`).
+    pub axis: Vec3,
+    /// A quadric's radius at `point` (`m_dRadius`).
+    pub radius: f64,
+    /// A cone's change of radius along its axis (`m_dSlope`).
+    pub slope: f64,
+    /// `+1` where the material is inside the quadric, `-1` outside (`m_dSide`).
+    pub side: f64,
+}
+
+impl Default for Face {
+    /// The fork's member initialisers: a plane, the axis `(0, 0, 1)`, radius and slope 0,
+    /// side `+1`.
+    fn default() -> Self {
+        Self {
+            point: Point3::ZERO,
+            normal: Vec3::ZERO,
+            kind: FaceKind::Plane,
+            axis: Vec3::new(0.0, 0.0, 1.0),
+            radius: 0.0,
+            slope: 0.0,
+            side: 1.0,
+        }
+    }
+}
+
+impl Face {
+    /// A plane through `point`, `normal` its unit normal out of the material.
+    #[must_use]
+    pub fn plane(point: Point3, normal: Vec3) -> Self {
+        Self {
+            point,
+            normal,
+            ..Self::default()
+        }
+    }
+
+    /// `SmBlendSetback::Distance`: the face's signed distance at `x` (negative in the
+    /// material; a cone's in the plane through its axis) and its unit normal out of the
+    /// material there (zero on a quadric's centre or axis).
+    #[must_use]
+    pub fn distance(&self, x: Point3) -> (f64, Vec3) {
+        let u = x - self.point;
+        match self.kind {
+            FaceKind::Plane => (u.dot(self.normal), self.normal),
+            FaceKind::Sphere => {
+                let len = u.length();
+                let n = if len > 0.0 {
+                    u * (self.side / len)
+                } else {
+                    Vec3::ZERO
+                };
+                (self.side * (len - self.radius), n)
+            }
+            FaceKind::Cylinder | FaceKind::Cone => {
+                let h = u.dot(self.axis);
+                let r = u - self.axis * h;
+                let rho = r.length();
+                let cos = 1.0 / sqrt(1.0 + self.slope * self.slope);
+                let sin = self.slope * cos;
+                let n = if rho > 0.0 {
+                    (r * (cos / rho) - self.axis * sin) * self.side
+                } else {
+                    Vec3::ZERO
+                };
+                (self.side * (rho - (self.radius + self.slope * h)) * cos, n)
+            }
+        }
+    }
+
+    /// Whether the face is a natural quadric, not a plane.
+    #[must_use]
+    pub fn is_curved(&self) -> bool {
+        self.kind != FaceKind::Plane
+    }
 }
 
 /// `SmBlendSetback::Edge`: a rounded edge at the corner, for the setbacks.
@@ -1090,11 +1222,17 @@ struct RoundJets {
     h: Vec<Vec<Hom>>,
     /// Its across degree.
     q: usize,
+    /// `rdDtDs` (the fork's d1de555): `dt/ds` there, s the mean arc length of its rails.
+    dt_ds: f64,
 }
 
 /// `sm_SbRoundJets`: a round's homogeneous derivatives along its rails at its end section,
 /// to order `k`, and its across degree.
-fn round_jets(round: &Round<'_>, k: usize) -> core::result::Result<RoundJets, Refusal> {
+fn round_jets(
+    kernel: &Kernel,
+    round: &Round<'_>,
+    k: usize,
+) -> core::result::Result<RoundJets, Refusal> {
     let along = round.along;
     if along != SurfParamType::U && along != SurfParamType::V {
         return Err(Refusal::invalid(
@@ -1106,7 +1244,11 @@ fn round_jets(round: &Round<'_>, k: usize) -> core::result::Result<RoundJets, Re
     } else {
         SurfParamType::U
     };
-    let mut s = round.surface.clone();
+    // Copy, then SM_CAST_PTR(SmBSplineSurface, pCopy) (NER): an analytic round's NURB, a
+    // procedural blend's net
+    let mut s = crate::topology::brep::p3::with_nurb(kernel, round.surface)?
+        .ok_or_else(|| Refusal::from(SolidError::null_pointer(OP)))?
+        .into_owned();
     let p = s.degree(along);
     let dom = s.natural_uv_domain();
     let along_ivl = interval_in(&dom, along);
@@ -1237,7 +1379,290 @@ fn round_jets(round: &Round<'_>, k: usize) -> core::result::Result<RoundJets, Re
             *el_mut(el_mut(&mut h, d)?, j)? = hd;
         }
     }
-    Ok(RoundJets { h, q: lq })
+
+    // the weights' share: G = H / W, W the rails' mean weight (the fork's d1de555)
+    if k > 2 {
+        return Err(sm_err().into()); // the jets are taken to second order
+    }
+    let mut sw = [0.0; 3];
+    for (d, swd) in sw.iter_mut().enumerate().take(k + 1) {
+        let hd = el_ref(&h, d)?;
+        *swd = 0.5 * (el_ref(hd, 0)?[3] + el_ref(hd, lq)?[3]);
+    }
+    if !(sw[0] > 0.0) {
+        return Err(Refusal::invalid(
+            "SmBlendSetback: a round's weights must be positive",
+        ));
+    }
+    let rho0 = 1.0 / sw[0];
+    let rho1 = -sw[1] / (sw[0] * sw[0]);
+    let rho2 = (2.0 * sw[1] * sw[1] - sw[0] * sw[2]) / (sw[0] * sw[0] * sw[0]);
+    let mut g = h.clone();
+    for j in 0..=lq {
+        let h0j = el(el_ref(&h, 0)?, j)?;
+        let mut g0 = HOM_ZERO;
+        let mut g1 = HOM_ZERO;
+        let mut g2 = HOM_ZERO;
+        g0 = axpy(&g0, rho0, &h0j);
+        if k >= 1 {
+            g1 = axpy(&g1, rho1, &h0j);
+            g1 = axpy(&g1, rho0, el_ref(el_ref(&h, 1)?, j)?);
+        }
+        if k >= 2 {
+            g2 = axpy(&g2, rho2, &h0j);
+            g2 = axpy(&g2, 2.0 * rho1, el_ref(el_ref(&h, 1)?, j)?);
+            g2 = axpy(&g2, rho0, el_ref(el_ref(&h, 2)?, j)?);
+        }
+        *el_mut(el_mut(&mut g, 0)?, j)? = g0;
+        if k >= 1 {
+            *el_mut(el_mut(&mut g, 1)?, j)? = g1;
+        }
+        if k >= 2 {
+            *el_mut(el_mut(&mut g, 2)?, j)? = g2;
+        }
+    }
+    // the rails' points and their first two derivatives by t, from the homogeneous ones
+    let mut speed = 0.0;
+    let mut accel = 0.0;
+    for e in 0..2 {
+        let c = if e == 0 { 0 } else { lq };
+        let a0 = el(el_ref(&g, 0)?, c)?;
+        let w0 = a0[3];
+        let w1 = if k >= 1 {
+            el(el_ref(&g, 1)?, c)?[3]
+        } else {
+            0.0
+        };
+        let w2 = if k >= 2 {
+            el(el_ref(&g, 2)?, c)?[3]
+        } else {
+            0.0
+        };
+        let p0 = Vec3::new(a0[0] / w0, a0[1] / w0, a0[2] / w0);
+        let mut p1 = Vec3::ZERO;
+        let mut p2 = Vec3::ZERO;
+        if k >= 1 {
+            let a1 = el(el_ref(&g, 1)?, c)?;
+            p1 = (Vec3::new(a1[0], a1[1], a1[2]) - p0 * w1) / w0;
+        }
+        if k >= 2 {
+            let a2 = el(el_ref(&g, 2)?, c)?;
+            p2 = (Vec3::new(a2[0], a2[1], a2[2]) - p1 * (2.0 * w1) - p0 * w2) / w0;
+        }
+        let len = p1.length();
+        if !(len > 0.0) {
+            return Err(Refusal::invalid(
+                "SmBlendSetback: a round's rails do not move along it at its end",
+            ));
+        }
+        speed += 0.5 * len;
+        accel += 0.5 * p1.dot(p2) / len;
+    }
+    // the parameter along: s, ds/dt = speed; dt/ds = 1 / speed, d2t/ds2 = -accel / speed^3
+    let ts = 1.0 / speed;
+    let tss = -accel / (speed * speed * speed);
+    for j in 0..=lq {
+        let g0 = el(el_ref(&g, 0)?, j)?;
+        *el_mut(el_mut(&mut h, 0)?, j)? = g0;
+        if k >= 1 {
+            let g1 = el(el_ref(&g, 1)?, j)?;
+            *el_mut(el_mut(&mut h, 1)?, j)? = axpy(&HOM_ZERO, ts, &g1);
+        }
+        if k >= 2 {
+            let g1 = el(el_ref(&g, 1)?, j)?;
+            let g2 = el(el_ref(&g, 2)?, j)?;
+            *el_mut(el_mut(&mut h, 2)?, j)? = axpy(&axpy(&HOM_ZERO, ts * ts, &g2), tss, &g1);
+        }
+    }
+    Ok(RoundJets {
+        h,
+        q: lq,
+        dt_ds: ts,
+    })
+}
+
+/// A circular round's end rows to order `k` (at most 2) from its GEOMETRY, not its
+/// parametrization (the role of the fork's `sm_SbGeometricRows`, archive/wip/85c-curved-setback,
+/// extended to the second row): `jets` (a round's jets at its end, [`round_jets`]'s, of across
+/// degree `q`) give way to its end section as the rational quadratic arc about its ball's centre
+/// C (raised to the degree of the derivative's), its derivative across the end `T + beta(t)
+/// V(t)` (T the unit normal of the section's plane toward the rails' increasing parameter, V
+/// the arc's homogeneous tangent, beta linear, set so that it runs along the rails at the ends),
+/// and for `k = 2` the second derivative 0: the round is a straight sweep of its end section
+/// there, so its normal curvature along `T + beta V` is that of the section at `beta^2`, and
+/// beta is 0 (the rails square to the section). Two parametrizations of one round give the same
+/// rows. Returns the rows and their across degree.
+///
+/// # Errors
+/// [`Refusal`] with `SM_ERR_INVALID_INPUT` and its reason: an end section that is not a circular
+/// arc or spans half its ball or more, a rail that turns back across the end, and for `k = 2` a
+/// round that is not a straight sweep of its end section there or whose rails are not square
+/// to it.
+fn geometric_rows(
+    jets: &[Vec<Hom>],
+    q: usize,
+    k: usize,
+) -> core::result::Result<(Vec<Vec<Hom>>, usize), Refusal> {
+    if k == 0 || k > 2 {
+        return Err(sm_err().into());
+    }
+    let row0 = el_ref(jets, 0)?;
+    let row1 = el_ref(jets, 1)?;
+    // a row's homogeneous point at `s` in [0, 1] (Bernstein form)
+    let at = |row: &[Hom], s: f64| -> Result<Hom> {
+        let mut h = HOM_ZERO;
+        for j in 0..=q {
+            let mut b = binomial(q, j)?;
+            for _ in 0..j {
+                b *= s;
+            }
+            for _ in j..q {
+                b *= 1.0 - s;
+            }
+            h = axpy(&h, b, el_ref(row, j)?);
+        }
+        Ok(h)
+    };
+    let mid_of = |row: &[Hom]| at(row, 0.5);
+    let a = euclid(el_ref(row0, 0)?);
+    let m = euclid(&mid_of(row0)?);
+    let b = euclid(el_ref(row0, q)?);
+    let (a0, b0) = (a - b, m - b);
+    let axb = a0.cross(b0);
+    let axb2 = axb.dot(axb);
+    if !(axb2 > 0.0) {
+        return Err(Refusal::invalid(
+            "SmBlendSetback: a round's end section is not a circular arc",
+        ));
+    }
+    let c = b + (b0 * a0.dot(a0) - a0 * b0.dot(b0)).cross(axb) * (0.5 / axb2);
+    let r = (a - c).length();
+    // C is the circle through the ends and the middle: the section is that circle's arc where
+    // its quarter points lie on it too (a section that is not an arc leaves it there)
+    for s in [0.25, 0.75] {
+        let p = euclid(&at(row0, s)?);
+        if !(((p - c).length() - r).abs() <= 1.0e-9 * (1.0 + r))
+            || !((p - c).dot(axb).abs() <= 1.0e-9 * (1.0 + r) * axb2.sqrt())
+        {
+            return Err(Refusal::invalid(
+                "SmBlendSetback: a round's end section is not a circular arc",
+            ));
+        }
+    }
+    let ua = (a - c).unitize()?;
+    let ub = (b - c).unitize()?;
+    let cos = ua.dot(ub);
+    if !(cos > -1.0 + 1.0e-9) {
+        return Err(Refusal::invalid(
+            "SmBlendSetback: a round's end section spans half its ball or more",
+        ));
+    }
+    let mut t = ua.cross(ub).unitize()?;
+    // T toward the round's rails' increasing parameter (its raw derivative along, at the middle)
+    let d = mid_of(row1)?;
+    let dx = Vec3::new(d[0] - d[3] * m.x, d[1] - d[3] * m.y, d[2] - d[3] * m.z);
+    if dx.dot(t) < 0.0 {
+        t = -t;
+    }
+    let w1 = (0.5 * (1.0 + cos)).sqrt();
+    let p1 = c + (ua + ub) * (r / (1.0 + cos));
+    // the arc, degree 2, and its homogeneous tangent V = w H' - w' H (spatial, degree 2 after
+    // the cancellation, computed as degree 3)
+    let arc = [(a, 1.0), (p1, w1), (b, 1.0)];
+    let hx: Bern = arc.iter().map(|(p, w)| p.x * w).collect();
+    let hy: Bern = arc.iter().map(|(p, w)| p.y * w).collect();
+    let hz: Bern = arc.iter().map(|(p, w)| p.z * w).collect();
+    let hw: Bern = arc.iter().map(|(_, w)| *w).collect();
+    let deriv = |b: &[f64]| -> Bern {
+        let n = b.len().saturating_sub(1) as f64;
+        b.iter()
+            .zip(b.iter().skip(1))
+            .map(|(x0, x1)| n * (x1 - x0))
+            .collect()
+    };
+    let tangent = |hc: &[f64]| -> Result<Bern> {
+        let t1 = bern_mul(&hw, &deriv(hc))?;
+        let t2 = bern_mul(&deriv(&hw), hc)?;
+        Ok(t1.iter().zip(&t2).map(|(x, y)| x - y).collect())
+    };
+    let v = [tangent(&hx)?, tangent(&hy)?, tangent(&hz)?];
+    let [vx, vy, vz] = &v;
+    let lv = vx.len();
+    // the derivative across the end: T + beta(t) V(t), beta linear, its ends set so that it runs
+    // along the rails there (the raw derivative's direction at each rail end: the rail's
+    // tangent, a direction of the geometry): T + beta V in the round's tangent plane all along
+    let mut beta = [0.0; 2];
+    for (e, be) in beta.iter_mut().enumerate() {
+        let col = if e == 0 { 0 } else { q };
+        let (h0, h1) = (el(row0, col)?, el(row1, col)?);
+        let p0 = euclid(&h0);
+        let d1 = Vec3::new(
+            h1[0] - h1[3] * p0.x,
+            h1[1] - h1[3] * p0.y,
+            h1[2] - h1[3] * p0.z,
+        );
+        let i = if e == 0 {
+            0
+        } else {
+            lv.checked_sub(1).ok_or_else(sm_err)?
+        };
+        let v0 = Vec3::new(el(vx, i)?, el(vy, i)?, el(vz, i)?);
+        let along = d1.dot(t);
+        if !(along > 0.0) {
+            return Err(Refusal::invalid(
+                "SmBlendSetback: a round's rail turns back across its end section",
+            ));
+        }
+        *be = d1.dot(v0) / (v0.dot(v0) * along);
+    }
+    let deg = lv; // beta V's degree
+    let mut out = vec![vec![HOM_ZERO; deg + 1]; k + 1];
+    for (cc, hc) in [&hx, &hy, &hz, &hw].into_iter().enumerate() {
+        let up = bern_elevate(hc, deg)?;
+        for (j, h) in el_mut(&mut out, 0)?.iter_mut().enumerate() {
+            *el_mut(h, cc)? = el(&up, j)?;
+        }
+    }
+    for (cc, (tc, vc)) in [t.x, t.y, t.z].into_iter().zip(&v).enumerate() {
+        let bv = bern_mul(&beta, vc)?;
+        for (j, h) in el_mut(&mut out, 1)?.iter_mut().enumerate() {
+            *el_mut(h, cc)? = tc + el(&bv, j)?;
+        }
+    }
+    if k == 2 {
+        // the round a straight sweep of its section at its end: its raw first derivative the
+        // same translation at every column, its second (by the rails' mean arc length) none,
+        // and its rails square to the section (beta 0)
+        let row2 = el_ref(jets, 2)?;
+        let size = 1.0 + r;
+        let mut first: Option<Vec3> = None;
+        for col in 0..=q {
+            let (h0, h1, h2) = (el(row0, col)?, el(row1, col)?, el(row2, col)?);
+            let w0 = h0[3];
+            let p0 = euclid(&h0);
+            let p1 = (xyz(&h1) - p0 * h1[3]) / w0;
+            let p2 = (xyz(&h2) - p1 * (2.0 * h1[3]) - p0 * h2[3]) / w0;
+            let f = *first.get_or_insert(p1);
+            if !((p1 - f).length() <= 1.0e-9 * f.length()) || !(p2.length() <= 1.0e-9 * size) {
+                return Err(Refusal::invalid(
+                    "SmBlendSetback: a G2 fill's rows beside a circular round are built where it is a straight sweep of its end section only",
+                ));
+            }
+        }
+        let beta_max = beta.iter().fold(0.0f64, |x, y| x.max(y.abs()));
+        let v_max = vx
+            .iter()
+            .chain(vy)
+            .chain(vz)
+            .fold(0.0f64, |x, y| x.max(y.abs()));
+        let beta_v = beta_max * v_max;
+        if !(beta_v <= 1.0e-9) {
+            return Err(Refusal::invalid(
+                "SmBlendSetback: a G2 fill's rows beside a circular round need its rails square to its end section",
+            ));
+        }
+    }
+    Ok((out, deg))
 }
 
 /// `sm_SbMonomials`: the monomials `x^a y^b`, `a + b <= d`, in a fixed order.
@@ -1498,12 +1923,14 @@ fn least_squares(
 }
 
 /// `SmBlendSetback::Round`: a round at the corner, ending at its setback. The round must
-/// meet its faces to the fill's order at its end section (a G1 round eased first for a G2
-/// fill).
+/// meet its faces to the fill's order at the faces at its end section (a G1 round eased first
+/// for a fill G2 to the faces).
 #[derive(Debug, Clone, Copy)]
 pub struct Round<'a> {
-    /// Its surface, one Bezier span across its rails, any along them (`m_pSurface`).
-    pub surface: &'a BSplineSurface,
+    /// Its surface, one Bezier span across its rails, any along them (`m_pSurface`, a
+    /// `const SmBSplineSurface *`): a B-spline, or an analytic surface or procedural blend
+    /// upstream derives from it, which evaluates as its own kind.
+    pub surface: &'a Surface,
     /// Its rails' direction (`m_eAlong`).
     pub along: SurfParamType,
     /// The rail parameter of its end section (`m_dEnd`).
@@ -1561,14 +1988,183 @@ pub struct Fill {
 /// conditions on the interior map no degree up to 9 can meet, or a fill that folds. A failing
 /// call's error, without a reason.
 pub fn fill_hole(
+    kernel: &Kernel,
     faces: &[Face],
     rounds: &[Round<'_>],
     order: usize,
     tol: f64,
 ) -> core::result::Result<Fill, Refusal> {
+    fill_hole_to(
+        kernel,
+        faces,
+        rounds,
+        FillOrders {
+            rounds: order,
+            faces: order,
+        },
+        tol,
+    )
+}
+
+/// The orders a fill meets its neighbours to: the rounds (and its own parts to each other)
+/// and the faces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FillOrders {
+    /// The order at the rounds' end sections, the inner curves and the spokes (1: G1, 2: G2).
+    pub rounds: usize,
+    /// The order at the faces (1: G1, 2: G2), at most `rounds`.
+    pub faces: usize,
+}
+
+/// [`fill_hole`] to the orders `orders`. A circular round meets its faces only to G1 (its
+/// curvature across is `1/r` against a plane's 0), so where its end section meets a face a
+/// patch through that section has normal curvature `1/r` along it (Meusnier) and cannot
+/// meet the plane to G2 there: beside circular rounds a curvature-continuous fill is G2 to the
+/// rounds and to itself and G1 to the faces (`rounds: 2, faces: 1`), as the rounds are. Its
+/// rounds' rows then come from their geometry (`geometric_rows`: the arc about the ball's centre,
+/// curvature `1/r` across). For a fill G2 everywhere, ease the rounds into a curvature-continuous
+/// section before their ends ([`ease_surface`]) and fill to order 2 at the faces too.
+///
+/// # Errors
+/// As [`fill_hole`]'s; [`Refusal`] with `SM_ERR_INVALID_INPUT` for orders other than 1 or 2
+/// or a face order above the rounds', and for a round that does not meet its faces to
+/// `orders.faces` at its end.
+pub fn fill_hole_to(
+    kernel: &Kernel,
+    faces: &[Face],
+    rounds: &[Round<'_>],
+    orders: FillOrders,
+    tol: f64,
+) -> core::result::Result<Fill, Refusal> {
+    fill_hole_with(
+        kernel,
+        faces,
+        rounds,
+        orders,
+        tol,
+        None,
+        &mut FillStats::default(),
+    )
+}
+
+/// [`fill_hole`], with its work and whether a G1 fill was refused as uncertified
+/// (`stats`; the fork's `Fill::m_bUncertified`, which the corner reads on refusal).
+///
+/// # Errors
+/// As [`fill_hole`]'s.
+pub fn fill_hole_counted(
+    kernel: &Kernel,
+    faces: &[Face],
+    rounds: &[Round<'_>],
+    order: usize,
+    tol: f64,
+    stats: &mut FillStats,
+) -> core::result::Result<Fill, Refusal> {
+    let orders = FillOrders {
+        rounds: order,
+        faces: order,
+    };
+    fill_hole_with(kernel, faces, rounds, orders, tol, None, stats)
+}
+
+/// `SmBlendSetback::Probe` (the fork's 250cb3f, f1d81f4): [`certified_scale`]'s probe of a
+/// G1 fill at degree 9: whether its conditions can be met (`feasible`), and the least
+/// uniform violation of its normalized sector conditions over the heights (`margin_value`:
+/// `<= 0` where met; `margin` asks it), one quadratic programme each; or (`fill`) the fill as
+/// [`fill_hole`]'s, its degrees tried from the least up only.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // the fork's three switches and solidcore's margin
+pub struct Probe {
+    /// `m_bFill`: the fill itself, from the least degree up (no degree-9 proof first).
+    pub fill: bool,
+    /// `m_bMargin`.
+    pub margin: bool,
+    /// `m_bFeasible`.
+    pub feasible: bool,
+    /// `m_dMargin`.
+    pub margin_value: f64,
+    /// Beside a curved face (#2343, not the fork): the fill certified only where its
+    /// certificate holds by more than its own rounding bound, so that the same corner built
+    /// afresh is certified too (the growth names its setback so).
+    pub rounding_margin: bool,
+}
+
+/// The fork's `Fill::m_lSolves` and `m_bUncertified` (f1d81f4), kept on refusal too, and the
+/// work of a fill beside a curved face (the fork's process-wide `CurvedCounts`, 37c9e1d, kept
+/// per fill here: counts, never timings).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FillStats {
+    /// `m_lSolves`: the quadratic programmes a G1 fill solved (its count, not its time).
+    pub solves: usize,
+    /// `m_bUncertified`: the G1 fill was refused as no fill up to degree 9 is certified
+    /// convex (beside a curved face: no more concave than its faces).
+    pub uncertified: bool,
+    /// `CurvedCounts[0]`: the fills made beside a curved face (0 or 1).
+    pub curved_fills: usize,
+    /// `CurvedCounts[1]`: their degrees tried, one quadratic programme each.
+    pub curved_degrees: usize,
+    /// Exact sector-row construction attempts for curved fills, including skipped rows.
+    /// Counts violation scans and selection; a row rebuilt later is counted again,
+    /// unlike the former stored-row count. Work is retained on refusal or error.
+    pub curved_rows: usize,
+    /// Exact row construction attempts in planar, curved and margin-probe solvers.
+    /// Includes skipped rows and repeated construction during scans and selection;
+    /// cheap-bound rejections do not count. Work is retained on refusal or error.
+    pub qp_rows_built: usize,
+    /// Maximum number of constraint rows retained in a solver's working set.
+    pub qp_peak_rows_held: usize,
+    /// Dual active-set iterations across the fill's quadratic programmes.
+    pub qp_steps: usize,
+}
+
+impl FillStats {
+    fn record_qp_work(&mut self, work: qp::QpStats) {
+        self.qp_rows_built = self.qp_rows_built.saturating_add(work.rows_built);
+        self.qp_peak_rows_held = self.qp_peak_rows_held.max(work.peak_rows_held);
+        self.qp_steps = self.qp_steps.saturating_add(work.steps);
+    }
+}
+
+/// `SmBlendSetback::FillHoleProbe`: the G1 fill (order 1) probed as `probe` asks, or built
+/// (`probe.fill`). A probe that asks no fill returns an empty one.
+///
+/// # Errors
+/// As [`fill_hole`]'s.
+pub fn fill_hole_probe(
+    kernel: &Kernel,
+    faces: &[Face],
+    rounds: &[Round<'_>],
+    tol: f64,
+    probe: &mut Probe,
+    stats: &mut FillStats,
+) -> core::result::Result<Fill, Refusal> {
+    let g1 = FillOrders {
+        rounds: 1,
+        faces: 1,
+    };
+    fill_hole_with(kernel, faces, rounds, g1, tol, Some(probe), stats)
+}
+
+/// `sm_SbFillHole`: [`fill_hole`] with the probe and the statistics.
+fn fill_hole_with(
+    kernel: &Kernel,
+    faces: &[Face],
+    rounds: &[Round<'_>],
+    orders: FillOrders,
+    tol: f64,
+    probe: Option<&mut Probe>,
+    stats: &mut FillStats,
+) -> core::result::Result<Fill, Refusal> {
+    *stats = FillStats::default();
+    let order = orders.rounds;
     if order != 1 && order != 2 {
         return Err(Refusal::invalid(
             "SmBlendSetback: a setback fill is of order 1 (G1) or 2 (G2)",
+        ));
+    }
+    if (orders.faces != 1 && orders.faces != 2) || orders.faces > order {
+        return Err(Refusal::invalid(
+            "SmBlendSetback: a setback fill meets its faces to order 1 or 2, at most its rounds' order",
         ));
     }
     if !(tol > 0.0) || rounds.len() < 3 || faces.len() != rounds.len() {
@@ -1578,20 +2174,36 @@ pub fn fill_hole(
     }
     let n = rounds.len();
     let k = order;
+    let kf = orders.faces; // the order at the faces
     let big_n = 2 * k + 1; // the setback patches' degree across the hole
+                           // beside a curved face the rounds' second derivatives along too (their k)
+    let any_curved = faces.iter().any(Face::is_curved);
 
     // each round's jets at its end, and the faces its across ends lie on
     let mut jets: Vec<Vec<Vec<Hom>>> = Vec::with_capacity(n);
     let mut qs: Vec<usize> = Vec::with_capacity(n);
+    let mut dt_ds: Vec<f64> = Vec::with_capacity(n);
     let mut face_at = [vec![n; n], vec![n; n]];
     for (r, round) in rounds.iter().enumerate() {
-        let RoundJets { h, q } = round_jets(round, k)?;
+        let RoundJets {
+            h,
+            q,
+            dt_ds: r_dt_ds,
+        } = round_jets(kernel, round, if any_curved { smax_usize(k, 2) } else { k })?;
+        // beside circular rounds a fill of a higher order than its faces' (G2 to the rounds,
+        // G1 to the faces) takes their rows from their geometry
+        let (h, q) = if kf < k {
+            geometric_rows(&h, q, k)?
+        } else {
+            (h, q)
+        };
+        dt_ds.push(r_dt_ds);
         for (e, at_e) in face_at.iter_mut().enumerate() {
             let hp = el_ref(el_ref(&h, 0)?, if e == 0 { 0 } else { q })?;
             let p = euclid(hp);
             let slot = el_mut(at_e, r)?;
             for (f, face) in faces.iter().enumerate() {
-                if (p - face.point).dot(face.normal).abs() <= tol {
+                if face.distance(p).0.abs() <= tol {
                     if *slot != n {
                         return Err(Refusal::invalid(
                             "SmBlendSetback: a round's rail lies on two of the faces",
@@ -1662,6 +2274,45 @@ pub fn fill_hole(
             *slot = true;
         }
     }
+    if any_curved {
+        if k != 1 || probe.as_ref().is_some_and(|p| !p.fill) {
+            return Err(Refusal::invalid(
+                "SmBlendSetback: beside a curved face only a G1 fill is built, and probed only as the fill itself",
+            ));
+        }
+        stats.curved_fills += 1;
+        let margin = probe.as_ref().is_some_and(|p| p.rounding_margin);
+        return curved::graph_g1_curved(
+            &curved::CurvedInput {
+                faces,
+                rounds,
+                jets: &jets,
+                qs: &qs,
+                round: &cycle_round,
+                face: &cycle_face,
+                rev: &cycle_rev,
+                tol,
+                margin,
+            },
+            stats,
+        );
+    }
+    if k == 1 {
+        return graph::graph_g1(
+            &graph::GraphInput {
+                faces,
+                rounds,
+                jets: &jets,
+                qs: &qs,
+                round: &cycle_round,
+                face: &cycle_face,
+                rev: &cycle_rev,
+                tol,
+            },
+            stats,
+            probe,
+        );
+    }
     let face_of = |m: usize| -> Result<&Face> { el_ref(faces, el(&cycle_face, m % n)?) };
 
     // the domain
@@ -1702,7 +2353,7 @@ pub fn fill_hole(
         };
         for &r in &cycle_round {
             let round = el_ref(rounds, r)?;
-            let dom = round.surface.natural_uv_domain();
+            let dom = round.surface.natural_uv_domain_with_nurb(kernel)?;
             let across = if round.along == SurfParamType::U {
                 dom.v_interval()
             } else {
@@ -1713,7 +2364,7 @@ pub fn fill_hole(
             } else {
                 Point2::new(across.evaluate(0.5), round.end)
             };
-            let d = round.surface.evaluate(uv, 1, 1, flags)?;
+            let d = round.surface.evaluate(kernel, uv, 1, 1, flags)?;
             let row0 = el_ref(&d, 0)?;
             let point = el(row0, 0)?;
             let speed = if round.along == SurfParamType::U {
@@ -1722,7 +2373,8 @@ pub fn fill_hole(
                 el(row0, 1)?
             };
             mids.push(point);
-            speeds.push(speed.length());
+            // by s (sm_SbRoundJets; the fork's d1de555)
+            speeds.push(speed.length() * el(&dt_ds, r)?);
             centre += point * (1.0 / nf);
         }
         for m in 0..n {
@@ -1773,10 +2425,10 @@ pub fn fill_hole(
                     }
                 }
             }
-            // they must meet the faces to order k: their first and last k + 1 columns on the
-            // faces' planes
+            // they must meet the faces to the faces' order kf: their first and last kf + 1
+            // columns on the faces' planes
             for row in &rows {
-                for c in 0..=k {
+                for c in 0..=kf {
                     for e in 0..2 {
                         let col = if e == 0 {
                             c
@@ -1990,14 +2642,14 @@ pub fn fill_hole(
             }
             Ok(out)
         };
-        // the conditions: F's rows of each setback patch, their first k + 1 columns on face
-        // m's plane and their last k + 1 on face m + 1's
+        // the conditions: F's rows of each setback patch, their first kf + 1 columns on face
+        // m's plane and their last kf + 1 on face m + 1's
         let conditions = |nets: &[Net]| -> Result<Vec<f64>> {
             let mut out = Vec::new();
             for m in 0..n {
                 let net = el_ref(nets, m)?;
                 for i in big_n - k..=big_n {
-                    for c in 0..=k {
+                    for c in 0..=kf {
                         for e in 0..2 {
                             let col = if e == 0 {
                                 c
@@ -2184,16 +2836,23 @@ pub fn fill_hole(
 /// `SmBlendSetback::Containment`: the most any patch of `fill` stands past a face out of the
 /// corner (positive: past it): out of the material for a convex corner (`convex`), into it
 /// for a concave one. A certified bound: every patch lies in the convex hull of its control
-/// points (weights positive).
+/// points (weights positive). Beside a curved face (solidcore#2343): 0 where every patch is
+/// certified on the material's side of every face, by the faces' implicit forms, else
+/// `f64::INFINITY` (the fork's `HUGE_VAL`, 37c9e1d).
 ///
 /// # Errors
-/// `SM_ERR_INVALID_INPUT` for an empty fill; `SM_ERR` for a patch with a weight not positive.
+/// `SM_ERR_INVALID_INPUT` for an empty fill; `SM_ERR` for a patch with a weight not positive
+/// (beside a curved face also: of more than one span, or of degree below 2 across a face it
+/// lies on).
 pub fn containment(fill: &Fill, faces: &[Face], convex: bool) -> Result<f64> {
     if fill.patches.is_empty() {
         return Err(SolidError::invalid_input(
             OP,
             "SmBlendSetback: an empty fill",
         ));
+    }
+    if faces.iter().any(Face::is_curved) {
+        return curved::containment_curved(fill, faces, convex);
     }
     let side = if convex { 1.0 } else { -1.0 };
     let mut worst = f64::NEG_INFINITY;
@@ -2261,6 +2920,251 @@ mod tests {
             EaseRamp { from: 2.0, to: 4.0 },
         ];
         assert!(ease_law_on_span(&ramps, 2.5, 3.0).is_err());
+    }
+
+    /// The round of radius r along axis a of the box corner `x, y, z >= 0` over `[s, s + len]`,
+    /// u along it, v across from its rail on face `(a + 1) % 3` to its rail on face
+    /// `(a + 2) % 3`. Order 1: the ball's circle, the rational quadratic arc (`along` 1: linear
+    /// along; 2: quadratic along, its middle row at a quarter of the way, so its speed varies;
+    /// `c`: the arc's weights `1, c sqrt(1/2), c^2`, the same arc at another parameter). Order 2:
+    /// the order-2 section at thumbweight 0, linear along.
+    fn box_corner_round(
+        a: usize,
+        r: f64,
+        s: f64,
+        len: f64,
+        order: usize,
+        along: usize,
+        c: f64,
+    ) -> Surface {
+        let (f, g) = ((a + 1) % 3, (a + 2) % 3);
+        let at = |t: f64, at_f: f64, at_g: f64| {
+            let mut p = [0.0; 3];
+            p[a] = t;
+            p[f] = at_f;
+            p[g] = at_g;
+            Point3::new(p[0], p[1], p[2])
+        };
+        let ts: Vec<f64> = if along == 1 {
+            vec![s, s + len]
+        } else {
+            vec![s, s + 0.25 * len, s + len]
+        };
+        let (mut pts, mut w) = (Vec::new(), Vec::new());
+        let nv = if order == 1 { 3 } else { 6 };
+        for &t in &ts {
+            let (r1, e, r2) = (at(t, 0.0, r), at(t, 0.0, 0.0), at(t, r, 0.0));
+            if order == 1 {
+                pts.extend([r1, e, r2]);
+                w.extend([1.0, c * 0.5f64.sqrt(), c * c]);
+            } else {
+                pts.extend([r1, (r1 + e) * 0.5, e, e, (e + r2) * 0.5, r2]);
+                w.extend([1.0, 0.4, 0.1, 0.1, 0.4, 1.0]);
+            }
+        }
+        Surface::from(
+            BSplineSurface::create_canonical(&CanonicalSurfaceData {
+                u_degree: ts.len() - 1,
+                v_degree: nv - 1,
+                control_points: &pts,
+                form: BSplineSurfaceForm::Unspecified,
+                u_multiplicities: &[ts.len(), ts.len()],
+                v_multiplicities: &[nv, nv],
+                u_knots: &[s, s + len],
+                v_knots: &[0.0, 1.0],
+                knot_type: KnotType::Unspecified,
+                weights: Some(&w),
+                uv_domain: None,
+            })
+            .unwrap(),
+        )
+    }
+
+    fn box_corner_faces() -> Vec<Face> {
+        (0..3)
+            .map(|f| {
+                let mut n = [0.0; 3];
+                n[f] = -1.0;
+                Face {
+                    point: Point3::new(0.0, 0.0, 0.0),
+                    normal: Vec3::new(n[0], n[1], n[2]),
+                    ..Face::default()
+                }
+            })
+            .collect()
+    }
+
+    fn box_corner_edges(r: f64) -> Vec<Edge> {
+        (0..3)
+            .map(|a| {
+                let mut d = [0.0; 3];
+                d[a] = 1.0;
+                Edge {
+                    away: Vec3::new(d[0], d[1], d[2]),
+                    radius: r,
+                    faces: [(a + 1) % 3, (a + 2) % 3],
+                }
+            })
+            .collect()
+    }
+
+    fn same_fill(a: &Fill, b: &Fill) {
+        assert_eq!(a.round, b.round);
+        assert_eq!(a.face, b.face);
+        assert_eq!(a.reversed, b.reversed);
+        assert_eq!(a.degree, b.degree);
+        assert_eq!(a.patches.len(), b.patches.len());
+        for (pa, pb) in a.patches.iter().zip(&b.patches) {
+            let (ca, cb) = (pa.canonical().unwrap(), pb.canonical().unwrap());
+            assert_eq!(ca.control_points, cb.control_points);
+            assert_eq!(ca.weights, cb.weights);
+        }
+    }
+
+    /// `fill_hole(k)` is `fill_hole_to` with both orders k: the G1 fill of three r 2 rounds
+    /// set back by the rule at the least certifying scale, and the G2 fill of three order-2
+    /// rounds.
+    #[test]
+    fn fill_hole_is_fill_hole_to_both_orders() {
+        let k = Kernel::default();
+        let faces = box_corner_faces();
+        for order in [1, 2] {
+            let r = 2.0;
+            let mut setbacks = distances(&faces, &box_corner_edges(r)).unwrap().setbacks;
+            if order == 1 {
+                let scale = certified_scale(&k, &faces, &box_corner_edges(r), &setbacks, None)
+                    .unwrap()
+                    .scale;
+                for x in &mut setbacks {
+                    *x *= scale;
+                }
+            }
+            let rounds: Vec<Surface> = (0..3)
+                .map(|a| box_corner_round(a, r, setbacks[a], 10.0, order, 1, 1.0))
+                .collect();
+            let input: Vec<Round<'_>> = rounds
+                .iter()
+                .zip(&setbacks)
+                .map(|(surface, &end)| Round {
+                    surface,
+                    along: SurfParamType::U,
+                    end,
+                    corner_above: false,
+                })
+                .collect();
+            let both = FillOrders {
+                rounds: order,
+                faces: order,
+            };
+            let a = fill_hole(&k, &faces, &input, order, 1e-9).unwrap();
+            let b = fill_hole_to(&k, &faces, &input, both, 1e-9).unwrap();
+            same_fill(&a, &b);
+            if order == 1 {
+                let mut stats = FillStats::default();
+                let mut probe = Probe {
+                    fill: true,
+                    ..Probe::default()
+                };
+                let measured =
+                    fill_hole_probe(&k, &faces, &input, 1e-9, &mut probe, &mut stats).unwrap();
+                same_fill(&a, &measured);
+                assert!(stats.qp_rows_built > 0);
+                assert!(stats.qp_peak_rows_held <= stats.qp_rows_built);
+                let first = stats;
+                let repeated =
+                    fill_hole_probe(&k, &faces, &input, 1e-9, &mut probe, &mut stats).unwrap();
+                same_fill(&measured, &repeated);
+                assert_eq!(
+                    first, stats,
+                    "work counters reset and repeat deterministically"
+                );
+            }
+        }
+        // a face order above the rounds' is refused
+        let rounds: Vec<Surface> = (0..3)
+            .map(|a| box_corner_round(a, 2.0, 3.0, 10.0, 1, 1, 1.0))
+            .collect();
+        let input: Vec<Round<'_>> = rounds
+            .iter()
+            .map(|surface| Round {
+                surface,
+                along: SurfParamType::U,
+                end: 3.0,
+                corner_above: false,
+            })
+            .collect();
+        let up = FillOrders {
+            rounds: 1,
+            faces: 2,
+        };
+        assert!(fill_hole_to(&k, &faces, &input, up, 1e-9).is_err());
+    }
+
+    /// A circular round's geometric rows are its geometry's: two parametrizations of one round
+    /// (linear along with the arc's own weights, against quadratic along at an uneven speed with
+    /// the arc's weights scaled `1, 2, 4`) give the same rows to order 1 and 2, where their
+    /// jets differ; and a section that is no circular arc is refused.
+    #[test]
+    fn geometric_rows_are_the_geometry() {
+        let k = Kernel::default();
+        let (r, s, len) = (2.0, 3.0, 10.0);
+        for order in [1, 2] {
+            let mut out = Vec::new();
+            let mut raw = Vec::new();
+            for (along, c) in [(1, 1.0), (2, 2.0)] {
+                let surface = box_corner_round(1, r, s, len, 1, along, c);
+                let round = Round {
+                    surface: &surface,
+                    along: SurfParamType::U,
+                    end: s,
+                    corner_above: false,
+                };
+                let jets = round_jets(&k, &round, order).unwrap();
+                let (rows, q) = geometric_rows(&jets.h, jets.q, order).unwrap();
+                assert_eq!(rows.len(), order + 1);
+                raw.push(jets.h);
+                out.push((rows, q));
+            }
+            let ((ra, qa), (rb, qb)) = (&out[0], &out[1]);
+            assert_eq!(qa, qb);
+            let mut most = 0.0f64;
+            for (row_a, row_b) in ra.iter().zip(rb) {
+                for (ha, hb) in row_a.iter().zip(row_b) {
+                    for c in 0..4 {
+                        most = most.max((ha[c] - hb[c]).abs());
+                    }
+                }
+            }
+            assert!(
+                most <= 1e-12 * (1.0 + r + s),
+                "order {order}: rows differ by {most}"
+            );
+            // their jets do differ
+            let mut jet_gap = 0.0f64;
+            for (row_a, row_b) in raw[0].iter().zip(&raw[1]) {
+                for (ha, hb) in row_a.iter().zip(row_b) {
+                    for c in 0..4 {
+                        jet_gap = jet_gap.max((ha[c] - hb[c]).abs());
+                    }
+                }
+            }
+            assert!(jet_gap > 1e-3, "order {order}: the jets agree ({jet_gap})");
+            // row 0 is the end section: its ends are the rails' ends
+            let row0 = &ra[0];
+            let (pa, pb) = (euclid(&row0[0]), euclid(&row0[*qa]));
+            assert!(pa.distance(Point3::new(r, s, 0.0)) <= 1e-14 * (1.0 + s));
+            assert!(pb.distance(Point3::new(0.0, s, r)) <= 1e-14 * (1.0 + s));
+        }
+        // an order-2 section is no circular arc
+        let surface = box_corner_round(1, r, s, len, 2, 1, 1.0);
+        let round = Round {
+            surface: &surface,
+            along: SurfParamType::U,
+            end: s,
+            corner_above: false,
+        };
+        let jets = round_jets(&k, &round, 1).unwrap();
+        assert!(geometric_rows(&jets.h, jets.q, 1).is_err());
     }
 
     #[test]

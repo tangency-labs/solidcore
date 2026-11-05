@@ -57,6 +57,9 @@
 //!   `pSurfaceNode->GetOwnerObject()`) instead of the node and the unused patch.
 //!   `LocalCurveSolve`'s `cpdOptTargetDistance` (`NotUsed` upstream) and
 //!   `CreateParallelProjectionCurves`' context are dropped.
+//! - **A blend's net for averages (#2510).** `ApproxDerivativeLengths`, an average that
+//!   scales tolerances, evaluates a procedural blend as its certified net
+//!   ([`crate::surface::procedural_blend::NetScope::new`]).
 //! - **Debug-only work** compiled out of the release build (drawing, dumps, the
 //!   `SM_ASSERT`s, `EvaluateNormal`'s static list of bad surfaces) is not ported, nor
 //!   is `FindDegenParamForDirection`'s angle bookkeeping (`dBestRad`,
@@ -141,6 +144,7 @@ use crate::nurbs::b_spline_surface::{
 };
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
+use crate::surface::procedural_blend::NetScope;
 use crate::surface::surface_cache::SurfaceCache;
 use crate::topology::BrepId;
 
@@ -841,6 +845,7 @@ impl Surface {
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
             | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::Step(_) => base_evaluate_normal(k, self, uv, u_side, v_side),
@@ -881,6 +886,7 @@ impl Surface {
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
             | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_)
@@ -918,6 +924,9 @@ impl Surface {
             }
             SurfaceKind::BSpline(s) => {
                 Ok(planar_of(k, s, &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
+            }
+            SurfaceKind::BallPatch(s) => {
+                Ok(planar_of(k, s.net(), &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
             }
             // SmSurface::IsPlanar on the blend's own (virtual) CalculateBoundingBox: the
             // net's pseudo box grown by the bound; a box that fails is not planar (the
@@ -2201,6 +2210,8 @@ pub fn approx_derivative_lengths<S: SurfaceEvaluate + ?Sized>(
     // none does (WR-663, tangency-labs/smlib 21dcf69)
     let only_evaluated = k.fixes.query_statuses_pass_on;
     let mut num_evaluated: u32 = 0;
+    // an average, a scale for tolerances: a procedural blend's net answers it (#2510)
+    let _net = NetScope::new(k);
 
     for &si in &samples {
         for &sj in &samples {
@@ -3206,7 +3217,6 @@ fn singular_param_solve(
         EFF_ZERO,
     );
     let mut ls = crate::geom::local_solve1d::LocalSolve1d::with_interval(*ivl, false);
-    ls.set_failed_guess_no_sign_change(k.fixes.oscillating_skips_failed_guesses);
     let r = ls.solve_it(&mut efo, start, tol)?;
     Ok((r.found, r.t))
 }

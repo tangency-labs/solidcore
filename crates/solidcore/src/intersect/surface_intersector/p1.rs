@@ -261,8 +261,9 @@ pub struct TsectPnt {
     /// `m_adUserDoubles`: per-algorithm scratch values.
     pub user_doubles: [f64; MAX_USER_DOUBLES],
     /// `m_apUserPointer[0..2]` (`None`: `NULL`). SMLib's only writer
-    /// (`SmFilletGeom::MakeRailEdgeuse`) stores surfaces in them and its only reader
-    /// (`SmFilletNx2Corner::AdjustTangentCorner`) reads them back as surfaces.
+    /// (`SmFilletGeom::MakeRailEdgeuse`) stores surfaces in them; their only reader,
+    /// `SmFilletNx2Corner::AdjustTangentCorner`, went with the fork's smlib#113 (34288e5,
+    /// #2400).
     pub user_pointer: [Option<UserSurface>; 2],
 }
 
@@ -619,6 +620,28 @@ pub struct SurfaceIntersector<'s> {
     pub extension_distance: f64,
     /// `m_bDoingExtensionClipping`.
     pub doing_extension_clipping: bool,
+    /// Not upstream (#2500): an extension of the trace (past its end without an end
+    /// point, or back from its start) stops where it comes back onto the curve already
+    /// traced, compared in 3D only ([`is_point_on_tsect_span_3d`]): where a surface is
+    /// extended round past the closure of its turn, a closed intersection does not
+    /// repeat its UV, and the end-point and loop checks, which compare UV too, do not
+    /// see it close. Off by default.
+    pub extension_stops_on_closure: bool,
+    /// Not upstream (#2500): while an extension runs with
+    /// [`Self::extension_stops_on_closure`], the traced curve's point it must not pass:
+    /// the start for the extension after the end, the end for the one back from the
+    /// start.
+    pub extension_closes_at: Option<Point3>,
+    /// Not upstream (#2500): whether that extension has left
+    /// [`Self::extension_closes_at`] (by ten times the tolerance) since it was set: only
+    /// then does coming back onto it close the curve.
+    pub extension_left_closure: bool,
+    /// Not upstream (#2500): that extension came back onto
+    /// [`Self::extension_closes_at`]: the curve is closed, and the extension keeps half of
+    /// the gap it ran over (the other half is the other end's), as the extension of a
+    /// surface of revolution round its axis keeps half the gap of its turn either end
+    /// (WR-650).
+    pub extension_closed: bool,
     /// `m_bCurveIsClosed`.
     pub curve_is_closed: bool,
     /// Not upstream: the `trace_step` calls left to the start-point loop of
@@ -762,6 +785,10 @@ impl<'s> SurfaceIntersector<'s> {
             last_through_parameter: 0.0,
             extension_distance: 0.0,
             doing_extension_clipping: false,
+            extension_stops_on_closure: false,
+            extension_closes_at: None,
+            extension_left_closure: false,
+            extension_closed: false,
             curve_is_closed: false,
             trace_steps_left: u64::MAX,
             start_loop_trace_steps: super::p4::MAX_START_LOOP_TRACE_STEPS,
@@ -1188,6 +1215,72 @@ impl<'s> SurfaceIntersector<'s> {
             deviation_found: Some(sqrt(max_dist_sq)),
             angle_found_rad,
         })
+    }
+
+    /// Not upstream (WR-697 addendum): whether the span
+    /// from `a` to `b` passes the tests [`Self::test_span_accuracy`] makes of a traced
+    /// span, without touching either point: the tangent turn within `this_ang_tol_rad`,
+    /// and at the same five interior parameters the 3D Hermite span and the two UV
+    /// Hermite spans mapped onto their surfaces within `this_approx_tol_3d` of each other.
+    /// A span no longer than `100 * SM_EFF_ZERO` passes, as there.
+    ///
+    /// # Errors
+    ///
+    /// Those of the angle and the surface evaluations.
+    pub(super) fn span_keeps_accuracy(
+        &self,
+        k: &Kernel,
+        a: &TsectPnt,
+        b: &TsectPnt,
+    ) -> Result<bool> {
+        let step_size = b.curve_parameter - a.curve_parameter;
+        if step_size <= EFF_ZERO * 100.0 {
+            return Ok(true);
+        }
+        if a.crv_deriv().angle_between(b.crv_deriv())? > self.this_ang_tol_rad {
+            return Ok(false);
+        }
+        let uv_crv0 = HermiteCurve::from_2d(
+            a.uv_pos(SrfIndex::First),
+            a.uv_deriv(SrfIndex::First) * step_size,
+            b.uv_pos(SrfIndex::First),
+            b.uv_deriv(SrfIndex::First) * step_size,
+            2,
+        );
+        let uv_crv1 = HermiteCurve::from_2d(
+            a.uv_pos(SrfIndex::Second),
+            a.uv_deriv(SrfIndex::Second) * step_size,
+            b.uv_pos(SrfIndex::Second),
+            b.uv_deriv(SrfIndex::Second) * step_size,
+            2,
+        );
+        let crv_3d = HermiteCurve::new(
+            a.crv_pos(),
+            a.crv_deriv() * step_size,
+            b.crv_pos(),
+            b.crv_deriv() * step_size,
+            3,
+        );
+        let tol_sq = self.this_approx_tol_3d * self.this_approx_tol_3d;
+        for i in 0..NUM_SPAN_TEST_POINTS {
+            let param = (i as f64 + 1.0) / (NUM_SPAN_TEST_POINTS as f64 + 1.0);
+            let uv3d0 = uv_crv0.evaluate_point(param);
+            let uv3d1 = uv_crv1.evaluate_point(param);
+            let uv0 = self.uv_domains[0].clamp_point(Point2::new(uv3d0.x, uv3d0.y));
+            let uv1 = self.uv_domains[1].clamp_point(Point2::new(uv3d1.x, uv3d1.y));
+            let pnt0 = self.surfaces[0].evaluate_point(k, uv0)?;
+            let pnt1 = self.surfaces[1].evaluate_point(k, uv1)?;
+            let crv_pnt = crv_3d.evaluate_point(param);
+            let dist_sq = max3(
+                pnt0.distance_squared(pnt1),
+                pnt0.distance_squared(crv_pnt),
+                pnt1.distance_squared(crv_pnt),
+            );
+            if dist_sq > tol_sq {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// A rejected span: a singular point becomes a crossing point.
@@ -2045,7 +2138,7 @@ pub fn is_point_on_tsect_curve(
         let t = sol.start.parameters[0];
         if dist <= tol {
             // crPointToTest has a direction: check that too.  [B401]
-            let pv = herm_3d.evaluate(t, 1, true);
+            let pv = herm_3d.evaluate(t, 1, true)?;
             let tangent = pv.get(1).copied().unwrap_or(Vec3::ZERO);
             if point_to_test.crv_deriv().dot(tangent) < 0.0 {
                 return Ok(true);
@@ -2061,6 +2154,50 @@ pub fn is_point_on_tsect_curve(
 
     // The point is not on the curve.
     Ok(false)
+}
+
+/// Not upstream (#2500): whether `point` lies on the traced span from `prev` to `next`
+/// in 3D, within `approx_tol_3d`: its foot on the span's 3D Hermite curve (as
+/// [`is_point_on_tsect_curve`] builds it) is within the tolerance. Neither the UV boxes
+/// nor the point's direction are tested: a curve traced round a surface extended past its
+/// turn comes back to its own points in 3D with other UV.
+///
+/// # Errors
+///
+/// Those of the Hermite curve's point solve.
+pub fn is_point_on_tsect_span_3d(
+    k: &Kernel,
+    point: Point3,
+    prev: &TsectPnt,
+    next: &TsectPnt,
+    approx_tol_3d: f64,
+) -> Result<bool> {
+    let delta_t = next.curve_parameter - prev.curve_parameter;
+    let herm_3d = HermiteCurve::new(
+        prev.crv_pos(),
+        prev.crv_deriv() * delta_t,
+        next.crv_pos(),
+        next.crv_deriv() * delta_t,
+        3,
+    );
+    let domain = herm_3d.natural_interval();
+    let mut box_3d = Extent3d::new();
+    herm_3d.calculate_bounding_box(Some(&mut box_3d), None, None)?;
+    let mut pnt_box = Extent3d::from_point(point);
+    pnt_box.expand_absolute(approx_tol_3d);
+    if box_3d.are_disjoint(&pnt_box, 0.0) {
+        return Ok(false);
+    }
+    let curve = Curve::from(herm_3d);
+    let (success, sol) = curve.local_point_solve::<()>(
+        k,
+        &domain,
+        SolverOperation::Minimize,
+        point,
+        &PointSolveOptions::default(),
+        domain.evaluate(0.5),
+    )?;
+    Ok(success && sol.start.solution_value <= approx_tol_3d)
 }
 
 /// Appends the piecewise cubic, C0 B-spline of `cntrl_poly` over the unique `knots`

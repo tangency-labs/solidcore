@@ -13,9 +13,15 @@
 //! Each request is attempted once per edge use or face. That fallback can revisit
 //! earlier candidates with raised tolerances and has quadratic worst-case work in
 //! the number of requests. Cache handles are mapped explicitly; no B-rep copy is kept.
+//! With `UpstreamFixes::brep_ray_classifies_current_trims` (WR-732), the tree of a
+//! face whose loops close is built with its current trims while the body is edited,
+//! or the classification is `SolidError::FaceTrimsUnavailable` (upstream skips the
+//! trims then); so is one meeting a face whose loops are open mid-edit.
 
 mod live;
-pub(crate) use live::{solve_mutable_brep_point, solve_mutable_ray};
+pub(crate) use live::{
+    solve_mutable_brep_point, solve_mutable_brep_point_kept, solve_mutable_ray, KeptFaceCaches,
+};
 pub use live::{
     BrepFaceServices, CurveFaceObject, CurveFaceServices, FaceCaches, LiveBrepObjects, SideObject,
     SidedFaceServices,
@@ -151,6 +157,16 @@ fn prepare_surface_cache(
 /// operation, or reused unbuilt: [`Surface::cache_tree_state`]) keeps the state bits
 /// the `SmTrimSrfCache` constructor set, as upstream's until its first `GetTree`; a
 /// surface whose cache upstream has built is built here as well.
+///
+/// Deviation (WR-732, #2503), only with
+/// [`crate::kernel::UpstreamFixes::brep_ray_classifies_current_trims`]: the tree of a
+/// face whose loops close ([`loops_close`]) is built against its current trims even
+/// while the B-rep is being edited ([`MappedCacheFace::implanting_while_editing`]).
+/// Upstream builds it untrimmed then, and answers right only when it reuses a cache
+/// it built before the edit. Such a face whose trims then fail to implant is
+/// [`SolidError::FaceTrimsUnavailable`]: the untrimmed surface would give a wrong
+/// answer. So is a face whose loops are open mid-edit: it has no boundary to implant
+/// (#2624).
 fn face_surface_cache(
     k: &Kernel,
     b: &mut Brep,
@@ -190,15 +206,119 @@ fn face_surface_cache(
             "unexpected cache geometry handle",
         )),
     };
+    // WR-732: while editing, classify against the face's current trims; a face whose
+    // loops are open has no boundary to implant, and no answer
+    let editing = k.fixes.brep_ray_classifies_current_trims && b.editing_enabled();
+    let unavailable = SolidError::FaceTrimsUnavailable {
+        operation: OP,
+        entity: EntityRef::Face(face),
+    };
+    if editing && !loops_close(b, face)? {
+        return Err(unavailable);
+    }
     let mut mapped = MappedCacheFace::new(BrepCacheFace { b, f: face }, &cache_handle, &entity_of)?;
+    if editing {
+        mapped = mapped.implanting_while_editing();
+    }
+    // while editing, a failed implant is no trimmed answer (outside editing upstream's
+    // fallbacks stay: the plain cache, the status)
+    let trims_failed = |e: SolidError| match e {
+        e @ (SolidError::Unported { .. }
+        | SolidError::Cancelled { .. }
+        | SolidError::PreparationRequired { .. }) => e,
+        _ if editing => unavailable.clone(),
+        e => e,
+    };
     let mut cache =
-        get_surface_cache_with_face(k, &surface, Some(CacheObject::Surface(face)), &mut mapped)?;
+        get_surface_cache_with_face(k, &surface, Some(CacheObject::Surface(face)), &mut mapped)
+            .map_err(trims_failed)?;
+    if editing && !cache.base().is_trimmed() {
+        // the factory fell back to the plain SmSurfaceCache: no face boundary
+        return Err(unavailable);
+    }
     // A Boolean operation can defer the factory's tree build until GetTree. A plain
     // SmSurfaceCache (the factory's fallback) runs its own GetTree: no face boundary.
     if get_tree {
-        cache.get_tree_with_face(k, &mut mapped)?;
+        cache
+            .get_tree_with_face(k, &mut mapped)
+            .map_err(trims_failed)?;
     }
     Ok(cache.into_base())
+}
+
+/// Whether every loop use of face `f` closes: each edge use ends where the next one
+/// (counter-clockwise) starts. A face edited mid-session can have an open loop, whose
+/// trims cannot be implanted. Mid-edit, an edge use can start at a vertex that is
+/// being merged into its edge's (a stitch's glue), so two vertices meet when they are
+/// one or lie within the sum of their tolerances of each other.
+///
+/// An edge's ends are read through its edge uses (`SmEdge::GetVertices`): its cached
+/// pair ([`crate::topology::Edge::vertices`]) is refreshed only when a public operation
+/// returns, and mid-edit can still name a vertex a merge has deleted (#2624).
+///
+/// A loop that names an entity the edit has deleted is open.
+///
+/// # Errors
+///
+/// Those of the topology reads, other than a deleted entity.
+fn loops_close(b: &Brep, f: FaceId) -> Result<bool> {
+    match loops_close_or_missing(b, f) {
+        Err(SolidError::NotFound { .. }) => Ok(false),
+        closes => closes,
+    }
+}
+
+/// [`loops_close`], a deleted entity an error.
+fn loops_close_or_missing(b: &Brep, f: FaceId) -> Result<bool> {
+    let start = |eu: EdgeuseId| -> Result<Option<crate::topology::VertexId>> {
+        match b.edgeuse(eu)?.vertexuse {
+            Some(vu) => crate::topology::vertexuse::vertex(b, vu),
+            None => Ok(None),
+        }
+    };
+    // an edges ends: where its primary edge use and that uses mate start
+    let ends = |edge| -> Result<(Option<_>, Option<_>)> {
+        let Some(primary) = eu1::primary_edgeuse(b, edge)? else {
+            return Ok((None, None));
+        };
+        let Some(mate) = eu1::mate(b, primary)? else {
+            return Ok((None, None));
+        };
+        Ok((start(primary)?, start(mate)?))
+    };
+    let meet = |v: crate::topology::VertexId, w: crate::topology::VertexId| -> Result<bool> {
+        if v == w {
+            return Ok(true);
+        }
+        let (v, w) = (b.vertex(v)?, b.vertex(w)?);
+        Ok(v.point.distance(w.point) <= v.tolerance + w.tolerance)
+    };
+    for lu in crate::topology::face::p4::upward_loopuses(b, f, false, None)? {
+        for eu in crate::topology::loopuse::edgeuses(b, lu, None, None)? {
+            let record = b.edgeuse(eu)?;
+            let (Some(edge), Some(next)) = (record.edge, record.ccw) else {
+                return Ok(false);
+            };
+            let (Some(from), Some(to)) = (start(eu)?, start(next)?) else {
+                return Ok(false);
+            };
+            // the edge use ends at its edge's other vertex
+            let (Some(v0), Some(v1)) = ends(edge)? else {
+                return Ok(false);
+            };
+            let end = if meet(v0, from)? {
+                v1
+            } else if meet(v1, from)? {
+                v0
+            } else {
+                return Ok(false);
+            };
+            if !meet(end, to)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 pub(crate) struct RaySurfaceContext<'a> {

@@ -272,7 +272,7 @@ fn rust_brep(k: &Kernel, b: &Brep) -> Result<Output, HarnessError> {
     if !graph_exportable(b).map_err(herr)? {
         return Ok(Output::new().values("record", geom));
     }
-    let mut b = b.clone();
+    let mut b = b.clone_standing_for_self().map_err(herr)?;
     strip_unrecorded(&mut b).map_err(herr)?;
     normalize_face_shells(&mut b).map_err(herr)?;
     Ok(graph(&b, geom))
@@ -564,9 +564,23 @@ impl UnitDiff for Runner {
                         None => out = out.int(&format!("feature{fi}_none"), 1),
                     }
                 }
+                crate::soundness::measure(&mut b);
                 Ok(out)
             }
             Err(e) => Output::unported(&e).ok_or_else(|| herr(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod soundness_probe {
+    use super::*;
+
+    /// The Rust base bodies of the cases moved from the C++ reference, measured on their own
+    /// ([`crate::soundness::probe`]).
+    #[test]
+    #[ignore = "a measurement for the moved cases' record, run on demand"]
+    fn moved_cases_results_measured() {
+        crate::soundness::probe(&Runner, "blend.feature_executive");
     }
 }

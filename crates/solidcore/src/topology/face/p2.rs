@@ -12,6 +12,7 @@
 //! | [`surface`], [`uv_domain`], [`rectangular_trim`], [`tolerance`] | `SmFace::GetSurface`, `GetUVDomain`, `GetRectangularTrim`, `GetTolerance` (`SM_USE_OLDTOL`) |
 //! | [`set_uv_domain`], [`set_faceuse`]      | `SmFace::SetUVDomain`, `SetFaceuse`               |
 //! | [`faceuses`], [`upward_faceuse`]        | `SmFace::GetFaceuses`, `GetUpwardFaceuse`         |
+//! | [`outer_faceuse`]                       | `sm_OuterFaceuse` (static in the fork's `SmOffsetFaces.cpp`) |
 //! | [`loops`], [`outer_loops`]              | `SmFace::GetLoops`, `GetOuterLoops`               |
 //! | [`check_seam_crossing`]                 | `sm_CheckSeamCrossing` (static)                   |
 //! | [`calculate_an_internal_point`]         | `SmFace::CalculateAnInternalPoint`                |
@@ -175,8 +176,8 @@ use crate::topology::edgeuse::p3 as eu3;
 use crate::topology::topology as topo;
 use crate::topology::vertexuse as vu1;
 use crate::topology::{
-    Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopId, LoopuseId, LoopuseStart, VertexId,
-    VertexuseId,
+    Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopId, LoopuseId, LoopuseStart, RegionId,
+    VertexId, VertexuseId,
 };
 
 const OP: &str = "topology::face::p2";
@@ -308,6 +309,28 @@ pub fn upward_faceuse(b: &Brep, f: FaceId) -> Result<Option<FaceuseId>> {
     Ok(b.face(f)?.faceuse)
 }
 
+/// `sm_OuterFaceuse` (the fork's offset faces, and SolidCraft's `outer_faceuse`): the face
+/// use of `f` on the outside of its body, the one bounding the infinite region (the upward
+/// one when it does, else its mate); `None` without face use.
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling id.
+pub fn outer_faceuse(b: &Brep, f: FaceId) -> Result<Option<FaceuseId>> {
+    let Some(fu) = upward_faceuse(b, f)? else {
+        return Ok(None);
+    };
+    let outside = match b.faceuse(fu)?.shell {
+        Some(shell) => b.shell(shell)?.region == b.infinite_region(),
+        None => false,
+    };
+    Ok(if outside {
+        Some(fu)
+    } else {
+        b.faceuse(fu)?.mate
+    })
+}
+
 /// `GetFaceuses`: the primary face use and its mate (both `None` without face use).
 ///
 /// # Errors
@@ -318,6 +341,23 @@ pub fn faceuses(b: &Brep, f: FaceId) -> Result<(Option<FaceuseId>, Option<Faceus
         return Ok((None, None));
     };
     Ok((Some(fu), b.faceuse(fu)?.mate))
+}
+
+/// The regions on face `f`'s two sides, in the order of [`faceuses`] (primary, mate): each
+/// its use's region (`SmFaceuse::GetRegion`, [`eu1::faceuse_region`]), `None` for a side with
+/// no use, no shell or no region. Not upstream (the one reading of a face's two sides for the
+/// measures, the stitch and the outward normal).
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling id.
+pub fn face_side_regions(b: &Brep, f: FaceId) -> Result<[Option<RegionId>; 2]> {
+    let side = |u: Option<FaceuseId>| match u {
+        Some(u) => eu1::faceuse_region(b, u),
+        None => Ok(None),
+    };
+    let (x, y) = faceuses(b, f)?;
+    Ok([side(x)?, side(y)?])
 }
 
 /// `GetLoops`: the loops of the primary face use's loop uses selected as
@@ -1040,6 +1080,7 @@ fn is_singularity(
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
         | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)

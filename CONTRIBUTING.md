@@ -2,13 +2,20 @@
 
 # Contributing to solidcore
 
-Thank you for helping. solidcore is a B-rep kernel in safe, deterministic Rust. It is based on
-SMLib and goes its own way: clean, procedural constructions, each built from the geometry of its
+Thank you for helping. solidcore is a B-rep kernel in safe, deterministic Rust. It started as a
+port of SMLib and has detached from it: clean, procedural constructions, each built from the geometry of its
 case, replacing the code they supersede. This page is the short version;
 [AGENTS.md](AGENTS.md) has the full rules, which apply to people and agents alike.
 
 ## Before you start
 
+- **Fix what has been reported.** solidcore replaced SMLib as SolidCraft's kernel in 0.40, and
+  the switch came with bugs: not everything works yet. Take an open reported issue: `urgent`
+  first (main's red difftest sweep, #2794), then `help wanted`. A defect you find yourself in code
+  no user reaches, an unrequested improvement or a speed trick: file it as an issue with a real
+  reproduction and leave it for triage. A pull request names, in its first lines, the issue it
+  fixes. [AGENTS.md §0](AGENTS.md) has the details.
+- **Put the work in its layer.** [docs/layers.md](docs/layers.md) says where each job lives. Geometry is computed only in the kernel (`solidcore`). The modelling API (`solidcore-ops`) only chooses and sequences kernel calls. Applications compute no geometry. If a workflow needs maths the kernel lacks, add it to the kernel with tests.
 - **Read the docs for the area.**
   - For fillets and chamfers, read [docs/generic-blend.md](docs/generic-blend.md): what the blend
     builds, its events, its exact classes, its open work, and how each step is ported (§9).
@@ -40,14 +47,22 @@ case, replacing the code they supersede. This page is the short version;
 
 ## The new construction replaces the old
 
-- **SMLib is the base, not the limit.** Where a construction has been redesigned (the generic
-  blend), the new one is what solidcore builds, and its steps keep their results bit for bit.
-- **Flags are temporary.** A port lands behind an opt-in flag only while it's in progress. Once its
-  construction is ported and parity is shown, the flag becomes the default and the old code is
-  deleted, together with the patches made to it.
+- **The most correct solution, not SMLib's.** SMLib and the SolidCraft fork are references to
+  consult (inputs, expected values, known constructions), never targets to match. Prove a result
+  with closed forms, geometric checks and invariants. Code ported unchanged keeps their results
+  bit for bit; code written or changed here sets its own baseline.
+- **No compatibility flags.** A fix changes the default result, with a test that fails without
+  it; no old path is kept behind a flag, and a saved design rebuilds with today's correct result.
+  Say in the PR which results change and show the evidence. Retiring the `UpstreamFixes` flags
+  left from the port (turn on, delete the old path) is welcome work.
 - **Don't extend the old paths.** Improve the construction that replaces them.
+- **Keep history linear.** Rebase your branch onto `main`; never merge `main` into it.
 
 ## Cases and known failures
+
+A new case for a kernel operation goes to the corpus in
+[crates/solidcore/tests/kernel_cases/](crates/solidcore/tests/kernel_cases/README.md#adding-a-case)
+(exported from SolidCraft or written by hand), not to SolidCraft's rig.
 
 Fillet and chamfer cases from SolidCraft's kernel rig are listed in
 [docs/generic-blend.md §7](docs/generic-blend.md#7-case-gallery), each with its state: passes,
@@ -76,4 +91,4 @@ accepted.
 - **Every commit builds,** and the tests it touches pass, or are listed known failing with their
   reason.
 - **Show the evidence:** the commands you ran and their results
-  ([docs/completion-evidence.md](docs/completion-evidence.md)).
+  ([the completion evidence checklist](docs/porting.md#completion-evidence-checklist)).

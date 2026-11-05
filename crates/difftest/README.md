@@ -4,7 +4,7 @@
 `solidcore-ffi`)** and the **solidcore Rust port** on identical inputs and
 compares the results. A unit may be marked `status = "green"` in
 `plan/units/<id>.toml` only when `difftest --status-of <id>` prints `green`, and
-`status = "partial"` only when it prints `partial` (AGENTS.md section 4a).
+`status = "partial"` only when it prints `partial` (docs/porting.md §4a).
 
 `audit.recursion` is a crate-wide audit rather than a port: it has no standalone
 C++ counterpart or runner and is excluded from `--green`. Its plan status records
@@ -179,8 +179,12 @@ applies) and changes one to three leaves or arrays of its inputs: floats to
 unit's inputs already use those strings), integers to `-1`, `0`, `2^31`,
 `2^32`, `i64::MIN`, `i64::MAX` or the length of an input array; arrays are
 emptied, truncated or get an element duplicated; flags are flipped. Strings are
-left alone. The seed is `fnv1a64("fuzz:" + unit) + i`, so a run is
-reproducible and `--fuzz 300` is a prefix of `--fuzz 1000`.
+left alone. The base case is chosen by name, not by its place in the list:
+each base `b` seeds a generator with `fnv1a64("fuzz:" + unit + ":" + b) + i`,
+the base whose generator draws the largest first value wins (rendezvous
+hashing), and that generator makes the mutations. A run is reproducible,
+`--fuzz 300` is a prefix of `--fuzz 1000`, and adding a fixture changes only
+the cases it wins (about one in `n + 1` for `n` bases) instead of every case.
 
 Cases run in batches of 100 in a child process (`difftest --fuzz-exec`, hidden)
 with a 4 GiB address-space limit, so a segfault, abort or hang ends the batch
@@ -312,7 +316,7 @@ $X stats --seeds-dir <dir> --cases N [--stage ..]            # error-site histog
 ## Deferred cases, `partial` units
 
 A unit's Rust code may call into a unit that is not ported yet; it then returns
-`SolidError::Unported { upstream, unit }` (AGENTS.md section 4a). In
+`SolidError::Unported { upstream, unit }` (docs/porting.md §4a). In
 `run_rust`, map that to `Output::deferred(unit, symbol)`, most simply:
 
 ```rust
@@ -365,8 +369,11 @@ restricts an entry to a C++ reference on glibc; elsewhere the case must pass.
 
 An entry may add `cpp_defect = "<id>"` only when the C++ reference itself is verified
 wrong and the Rust result is the correct one: `<id>` (`UB-`/`WR-`/`ND-`/`HANG-<n>`)
-must name exactly one `plan/upstream-issues/<id>--<slug>.md` with `- **Confirmed:**
-yes` (checked when the list is loaded; a bad id fails the unit). Such a case is
+must name exactly one `plan/upstream-issues/<id>--<slug>.md`, confirmed by a
+`- **Confirmed:** yes` line in that record **or in one of its
+`<id>--addendum-<date>-<slug>.md` files** (checked when the list is loaded; a bad id
+fails the unit). A merged record is never edited (`AGENTS.md` section 4b), so a defect
+that is confirmed only later carries its confirmation in an addendum. Such a case is
 **parked**: the gate does not run it, it counts neither as a pass nor as a failure,
 and it does not keep the unit from `green`. It is reported with outcome `parked` and
 its issue id (`cases_parked`, ` parked=N` on the summary line, a `parked <case> (<id>)`
@@ -401,8 +408,28 @@ must remain passing, including against `known_mismatch`; cases that compared
 float/integer/topology values must keep value coverage. Deferred, failing and
 known-mismatch, `cpp_defect` and parked cases cannot disappear. Each must remain one
 of those three (adding or dropping the `cpp_defect` marker) or become a genuine pass;
-it cannot become deferred, rejected or failing. A baseline pass may not become
-`known_mismatch`, `cpp_defect` or parked, so marking a passing case never waives it.
+it cannot become deferred, rejected or failing. A baseline pass may not become parked,
+so marking a passing case never waives it.
+
+**A baseline pass may be listed, but only with its own evidence.** A change that makes
+solidcore more correct moves cases that passed before, and hiding them is not an option
+(`AGENTS.md` section 4b). Two moves are allowed, each only when the record the entry
+cites **names that case**:
+
+- to `cpp_defect`, when the C++ is wrong for the case and the upstream-issue record
+  names it, in the base record or in an addendum: what the C++ answers, what solidcore
+  answers and why solidcore's answer is the right one;
+- to `known_mismatch`, when the construction was deliberately replaced or deleted in the
+  same change and the `plan/findings/<slug>.md` record the `why` cites names it — in
+  that record or in one of its `--addendum-` files — with the value that moves and how
+  the old path's result was reproduced.
+
+A record that only describes the change in general lists nothing, so nothing is waived
+cheaply, and a case the evidence does not reach stays a regression and keeps the sweep
+red until it is measured. The ratchet reports such a case as `passed in the baseline,
+now cpp_defect, and its record does not name it` or `... now known_mismatch, and no
+finding names it`. Parked and the other outcomes are unchanged: no evidence lets a
+baseline pass become `parked`, `deferred` or `rejected`.
 Every retained case that compared values must keep value coverage, except a case that
 is now parked (it is not run). Rejected fixture constructors may be
 removed; new passing cases and genuine fixes are allowed. Changed seeds and
@@ -786,10 +813,12 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   the rolling ball of the constant-radius solver, the leg on each face for a right-angle edge
   between planes (`distance * cot(α/2)` for an interior angle `α`, varying along curved
   faces); one distance for all edges; `SmApiChamferFillet` is not used, it chamfers every
-  edge of a body), `offset_faces`
-  (faces by a point on each), `sweep_face` (the prism of a body's face: the face through
-  the point `face`, the one whose surface holds it and which classifies it inside, has its
-  loops' edge curves, trimmed to the edges, swept `distance` along `direction` with
+  edge of a body), `offset_faces` (faces by a point on each, moved by the SolidCraft fork's
+  `SmOffsetFacesExecutive`, `solidcore::offset::offset_faces`, the tangent blends on them
+  following), `sweep_face` (the prism of a body's face: the face through the point `face`,
+  the one whose surface holds it and which classifies it inside or on an edge bordering
+  no other face, such as its own seam, has its loops' edge curves, trimmed to the edges,
+  swept `distance` along `direction` with
   `SmApiCreateLinearSweep` and capped; for a cut by a face's own boundary, #968),
   `sheet_corner` (the deferred sheet-flange recipe below). Each
   writes the body `id`; the last writes `result`.
@@ -824,9 +853,9 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   yet: `cylinder_faces_max` until solidcore has a cylinder surface kind), `ERROR` (a step
   returned an error other than `Unported`), `DEFERRED`. A step that reaches unported code
   defers the case on the unit in its `SolidError::Unported`; `fillet` has no Rust
-  `SmApiFilletEdges` yet and defers on `blend.fillet_executive_p1`; `offset_faces` defers
-  on `no SM_API entry point`, since `SM_API` only offsets or shells whole bodies
-  (`SmApiOffsetBrepFull`, `SmApiShellBrepFull`).
+  `SmApiFilletEdges` yet and defers on `blend.fillet_executive_p1`; `sheet_corner` defers
+  on `no SM_API entry point` (sheet construction, corner joining and unfolding have no
+  adapter).
 * **Engines.** Rust only for now. A C++ engine (a shim running the same steps through
   `SM_API`) would show which of these bugs upstream SMLib has.
 * **Output.** One line per case, then
@@ -924,7 +953,11 @@ nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-cor
   after it are the same. The child gets `--constructor` as a fifth argument.
 * **Verdicts** (per body): `MATCH` (every stage agrees: statuses and counts equal,
   values within `1e-9` relative), `HEAL-DIFF` (every build stage agrees, the heal or a
-  later stage differs), `DIFF` (a build stage differs), `DEFERRED` (the Rust side
+  later stage differs), `DIFF` (a build stage differs), `CPP-ND` (a body whose C++
+  result depends on the run, listed with the varying stages in
+  `crates/difftest/step_cpp_nondeterministic/`, one file per body: its other stages
+  agree, and the detail shows the Rust values of the listed stages only, so the row is
+  the same in every run while the Rust result is), `DEFERRED` (the Rust side
   reached unported code; the unit is shown), `CRASH` (a child crashed, timed out or
   the shim rejected the input), `SKIPPED` (no B-rep body in the file), `RUST-ONLY` (a
   build without `cpp`: the Rust side built the body, nothing was compared).

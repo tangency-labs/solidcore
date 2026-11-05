@@ -584,8 +584,28 @@ class WorkflowGateTests(unittest.TestCase):
         self.assertIn("needs: changes\n", perturb)
         self.assertIn("if: needs.changes.outputs.full == 'true'", perturb)
         self.assertIn("--green --perturb", perturb)
-        # No event filter on the job or its run step: pull_request and merge_group both run it.
-        self.assertNotIn("github.event_name", perturb)
+        # On request only: a manual dispatch with the difftest input set, never on pull
+        # requests, the merge queue or pushes (#2398).
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.difftest", perturb)
+
+    def test_sweep_publishes_main_and_runs_on_pull_requests_and_on_request(self):
+        # Pushes to main run the sweep, which publishes the reports the exact-base check and
+        # the site read. Pull requests run it against their exact base, so a change that moves
+        # a case shows it before it merges; a maintainer can also request it.
+        sweep = self.jobs()["difftest-sweep"]
+        self.assertIn(
+            "(github.event_name == 'push' || github.event_name == 'pull_request'"
+            " || (github.event_name == 'workflow_dispatch' && inputs.difftest))",
+            sweep,
+        )
+        for part in ("difftest-baseline", "difftest-compare"):
+            self.assertIn("github.event_name == 'pull_request'", self.jobs()[part])
+
+    def test_a_pull_request_needs_base_sweep_and_compare(self):
+        gate = self.jobs()["difftest"]
+        self.assertIn('[ "$PR" = true ] && [ "$FULL" = true ]', gate)
+        for part in ("needs.difftest-baseline.result", "$SWEEP", "needs.difftest-compare.result"):
+            self.assertIn(part, gate)
 
     def test_sweep_does_not_wait_for_the_base(self):
         sweep = self.jobs()["difftest-sweep"]

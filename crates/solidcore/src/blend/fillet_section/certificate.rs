@@ -28,6 +28,7 @@
 //! | [`law_series_over`]               | `sm_LawSeriesOver` (0d43b4c)            |
 //! | [`inverse4`]                      | `sm_Inverse4`                           |
 //! | [`Enclosure`], [`gn_enclose`]     | `sm_GnEnclose` (its `rF`, `pX`, `pDS`)  |
+//! | [`SpanAt`], [`gn_enclose_over`], [`face_partials_over`] | `sm_GnSpanAt`, `sm_GnEncloseOver`, `sm_FacePartialsOver` (c5b6bb7) |
 //! | [`gn_fourth_over`]                | `sm_GnFourthOver`                       |
 //! | [`gn_certify_span`]               | `sm_GnCertifySpan`                      |
 //! | `gn_try!` (private)               | `SM_GN_TRY`                             |
@@ -44,9 +45,24 @@
 //!   fixed size (`n > SM_GN_MAXE`, which the fork leaves to its callers) is an `Err`.
 //! - **Bounds.** Every loop is the fork's, with its fixed counts (8 Krawczyk steps, 200
 //!   contraction steps, levels 0..=6); there is no recursion.
+//! - **Cancellation (#2136, #2371).** `gn_certify_span` polls the kernel's cancel token
+//!   once per level, per piece's end station and per piece's bound; a cancel passes through
+//!   `SM_GN_TRY` and the unsolved-piece fallback as `Cancelled` instead of proving
+//!   nothing. A token that never fires changes nothing.
+//! - **The uv curves' term (#2690).** Not the fork's: a face's point on a foot's uv curve
+//!   is off the true foot by at most `|S_u| |du| + |S_v| |dv|`, each uv error `du`, `dv`
+//!   bounded by its own parameter's fourth derivative, where the fork takes
+//!   `(|S_u| + |S_v|) max(|du|, |dv|)`. The fork's form is never smaller, and on a face
+//!   whose `u` (say) moves little while `|S_u|` is large it pairs that large partial with
+//!   the other parameter's error and refines spans the tolerance does not need.
+//!   `gn_certify_span` certifies a level by this bound but steers its levels (the least
+//!   value it stops on, the halving it goes on with) by the fork's form, so a span takes no
+//!   more levels or pieces than the fork's, and is certified at the same level or sooner;
+//!   steered by the tighter bound, a round on a round took more spans and solves.
 //! - **Indices.** Knots and nets are read by checked indices (a knot or a coordinate
 //!   outside reads NaN, which shows in the result); the fork's indices stay inside.
 
+use super::definition_box::{definition_partials_over_box, GnDefFace, GnDefs};
 use super::form::{binom, gn_form_normalized, GnSectionFormT};
 use super::interval::{cmax, cmin, round_down, round_up, Ivl};
 use super::series::{GnScalar, Ser, Trunc, VSer, MAX_E, MAX_S, TAYLOR, V3};
@@ -55,8 +71,7 @@ use super::station::{
     knot, smax, solve4, span, GnStation, GnSystem, Nurbs, Partials,
 };
 use super::tay::{
-    gn_area_sum, gn_half_angle, gn_invert, gn_target, tay_sqrt, GnAreaCells, Ring, Tay, TayScalar,
-    TAY,
+    gn_half_angle, gn_invert, gn_target, tay_sqrt, GnAreaCells, Ring, Tay, TayScalar, TAY,
 };
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
@@ -64,6 +79,7 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::surface::surface::Surface;
 
 const OP: &str = "blend::fillet_section::certificate";
+const OP_CERTIFY_SPAN: &str = "blend::fillet_section::certificate::gn_certify_span";
 
 /// `SM_GN_TRY(a)`: a failed evaluation proves nothing, the enclosing function returns
 /// `Ok($none)` (the fork's `return SM_SUCCESS` with its outputs as they stand).
@@ -71,6 +87,8 @@ macro_rules! gn_try {
     ($e:expr, $none:expr) => {
         match $e {
             Ok(v) => v,
+            // a cancel (#2136) is never a failed evaluation: it ends the operation
+            Err(e @ SolidError::Cancelled { .. }) => return Err(e),
             Err(_) => return Ok($none),
         }
     };
@@ -228,7 +246,7 @@ pub fn curve_derivs_over(
                     pwr = pwr * dt;
                     f *= (j - d) as f64;
                 }
-                let c = pwr * Ivl::from(1.0 / f);
+                let c = pwr * (Ivl::from(1.0) / Ivl::from(f));
                 let aj = at1(&am, j, VZ);
                 x = x + aj.x * c;
                 y = y + aj.y * c;
@@ -330,13 +348,13 @@ pub fn nurbs_partials_over_piece(
         *v0 = Ivl::from(1.0);
     }
     for i in 1..=la {
-        let x = at1(&pu, i - 1, IZ) * du * Ivl::from(1.0 / i as f64);
+        let x = at1(&pu, i - 1, IZ) * du * (Ivl::from(1.0) / Ivl::from(i as f64));
         if let Some(pi) = pu.get_mut(i) {
             *pi = x;
         }
     }
     for j in 1..=lb {
-        let x = at1(&pv, j - 1, IZ) * dv * Ivl::from(1.0 / j as f64);
+        let x = at1(&pv, j - 1, IZ) * dv * (Ivl::from(1.0) / Ivl::from(j as f64));
         if let Some(pj) = pv.get_mut(j) {
             *pj = x;
         }
@@ -411,7 +429,8 @@ pub fn nurbs_partials_over_piece(
 
 /// `sm_LeaderSeriesOver`: the leader's point and unit tangent over `s` as series in sigma
 /// to `tr.s`, enclosed (the span lies in one piece of the leader: the stations hold its
-/// knots).
+/// knots). `piece`: the leader's piece whose polynomial is taken over `s` (`lPiece`,
+/// c5b6bb7; `None`, the fork's -1: the one the middle of `s` lies in).
 ///
 /// # Errors
 ///
@@ -420,9 +439,10 @@ pub fn leader_series_over(
     leader: &NurbsCurve,
     s: Ivl,
     tr: Trunc,
+    piece: Option<usize>,
 ) -> Result<(VSer<Ivl>, VSer<Ivl>)> {
     let sigma = Trunc::new(tr.s(), 0)?;
-    let piece = span(&leader.u, leader.p, leader.n, s.mid());
+    let piece = piece.unwrap_or_else(|| span(&leader.u, leader.p, leader.n, s.mid()));
     let d = curve_derivs_over(leader, s, tr.s() + 1, Some(piece))?;
     let mut l = VSer::constant(VZ);
     let mut d1 = l;
@@ -431,7 +451,7 @@ pub fn leader_series_over(
         if j > 0 {
             fact *= j as f64;
         }
-        let f = Ivl::from(1.0 / fact);
+        let f = Ivl::from(1.0) / Ivl::from(fact);
         let dj = at1(&d, j, VZ);
         let dj1 = at1(&d, j + 1, VZ);
         let cl = [dj.x, dj.y, dj.z];
@@ -444,6 +464,47 @@ pub fn leader_series_over(
     let inv = d1.dot(&d1, sigma).inv_sqrt(sigma)?;
     let t = d1.times(&inv, sigma);
     Ok((l, t))
+}
+
+/// [`leader_series_over`] over an `s` that may cross the leader's knots (not upstream): `s`
+/// cut at the knots strictly inside it, each part's series on its own piece, their hull
+/// coefficient by coefficient. Each coefficient encloses its derivative at every point of
+/// its part (at a knot, from either side), and the feet's series use them point by point
+/// (Krawczyk's test is over the feet, for each s), so the hull is an enclosure whatever
+/// the leader's continuity: where it has a corner in its parameter the two sides' values
+/// widen the hull, and the bounds with it. Only a leader that is not continuous at a
+/// crossed knot, or an `s` past its knots, is refused.
+///
+/// # Errors
+///
+/// [`SolidError::Unsupported`] for such a knot or `s`; those of [`leader_series_over`].
+pub fn leader_series_piecewise(
+    leader: &NurbsCurve,
+    s: Ivl,
+    tr: Trunc,
+) -> Result<(VSer<Ivl>, VSer<Ivl>)> {
+    let hull = |a: &mut VSer<Ivl>, b: &VSer<Ivl>| {
+        for (sa, sb) in a.a.iter_mut().zip(&b.a) {
+            for (ra, rb) in sa.c.iter_mut().zip(&sb.c) {
+                for (x, y) in ra.iter_mut().zip(rb) {
+                    *x = x.hull(*y);
+                }
+            }
+        }
+    };
+    let mut out: Option<(VSer<Ivl>, VSer<Ivl>)> = None;
+    for (a, b, k) in knot_cuts(&leader.u, leader.p, leader.n, s.lo, s.hi, 0)? {
+        let (l, t) = leader_series_over(leader, Ivl::new(a, b), tr, Some(k))?;
+        out = Some(match out {
+            None => (l, t),
+            Some((mut hl, mut ht)) => {
+                hull(&mut hl, &l);
+                hull(&mut ht, &t);
+                (hl, ht)
+            }
+        });
+    }
+    out.ok_or_else(|| SolidError::sm_err(OP))
 }
 
 /// `sm_GnLaw` (0d43b4c): a ball whose radius varies, its law r(s) over the leader's
@@ -527,7 +588,7 @@ pub fn law_series_over(law: &GnLaw<'_>, s: Ivl, order: usize) -> Result<Ser<Ivl>
         if i > 0 {
             fact *= i as f64;
         }
-        r.set(i, 0, at1(&d, i, VZ).x * Ivl::from(1.0 / fact));
+        r.set(i, 0, at1(&d, i, VZ).x * (Ivl::from(1.0) / Ivl::from(fact)));
     }
     if !r.at(0, 0).is_positive() {
         return Err(SolidError::sm_err(OP));
@@ -565,11 +626,11 @@ pub struct Enclosure {
     pub f: [VSer<Ivl>; 2],
     /// The feet's parameters' series (`pX`).
     pub x: [Ser<Ivl>; 4],
-    /// Per face, `|S_u| + |S_v|` over the feet's box (`pDS`): it bounds `|dS|` per unit uv
-    /// step (max norm).
-    pub ds: [f64; 2],
-    /// The same, least (`pDSLo`): `|S_u| + |S_v|` no smaller anywhere in the box.
-    pub ds_lo: [f64; 2],
+    /// Per face, `[|S_u|, |S_v|]` over the feet's box (the fork's `pDS` is their sum):
+    /// `|S_u| |du| + |S_v| |dv|` bounds `|dS|` for a uv step `(du, dv)` in the box (#2690).
+    pub ds: [[f64; 2]; 2],
+    /// The same, least (the fork's `pDSLo`, their sum): no smaller anywhere in the box.
+    pub ds_lo: [[f64; 2]; 2],
     /// The point V's series over the span (`pV`, 7102bc5).
     pub v: VSer<Ivl>,
 }
@@ -603,15 +664,193 @@ fn system<'a>(
     }
 }
 
+/// A face's partials over `[ua, ub] x [va, vb]`, enclosed (`sm_FacePartialsOver`,
+/// c5b6bb7): a NURBS face's piece `(ku, kv)`, continued; a blend by its definition's on
+/// the piece of its net along s that `(ku, kv)` is in
+/// ([`super::definition_box::definition_partials_over_box`]).
+///
+/// # Errors
+///
+/// Those of [`nurbs_partials_over_piece`] and
+/// [`super::definition_box::definition_partials_over_box`].
+#[allow(clippy::too_many_arguments)]
+pub fn face_partials_over(
+    k: &Kernel,
+    cn: &Nurbs,
+    def: Option<&mut GnDefFace<'_>>,
+    ku: usize,
+    kv: usize,
+    ua: f64,
+    ub: f64,
+    va: f64,
+    vb: f64,
+    lk: usize,
+) -> Result<Partials<Ivl>> {
+    if let Some(d) = def {
+        return definition_partials_over_box(k, d, cn, ku, kv, ua, ub, va, vb, lk);
+    }
+    nurbs_partials_over_piece(cn, ku, kv, ua, ub, va, vb, lk)
+}
+
+/// The parts of `[lo, hi]` between the knots strictly inside it, each with the span whose
+/// closed interval holds it: a knot crossed where the direction is continuous to less than
+/// `continuity` (degree minus multiplicity) is refused, and so is an interval past the
+/// knots' range (the face or curve is not defined there). A point `lo = hi` on an inner
+/// knot lies in both spans' closed intervals: it is returned twice, once with each, so a
+/// hull over the parts holds both one-sided values there (#2570).
+pub(crate) fn knot_cuts(
+    knots: &[f64],
+    p: usize,
+    n: usize,
+    lo: f64,
+    hi: f64,
+    continuity: usize,
+) -> Result<Vec<(f64, f64, usize)>> {
+    let refused = |reason| SolidError::Unsupported {
+        operation: OP,
+        reason,
+    };
+    let (first, last) = (knot(knots, p as isize), knot(knots, n as isize));
+    if !(lo >= first && hi <= last && lo <= hi) {
+        return Err(refused("a box past the face's knots"));
+    }
+    let after = span(knots, p, n, lo);
+    if lo == hi && after > p && knot(knots, after as isize) == lo {
+        // the span that ends at the knot: the last one before it that is not empty
+        let mut before = after - 1;
+        while before > p && knot(knots, before as isize) >= knot(knots, before as isize + 1) {
+            before -= 1;
+        }
+        return Ok(vec![(lo, hi, before), (lo, hi, after)]);
+    }
+    let mut at = vec![lo];
+    let mut prev = f64::NAN;
+    for &x in knots {
+        if x > lo && x < hi && x != prev {
+            let m = knots.iter().filter(|&&y| y == x).count();
+            if p.checked_sub(m).is_none_or(|c| c < continuity) {
+                return Err(refused(
+                    "a box crosses a knot line where the face or curve is not continuous enough",
+                ));
+            }
+            at.push(x);
+        }
+        prev = x;
+    }
+    at.push(hi);
+    Ok(at
+        .iter()
+        .zip(at.iter().skip(1))
+        .map(|(&a, &b)| (a, b, span(knots, p, n, 0.5 * (a + b))))
+        .collect())
+}
+
+/// Whether `[lo, hi]` lies on more than one piece of `knots` (it crosses an inner knot, or
+/// is a point on one), or past their range.
+pub(crate) fn crosses_a_knot(knots: &[f64], p: usize, n: usize, lo: f64, hi: f64) -> bool {
+    knot_cuts(knots, p, n, lo, hi, 0).map_or(true, |c| c.len() > 1)
+}
+
+/// The continuity a face must have at a knot line a feet's box crosses
+/// ([`nurbs_partials_over_box`]): Krawczyk's mean-value form needs the feet's system (the
+/// faces' points and first partials) continuous, with its Jacobian (their second partials)
+/// enclosed wherever it exists; at C^2 the system is C^1 across the line.
+pub const FEET_BOX_CONTINUITY: usize = 2;
+
+/// A NURBS face's partials `P[a][b]`, `a + b <= lk`, over `[ua, ub] x [va, vb]` wherever
+/// it lies on the face's knots, enclosed (not upstream): the box cut at the knot lines
+/// strictly inside it, each part enclosed on its own polynomial piece
+/// ([`nurbs_partials_over_piece`] over the part, its closed span), and the enclosures'
+/// hull. Every point of the box lies in some closed part, where that piece is the face, so
+/// the hull holds, at every point, each partial the face has there (on a knot line, from
+/// either side): an enclosure point by point, whatever the continuity. A use that also
+/// integrates over the box (a mean-value form) needs the face continuous to some order
+/// across the lines it crosses: a crossed line where the face's continuity (degree minus
+/// the knot's multiplicity) is below `continuity` is refused, as is a box past the knots'
+/// range. No station invariant is assumed.
+///
+/// # Errors
+///
+/// [`SolidError::Unsupported`] for a crossed knot line of too low a continuity or a box
+/// past the knots; those of [`nurbs_partials_over_piece`].
+#[allow(clippy::too_many_arguments)]
+pub fn nurbs_partials_over_box(
+    cn: &Nurbs,
+    ua: f64,
+    ub: f64,
+    va: f64,
+    vb: f64,
+    lk: usize,
+    continuity: usize,
+) -> Result<Partials<Ivl>> {
+    let us = knot_cuts(&cn.u, cn.p, cn.nu, ua, ub, continuity)?;
+    let vs = knot_cuts(&cn.v, cn.q, cn.nv, va, vb, continuity)?;
+    let mut out: Option<Partials<Ivl>> = None;
+    for &(a0, a1, ku) in &us {
+        for &(b0, b1, kv) in &vs {
+            let p = nurbs_partials_over_piece(cn, ku, kv, a0, a1, b0, b1, lk)?;
+            out = Some(match out {
+                None => p,
+                Some(h) => partials_hull(h, &p, lk),
+            });
+        }
+    }
+    out.ok_or_else(|| SolidError::sm_err(OP))
+}
+
+/// The hull of two enclosures of partials, `a + b <= lk`.
+pub(crate) fn partials_hull(mut h: Partials<Ivl>, p: &Partials<Ivl>, lk: usize) -> Partials<Ivl> {
+    for a in 0..=lk {
+        for b in 0..=(lk - a) {
+            let (x, y) = (h.at(a, b), p.at(a, b));
+            let v = V3 {
+                x: x.x.hull(y.x),
+                y: x.y.hull(y.y),
+                z: x.z.hull(y.z),
+            };
+            h.set(a, b, v);
+        }
+    }
+    h
+}
+
+/// A span the feet are enclosed over (`sm_GnSpanAt`, c5b6bb7): S, the feet's guesses at
+/// its ends (their hull, widened, is the first box), each face's polynomial piece over it
+/// and the leader's (`None`: the one the middle of S lies in).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpanAt {
+    /// `sS`.
+    pub s: Ivl,
+    /// `axA`: the feet's guesses at S's start.
+    pub xa: [f64; 4],
+    /// `axB`: and at its end.
+    pub xb: [f64; 4],
+    /// `aku`: each face's piece in u.
+    pub ku: [usize; 2],
+    /// `akv`: and in v.
+    pub kv: [usize; 2],
+    /// `lLeader`.
+    pub leader: Option<usize>,
+    /// Not upstream: a NURBS face's partials over a box are enclosed piece by piece
+    /// ([`nurbs_partials_over_box`]), so the feet may cross knot lines (`ku`, `kv` unused for
+    /// them), and the leader's series over S on the piece `leader` names (the caller cut S
+    /// at the leader's knots: a point S on a knot, the side it names) or, `None`, piece by
+    /// piece ([`leader_series_piecewise`]); `false`: on the pieces `ku`, `kv` and `leader`,
+    /// continued (upstream's, which relies on the station invariant).
+    pub piecewise: bool,
+}
+
 /// `sm_GnEnclose`: the feet's series over `S = [a.s, b.s]` (a point when they are one
 /// station), to order `order_s` in s and `n` in tau, enclosed; `None` where Krawczyk's test
-/// fails on S (or an evaluation fails: nothing is proved).
+/// fails on S (or an evaluation fails: nothing is proved). `defs`: the faces that are
+/// blends by their definitions, enclosed over the boxes (c5b6bb7).
 ///
 /// # Errors
 ///
 /// `InvalidInput` when `order_s` or `n` exceeds the series' size.
 #[allow(clippy::too_many_arguments)]
 pub fn gn_enclose(
+    k: &Kernel,
     faces_n: [&Nurbs; 2],
     leader_n: &NurbsCurve,
     a: &GnStation,
@@ -621,25 +860,25 @@ pub fn gn_enclose(
     n: usize,
     order_s: usize,
     law: Option<&GnLaw<'_>>,
+    defs: Option<&mut GnDefs<'_>>,
 ) -> Result<Option<Enclosure>> {
-    let s = Ivl::new(a.s, b.s);
-    let tr = Trunc::new(order_s, n)?;
-    // a ball whose radius varies: its law over the span (0d43b4c)
-    let law_r = match law {
-        Some(l) => Some(gn_try!(law_series_over(l, s, order_s), None)),
-        None => None,
-    };
-    let law_r = law_r.as_ref();
-    let (leader, tangent) = gn_try!(leader_series_over(leader_n, s, tr), None);
     let ax = |c: usize| a.x.get(c).map_or(f64::NAN, |x| x.at(0, 0));
     let bx = |c: usize| b.x.get(c).map_or(f64::NAN, |x| x.at(0, 0));
-
+    let mut at = SpanAt {
+        s: Ivl::new(a.s, b.s),
+        xa: [ax(0), ax(1), ax(2), ax(3)],
+        xb: [bx(0), bx(1), bx(2), bx(3)],
+        ku: [0; 2],
+        kv: [0; 2],
+        leader: None,
+        piecewise: false,
+    };
     // each face's polynomial piece over the span: the one its middle lies in. A station
     // stands where a foot crosses a knot line, so every foot over the span lies in that
     // piece, and the piece's polynomial, continued over the rest of a box, is the face
     // wherever a foot can be: the root Krawczyk's test proves unique in a box is the foot
-    let mut ku = [0_usize; 2];
-    let mut kv = [0_usize; 2];
+    // (a definition's piece of its net is one between two of its stations, its polynomial
+    // pieces the ones the faces under it have there)
     for (f, face) in faces_n.iter().enumerate() {
         let su = span(&face.u, face.p, face.nu, 0.5 * (ax(2 * f) + bx(2 * f)));
         let sv = span(
@@ -648,24 +887,78 @@ pub fn gn_enclose(
             face.nv,
             0.5 * (ax(2 * f + 1) + bx(2 * f + 1)),
         );
-        if let (Some(u), Some(v)) = (ku.get_mut(f), kv.get_mut(f)) {
+        if let (Some(u), Some(v)) = (at.ku.get_mut(f), at.kv.get_mut(f)) {
             *u = su;
             *v = sv;
         }
     }
-    let partials_over = |xl: [f64; 4], xh: [f64; 4], lk: usize| -> Result<[Partials<Ivl>; 2]> {
+    gn_enclose_over(k, faces_n, leader_n, &at, r, side, n, order_s, law, defs)
+}
+
+/// `sm_GnEncloseOver` (c5b6bb7): the feet's series over `at.s`, to order `order_s` in s and
+/// `n` in tau, enclosed; `None` where Krawczyk's test fails on S (or an evaluation fails:
+/// nothing is proved). The centre's residual is evaluated once: the iterations keep the
+/// centre.
+///
+/// # Errors
+///
+/// `InvalidInput` when `order_s` or `n` exceeds the series' size.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn gn_enclose_over(
+    k: &Kernel,
+    faces_n: [&Nurbs; 2],
+    leader_n: &NurbsCurve,
+    at: &SpanAt,
+    r: [f64; 2],
+    side: [f64; 2],
+    n: usize,
+    order_s: usize,
+    law: Option<&GnLaw<'_>>,
+    defs: Option<&mut GnDefs<'_>>,
+) -> Result<Option<Enclosure>> {
+    crate::profile::profile_scope!(k, "blend::certificate::gn_enclose_over");
+    let s = at.s;
+    let tr = Trunc::new(order_s, n)?;
+    // a ball whose radius varies: its law over the span (0d43b4c)
+    let law_r = match law {
+        Some(l) => Some(gn_try!(law_series_over(l, s, order_s), None)),
+        None => None,
+    };
+    let law_r = law_r.as_ref();
+    let (leader, tangent) = if at.piecewise && at.leader.is_none() {
+        gn_try!(leader_series_piecewise(leader_n, s, tr), None)
+    } else {
+        gn_try!(leader_series_over(leader_n, s, tr, at.leader), None)
+    };
+    let ax = |c: usize| at.xa.get(c).copied().unwrap_or(f64::NAN);
+    let bx = |c: usize| at.xb.get(c).copied().unwrap_or(f64::NAN);
+    let [ku0, ku1] = at.ku;
+    let [kv0, kv1] = at.kv;
+    let mut defs = defs;
+    let mut partials_over = |xl: [f64; 4], xh: [f64; 4], lk: usize| -> Result<[Partials<Ivl>; 2]> {
         let [n0, n1] = faces_n;
-        let [ku0, ku1] = ku;
-        let [kv0, kv1] = kv;
         let [l0, l1, l2, l3] = xl;
         let [h0, h1, h2, h3] = xh;
+        let (d0, d1) = match defs.as_deref_mut() {
+            Some(d) => {
+                let [a0, a1] = &mut d.faces;
+                (a0.as_mut(), a1.as_mut())
+            }
+            None => (None, None),
+        };
+        if at.piecewise && d0.is_none() && d1.is_none() {
+            return Ok([
+                nurbs_partials_over_box(n0, l0, h0, l1, h1, lk, FEET_BOX_CONTINUITY)?,
+                nurbs_partials_over_box(n1, l2, h2, l3, h3, lk, FEET_BOX_CONTINUITY)?,
+            ]);
+        }
         Ok([
-            nurbs_partials_over_piece(n0, ku0, kv0, l0, h0, l1, h1, lk)?,
-            nurbs_partials_over_piece(n1, ku1, kv1, l2, h2, l3, h3, lk)?,
+            face_partials_over(k, n0, d0, ku0, kv0, l0, h0, l1, h1, lk)?,
+            face_partials_over(k, n1, d1, ku1, kv1, l2, h2, l3, h3, lk)?,
         ])
     };
 
-    // the feet's box: Krawczyk's operator from the two stations' hull
+    // the feet's box: Krawczyk's operator from the guesses' hull
     let mut xm = [0.0_f64; 4];
     let mut bx_ = [IZ; 4];
     for (c, (m, xc)) in xm.iter_mut().zip(bx_.iter_mut()).enumerate() {
@@ -679,16 +972,19 @@ pub fn gn_enclose(
     let mut q = f64::INFINITY;
     let mut proved = false;
     let point = Trunc::new(0, 0)?;
-    let mut it = 0;
-    while it < 8 && !proved {
-        it += 1;
-        // G at the box's centre for every s in the span
+    // G at the box's centre (which the iterations keep) for every s in the span
+    let sg = {
         let pc = gn_try!(partials_over(xm, xm, 2), None);
         let sxc = xm.map(|x| Ser::constant(Ivl::from(x)));
         let (sg, _) = gn_try!(
             gn_evaluate(&system(&pc, &leader, &tangent, r, side, law_r), &sxc, point),
             None
         );
+        sg
+    };
+    let mut it = 0;
+    while it < 8 && !proved {
+        it += 1;
         // the Jacobian over the box
         let pb = gn_try!(partials_over(bx_.map(|x| x.lo), bx_.map(|x| x.hi), 2), None);
         let sxb = bx_.map(Ser::constant);
@@ -800,7 +1096,12 @@ pub fn gn_enclose(
                 *yrr = v;
                 rho = cmax(rho, v.mag());
             }
-            rho = round_up(rho / (1.0 - q));
+            // 1 - q rounded down: the quotient rounded up is then at least the exact one
+            let gap = round_down(1.0 - q);
+            if !gap.is_finite() || gap <= 0.0 {
+                return Ok(None);
+            }
+            rho = round_up(rho / gap);
             if !rho.is_finite() {
                 return Ok(None);
             }
@@ -815,10 +1116,10 @@ pub fn gn_enclose(
     }
     let (_, mut f, v, nrm) = gn_try!(gn_evaluate_vn(&sysk, &sx, tr), None);
     gn_top_jets(n, tr, &nrm, &mut f);
-    // the faces' first partials over the box: |S_u| + |S_v| bounds |dS| per unit uv step
-    // (max norm)
-    let mut ds = [0.0_f64; 2];
-    let mut ds_lo = [0.0_f64; 2];
+    // the faces' first partials over the box: |S_u| |du| + |S_v| |dv| bounds |dS| for a uv
+    // step (du, dv) (#2690: kept apart, where the fork sums them)
+    let mut ds = [[0.0_f64; 2]; 2];
+    let mut ds_lo = [[0.0_f64; 2]; 2];
     for ((dsf, dsl), pf) in ds.iter_mut().zip(ds_lo.iter_mut()).zip(&pk) {
         let su = pf.at(1, 0);
         let sv = pf.at(0, 1);
@@ -828,14 +1129,14 @@ pub fn gn_enclose(
         let dv = crate::geom::vector3d::sqrt(
             sv.x.mag() * sv.x.mag() + sv.y.mag() * sv.y.mag() + sv.z.mag() * sv.z.mag(),
         );
-        *dsf = du + dv;
+        *dsf = [du, dv];
         let lu = crate::geom::vector3d::sqrt(
             su.x.mig() * su.x.mig() + su.y.mig() * su.y.mig() + su.z.mig() * su.z.mig(),
         );
         let lv = crate::geom::vector3d::sqrt(
             sv.x.mig() * sv.x.mig() + sv.y.mig() * sv.y.mig() + sv.z.mig() * sv.z.mig(),
         );
-        *dsl = lu + lv;
+        *dsl = [lu, lv];
     }
     Ok(Some(Enclosure {
         f,
@@ -858,11 +1159,16 @@ fn cmin_usize(a: usize, b: usize) -> usize {
 
 /// The fourth s-derivatives' bounds of a span: `m4[f][k]` per face and jet, `uv4[f]` per
 /// face's uv curves (infinite where not proved), then the same bounds' least values at the
-/// span's middle (`pM4Lo`, `pUV4Lo`): no piece holding the middle bounds them lower.
+/// span's middle (`pM4Lo`, `pUV4Lo`): no piece holding the middle bounds them lower. Then
+/// the uv curves' bound and least value as the fork takes them,
+/// `(|S_u| + |S_v|) max(|u''''|, |v''''|)` (#2690: `gn_certify_span` steers its levels by
+/// these, and certifies by `uv4`).
 pub type Fourth = (
     [[f64; MAX_E + 1]; 2],
     [f64; 2],
     [[f64; MAX_E + 1]; 2],
+    [f64; 2],
+    [f64; 2],
     [f64; 2],
 );
 
@@ -889,8 +1195,10 @@ fn taylor_bound(mid: impl Fn(usize) -> f64, rem: f64, h: f64) -> f64 {
 }
 
 /// `sm_GnFourthOver`: the bound on the jets' fourth s-derivatives over `[a.s, b.s]`, per
-/// face and jet (`m4[f][k]`, infinite where not proved), and on the feet's uv curves' times
-/// the faces' `|S_u| + |S_v|` over the span's box (`uv4[f]`), in their Taylor form at the
+/// face and jet (`m4[f][k]`, infinite where not proved), and on the feet's uv curves',
+/// each parameter's times the face's partial in it over the span's box,
+/// `|S_u| |u''''| + |S_v| |v''''|` (`uv4[f]`; the fork's is
+/// `(|S_u| + |S_v|) max(|u''''|, |v''''|)`, #2690), in their Taylor form at the
 /// interval's middle m: `c''''(s)` is within `sum_{j<M} c^(4+j)(m) (s - m)^j / j!` plus the
 /// remainder `c^(4+M)(interval) (h/2)^M / M!`, `M = SM_GN_TAYLOR`, the derivatives at the
 /// middle enclosed on that one point and the remainder's over the interval.
@@ -912,7 +1220,7 @@ pub fn gn_fourth_over(
     n: usize,
 ) -> Result<Fourth> {
     let (fourth, _) = gn_fourth_over_series(
-        k, faces_n, leader_n, faces, center, a, b, r, side, n, None, 0,
+        k, faces_n, leader_n, faces, center, a, b, r, side, n, None, 0, None,
     )?;
     Ok(fourth)
 }
@@ -937,7 +1245,8 @@ pub struct PieceSeries {
 /// [`gn_fourth_over`] with the series of [`PieceSeries`] (`None` where they are not all
 /// proved, as the fork's out-params are then not all set), and the fork's `pLaw` and
 /// `lExtra` (0d43b4c): a ball whose radius varies, and the orders in s the series take
-/// past `4 + SM_GN_TAYLOR` (the touch circle's m').
+/// past `4 + SM_GN_TAYLOR` (the touch circle's m'); and its `pDefs` (c5b6bb7): the faces
+/// that are blends by their definitions, enclosed over the boxes.
 ///
 /// # Errors
 ///
@@ -956,18 +1265,35 @@ pub fn gn_fourth_over_series(
     n: usize,
     law: Option<&GnLaw<'_>>,
     extra: usize,
+    defs: Option<&mut GnDefs<'_>>,
 ) -> Result<(Fourth, Option<PieceSeries>)> {
+    let mut defs = defs;
     let none: (Fourth, Option<PieceSeries>) = (
         (
             [[f64::INFINITY; MAX_E + 1]; 2],
             [f64::INFINITY; 2],
             [[0.0; MAX_E + 1]; 2],
             [0.0; 2],
+            [f64::INFINITY; 2],
+            [0.0; 2],
         ),
         None,
     );
     let h = b.s - a.s;
-    let Some(e5) = gn_enclose(faces_n, leader_n, a, b, r, side, n, 4 + TAYLOR + extra, law)? else {
+    let Some(e5) = gn_enclose(
+        k,
+        faces_n,
+        leader_n,
+        a,
+        b,
+        r,
+        side,
+        n,
+        4 + TAYLOR + extra,
+        law,
+        defs.as_deref_mut(),
+    )?
+    else {
         return Ok(none);
     };
     // the middle's station, and the series there
@@ -999,6 +1325,7 @@ pub fn gn_fourth_over_series(
         none
     );
     let Some(e4) = gn_enclose(
+        k,
         faces_n,
         leader_n,
         &smid,
@@ -1008,6 +1335,7 @@ pub fn gn_fourth_over_series(
         n,
         4 + TAYLOR - 1 + extra,
         law,
+        defs,
     )?
     else {
         return Ok(none);
@@ -1019,30 +1347,45 @@ pub fn gn_fourth_over_series(
         vm: e4.v,
         mid,
     };
-    let (mut m4, mut uv4, mut m4_lo, mut uv4_lo) = none.0;
-    // the uv curves' fourth derivatives, in the same Taylor form, times the faces'
-    // |S_u| + |S_v| over the span's box
-    for (f, (uvf, &dsf)) in uv4.iter_mut().zip(&e5.ds).enumerate() {
-        let mut dmax = 0.0_f64;
-        for c in (2 * f)..(2 * f + 2) {
+    let (mut m4, mut uv4, mut m4_lo, mut uv4_lo, mut uv4_fork, mut uv4_lo_fork) = none.0;
+    // the uv curves' fourth derivatives, in the same Taylor form, each times the face's
+    // partial in its parameter over the span's box (#2690)
+    for (f, ((uvf, uvk), dsf)) in uv4
+        .iter_mut()
+        .zip(uv4_fork.iter_mut())
+        .zip(&e5.ds)
+        .enumerate()
+    {
+        let (mut sum, mut dmax) = (0.0_f64, 0.0_f64);
+        for (c, &dsc) in ((2 * f)..(2 * f + 2)).zip(dsf) {
             let (Some(x4), Some(x5)) = (e4.x.get(c), e5.x.get(c)) else {
                 return Ok((none.0, Some(series)));
             };
             let m = taylor_bound(|i| x4.at(i, 0).mag(), x5.at(4 + TAYLOR, 0).mag(), h);
+            sum += m * dsc;
             dmax = cmax(dmax, m);
         }
-        *uvf = dmax * dsf;
+        *uvf = sum;
+        // (the fork's: the largest fourth derivative times |S_u| + |S_v|)
+        *uvk = dmax * dsf.iter().sum::<f64>();
     }
-    // the same, least: the middle's 4! c[4] alone, times the faces' least |S_u| + |S_v|
-    for (f, (uvl, &dsl)) in uv4_lo.iter_mut().zip(&e4.ds_lo).enumerate() {
-        let mut dlo = 0.0_f64;
-        for c in (2 * f)..(2 * f + 2) {
+    // the same, least: the middle's 4! c[4] alone, each times the face's least partial
+    for (f, ((uvl, uvk), dsl)) in uv4_lo
+        .iter_mut()
+        .zip(uv4_lo_fork.iter_mut())
+        .zip(&e4.ds_lo)
+        .enumerate()
+    {
+        let (mut sum, mut dlo) = (0.0_f64, 0.0_f64);
+        for (c, &dsc) in ((2 * f)..(2 * f + 2)).zip(dsl) {
             let Some(x4) = e4.x.get(c) else {
                 return Ok((none.0, Some(series)));
             };
+            sum += 24.0 * x4.at(4, 0).mig() * dsc;
             dlo = cmax(dlo, 24.0 * x4.at(4, 0).mig());
         }
-        *uvl = dlo * dsl;
+        *uvl = sum;
+        *uvk = dlo * dsl.iter().sum::<f64>();
     }
     for ((m4f, f4), f5) in m4.iter_mut().zip(&e4.f).zip(&e5.f) {
         for (kk, m4fk) in m4f.iter_mut().enumerate().take(n + 1) {
@@ -1066,7 +1409,10 @@ pub fn gn_fourth_over_series(
             *m4lfk = crate::geom::vector3d::sqrt(sq);
         }
     }
-    Ok(((m4, uv4, m4_lo, uv4_lo), Some(series)))
+    Ok((
+        (m4, uv4, m4_lo, uv4_lo, uv4_fork, uv4_lo_fork),
+        Some(series),
+    ))
 }
 
 /// `sm_GnVarying`: a section whose thumbweight varies along s (the equal area one,
@@ -1075,14 +1421,20 @@ pub fn gn_fourth_over_series(
 pub struct GnVarying {
     /// `n`.
     pub n: usize,
-    /// `dRR`: `r1 r2`.
-    pub rr: f64,
+    /// `r1`, `r2` (the fork's `dRR` is their product, rounded; the certificate takes it
+    /// in intervals from the radii).
+    pub r: [f64; 2],
     /// `pCells`: I's enclosures, computed once per cell.
     pub cells: GnAreaCells,
+    /// The thumbweight's proved enclosure, `[lo, hi]`, over every span certified with this
+    /// ([`gn_certify_span`]: the union of its pieces' [`GnRowTerms::w`] at each level whose
+    /// bound it returns); `[inf, -inf]` before any. Not upstream.
+    pub w: [f64; 2],
 }
 
 /// `sm_GnRowTerms`: the largest `|(sum_ik dg_ikj c'_ik)|` (`x`) and `|W_j|` (`y`),
-/// the least `W_j` (`w_lo`) per row, and the largest `|S - O|` (`r`).
+/// the least `W_j` (`w_lo`) per row, the largest `|S - O|` (`r`), and the equal area
+/// thumbweight's proved enclosure over the pieces (`w`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct GnRowTerms {
     /// `X`.
@@ -1093,6 +1445,10 @@ pub struct GnRowTerms {
     pub w_lo: Vec<f64>,
     /// `R`.
     pub r: f64,
+    /// The equal area thumbweight over every piece folded in, `[lo, hi]`: the union of the
+    /// interval Newton roots `w0` (each holds every piece's root, for every s in it); `[inf,
+    /// -inf]` before any. Not upstream: the fork discards `w0` after the inversion.
+    pub w: [f64; 2],
 }
 
 /// `sm_Centred`: the coefficients `0..=SM_GN_TAY` of a series over a piece in their
@@ -1131,6 +1487,7 @@ fn vat(v: &VSer<Ivl>, q: usize, i: usize, k: usize) -> Ivl {
 /// `cm`: at its middle (to K - 1); `d`: s less the middle over the piece.
 #[allow(clippy::too_many_arguments)]
 pub fn gn_row_terms_over(
+    k: &Kernel,
     vary: &mut GnVarying,
     f: &[VSer<Ivl>; 2],
     centre: &VSer<Ivl>,
@@ -1167,14 +1524,15 @@ pub fn gn_row_terms_over(
             }
         }
     }
-    let inv_rr = Ivl::from(1.0) / Ivl::from(vary.rr);
+    let [r1, r2] = vary.r;
+    let inv_rr = Ivl::from(1.0) / (Ivl::from(r1) * Ivl::from(r2));
     for xi in &mut x_mid {
         *xi = *xi * inv_rr;
     }
     x_top = x_top * inv_rr;
     let u = gn_half_angle(&centred(&x_mid, x_top, K, d));
     let tg = gn_target(&u);
-    let phi = gn_area_sum::<Ivl>(n, Ivl::from(guess)) - tg.at(0);
+    let phi = vary.cells.at(k, guess) - tg.at(0);
     let mut w0 = IZ;
     let mut root = false;
     let mut rho = 1.0e-12 * (1.0 + guess.abs());
@@ -1185,7 +1543,7 @@ pub fn gn_row_terms_over(
         if !below_one {
             break;
         }
-        let d1 = vary.cells.over(w).at(1);
+        let d1 = vary.cells.over(k, w).at(1);
         if d1.hi < 0.0 {
             let nn = Ivl::from(guess) - phi / d1;
             if nn.lo > w.lo && nn.hi < w.hi {
@@ -1199,7 +1557,9 @@ pub fn gn_row_terms_over(
     if !root {
         return false;
     }
-    let over_w0 = vary.cells.over(w0);
+    let [w_lo, w_hi] = rt.w;
+    rt.w = [cmin(w_lo, w0.lo), cmax(w_hi, w0.hi)];
+    let over_w0 = vary.cells.over(k, w0);
     let sw = gn_invert(&tg, &over_w0, w0);
     let form = gn_form_normalized(n, sw);
     // the jets c'_ik as series in s over the piece
@@ -1432,13 +1792,19 @@ pub fn arc_row_terms_over(
 /// most) until every piece is proved and, over the target, while that halves the bound, so
 /// that a long span's bound follows its derivatives, not the width of one enclosure over
 /// it. The feet's uv curves are Hermite interpolants of the same stations, and the face at
-/// a uv curve's point is off the face's true foot by at most `|S_u, S_v|` times the uv
-/// error, `h^4 / 384 |x''''|`: that bound counts too (an edge's curve against its face).
+/// a uv curve's point is off the face's true foot by at most `|S_u| |du| + |S_v| |dv|`,
+/// each uv error `h^4 / 384 |x''''|` of its own parameter: that bound counts too (an
+/// edge's curve against its face).
 ///
 /// Every level's bound is at least the same sum with each term's least value at the
 /// pieces' middles (every piece's enclosure holds its middle's value): once that is over
 /// the target no finer level certifies the span, and the bound so far is returned for the
 /// caller to halve the span.
+///
+/// Not the fork's (#2690): a level is certified by the uv curves' term taken per parameter
+/// (`|S_u| |du| + |S_v| |dv|`), never larger than the fork's; the levels are steered (that
+/// least value, and going on only where a level halved the bound) by the fork's term, so
+/// a span takes at most the fork's levels and is certified at the same level or sooner.
 ///
 /// # Errors
 ///
@@ -1458,7 +1824,9 @@ pub fn gn_certify_span(
     target: f64,
     mut vary: Option<&mut GnVarying>,
     law: Option<&GnLaw<'_>>,
+    mut defs: Option<&mut GnDefs<'_>>,
 ) -> Result<f64> {
+    crate::profile::profile_scope!(k, "blend::certificate::gn_certify_span");
     // the series' orders are checked once (the fork leaves them to its callers)
     Trunc::new(4 + TAYLOR, n)?;
     let mut bound_out = f64::INFINITY;
@@ -1491,6 +1859,7 @@ pub fn gn_certify_span(
         }
     }
     for level in 0..=6_u32 {
+        k.check_cancelled(OP_CERTIFY_SPAN)?;
         let pieces = 1_usize << level;
         // the pieces' end stations
         let mut ends = Vec::new();
@@ -1498,6 +1867,7 @@ pub fn gn_certify_span(
         let mut solved = true;
         let mut i = 1;
         while i < pieces && solved {
+            k.check_cancelled(OP_CERTIFY_SPAN)?;
             let t = i as f64 / pieces as f64;
             let s = a.s + t * h;
             let mut seed = [0.0_f64; 4];
@@ -1525,6 +1895,8 @@ pub fn gn_certify_span(
             .0
             {
                 Ok(st) => ends.push(st),
+                // a cancel (#2136) is not an unsolved piece: it ends the operation
+                Err(e @ SolidError::Cancelled { .. }) => return Err(e),
                 Err(_) => solved = false,
             }
             i += 1;
@@ -1536,7 +1908,8 @@ pub fn gn_certify_span(
         let mut m4 = [[0.0_f64; MAX_E + 1]; 2];
         let mut uv4 = [0.0_f64; 2];
         let mut m4_lo = [[0.0_f64; MAX_E + 1]; 2];
-        let mut uv4_lo = [0.0_f64; 2];
+        let mut uv4_fork = [0.0_f64; 2];
+        let mut uv4_lo_fork = [0.0_f64; 2];
         let mut proved = true;
         let ld = bar.w.len();
         let mut rows = GnRowTerms {
@@ -1544,15 +1917,17 @@ pub fn gn_certify_span(
             y: vec![0.0; ld],
             w_lo: vec![f64::INFINITY; ld],
             r: 0.0,
+            w: [f64::INFINITY, f64::NEG_INFINITY],
         };
         for pair in ends.windows(2) {
             if !proved {
                 break;
             }
+            k.check_cancelled(OP_CERTIFY_SPAN)?;
             let [ea, eb] = pair else {
                 return Err(SolidError::sm_err(OP));
             };
-            let ((pm, puv, pm_lo, puv_lo), series) = gn_try!(
+            let ((pm, puv, pm_lo, _, puv_fork, puv_lo_fork), series) = gn_try!(
                 gn_fourth_over_series(
                     k,
                     faces_n,
@@ -1568,6 +1943,7 @@ pub fn gn_certify_span(
                     // the touch circle of a varying ball takes the centre's
                     // s-derivative: one order more
                     usize::from(arc && law.is_some()),
+                    defs.as_deref_mut(),
                 ),
                 bound_out
             );
@@ -1590,7 +1966,10 @@ pub fn gn_certify_span(
                     *l = cmax(*l, pl);
                 }
             }
-            for (l, &pl) in uv4_lo.iter_mut().zip(&puv_lo) {
+            for (u, &pu) in uv4_fork.iter_mut().zip(&puv_fork) {
+                *u = cmax(*u, pu);
+            }
+            for (l, &pl) in uv4_lo_fork.iter_mut().zip(&puv_lo_fork) {
                 *l = cmax(*l, pl);
             }
             if proved {
@@ -1603,7 +1982,7 @@ pub fn gn_certify_span(
                             let d = Ivl::new(ea.s, eb.s) - Ivl::from(ps.mid);
                             let guess = (1.0 - t) * a.w + t * b.w;
                             gn_row_terms_over(
-                                v, &ps.f, &ps.v, &ps.fm, &ps.vm, d, guess, &bar, o, &mut rows,
+                                k, v, &ps.f, &ps.v, &ps.fm, &ps.vm, d, guess, &bar, o, &mut rows,
                             )
                         }
                         None => false,
@@ -1632,52 +2011,69 @@ pub fn gn_certify_span(
         if !proved {
             continue;
         }
-        let mut bound = 0.0_f64;
-        let mut da = 0.0_f64;
-        for (m4f, &uvf) in m4.iter().zip(&uv4) {
-            let mut sum = 0.0_f64;
-            for &m4fk in m4f.iter().take(l_jets + 1) {
-                sum += h * h * h * h / 384.0 * m4fk;
+        // the level's bound with the uv curves' term `uv` (#2690: taken with each
+        // parameter's own term, `uv4`, to certify, and with the fork's, `uv4_fork`, to steer
+        // the levels as the fork does, so that no span takes more levels or pieces than
+        // there)
+        let level_bound = |uv: &[f64; 2]| -> f64 {
+            let mut bound = 0.0_f64;
+            let mut da = 0.0_f64;
+            for (m4f, &uvf) in m4.iter().zip(uv) {
+                let mut sum = 0.0_f64;
+                for &m4fk in m4f.iter().take(l_jets + 1) {
+                    sum += h * h * h * h / 384.0 * m4fk;
+                }
+                da = cmax(da, sum);
+                bound = cmax(
+                    bound,
+                    cmax(
+                        if rows_vary { 0.0 } else { sum },
+                        h * h * h * h / 384.0 * uvf,
+                    ),
+                );
             }
-            da = cmax(da, sum);
-            bound = cmax(
-                bound,
-                cmax(
-                    if rows_vary { 0.0 } else { sum },
-                    h * h * h * h / 384.0 * uvf,
-                ),
-            );
-        }
-        // the arc: no fixed section, every row's remainder (the varying rows' bound with
-        // A = 0)
-        if arc {
-            da = 0.0;
-        }
-        if rows_vary {
-            let kh = h * h * h * h / 384.0;
-            for (j, wj) in bar.w.iter().enumerate() {
-                let (Some(&lj), Some(&yj), Some(&xj)) =
-                    (rows.w_lo.get(j), rows.y.get(j), rows.x.get(j))
-                else {
-                    break;
-                };
-                let den = lj - kh * yj;
-                let num = wj.hi * da + kh * xj + kh * yj * rows.r;
-                let positive = den > 0.0;
-                bound = if positive {
-                    cmax(bound, num / den)
-                } else {
-                    f64::INFINITY
-                };
-                if !positive {
-                    break;
+            // the arc: no fixed section, every row's remainder (the varying rows' bound with
+            // A = 0)
+            if arc {
+                da = 0.0;
+            }
+            if rows_vary {
+                let kh = h * h * h * h / 384.0;
+                for (j, wj) in bar.w.iter().enumerate() {
+                    let (Some(&lj), Some(&yj), Some(&xj)) =
+                        (rows.w_lo.get(j), rows.y.get(j), rows.x.get(j))
+                    else {
+                        break;
+                    };
+                    let den = lj - kh * yj;
+                    let num = wj.hi * da + kh * xj + kh * yj * rows.r;
+                    let positive = den > 0.0;
+                    bound = if positive {
+                        cmax(bound, num / den)
+                    } else {
+                        f64::INFINITY
+                    };
+                    if !positive {
+                        break;
+                    }
                 }
             }
-        }
+            bound
+        };
+        let bound = level_bound(&uv4_fork);
         if !bound.is_finite() {
             continue;
         }
-        bound_out = cmin(bound_out, round_up(bound * (1.0 + 1.0e-12)));
+        // certified by each parameter's own term, never larger than the fork's
+        let bound = round_up(level_bound(&uv4) * (1.0 + 1.0e-12));
+        if bound < bound_out {
+            // the thumbweight over the span, proved at the level whose bound is returned
+            if let Some(v) = vary.as_deref_mut() {
+                let ([lo, hi], [rlo, rhi]) = (v.w, rows.w);
+                v.w = [cmin(lo, rlo), cmax(hi, rhi)];
+            }
+        }
+        bound_out = cmin(bound_out, bound);
         if bound_out <= target {
             break;
         }
@@ -1686,7 +2082,7 @@ pub fn gn_certify_span(
         // varying rows, whose own least terms are not ported: the fork's f916a8d)
         let k4 = h * h * h * h / 384.0;
         let mut lower = 0.0_f64;
-        for (m4lf, &uvl) in m4_lo.iter().zip(&uv4_lo) {
+        for (m4lf, &uvl) in m4_lo.iter().zip(&uv4_lo_fork) {
             let mut sum = 0.0_f64;
             for &m in m4lf.iter().take(l_jets + 1) {
                 sum += k4 * m;
@@ -1749,6 +2145,93 @@ mod tests {
         i.lo <= x && x <= i.hi
     }
 
+    /// A cubic in u with an interior knot of multiplicity `m` at u = 1 (knots 0 x4, 1 xm,
+    /// 2 x4), linear in v, its control points' z not a polynomial across the knot.
+    fn cubic_with_knot(m: usize) -> Nurbs {
+        let mut u = vec![0.0; 4];
+        u.extend(std::iter::repeat_n(1.0, m));
+        u.extend([2.0; 4]);
+        let nu = u.len() - 4;
+        let mut pw = Vec::new();
+        let zs = [0.0, 1.0, -0.5, 2.0, 0.3, -1.2];
+        for (i, z) in (0..nu).zip(zs.iter().cycle()) {
+            for y in [0.0, 1.0] {
+                pw.extend([i as f64, y, z + 0.25 * y, 1.0]);
+            }
+        }
+        Nurbs {
+            p: 3,
+            q: 1,
+            nu,
+            nv: 2,
+            u,
+            v: vec![0.0, 0.0, 1.0, 1.0],
+            pw,
+        }
+    }
+
+    /// A box across a knot line: the piecewise enclosure holds every partial of the face on
+    /// both sides (the third u-partial jumps at the knot), which one piece continued over the
+    /// box does not; a knot of too low a continuity, and a box past the knots, are refused.
+    #[test]
+    fn a_box_across_a_knot_line_is_enclosed_piece_by_piece() {
+        let n = cubic_with_knot(1);
+        let (ua, ub, va, vb) = (0.9, 1.1, 0.2, 0.3);
+        let e = nurbs_partials_over_box(&n, ua, ub, va, vb, 3, FEET_BOX_CONTINUITY).unwrap();
+        let left = nurbs_partials_over_piece(&n, 3, 1, ua, ub, va, vb, 3).unwrap();
+        let mut continued_misses = false;
+        for &u in &[0.9, 0.95, 1.0, 1.05, 1.1] {
+            for &v in &[0.2, 0.25, 0.3] {
+                // at the knot itself, either side's piece
+                let spans = if u == 1.0 {
+                    vec![3, 4]
+                } else {
+                    vec![span(&n.u, 3, n.nu, u)]
+                };
+                for ku in spans {
+                    let x = nurbs_partials::<f64>(&n, ku, 1, u, v, 3);
+                    for a in 0..=3 {
+                        for b in 0..=(3 - a) {
+                            let (p, q) = (x.at(a, b), e.at(a, b));
+                            for (c, i) in [(p.x, q.x), (p.y, q.y), (p.z, q.z)] {
+                                let slack = 1e-9 * (1.0 + c.abs());
+                                assert!(
+                                    i.lo - slack <= c && c <= i.hi + slack,
+                                    "P[{a}][{b}] at ({u}, {v}): {c} not in {i:?}"
+                                );
+                            }
+                        }
+                    }
+                    let c = x.at(3, 0).z;
+                    continued_misses |= !contains(left.at(3, 0).z, c);
+                }
+            }
+        }
+        assert!(
+            continued_misses,
+            "the left piece continued is not the face past the knot"
+        );
+        // a point on the knot: both sides' partials (the third u-partial jumps there)
+        let at = nurbs_partials_over_box(&n, 1.0, 1.0, 0.25, 0.25, 3, FEET_BOX_CONTINUITY).unwrap();
+        let sides = [3, 4].map(|ku| nurbs_partials::<f64>(&n, ku, 1, 1.0, 0.25, 3).at(3, 0).z);
+        assert!(sides[0] != sides[1], "{sides:?}");
+        for c in sides {
+            assert!(contains(at.at(3, 0).z, c), "{c} not in {:?}", at.at(3, 0).z);
+        }
+        // a double knot (C^1) crossed by a feet's box is refused; at C^1 asked, enclosed
+        let d = cubic_with_knot(2);
+        assert!(matches!(
+            nurbs_partials_over_box(&d, ua, ub, va, vb, 3, FEET_BOX_CONTINUITY),
+            Err(SolidError::Unsupported { .. })
+        ));
+        assert!(nurbs_partials_over_box(&d, ua, ub, va, vb, 3, 1).is_ok());
+        // past the knots
+        assert!(matches!(
+            nurbs_partials_over_box(&n, 1.9, 2.1, va, vb, 2, FEET_BOX_CONTINUITY),
+            Err(SolidError::Unsupported { .. })
+        ));
+    }
+
     /// Two planes at a square corner, the ball of radius r on the edge along y (the
     /// station test's closed form): the feet (tau r, L s, 0) and (0, L s, tau r) are linear
     /// in s and tau, so every fourth s-derivative is 0 and the span's bound is 0 to the
@@ -1774,9 +2257,21 @@ mod tests {
         let a = station(&k, faces, &leader, sa, [r, len * sa, len * sa, r], rr, side);
         let b = station(&k, faces, &leader, sb, [r, len * sb, len * sb, r], rr, side);
         let n = 2;
-        let e = gn_enclose([&n1, &n2], &ln, &a, &b, rr, side, n, 4 + TAYLOR, None)
-            .unwrap()
-            .expect("proved");
+        let e = gn_enclose(
+            &k,
+            [&n1, &n2],
+            &ln,
+            &a,
+            &b,
+            rr,
+            side,
+            n,
+            4 + TAYLOR,
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("proved");
         assert!(contains(e.x[0].c[0][0], r) && contains(e.x[3].c[0][0], r));
         for q in [1, 2] {
             let x = e.x[q].c[0][0];
@@ -1784,9 +2279,11 @@ mod tests {
             assert!(contains(e.x[q].c[1][0], len), "{q}");
         }
         assert!(contains(e.x[0].c[0][1], r) && contains(e.x[3].c[0][1], r));
-        // |S_u| + |S_v| of a unit plane is 2
-        assert!((e.ds[0] - 2.0).abs() < 1e-12 && (e.ds[1] - 2.0).abs() < 1e-12);
-        let (m4, uv4, _, _) =
+        // |S_u| and |S_v| of a unit plane are 1
+        for dsf in e.ds {
+            assert!(dsf.iter().all(|d| (d - 1.0).abs() < 1e-12), "{dsf:?}");
+        }
+        let (m4, uv4, ..) =
             gn_fourth_over(&k, [&n1, &n2], &ln, faces, &leader, &a, &b, rr, side, n).unwrap();
         for f in 0..2 {
             assert!(uv4[f] >= 0.0 && uv4[f] < 1e-9, "{uv4:?}");
@@ -1806,6 +2303,7 @@ mod tests {
             side,
             n,
             1e-6,
+            None,
             None,
             None,
         )
@@ -1839,7 +2337,8 @@ mod tests {
     /// the plane and `F2 = (L_xy R / (R + r), tau r)` on the cylinder. So the jets' fourth
     /// s-derivatives are, exactly, `|c10''''| = |L''''|`, `|c11''''| = r / (R + r) |L''''|`,
     /// `|c20''''| = R / (R + r) |L''''|` and 0 for the rest, and the plane's uv curve is
-    /// `L_xy` (`uv4 >= 2 max(|L_x''''|, |L_y''''|)`). Checked against that closed form, with
+    /// `L_xy` (`uv4 >= |L_x''''| + |L_y''''|`, the plane's partials of length 1). Checked
+    /// against that closed form, with
     /// L'''' from the leader's own evaluator: at the span's middle (one point, a tight
     /// enclosure) `4! c[4][k]` of every jet and of the plane's (u, v) holds the closed
     /// form's value; over the span every `m4`, `uv4` is finite and at least the closed
@@ -1935,9 +2434,21 @@ mod tests {
         // hold the closed form's, `(4! c[4][k])`
         let sm = 0.5 * (sa + sb);
         let ms = st(sm);
-        let em = gn_enclose([&np, &nc], &ln, &ms, &ms, rr, side, n, 4 + TAYLOR - 1, None)
-            .unwrap()
-            .expect("proved at a point");
+        let em = gn_enclose(
+            &k,
+            [&np, &nc],
+            &ln,
+            &ms,
+            &ms,
+            rr,
+            side,
+            n,
+            4 + TAYLOR - 1,
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("proved at a point");
         let dm = leader.evaluate(sm, 4, true, false).unwrap()[4];
         let holds = |i: Ivl, x: f64| {
             let j = Ivl::from(24.0) * i;
@@ -1953,7 +2464,7 @@ mod tests {
         }
         // the plane's (u, v) is the foot's (x, y)
         assert!(holds(em.x[0].c[4][0], dm.x) && holds(em.x[1].c[4][0], dm.y));
-        let (m4, uv4, _, _) =
+        let (m4, uv4, ..) =
             gn_fourth_over(&k, [&np, &nc], &ln, faces, &leader, &a, &b, rr, side, n).unwrap();
         let want = [
             [l4, r / (big_r + r) * l4, 0.0],
@@ -1965,7 +2476,7 @@ mod tests {
                 assert!(got.is_finite() && w <= got, "{f} {kk} {got} {w}");
             }
         }
-        let wuv = 2.0 * l4x.max(l4y);
+        let wuv = l4x + l4y;
         assert!(wuv <= uv4[0] && uv4[0].is_finite(), "{} {wuv}", uv4[0]);
         assert!(uv4[1].is_finite());
 
@@ -1983,6 +2494,7 @@ mod tests {
             side,
             n,
             target,
+            None,
             None,
             None,
         )
@@ -2011,7 +2523,20 @@ mod tests {
                 .unwrap();
             l4l = l4l.max(Vec3::new(d[4].x, d[4].y, 0.0).length());
         }
-        let one = gn_enclose([&np, &nc], &ln, &a, &lb, rr, side, n, 4 + TAYLOR, None).unwrap();
+        let one = gn_enclose(
+            &k,
+            [&np, &nc],
+            &ln,
+            &a,
+            &lb,
+            rr,
+            side,
+            n,
+            4 + TAYLOR,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(one.is_none());
         let long = gn_certify_span(
             &k,
@@ -2025,6 +2550,7 @@ mod tests {
             side,
             n,
             target,
+            None,
             None,
             None,
         )

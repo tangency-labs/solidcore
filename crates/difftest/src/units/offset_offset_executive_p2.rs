@@ -667,6 +667,8 @@ fn operation<T>(result: solidcore::Result<T>) -> RResult<(i32, Option<T>)> {
     match result {
         Ok(value) => Ok((ffi::NATIVE_SUCCESS, Some(value))),
         Err(SolidError::Upstream { code, .. }) => Ok((code, None)),
+        // a failure in solidcore's terms (#2615): its C++ comparison status
+        Err(e @ SolidError::Failed(_)) => Ok((e.sm_status().unwrap_or(solidcore::error::SM_ERR), None)),
         Err(error) => Err(RunError::Kernel(error)),
     }
 }
@@ -1765,6 +1767,13 @@ fn native_outcome(input: &Inputs, outcome: ffi::Outcome) -> HResult<Output> {
         ffi::Outcome::Rejected { status } => Ok(Output::rejected(format!(
             "native fixture constructor status_{status}"
         ))),
+        // The Rust side refuses the same input (`OffsetFailure::DistanceUnresolved`); the
+        // C++ would run it for tens of seconds (HANG-53).
+        ffi::Outcome::Refused => Ok(Output::rejected(
+            "the offset distance is below the source's B-rep tolerance: the Rust kernel \
+             refuses it before building anything (HANG-53: the C++ subdivides toward it \
+             for tens of seconds), so the C++ is not run",
+        )),
         ffi::Outcome::Built(snapshot) => native_output(input, &snapshot),
     }
 }
@@ -1967,15 +1976,24 @@ pub(super) fn register_notification_brep(
 /// uses' UV trim curves: offset queries may make them lazily in the input (as
 /// upstream's `NormalizedEvaluate` / `GetUVTrimCurve` do), and the native
 /// snapshot block, which the native purity bit compares, does not record them.
-fn purity_state(brep: &Brep) -> String {
-    let mut state = brep.clone();
+fn purity_state(brep: &Brep) -> Result<String, SolidError> {
+    let mut state = brep.clone_standing_for_self()?;
+    // nor the surfaces' caches: the standing copy shares the source's cache slots, so its
+    // Debug would show the caches the operation built (#2715); each surface gets a
+    // value copy of its own
+    let faces: Vec<_> = state.faces().ids().collect();
+    for f in faces {
+        if let Ok(face) = state.face_mut(f) {
+            face.surface = face.surface.clone();
+        }
+    }
     let uses: Vec<_> = state.edgeuses().ids().collect();
     for id in uses {
         if let Ok(record) = state.edgeuse_mut(id) {
             record.uv_trim_curve = None;
         }
     }
-    format!("{state:?}")
+    Ok(format!("{state:?}"))
 }
 fn rust_output(input: &Inputs) -> RResult<Output> {
     validate(input)?;
@@ -2028,8 +2046,8 @@ fn rust_output(input: &Inputs) -> RResult<Output> {
     };
     let keys = selections(input, source.as_ref(), foreign.as_ref())?;
     let selected_before = observe_selections(&keys, source.as_ref(), foreign.as_ref(), None);
-    let source_state_before = source.as_ref().map(purity_state);
-    let foreign_state_before = foreign.as_ref().map(purity_state);
+    let source_state_before = source.as_ref().map(purity_state).transpose()?;
+    let foreign_state_before = foreign.as_ref().map(purity_state).transpose()?;
     let source_before = input
         .source
         .as_ref()
@@ -2153,8 +2171,8 @@ fn rust_output(input: &Inputs) -> RResult<Output> {
         .zip(foreign.as_ref())
         .map(|(fixture, brep)| rust_projection(&kernel, fixture, brep))
         .transpose()?;
-    let source_pure = source_state_before == source.as_ref().map(purity_state);
-    let foreign_pure = foreign_state_before == foreign.as_ref().map(purity_state);
+    let source_pure = source_state_before == source.as_ref().map(purity_state).transpose()?;
+    let foreign_pure = foreign_state_before == foreign.as_ref().map(purity_state).transpose()?;
     let lifetime = if input.source.is_none() {
         0
     } else if source.is_some() {
@@ -2200,18 +2218,60 @@ fn rust_output(input: &Inputs) -> RResult<Output> {
             .values("volumes", [source_volume, result_volume].concat())
             .values("operand", source_state);
     }
+    if let Some(result) = result.as_mut() {
+        crate::soundness::measure(result);
+    }
     Ok(output)
 }
 
-/// The calls the C++ crash trap runs in a fresh child: an API shell of a file sheet
-/// with merged results, where `SmOffsetExecutive::PiecewiseMerge` reaches UB-241
-/// (`SmProtoTopologyManager::GlueCoincidentBrepVertices` keeps gluing a vertex it has
-/// deleted; `AddressSanitizer`: SEGV in `sm_RmFromSpatialTree` via `SmBrep::GlueVertices`). Only a
-/// call that actually crashes there is rejected; the others compare as usual.
-fn crash_trapped(input: &Inputs) -> bool {
-    input.operation == Operation::ApiShell
+/// Why the C++ side of `input` runs in a fresh child process (the crash trap), if it
+/// does: a crash there is a rejected case, not a dead run. Only a call that actually
+/// crashes is rejected; the others compare as usual.
+///
+/// - Every call that reaches `SmOffsetExecutive::DoExtendedOffset` (the extended
+///   offset, and every other operation extending convex edges, which dispatches to
+///   it): its native crashes on hostile inputs (the nightly fuzz) end that case only.
+/// - An API shell of a file sheet with merged results, where
+///   `SmOffsetExecutive::PiecewiseMerge` reaches UB-241
+///   (`SmProtoTopologyManager::GlueCoincidentBrepVertices` keeps gluing a vertex it has
+///   deleted; `AddressSanitizer`: SEGV in `sm_RmFromSpatialTree` via `SmBrep::GlueVertices`).
+fn crash_trap(input: &Inputs) -> Option<&'static str> {
+    if input.operation == Operation::ApiShell
         && input.config.merge_results
         && matches!(input.source, Some(Fixture::File { .. }))
+    {
+        Some(
+            "UB-241: SmApiShellBrepFull crashed in the crash trap's fresh child process \
+             (GlueCoincidentBrepVertices glues a vertex it has deleted; SIGSEGV in \
+             sm_RmFromSpatialTree)",
+        )
+    } else if input.operation == Operation::Extended || input.config.extend_convex {
+        Some(
+            "the C++ crashed in SmOffsetExecutive::DoExtendedOffset, run in the crash \
+             trap's fresh child process",
+        )
+    } else {
+        None
+    }
+}
+
+/// The C++ outcome, or the crash trap's rejection when the trapped child crashed.
+fn trapped<T>(
+    input: &Inputs,
+    in_process: impl FnOnce() -> Result<T, solidcore_ffi::FfiError>,
+    in_child: impl FnOnce() -> Result<T, solidcore_ffi::FfiError>,
+) -> HResult<Result<T, &'static str>> {
+    let Some(why) = crash_trap(input) else {
+        return in_process()
+            .map(Ok)
+            .map_err(|error| bad(format!("native p2 adapter: {error}")));
+    };
+    match in_child() {
+        Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => Ok(Err(why)),
+        other => other
+            .map(Ok)
+            .map_err(|error| bad(format!("native p2 adapter: {error}"))),
+    }
 }
 
 impl UnitDiff for Runner {
@@ -2221,26 +2281,22 @@ impl UnitDiff for Runner {
     fn run_cpp(&self, case: &Case) -> HResult<Output> {
         let input: Inputs = case.parse()?;
         // FFI argument errors are NEVER constructor rejections or native statuses.
+        let request = input.native();
         let Some(query) = input.volume_query else {
-            let outcome = if crash_trapped(&input) {
-                match ffi::eval_in_child(&input.native()) {
-                    Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => {
-                        return Ok(Output::rejected(
-                            "UB-241: SmApiShellBrepFull crashed in the crash trap's fresh \
-                             child process (GlueCoincidentBrepVertices glues a vertex it \
-                             has deleted; SIGSEGV in sm_RmFromSpatialTree)",
-                        ));
-                    }
-                    other => other,
-                }
-            } else {
-                ffi::eval(&input.native())
-            }
-            .map_err(|error| bad(format!("native p2 adapter: {error}")))?;
-            return native_outcome(&input, outcome);
+            return match trapped(&input, || ffi::eval(&request), || ffi::eval_in_child(&request))? {
+                Ok(outcome) => native_outcome(&input, outcome),
+                Err(why) => Ok(Output::rejected(why)),
+            };
         };
-        let (outcome, volumes) = ffi::eval_measured(&input.native(), query.native())
-            .map_err(|error| bad(format!("native p2 adapter: {error}")))?;
+        let measured = trapped(
+            &input,
+            || ffi::eval_measured(&request, query.native()),
+            || ffi::eval_measured_in_child(&request, query.native()),
+        )?;
+        let (outcome, volumes) = match measured {
+            Ok(measured) => measured,
+            Err(why) => return Ok(Output::rejected(why)),
+        };
         let output = native_outcome(&input, outcome)?;
         Ok(match volumes {
             Some(v) => output
@@ -2440,6 +2496,14 @@ fn generated(rng: &mut Rng) -> Inputs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Rust result bodies of the cases moved from the C++ reference, measured on their
+    /// own ([`crate::soundness::probe`]).
+    #[test]
+    #[ignore = "a measurement for the moved cases' record, run on demand"]
+    fn moved_cases_results_measured() {
+        crate::soundness::probe(&Runner, "offset.offset_executive_p2");
+    }
     use std::collections::BTreeSet;
 
     use crate::case::repo_root;

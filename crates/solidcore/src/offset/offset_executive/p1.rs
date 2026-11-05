@@ -71,6 +71,8 @@
 //! The lamina clean-up's `DeleteFaces` runs through merge p4's arena intersector over
 //! the offset B-rep alone (both upstream operands are that B-rep); it notifies under
 //! `DELETE_FACES_NAMESPACE` rather than the caller's offset keys.
+//!
+//! Cancellation: `replace_implicit_offsets` polls the kernel's cancel token (#2136, #2372) per face and inside each surface offset.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -81,7 +83,6 @@ use crate::geom::context::{Context, MarkType};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::object::{NotifyOperation, ObjectRef};
 use crate::geom::solution_array::{Solution, SolutionArray};
@@ -91,7 +92,7 @@ use crate::heal::stitch::p2 as stitch;
 use crate::intersect::topology_solver::p1::TopologySolver;
 use crate::intersect::topology_solver::p2::TopologySolveOptions;
 use crate::kernel::Kernel;
-use crate::math::{min2, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT, PI};
+use crate::math::{Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_surface_n_lib::p1::OffsetParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::knots::Side;
@@ -99,6 +100,8 @@ use crate::offset::offset_geometry_creation::{OffsetGeometryCreation, SsiData};
 
 use super::edgeuse::{CapNotifications, MarkSource};
 use super::p2::OffsetNotifications;
+use crate::surface::extend::Continuity;
+use crate::surface::side::BoxSide;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep::p1::{self as bp1, SetRegionVoidType};
@@ -182,122 +185,6 @@ pub struct VertexOffset {
     pub curve_orientations: Vec<OrientType>,
 }
 
-/// Not upstream (WR-532; the fork's tangency-labs/smlib@b283ea2, `sm_ExtendConeAsItself`):
-/// cone (or cylinder) `surface` extended by `dist` along its rulings and around its axis
-/// as itself, each direction's end spans carried on (`SM_CT_CINFINITY`), which stays on
-/// the circle where a tangent extension (`SM_CT_G1R`) leaves it. Around the axis it goes
-/// no farther than half the turn the cone leaves open on each side, so it never laps
-/// itself; a closed cone is extended along its rulings only. Around the axis each
-/// side is extended on its own and each old end made a knot of multiplicity equal to
-/// the degree again ([`full_knot`]; tangency-labs/smlib@3626d4b).
-///
-/// # Errors
-///
-/// Those of the extensions and knot insertions.
-fn extend_cone_as_itself(
-    kernel: &Kernel,
-    surface: &Surface,
-    cone: &crate::surface::cone::Cone,
-    dist: f64,
-) -> Result<Surface> {
-    use crate::nurbs::b_spline_surface::SurfParamType;
-    let (around, along) = if cone.rev().swap_uv() {
-        (SurfParamType::V, SurfParamType::U)
-    } else {
-        (SurfParamType::U, SurfParamType::V)
-    };
-    let along_srf =
-        surface.create_extended_surface_dir(kernel, along, dist, ContinuityType::CInfinity)?;
-
-    // around: half the open turn on each side, in arc length on the smaller end circle
-    let sweep_rad = cone.rev().step_uv_domain().u_interval().length() * PI / 180.0;
-    let radius = min2(cone.bot_radius(), cone.top_radius());
-    let open = 2.0 * PI - sweep_rad;
-    let around_dist = min2(dist, 0.5 * 0.5 * open * radius);
-    // (`SM_CAST_PTR(SmBSplineSurface, ..)`: the B-spline surface and its subclasses)
-    let is_bspline = !matches!(
-        along_srf.kind(),
-        SurfaceKind::OffsetSurface(_)
-            | SurfaceKind::CurveBounded(_)
-            | SurfaceKind::Step(_)
-            | SurfaceKind::SrfInVolume(_)
-    );
-    if !is_bspline || open <= 0.0 || around_dist <= EFF_ZERO_SQRT * (1.0 + radius) {
-        return Ok(along_srf);
-    }
-    // (tangency-labs/smlib@3626d4b) each side on its own, each old end then a knot of
-    // multiplicity equal to the degree again: SMLib's own form for a circle
-    // (`SmCone::IsNurbSurfaceCone` takes only a triple knot at each end and double knots
-    // inside); both sides in one call extend the first side's extended span again and
-    // leave a single knot at the old end, and a face on that surface is no longer found
-    // to be a cone
-    let around_ivl = if around == SurfParamType::U {
-        along_srf.natural_uv_domain_with_nurb(kernel)?.u_interval()
-    } else {
-        along_srf.natural_uv_domain_with_nurb(kernel)?.v_interval()
-    };
-    let (min_side, max_side) = if around == SurfParamType::U {
-        (SurfParamType::UMin, SurfParamType::UMax)
-    } else {
-        (SurfParamType::VMin, SurfParamType::VMax)
-    };
-    let mut min_srf = along_srf.create_extended_surface_dir(
-        kernel,
-        min_side,
-        around_dist,
-        ContinuityType::CInfinity,
-    )?;
-    full_knot(&mut min_srf, around, around_ivl.min())?;
-    let mut both = min_srf.create_extended_surface_dir(
-        kernel,
-        max_side,
-        around_dist,
-        ContinuityType::CInfinity,
-    )?;
-    full_knot(&mut both, around, around_ivl.max())?;
-    Ok(both)
-}
-
-/// Not upstream (WR-532; tangency-labs/smlib@3626d4b): makes the knot of B-spline
-/// `surface` at `at` in direction `dir` of multiplicity equal to the degree
-/// (`InsertOneKnot` of the missing count; a knot within `EFF_ZERO` of the interval's
-/// length counts as the same).
-///
-/// # Errors
-///
-/// `SM_ERR_NULL_POINTER` for a surface that is not a B-spline surface (upstream's
-/// `NER` of the cast); those of the knot query and insertion.
-fn full_knot(
-    surface: &mut Surface,
-    dir: crate::nurbs::b_spline_surface::SurfParamType,
-    at: f64,
-) -> Result<()> {
-    use crate::nurbs::b_spline_surface::SurfParamType;
-    const OP: &str = "offset::offset_executive::p1::extend_cone_as_itself";
-    let SurfaceKind::BSpline(bs) = surface.kind_mut() else {
-        return Err(SolidError::null_pointer(OP));
-    };
-    let (knots, mults) = bs.knots(dir, None)?;
-    let domain = bs.natural_uv_domain();
-    let ivl = if dir == SurfParamType::U {
-        domain.u_interval()
-    } else {
-        domain.v_interval()
-    };
-    let same = EFF_ZERO * (1.0 + ivl.length());
-    let mut have = 0;
-    for (&knot, &mult) in knots.iter().zip(&mults) {
-        if (knot - at).abs() <= same {
-            have = mult;
-        }
-    }
-    let degree = bs.degree(dir);
-    if have < degree {
-        bs.insert_one_knot(at, degree - have, dir)?;
-    }
-    Ok(())
-}
-
 /// The 27-bit object namespace under which the lamina clean-up's `DeleteFaces`
 /// (merge p4's arena adapter) records its notifications; distinct from the Boolean
 /// kernels' namespaces, which share no attribute store with an offset executive.
@@ -326,6 +213,14 @@ pub struct OffsetExecutive {
     pub(super) vertex_to_faces: Relation<VertexId, FaceId>,
     pub(super) blend_to_faces: Relation<FaceId, FaceId>,
     extended_surfaces: BTreeMap<u64, Surface>,
+    /// Not upstream: how far each original face's surface must reach past the face for
+    /// its neighbours' offsets to meet its own ([`super::reach::extension_reach`]), by the
+    /// face and by each of its face uses, recorded as the face is offset.
+    extension_reaches: BTreeMap<FaceId, f64>,
+    faceuse_extension_reaches: BTreeMap<FaceuseId, f64>,
+    /// Not upstream: the margin of every face of an operation whose faces are not offset
+    /// but moved to surfaces of their own (a local operation), set by its caller.
+    extension_bound: Option<f64>,
     /// Not upstream (WR-346): the original faces of an inset whose offset collapses (a
     /// convex round thinner than the wall), mated across instead of offset
     /// (`m_sCollapsedFaces`; only with `Kernel::fixes.offset_collapsed_rounds_mated`).
@@ -385,6 +280,9 @@ impl OffsetExecutive {
             vertex_to_faces: Relation::default(),
             blend_to_faces: Relation::default(),
             extended_surfaces: BTreeMap::new(),
+            extension_reaches: BTreeMap::new(),
+            faceuse_extension_reaches: BTreeMap::new(),
+            extension_bound: None,
             collapsed_faces: Vec::new(),
             unmated_edgeuses: BTreeSet::new(),
             local_faces: Vec::new(),
@@ -646,6 +544,97 @@ impl OffsetExecutive {
         self.edge_to_faces.remove_all();
         self.vertex_to_faces.remove_all();
         self.blend_to_faces.remove_all();
+        self.extension_reaches.clear();
+        self.faceuse_extension_reaches.clear();
+    }
+
+    /// Records how far the surface of original face `face` must be extended for its
+    /// neighbours' offsets to meet its offset along `faceuse`
+    /// ([`super::reach::extension_reach`] at the executive's offset distance, the shell's
+    /// faces staying where they are), and one offset distance, so that the meetings cross
+    /// the extended surface's boundary rather than touch it.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`super::reach::extension_reach`].
+    pub(super) fn record_extension_reach(
+        &mut self,
+        kernel: &Kernel,
+        original: &mut Brep,
+        face: FaceId,
+        faceuse: FaceuseId,
+    ) -> Result<()> {
+        // The meetings must cross the extended surface's boundary, not touch it (a face
+        // that stays where it is meets its neighbours' offsets at its edge, a tangent
+        // neighbour's offset meets at the edge's image): the margin is the reach and the
+        // offset's own size, so each meeting lies at least one offset inside the extension
+        // (a tolerance-sized margin is below what an extension can certify). A face with
+        // no neighbour meets no offset and is not extended. A local operation's faces move to surfaces of their
+        // own: its margin is the bound it sets ([`Self::set_extension_bound`]).
+        let reach = if let Some(bound) = self.extension_bound {
+            bound
+        } else {
+            super::reach::extension_reach(
+                kernel,
+                original,
+                faceuse,
+                self.offset_distance,
+                &self.shell_faces,
+                self.tangency_tol_radians,
+            )?
+            .map_or(0.0, |reach| reach + self.offset_distance.abs())
+        };
+        self.extension_reaches.insert(face, reach);
+        let (primary, mate) = crate::topology::face::p2::faceuses(original, face)?;
+        for faceuse in [Some(faceuse), primary, mate].into_iter().flatten() {
+            self.faceuse_extension_reaches.insert(faceuse, reach);
+        }
+        Ok(())
+    }
+
+    /// Sets the margin every face's surface is extended by, in place of its offset's reach
+    /// (a local operation, whose faces move to surfaces of their own); `None` derives it.
+    pub fn set_extension_bound(&mut self, bound: Option<f64>) {
+        self.extension_bound = bound;
+    }
+
+    /// The largest reach recorded: the margin of a surface no recorded face accounts for
+    /// (an edge's or vertex's cap, a face the offset did not make from one).
+    fn body_extension_reach(&self) -> f64 {
+        if let Some(bound) = self.extension_bound {
+            return bound;
+        }
+        self.extension_reaches.values().fold(0.0, |a, &b| a.max(b))
+    }
+
+    /// The margin the surface of original face `face` is extended by: its recorded reach.
+    pub(super) fn original_extension_margin(&self, face: FaceId) -> f64 {
+        if let Some(bound) = self.extension_bound {
+            return bound;
+        }
+        self.extension_reaches
+            .get(&face)
+            .copied()
+            .unwrap_or_else(|| self.body_extension_reach())
+    }
+
+    /// The margin the surface of offset face `face` is extended by: the reach of the
+    /// original face use it was made from.
+    pub(super) fn offset_extension_margin(&self, face: FaceId) -> f64 {
+        if let Some(bound) = self.extension_bound {
+            return bound;
+        }
+        let reaches: Vec<f64> = self
+            .faceuse_to_faces
+            .firsts(face)
+            .iter()
+            .filter_map(|faceuse| self.faceuse_extension_reaches.get(faceuse).copied())
+            .collect();
+        if reaches.is_empty() {
+            self.body_extension_reach()
+        } else {
+            reaches.into_iter().fold(0.0, f64::max)
+        }
     }
 
     /// Synchronizes mapped edge ranges, splitting offset edges at the other side's
@@ -734,29 +723,58 @@ impl OffsetExecutive {
         Ok(out)
     }
 
-    /// Returns a cached extension, creating it with distance `offset_distance * 5.0`
-    /// and G1-ruled continuity. A hit never re-extends or replaces the cached surface.
+    /// Returns a cached extension, creating it `margin` past every side of `base`'s box
+    /// (none for a margin of zero: the base itself), every side exactly ruled
+    /// ([`Surface::extended_sides_keeping_parameters`], [`Continuity::Ruled`]): a plane,
+    /// cone, sphere, torus or ball patch as itself, a procedural blend by its definition, an
+    /// offset surface as the offset of its base extended. A hit never re-extends or replaces
+    /// the cached surface.
+    ///
+    /// The margin is how far the face's offset must reach past the face for its
+    /// neighbours' offsets to meet it ([`Self::original_extension_margin`],
+    /// [`Self::offset_extension_margin`]: [`super::reach::extension_reach`]).
+    ///
+    /// Not upstream: upstream's `CreateExtendedSurface(.., SM_CT_G1R, ..)` extends by five
+    /// offset distances, fits a ruled extension and removes knots within a tolerance (the
+    /// WR-532 / WR-728 opt-ins `offset_extends_cones_as_themselves` and
+    /// `offset_extends_ball_patches_as_themselves` extended cones and ball patches as
+    /// themselves; the exact path always does, so the flags no longer change this).
     ///
     /// `base_key` represents upstream pointer identity, including across Rust clones.
     /// Distinct source identities must use distinct keys. Failed extensions are not cached.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] for a margin that is negative or not finite; those of
+    /// the extension.
     pub fn get_create_extended_surface(
         &mut self,
         kernel: &Kernel,
         base_key: u64,
         base: &Surface,
+        margin: f64,
     ) -> Result<&Surface> {
+        if !(margin.is_finite() && margin >= 0.0) {
+            return Err(SolidError::invalid_input(
+                "offset::offset_executive::p1::get_create_extended_surface",
+                "the margin is negative or not finite",
+            ));
+        }
         match self.extended_surfaces.entry(base_key) {
             std::collections::btree_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
             std::collections::btree_map::Entry::Vacant(entry) => {
                 // The obsolete offset-specific `else` at cpp:2158 is unreachable:
                 // NER(pBase) already established pOrigSurf == pBase != NULL.
-                let dist = self.offset_distance * 5.0;
-                let extension = match base.kind() {
-                    // Not upstream (WR-532), opt-in `offset_extends_cones_as_themselves`
-                    SurfaceKind::Cone(cone) if kernel.fixes.offset_extends_cones_as_themselves => {
-                        extend_cone_as_itself(kernel, base, cone, dist)?
-                    }
-                    _ => base.create_extended_surface(kernel, dist, ContinuityType::G1R)?,
+                let extension = if margin == 0.0 {
+                    base.clone()
+                } else {
+                    base.extended_sides_keeping_parameters(
+                        kernel,
+                        &BoxSide::ALL,
+                        Continuity::Ruled,
+                        margin,
+                    )?
+                    .surface
                 };
                 Ok(entry.insert(extension))
             }
@@ -802,6 +820,7 @@ impl OffsetExecutive {
         // for every face
         let mut fix = Vec::new();
         for f in bp1::faces(brep, None)? {
+            kernel.check_cancelled(OP)?;
             // skip non SmOffsetSurfaces
             let Some(SurfaceKind::OffsetSurface(offset)) =
                 brep.face(f)?.surface.as_ref().map(Surface::kind)
@@ -818,12 +837,28 @@ impl OffsetExecutive {
             let Some(nurb) = crate::topology::brep::p3::with_nurb(kernel, base)? else {
                 return Err(SolidError::sm_err(OP));
             };
-            // use NLIB function to build offset surface approximation
-            let approximation = nurb.approximate_offset_surface(
-                offset.offset_distance(),
-                approximation_tol_3d,
-                OffsetParamType::Inherited,
-            )?;
+            let approximation = if kernel.fixes.shell_one_construction {
+                // Not upstream (WR-718, #2350 S1): the offset certified within the
+                // tolerance at every parameter, in the base's parametrisation
+                let base_nurb = nurb.gw_nurb().ok_or_else(|| SolidError::null_pointer(OP))?;
+                let made = crate::offset::construction::sheets::certified_offset(
+                    kernel,
+                    base_nurb,
+                    offset.offset_distance(),
+                    approximation_tol_3d,
+                )?;
+                crate::nurbs::b_spline_surface::p1::BSplineSurface::from_nurb(made.surface, false)
+            } else {
+                // use NLIB function to build offset surface approximation
+                // (the cancel token polled inside, #2136 / #2372; none changes nothing)
+                nurb.approximate_offset_surface_cancellable(
+                    offset.offset_distance(),
+                    approximation_tol_3d,
+                    OffsetParamType::Inherited,
+                    crate::nurbs::srf_offset::OffsetOptions::default(),
+                    kernel.cancel_token(),
+                )?
+            };
             // remember face/surface pair
             fix.push((f, Surface::from(approximation)));
         }
@@ -1034,7 +1069,12 @@ impl OffsetExecutive {
                     )
                 })?
             }
-            None => create_face_from_surface(kernel, offset_brep, &new_surface, &domain)?,
+            None => crate::topology::brep::sheet::face_on(
+                kernel,
+                offset_brep,
+                new_surface.clone(),
+                &domain,
+            )?,
         };
         self.closing_faces.push(new_face); // [B549]
         Ok(())
@@ -1905,6 +1945,9 @@ impl OffsetExecutive {
             }
             // (IsKindOf(SmBSplineSurface_TYPE): the fork's SmProceduralBlend, its net)
             SurfaceKind::ProceduralBlend(surface) => {
+                ignore_status(surface.net_mut().get_or_create_gw_nurb())?;
+            }
+            SurfaceKind::BallPatch(surface) => {
                 ignore_status(surface.net_mut().get_or_create_gw_nurb())?;
             }
             SurfaceKind::Plane(surface) if surface.base().gw_nurb().is_none() => {
@@ -2831,37 +2874,6 @@ fn uv_curve_bounding_box(kernel: &Kernel, curve: &mut Curve) -> Result<Extent3d>
     )?)?
     .and_then(|boxes| boxes.normal)
     .unwrap_or_else(Extent3d::new))
-}
-
-/// `SmBrep::CreateFaceFromSurface(pSurface, sDomain, rpNewFace)` (unit
-/// `topology.brep_p8`): the new face.
-///
-/// Notifications go to an arena-only store (`ArenaNotifyState`: default records, no
-/// attributes, no context), the new face owning its surface under its arena identity;
-/// the closing face's notifications have no observer here (upstream: the offset B-rep's
-/// context, which the executive does not hold).
-fn create_face_from_surface(
-    kernel: &mut Kernel,
-    b: &mut Brep,
-    surface: &Surface,
-    domain: &Extent2d,
-) -> Result<FaceId> {
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::new(b);
-    let mut env = state.env(None);
-    let mut marks = crate::topology::topology_traverser::Marks::default();
-    let this_face = |f: FaceId| loopuse::notify_ref(EntityRef::Face(f));
-    let mut fenv = crate::topology::brep::p8::FaceBuildEnv {
-        env: &mut env,
-        marks: &mut marks,
-        this_face: &this_face,
-    };
-    crate::topology::brep::p8::create_face_from_surface(
-        kernel,
-        b,
-        Some(surface.clone()),
-        domain,
-        &mut fenv,
-    )
 }
 
 fn required<T>(value: Option<T>) -> Result<T> {
@@ -3877,10 +3889,16 @@ mod tests {
         let mut executive = executive();
         let base = plane(0.0);
         let expected = base
-            .create_extended_surface(&kernel, 0.125 * 5.0, ContinuityType::G1R)
-            .unwrap();
+            .extended_sides_keeping_parameters(
+                &kernel,
+                &BoxSide::ALL,
+                Continuity::Ruled,
+                0.125 * 5.0,
+            )
+            .unwrap()
+            .surface;
         let first = executive
-            .get_create_extended_surface(&kernel, 41, &base)
+            .get_create_extended_surface(&kernel, 41, &base, 0.625)
             .unwrap();
         assert_eq!(
             first.natural_uv_domain_if_built(),
@@ -3895,7 +3913,7 @@ mod tests {
         // A cached identity does not evaluate even a different/malformed supplied base.
         let broken = Surface::from(BSplineSurface::new());
         let cached = executive
-            .get_create_extended_surface(&kernel, 41, &broken)
+            .get_create_extended_surface(&kernel, 41, &broken, 0.625)
             .unwrap();
         assert_eq!(
             cached
@@ -3907,7 +3925,7 @@ mod tests {
             first_point
         );
         let other = executive
-            .get_create_extended_surface(&kernel, 42, &plane(7.0))
+            .get_create_extended_surface(&kernel, 42, &plane(7.0), 0.625)
             .unwrap();
         assert_eq!(
             other
@@ -3923,16 +3941,88 @@ mod tests {
     }
 
     #[test]
+    fn a_surface_is_extended_by_its_margin_none_by_zero_and_a_negative_one_is_refused() {
+        let kernel = Kernel::default();
+        let base = plane(0.0);
+        let expected = base
+            .extended_sides_keeping_parameters(&kernel, &BoxSide::ALL, Continuity::Ruled, 0.3)
+            .unwrap()
+            .surface;
+        let mut executive = executive();
+        let got = executive
+            .get_create_extended_surface(&kernel, 1, &base, 0.3)
+            .unwrap();
+        assert_eq!(
+            got.natural_uv_domain_if_built(),
+            expected.natural_uv_domain_if_built()
+        );
+        let same = executive
+            .get_create_extended_surface(&kernel, 2, &base, 0.0)
+            .unwrap();
+        assert_eq!(
+            same.natural_uv_domain_if_built(),
+            base.natural_uv_domain_if_built()
+        );
+        for refused in [-0.1, f64::NAN, f64::INFINITY] {
+            assert!(executive
+                .get_create_extended_surface(&kernel, 3, &base, refused)
+                .is_err());
+        }
+        assert_eq!(executive.extended_surfaces.len(), 2);
+    }
+
+    /// A box offset by `d` either way: every face's offset is met `d` past (or inside) each
+    /// edge and `d·√2` from each corner, so each face's margin is `d·√2` and one offset. An offset face takes the margin of the face use it was made from; one made
+    /// from none, the body's largest.
+    #[test]
+    fn a_box_face_margin_is_its_offset_corner_reach() {
+        let mut kernel = Kernel::default();
+        let mut brep = crate::primitive::api_primitives::create_box(
+            &mut kernel,
+            crate::math::Point3::new(0.0, 0.0, 0.0),
+            1.0,
+            2.0,
+            3.0,
+        )
+        .unwrap();
+        let faces = bp1::faces(&brep, None).unwrap();
+        let expected = 0.125 * 2.0_f64.sqrt() + 0.125;
+        for (distance, inset) in [(0.125, false), (0.125, true)] {
+            let mut executive =
+                OffsetExecutive::new(OffsetOperation::SolidOffset, distance, 1.0e-6);
+            executive.set_inset(inset);
+            for &f in &faces {
+                let faceuse =
+                    super::super::p2::select_offset_faceuse(&brep, f, false, inset, "test")
+                        .unwrap();
+                executive
+                    .record_extension_reach(&kernel, &mut brep, f, faceuse)
+                    .unwrap();
+                assert!((executive.original_extension_margin(f) - expected).abs() < 1e-12);
+                executive.relate_faceuse(faceuse, FaceId::from_index(100));
+            }
+            assert!(
+                (executive.offset_extension_margin(FaceId::from_index(100)) - expected).abs()
+                    < 1e-12
+            );
+            assert!(
+                (executive.offset_extension_margin(FaceId::from_index(101)) - expected).abs()
+                    < 1e-12
+            );
+        }
+    }
+
+    #[test]
     fn failed_extensions_are_not_cached_and_can_be_retried() {
         let kernel = Kernel::default();
         let mut executive = executive();
         let broken = Surface::from(BSplineSurface::new());
         assert!(executive
-            .get_create_extended_surface(&kernel, 1, &broken)
+            .get_create_extended_surface(&kernel, 1, &broken, 0.625)
             .is_err());
         assert!(executive.extended_surfaces.is_empty());
         assert!(executive
-            .get_create_extended_surface(&kernel, 1, &plane(0.0))
+            .get_create_extended_surface(&kernel, 1, &plane(0.0), 0.625)
             .is_ok());
     }
 

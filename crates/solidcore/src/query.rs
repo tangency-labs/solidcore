@@ -6,10 +6,12 @@
 
 pub mod api_queries;
 pub mod brep;
+pub mod distance_bound;
 pub mod edge;
 pub mod face;
 mod face_surface;
 pub mod r#loop;
+pub mod normal;
 pub mod poly;
 pub mod poly_properties;
 pub mod tess;

@@ -41,6 +41,7 @@ use crate::curve::curve::p7::PropertyAnalysisOptions;
 use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{ignore_status, passed_on, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
+use crate::geom::tol::ZONE_TOL_3D;
 use crate::geom::vector2d::Point2;
 use crate::math::{Vec3, EFF_ZERO_SQRT};
 use crate::nurbs::b_spline_curve::p1::BSplineCurve;
@@ -48,6 +49,7 @@ use crate::nurbs::b_spline_surface::p1::{BSplineSurface, SurfParamType};
 use crate::nurbs::b_spline_surface_n_lib::p2::SkinnedSurfaceOptions;
 use crate::nurbs::knots::Side;
 use crate::primitive::primitive_creation::{p1::PrimitiveCreation, SweepOptions};
+use crate::surface::procedural_sweep::ProceduralSweep;
 use crate::surface::surface::{
     p2::{BlendEndType, CurvatureType, DerivSurfDefinition},
     Surface,
@@ -470,26 +472,45 @@ impl PrimitiveCreation {
             let mut groups = Vec::new();
             for (index, mut composite) in composites.composites.into_iter().enumerate() {
                 let profile = composite.make_composite_nurb()?;
-                let surface = if index == 0 && opt_placements.is_some() {
-                    let (surface, at) = BSplineSurface::create_sweep_surface_with_placements(
+                let want_placements = index == 0 && opt_placements.is_some();
+                let (net, trace) = BSplineSurface::create_sweep_surface_traced(
+                    &profile,
+                    &prepared.path,
+                    prepared.scale.as_ref(),
+                    options.translational_sweep,
+                    approx_tol,
+                    want_placements.then_some(&mut placed),
+                )?;
+                // not upstream (#2572): a path sweep without a scale keeps its definition. A path of
+                // lines and circular arcs has its net built from the definition itself (exact to
+                // rounding, its bound within the kernel's tolerance); any other keeps the fit and,
+                // where the definition certifies it, the net's certified distance from it (the
+                // error is the reason it has none, and the ledger keeps the kinds of wall that do not)
+                let exact = match (&trace, prepared.scale.is_none()) {
+                    (Some(trace), true) => ProceduralSweep::create_path_exact(
                         &profile,
                         &prepared.path,
-                        prepared.scale.as_ref(),
-                        options.translational_sweep,
-                        approx_tol,
-                    )?;
-                    placed = at;
-                    surface
-                } else {
-                    BSplineSurface::create_sweep_surface(
-                        &profile,
-                        &prepared.path,
-                        prepared.scale.as_ref(),
-                        options.translational_sweep,
-                        approx_tol,
-                    )?
+                        trace.start_normal,
+                    )
+                    .ok()
+                    .filter(|(exact, _)| exact.bound() <= ZONE_TOL_3D),
+                    _ => None,
                 };
-                let surface = Surface::from(surface);
+                let (net, definition) = if let Some((exact, built)) = exact {
+                    (built, Some(exact))
+                } else {
+                    let fitted = match (&trace, prepared.scale.is_none()) {
+                        (Some(trace), true) => {
+                            ProceduralSweep::create_path(&profile, &prepared.path, trace, &net).ok()
+                        }
+                        _ => None,
+                    };
+                    (net, fitted)
+                };
+                let mut surface = Surface::from(net);
+                if let Some(definition) = definition {
+                    surface.set_sweep_definition(definition);
+                }
                 // (a B-spline surface just made: never lazy)
                 let domain = surface.natural_uv_domain_if_built();
                 let mut made = Vec::new();

@@ -426,7 +426,7 @@ impl ExecutiveAccess<Handle> for Access {
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
         // This fixture owns no corners, so no handle resolves to one. The virtual
-        // dispatch is `blend::fillet_corner::p3::FilletCorner::adjust_tangent_corner`.
+        // `AdjustTangentCorner` is the base's SM_SUCCESS at every corner (#2400).
         missing()
     }
     fn calc_fillet_geom(
@@ -875,10 +875,12 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
         overflow_edges: Vec::new(),
         mitred_edges: Vec::new(),
         fan_split_points: Vec::new(),
+        earlier_pass_faces: Vec::new(),
         // the fork's refusal fit (WR-696): none noted, as `FilletExecutive::new` leaves it
         fit_radius: -1.0,
         fit_edge: None,
         fit_kind: solidcore::blend::fillet_executive::FitKind::Radius,
+        fit_setback: -1.0,
     };
     // The executive constructor sets this after constructing its SmMerge base.
     executive.intersector.ignore_tangency = true;
@@ -902,8 +904,12 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
             }
             match error {
                 SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007,
-                SolidError::Upstream { code, .. } => code,
-                other => return Err(HarnessError::new(other.to_string())),
+                // every error carrying its exact C++ status (an upstream status, a typed
+                // refusal of an edge, a corner or a size, a failure in solidcore's terms)
+                other => match other.sm_status() {
+                    Some(code) => code,
+                    None => return Err(HarnessError::new(other.to_string())),
+                },
             }
         }
     };

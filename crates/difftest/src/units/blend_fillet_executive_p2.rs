@@ -726,14 +726,14 @@ impl ExecutiveAccess<Handle> for Access {
         corner: Handle,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
-        // The virtual `pCorner->AdjustTangentCorner()` on the actual corner: the base
-        // returns SM_SUCCESS; the Nx2 and closed Nx1 overrides need a TangentSplitEnv
-        // over the solvers' virtual operations, which this fixture does not build.
+        // The virtual `pCorner->AdjustTangentCorner()` on the actual corner: the base's
+        // SM_SUCCESS at every corner since the Nx2 and closed Nx1 overrides were deleted
+        // (the fork's smlib#113, 34288e5 and caa67d0; #2400).
         let Handle::Corner(cid) = corner else {
             return missing();
         };
-        let c = self.corners.get_mut(cid).ok_or_else(missing_error)?;
-        c.adjust_tangent_corner_with(&mut (), |_, ()| missing(), |_, ()| missing())
+        self.corners.get(cid).ok_or_else(missing_error)?;
+        Ok(())
     }
     fn calc_fillet_geom(
         &mut self,
@@ -1107,6 +1107,7 @@ impl ExecutiveAccess<Handle> for Access {
                         b,
                         v,
                         &eus,
+                        &[],
                         |eu| {
                             let Some(Handle::Solver(idx)) =
                                 executive.fillet_solver_of_edgeuse(Handle::Edgeuse(eu))
@@ -1557,10 +1558,12 @@ fn executive(target: Option<Handle>) -> FilletExecutive<Handle> {
         overflow_edges: Vec::new(),
         mitred_edges: Vec::new(),
         fan_split_points: Vec::new(),
+        earlier_pass_faces: Vec::new(),
         // the fork's refusal fit (WR-696): none noted, as `FilletExecutive::new` leaves it
         fit_radius: -1.0,
         fit_edge: None,
         fit_kind: solidcore::blend::fillet_executive::FitKind::Radius,
+        fit_setback: -1.0,
     };
     executive.intersector.ignore_tangency = true;
     executive

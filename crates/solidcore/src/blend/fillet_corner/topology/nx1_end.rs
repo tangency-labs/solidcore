@@ -16,9 +16,8 @@
 //! geometry, extended-surface coincidence), the last statements of
 //! `MakeCornerTopology`, are returned as an [`Nx1GapCheck`] for the caller, which
 //! holds the corner table and solver store they need, to run before anything else.
-//! With `Kernel::fixes.fillet_nx1_tangent_side_edge_same_convexity` (WR-600's flag; the
-//! fork's tangency-labs/smlib@856b54e) the end face at a tangent side is extended
-//! `CInfinity` and that side's cap edge is `OnExtendEdge`. There is no recursion.
+//! The end face at a tangent side is extended `CInfinity` and that side's cap edge is
+//! `OnExtendEdge` (WR-600, the fork's tangency-labs/smlib@856b54e). There is no recursion.
 
 use std::collections::BTreeMap;
 
@@ -29,7 +28,6 @@ use crate::blend::fillet_geom::p1::{
     FilletBrep, FilletCornerId, FilletEdgeType, FilletGeomId, FilletVertex, FilletVertexType,
 };
 use crate::error::{EntityRef, Result, SolidError, SM_ERR, SM_ERR_INVALID_INPUT};
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::intersect::point_class::PointClassType;
 use crate::kernel::Kernel;
 use crate::math::{Point3, EFF_ZERO};
@@ -269,11 +267,13 @@ impl FilletCorner {
             // there depends on how its curvature differs from the rail's face across the
             // seam, which a linear (G1) extension would not keep (tangency-labs/smlib@856b54e).
             let extension = if mixed && (tangent_side[0] || tangent_side[1]) {
-                ContinuityType::CInfinity
+                crate::surface::extend::Continuity::Natural
             } else {
-                ContinuityType::G1
+                crate::surface::extend::Continuity::Tangent
             };
-            let new_surface = surface.create_extended_surface(k, ext_dist, extension)?;
+            let new_surface = surface
+                .extended_sides(k, &crate::surface::side::BoxSide::ALL, extension, ext_dist)?
+                .surface;
             // Copy pNewSurface, when possible as an analytic surface
             let new_extend_surface = new_surface.copy_and_add_analytics(k)?;
             // If AddExtendedOriginalSurface() deleted pNewExtendSurface, then
