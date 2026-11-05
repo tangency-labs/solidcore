@@ -1383,6 +1383,26 @@ mod tests {
         assert_eq!(full_hist, [1, 0, 2, 0, 3, 0, 0, 0, 4, 0, 0]);
     }
 
+    /// Capacity growth preserves removed records and every table link and count.
+    #[test]
+    fn wr13_default_growth_preserves_all_removed_records() {
+        let mut table = HashTable::new(0, 4).unwrap();
+        table.add(101, 0, 11).unwrap();
+        table.add(202, 2, 22).unwrap();
+        assert_eq!(table.remove(&[0, 1]), 2);
+        let records = table.bucket_items().to_vec();
+        let buckets = table.buckets().to_vec();
+        let used = table.first_used_bucket();
+        let counts = (table.total_bucket_item_count(), table.removed_bucket_item_count(), table.used_bucket_item_count(), table.used_bucket_count());
+        table.inc_max_item_count();
+        assert_eq!(table.capacity(), 128);
+        assert_eq!(table.bucket_items(), records);
+        assert_eq!(table.buckets(), buckets);
+        assert_eq!(table.first_used_bucket(), used);
+        assert_eq!((table.total_bucket_item_count(), table.removed_bucket_item_count(), table.used_bucket_item_count(), table.used_bucket_count()), counts);
+        assert_eq!(table.remove(&[0, 1]), 0);
+    }
+
     #[test]
     fn wr13_default_grow_after_removing_all_zeroes_records_and_corrupts_remove() {
         let mut ht = HashTable::new(1, 4).unwrap();
