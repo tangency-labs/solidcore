@@ -1,16 +1,15 @@
 //! Runner for unit `curve.offset_curve`: implicit offset curves (`SmOffsetCurve`).
 //!
-//! C++: `solidcore_ffi::units::curve_offset_curve` (upstream
-//! `source/SMLib/src/SmOffsetCurve.cpp`, called through `SmCurve*`). Rust:
-//! `solidcore::curve::offset_curve` through [`Curve`].
+//! Ported from upstream `source/SMLib/src/SmOffsetCurve.cpp` (called through `SmCurve*`);
+//! checked against its golden. Rust: `solidcore::curve::offset_curve` through [`Curve`].
 //!
 //! A case is a `base` curve (`{"bspline": {dim, oob, cpts, p, u}}` with control points
 //! as stored `[x, y, z, w]`, or `{"hermite": {dim, p1, d1, p2, d2}}`), the offset
 //! `spec` (`{dim, a, b, normal, dist, owns, nrev}`: built, then reversed `nrev` times),
 //! an optional `outer` spec (an offset of that offset) and an `op`. `read_db` cases
-//! carry the database bytes (made by upstream `WriteToDB` when the case is generated)
-//! instead. Both sides produce the flat record documented in the ffi module; the
-//! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
+//! carry the database bytes instead (the generated ones written by upstream `WriteToDB`,
+//! frozen in `fixtures/curve.offset_curve/written_records.json`). The output is a flat
+//! record: the runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce) and the rest as the `out` values.
 //!
@@ -34,15 +33,13 @@ use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
 use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::b_spline_curve_n_lib::TrimMode;
-use solidcore::nurbs::math::NOW;
+use solidcore::nurbs::math::{NOW, NOZ};
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::topology::brep::validation::curve_assert_valid;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
-use solidcore_ffi::units::curve_offset_curve::{self as ffi, Op};
 
 use crate::case::CaseContext;
-use crate::runner::default_cases;
 use crate::util::assert_reports::put_assert_reports;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -194,164 +191,12 @@ fn b(f: bool) -> f64 {
     }
 }
 
-fn push3(v: &mut Vec<f64>, p: [f64; 3]) {
-    v.extend(p);
-}
-
-fn base_block(v: &mut Vec<f64>, c: &BaseIn) -> Result<(), HarnessError> {
-    match c {
-        BaseIn::Bspline(bs) => {
-            let n = bs
-                .cpts
-                .len()
-                .checked_sub(1)
-                .ok_or_else(|| harness("no points"))?;
-            let m =
-                bs.u.len()
-                    .checked_sub(1)
-                    .ok_or_else(|| harness("no knots"))?;
-            let kind = if bs.raw_knots { 2.0 } else { 0.0 };
-            v.extend([
-                kind,
-                bs.dim as f64,
-                b(bs.oob),
-                n as f64,
-                bs.p as f64,
-                m as f64,
-            ]);
-            for p in &bs.cpts {
-                v.extend(p);
-            }
-            v.extend_from_slice(&bs.u);
-        }
-        BaseIn::Hermite(h) => {
-            v.extend([1.0, h.dim as f64]);
-            for p in [h.p1, h.d1, h.p2, h.d2] {
-                push3(v, p);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn spec_block(v: &mut Vec<f64>, s: &SpecIn) {
-    v.extend([s.dim as f64, s.a, s.b]);
-    push3(v, s.normal);
-    v.extend([s.dist, b(s.owns), s.nrev as f64]);
-}
-
-fn probe_block(v: &mut Vec<f64>, probes: &[f64]) {
-    v.push(probes.len() as f64);
-    v.extend_from_slice(probes);
-}
-
 fn db_bytes(text: Option<&String>, bytes: Option<&Vec<u8>>) -> Result<Vec<u8>, HarnessError> {
     match (text, bytes) {
         (Some(t), None) => Ok(t.clone().into_bytes()),
         (None, Some(b)) => Ok(b.clone()),
         _ => Err(harness("read_db needs exactly one of text, bytes")),
     }
-}
-
-fn op_of(op: &OpIn) -> Op {
-    match op {
-        OpIn::State => Op::State,
-        OpIn::Eval { .. } => Op::Eval,
-        OpIn::EvalPoint { .. } => Op::EvalPoint,
-        OpIn::Knots { .. } => Op::Knots,
-        OpIn::Continuities { .. } => Op::Continuities,
-        OpIn::Reverse { .. } => Op::Reverse,
-        OpIn::Trim { .. } => Op::Trim,
-        OpIn::Eq { .. } => Op::Eq,
-        OpIn::Copy { .. } => Op::Copy,
-        OpIn::CloneCtor { .. } => Op::CloneCtor,
-        OpIn::IsKindOf { .. } => Op::IsKindOf,
-        OpIn::AssertValid { .. } => Op::AssertValid,
-        OpIn::ReadDb { .. } => Op::ReadDb,
-    }
-}
-
-/// The curve blocks of a curve op.
-fn curve_blocks(v: &mut Vec<f64>, i: &Inputs) -> Result<(), HarnessError> {
-    let base = i
-        .base
-        .as_ref()
-        .ok_or_else(|| harness("curve op without base"))?;
-    let spec = i
-        .spec
-        .as_ref()
-        .ok_or_else(|| harness("curve op without spec"))?;
-    base_block(v, base)?;
-    spec_block(v, spec);
-    match &i.outer {
-        None => v.push(0.0),
-        Some(o) => {
-            v.push(1.0);
-            spec_block(v, o);
-        }
-    }
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let op = op_of(&i.op);
-    let mut v = Vec::new();
-    if let OpIn::ReadDb {
-        binary,
-        version,
-        text,
-        bytes,
-        probes,
-    } = &i.op
-    {
-        let data = db_bytes(text.as_ref(), bytes.as_ref())?;
-        v.extend([b(*binary), *version as f64, data.len() as f64]);
-        v.extend(data.iter().map(|&c| f64::from(c)));
-        probe_block(&mut v, probes);
-        return Ok((op, v));
-    }
-    curve_blocks(&mut v, i)?;
-    match &i.op {
-        OpIn::State | OpIn::ReadDb { .. } => {}
-        OpIn::Eval {
-            t,
-            n,
-            left,
-            nonzero,
-        } => {
-            v.extend([*t, *n as f64, b(*left), b(*nonzero)]);
-        }
-        OpIn::EvalPoint { t } => v.push(*t),
-        OpIn::Knots { ivl, mults } => {
-            let [a, bb] = ivl.unwrap_or([0.0, 0.0]);
-            v.extend([b(ivl.is_some()), a, bb, b(*mults)]);
-        }
-        OpIn::Continuities { angle } => v.push(*angle),
-        OpIn::Reverse { a, b: bb, probes } => {
-            v.extend([*a, *bb]);
-            probe_block(&mut v, probes);
-        }
-        OpIn::Trim {
-            a,
-            b: bb,
-            mode,
-            probes,
-        } => {
-            v.extend([*a, *bb, f64::from(*mode)]);
-            probe_block(&mut v, probes);
-        }
-        OpIn::Eq { this, copy, other } => {
-            v.extend([b(*this), b(*copy)]);
-            if !*this && !*copy {
-                let o = other.as_ref().ok_or_else(|| harness("eq without other"))?;
-                spec_block(&mut v, o);
-            }
-        }
-        OpIn::Copy { probes } | OpIn::CloneCtor { probes } => probe_block(&mut v, probes),
-        OpIn::IsKindOf { type_code } => v.push(*type_code as f64),
-        OpIn::AssertValid { level, list } => v.extend([f64::from(*level), b(*list)]),
-    }
-    Ok((op, v))
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -362,11 +207,149 @@ fn to_output(flat: &[f64]) -> Output {
         .values("out", rest)
 }
 
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = cpp_input(i)?;
-    match ffi::eval(op, &input) {
-        Ok(flat) => Ok(to_output(&flat)),
-        Err(e) => Err(harness(e.to_string())),
+// ---- generated input contract -----------------------------------------------------
+//
+// The generator keeps a draw only inside the domain upstream's entry points are defined
+// on: bounded sizes and indices, finite coordinates, clamped well-formed B-splines, and no
+// copy of an offset owning a Hermite base (upstream's base `Copy` fails, the copy shares
+// the base and both objects delete it). Generated cases exercise the working path;
+// hostile inputs are the fixtures' job.
+
+/// Largest control point index `n`.
+const MAX_INDEX: usize = 256;
+/// Largest degree.
+const MAX_DEGREE: usize = 9;
+/// Largest coordinate magnitude.
+const MAX_COORD: f64 = 1e6;
+/// Most derivatives of `Eval`.
+const MAX_DERIVS: usize = 4;
+/// Most probe parameters.
+const MAX_PROBES: usize = 32;
+/// Largest `IsKindOf` type code.
+const MAX_TYPE: i64 = 1 << 20;
+
+fn finite(v: f64) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+fn finite3(v: &[f64; 3]) -> bool {
+    v.iter().all(|&c| finite(c))
+}
+
+fn dim_ok(dim: u64) -> bool {
+    (2..=3).contains(&dim)
+}
+
+fn probes_ok(probes: &[f64]) -> bool {
+    probes.len() <= MAX_PROBES && probes.iter().all(|&t| finite(t))
+}
+
+/// A clamped B-spline with consistent counts, finite points, positive weights and
+/// knots whose multiplicities stay within the degree.
+fn bspline_ok(bs: &BSplineIn) -> bool {
+    let (Some(n), Some(m)) = (bs.cpts.len().checked_sub(1), bs.u.len().checked_sub(1)) else {
+        return false;
+    };
+    let p = bs.p;
+    if !dim_ok(bs.dim) || n > MAX_INDEX || p > MAX_DEGREE || m > MAX_INDEX + MAX_DEGREE + 1 {
+        return false;
+    }
+    if p == 0 || p > n || m != n + p + 1 {
+        return false;
+    }
+    let Some(&[_, _, z0, w0]) = bs.cpts.first() else {
+        return false;
+    };
+    for &[x, y, z, w] in &bs.cpts {
+        if (z == NOZ) != (z0 == NOZ) || (w == NOW) != (w0 == NOW) {
+            return false;
+        }
+        if !finite(x) || !finite(y) || (z != NOZ && !finite(z)) || (w != NOW && !finite(w)) {
+            return false;
+        }
+        if w != NOW && w <= 1e-3 {
+            return false;
+        }
+    }
+    let knots = &bs.u;
+    if knots.iter().any(|&k| !finite(k)) || knots.windows(2).any(|w| w.first() > w.last()) {
+        return false;
+    }
+    let (Some(&a), Some(&b)) = (knots.first(), knots.last()) else {
+        return false;
+    };
+    let (Some(head), Some(tail), Some(inner)) =
+        (knots.get(..=p), knots.get(m - p..), knots.get(p + 1..m - p))
+    else {
+        return false;
+    };
+    if a >= b || head.iter().any(|&k| k != a) || tail.iter().any(|&k| k != b) {
+        return false;
+    }
+    if b - a < 1e-6 * a.abs().max(b.abs()).max(1.0) {
+        return false;
+    }
+    if inner.iter().any(|&k| k == a || k == b) {
+        return false;
+    }
+    let mut run = 1;
+    for w in inner.windows(2) {
+        run = if w.first() == w.last() { run + 1 } else { 1 };
+        if run > p {
+            return false;
+        }
+    }
+    true
+}
+
+fn base_ok(c: &BaseIn) -> bool {
+    match c {
+        BaseIn::Bspline(bs) => bspline_ok(bs),
+        BaseIn::Hermite(h) => dim_ok(h.dim) && [h.p1, h.d1, h.p2, h.d2].iter().all(finite3),
+    }
+}
+
+fn spec_ok(s: &SpecIn) -> bool {
+    dim_ok(s.dim)
+        && finite(s.a)
+        && finite(s.b)
+        && finite3(&s.normal)
+        && finite(s.dist)
+        && s.nrev <= MAX_RUNNER_REVERSALS
+}
+
+/// Whether a generated draw is inside the domain above. A `read_db` draw is judged on the
+/// curve whose record it reads.
+fn admits(i: &Inputs) -> bool {
+    let (Some(base), Some(spec)) = (&i.base, &i.spec) else {
+        return false;
+    };
+    if !base_ok(base) || !spec_ok(spec) || i.outer.as_ref().is_some_and(|o| !spec_ok(o)) {
+        return false;
+    }
+    let hermite = matches!(base, BaseIn::Hermite(_));
+    let copy_unsafe = hermite && spec.owns;
+    // the copy constructor's own base copy: without an outer offset the original owns the
+    // base itself; with one the outer offset must own the inner offset it copies
+    let ctor_unsafe = copy_unsafe && i.outer.as_ref().is_none_or(|o| o.owns);
+    match &i.op {
+        OpIn::State | OpIn::ReadDb { .. } => true,
+        OpIn::Eval { t, n, .. } => finite(*t) && *n <= MAX_DERIVS,
+        OpIn::EvalPoint { t } => finite(*t),
+        OpIn::Knots { ivl, .. } => ivl.is_none_or(|[a, b]| finite(a) && finite(b)),
+        OpIn::Continuities { angle } => finite(*angle) && (0.0..=90.0).contains(angle),
+        OpIn::Reverse { a, b, probes } => finite(*a) && finite(*b) && probes_ok(probes),
+        OpIn::Trim { a, b, mode, probes } => {
+            finite(*a) && finite(*b) && *mode <= 2 && probes_ok(probes)
+        }
+        OpIn::Eq { this, copy, other } => {
+            let copies_unsafe = *copy && copy_unsafe && !*this;
+            !copies_unsafe && (*this || *copy || other.as_ref().is_some_and(spec_ok))
+        }
+        OpIn::Copy { probes } => !copy_unsafe && probes_ok(probes),
+        OpIn::CloneCtor { probes } => !ctor_unsafe && probes_ok(probes),
+        OpIn::IsKindOf { type_code } => (0..=MAX_TYPE).contains(type_code),
+        OpIn::AssertValid { level, .. } => *level <= 4 && *level != 3,
     }
 }
 
@@ -435,8 +418,8 @@ fn build_offset(base: Curve, s: &SpecIn) -> solidcore::Result<Curve> {
     Ok(c)
 }
 
-/// Most reversals the runner applies (`ffi::MAX_REVERSALS`, the guard's bound): the
-/// `nrev` loop is runner code, so a fuzzed count must not make it run for hours.
+/// Most reversals the runner applies: the `nrev` loop is runner code, so a fuzzed count
+/// must not make it run for hours.
 const MAX_RUNNER_REVERSALS: usize = 4;
 
 /// The base curve and the op's curve.
@@ -466,7 +449,7 @@ fn build(i: &Inputs) -> Result<(Curve, Curve), HarnessError> {
     })
 }
 
-/// The copy constructor's undefined domain (also rejected by the ffi wrapper): it copies
+/// The copy constructor's undefined domain (also outside the generated input contract): it copies
 /// the base curve when the original owns it (the protocol's `owns` flag), and upstream's
 /// `Copy` fails for a Hermite curve, leaving the copy sharing a base both objects then
 /// delete. Without an outer offset the original owns the base itself; with one the outer
@@ -899,18 +882,6 @@ fn gen_probes(rng: &mut Rng, s: &SpecIn) -> Vec<f64> {
     (0..k).map(|_| gen_t(rng, s)).collect()
 }
 
-/// Upstream's `WriteToDB` bytes of the case's curve.
-fn write_db(i: &Inputs, binary: bool, version: u64) -> Option<Vec<u8>> {
-    let mut v = Vec::new();
-    curve_blocks(&mut v, i).ok()?;
-    v.extend([b(binary), version as f64]);
-    let out = ffi::eval(Op::WriteDb, &v).ok()?;
-    if out.first().copied() != Some(0.0) {
-        return None;
-    }
-    Some(out.get(1..)?.iter().map(|&x| x as u8).collect())
-}
-
 fn gen_case(rng: &mut Rng) -> Inputs {
     let planar = rng.chance(0.6);
     let base = if rng.chance(0.7) {
@@ -996,36 +967,24 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     }
 }
 
-/// Fills in a generated `read_db` case's bytes from upstream's writer and drops the
-/// curve (the reader builds its own).
-fn finish(mut i: Inputs) -> Option<Inputs> {
-    if let OpIn::ReadDb {
-        binary,
-        version,
-        text,
-        bytes,
-        ..
-    } = &mut i.op
-    {
-        let data = {
-            let probe = Inputs {
-                base: i.base.clone(),
-                spec: i.spec.clone(),
-                outer: i.outer.clone(),
-                op: OpIn::State,
-            };
-            write_db(&probe, *binary, *version)?
-        };
-        if *binary {
-            *bytes = Some(data);
-        } else {
-            *text = Some(String::from_utf8(data).ok()?);
+/// A generated case's draw: the first [`gen_case`] inside the input contract.
+fn draw(rng: &mut Rng) -> Option<Inputs> {
+    (0..64).map(|_| gen_case(rng)).find(admits)
+}
+
+/// A generated `read_db` draw (no record yet). Its case reads the record upstream's
+/// `WriteToDB` wrote of the drawn curve, which solidcore has no offset-curve writer for
+/// (#2857): those cases are frozen in `fixtures/curve.offset_curve/written_records.json`
+/// under their generated names and the generated index is skipped.
+fn is_read_draw(i: &Inputs) -> bool {
+    matches!(
+        i.op,
+        OpIn::ReadDb {
+            text: None,
+            bytes: None,
+            ..
         }
-        i.base = None;
-        i.spec = None;
-        i.outer = None;
-    }
-    Some(i)
+    )
 }
 
 /// Generated `assert_valid` cases (their own seed stream, `<unit>:assert_valid`).
@@ -1048,26 +1007,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        for _ in 0..64 {
-            let i = gen_case(rng);
-            let Ok((op, input)) = cpp_input(&Inputs {
-                op: if matches!(i.op, OpIn::ReadDb { .. }) {
-                    OpIn::State
-                } else {
-                    i.op.clone()
-                },
-                ..i.clone()
-            }) else {
-                continue;
-            };
-            if ffi::validate(op, &input).is_err() {
-                continue;
-            }
-            if let Some(i) = finish(i) {
-                return serde_json::to_value(i).ok();
-            }
-        }
-        None
+        draw(rng)
+            .filter(|i| !is_read_draw(i))
+            .and_then(|i| serde_json::to_value(i).ok())
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1075,7 +1017,17 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        let mut v = default_cases(self, &main)?;
+        let mut v = main.fixture_cases(self.id())?;
+        // a skipped index (a `read_db` draw) is a fixture case of the same name
+        let generated = main.generated_cases(self.id(), |rng| {
+            let i = draw(rng)?;
+            Some(if is_read_draw(&i) {
+                Value::Null
+            } else {
+                serde_json::to_value(i).unwrap_or(Value::Null)
+            })
+        });
+        v.extend(generated.into_iter().filter(|c| !c.inputs.is_null()));
         // AssertValid with native report comparison: their own seed stream (the other
         // generated cases are unchanged); named `avNNNN`
         let av = CaseContext {
@@ -1090,10 +1042,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
