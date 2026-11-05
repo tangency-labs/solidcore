@@ -226,10 +226,14 @@ fn m16_phase_check(i: u32) -> Vec<String> {
 /// circle moves along it, and the vertex there lies inside the tool edge's span (phases
 /// 0 to 8 and 24 to 31) or past its end (9 to 23). Every cut passes SMLib's check.
 /// Splitting each edge at its own intersection's parameter, 30 of the 32 were refused
-/// with gaps from 2.15e-5 to 3.06e-5 (only 3 and 27 passed).
+/// with gaps from 2.15e-5 to 3.06e-5 (only 3 and 27 passed). An optimised build runs all
+/// 32; a debug build every fourth (0, 4, ..., 28: both kinds of vertex, all refused before),
+/// to keep the test's time down.
 #[test]
 fn issue_2621_m16_groove_at_every_phase_passes_the_check() {
+    let step = if cfg!(debug_assertions) { 4 } else { 1 };
     let refused: Vec<(u32, Vec<String>)> = (0..32)
+        .step_by(step)
         .map(|i| (i, m16_phase_check(i)))
         .filter(|(_, lines)| !lines.is_empty())
         .collect();
