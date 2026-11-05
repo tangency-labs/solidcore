@@ -443,7 +443,8 @@ impl FilletFinishAccess<FilletObject> for FinishAccess<'_, '_> {
             attributes,
             ..
         } = &mut *self.0;
-        p3::seed_records(notification_records, target, &key_of);
+        let seeded = p3::seed_records(notification_records, target, &key_of);
+        k.work_counters.add_records_seeded(seeded);
         crate::geom::context::Context::with_notification_context(k, |_, context| {
             let mut env = crate::topology::edge::NotifyEnv {
                 records: notification_records,
@@ -1072,5 +1073,144 @@ mod ball_fit_tests {
         let (code, result) = end_round(2.0, true);
         result.unwrap();
         assert_ne!(code, NO_ROOM);
+    }
+}
+
+/// The notification records each `PreEdit` of a merged fillet's finish seeds: the target's
+/// objects added since the store last seeded it, so the store ends as a full seeding leaves it
+/// and the finish visits each object once, not once per face.
+#[cfg(test)]
+mod notify_seed_tests {
+    use super::*;
+    use crate::math::Point3;
+    use crate::primitive::api_primitives::create_box;
+    use crate::topology::{edge, vertex, Brep, FaceId, Vertex};
+
+    /// Notifies `PreEdit` on target face `f`, as a merged finish does for each face.
+    fn notify(k: &mut Kernel, objects: &mut SessionObjects<'_>, f: FaceId) {
+        let face = FilletObject::Topology(FilletBody::Target, EntityRef::Face(f));
+        FinishAccess(objects)
+            .finish_notify_face(k, face, NotifyOperation::PreEdit, Some(face), None, None)
+            .unwrap();
+    }
+
+    /// Whether the session's records are those a full seeding of the target leaves.
+    fn fully_seeded(objects: &SessionObjects<'_>) -> bool {
+        let serial = objects.target_serial;
+        let mut full = objects.notification_records.clone();
+        p3::seed_records(&mut full, objects.target, &|e| p3::topology_ref(serial, e));
+        full == objects.notification_records
+    }
+
+    /// The live objects of `b`, every kind a seeding visits (the B-rep's own record excluded).
+    fn live_objects(b: &Brep) -> usize {
+        b.regions().len()
+            + b.shells().len()
+            + b.faceuses().len()
+            + b.faces().len()
+            + b.loopuses().len()
+            + b.loops().len()
+            + b.edgeuses().len()
+            + b.edges().len()
+            + b.vertexuses().len()
+            + b.vertices().len()
+    }
+
+    /// A 60 x 40 x 20 box with its four upright edges rounded r 3 (10 faces): the finish's
+    /// seeding visits each object at most once, plus the B-rep's own record per face.
+    #[test]
+    fn a_merged_finish_seeds_each_object_once() {
+        let mut k = Kernel::default();
+        let mut body = create_box(&mut k, Point3::ZERO, 60.0, 40.0, 20.0).unwrap();
+        let upright: Vec<EdgeId> = p1::edges(&body, None)
+            .unwrap()
+            .into_iter()
+            .filter(|&e| {
+                let ends = edge::vertices(&body, e, None).unwrap();
+                let [Some(a), Some(b)] = ends[..] else {
+                    return false;
+                };
+                let (a, b) = (
+                    vertex::point(&body, a).unwrap(),
+                    vertex::point(&body, b).unwrap(),
+                );
+                (a.z - b.z).abs() > 1.0
+            })
+            .collect();
+        assert_eq!(upright.len(), 4);
+        let mut session = FilletSession::new(&mut k, &mut body).unwrap();
+        session
+            .prepare_constant_radius_edges(&mut k, &upright, 3.0, 1, 1, 1.0)
+            .unwrap();
+        k.work_counters.reset();
+        session.do_fillet(&mut k).unwrap();
+        let faces = p1::faces(session.objects.target, None).unwrap().len();
+        let objects = live_objects(session.objects.target);
+        let seeded = usize::try_from(k.work_counters.records_seeded()).unwrap();
+        println!("{faces} faces, {objects} objects: {seeded} seeded");
+        assert_eq!(faces, 10);
+        assert!(seeded >= faces, "{seeded} seeded for {faces} faces");
+        assert!(
+            seeded <= objects + faces,
+            "{seeded} seeded, at most {objects} objects and {faces} faces"
+        );
+    }
+
+    /// Between notifications the target gains a vertex, loses a record, keeps a changed one
+    /// and empties a slot: after each, the records are those a full seeding leaves, and a
+    /// notification after a gain visits the new object and the B-rep alone.
+    #[test]
+    fn each_notification_leaves_the_records_of_a_full_seeding() {
+        let mut k = Kernel::default();
+        let mut body = create_box(&mut k, Point3::ZERO, 10.0, 20.0, 30.0).unwrap();
+        let mut session = FilletSession::new(&mut k, &mut body).unwrap();
+        let objects = &mut session.objects;
+        let serial = objects.target_serial;
+        let key = |e| p3::topology_ref(serial, e).key;
+        let faces = p1::faces(objects.target, None).unwrap();
+        let face = |i: usize| faces[i % faces.len()];
+
+        notify(&mut k, objects, face(0));
+        assert!(fully_seeded(objects));
+
+        let v = objects
+            .target
+            .add_vertex_record(Vertex {
+                point: Point3::new(1.0, 2.0, 3.0),
+                tolerance: objects.target.tolerance(),
+                vertexuses: Vec::new(),
+                poly_vertex: None,
+            })
+            .unwrap();
+        k.work_counters.reset();
+        notify(&mut k, objects, face(1));
+        assert_eq!(k.work_counters.records_seeded(), 2);
+        assert!(objects
+            .notification_records
+            .contains_key(&key(EntityRef::Vertex(v))));
+        assert!(fully_seeded(objects));
+
+        objects
+            .notification_records
+            .remove(&key(EntityRef::Vertex(v)));
+        notify(&mut k, objects, face(2));
+        assert!(objects
+            .notification_records
+            .contains_key(&key(EntityRef::Vertex(v))));
+        assert!(fully_seeded(objects));
+
+        let kept = key(EntityRef::Face(face(0)));
+        objects
+            .notification_records
+            .get_mut(&kept)
+            .unwrap()
+            .set_all_flags(5);
+        notify(&mut k, objects, face(3));
+        assert_eq!(objects.notification_records[&kept].all_flags(), 5);
+        assert!(fully_seeded(objects));
+
+        objects.target.remove_vertex_record(v).unwrap();
+        notify(&mut k, objects, face(4));
+        assert!(fully_seeded(objects));
     }
 }
