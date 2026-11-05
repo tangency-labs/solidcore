@@ -3289,6 +3289,55 @@ mod tests {
     }
 
     #[test]
+    fn wr90_append_matches_sequential_add_for_all_float_classes() {
+        fn gap(length: f64) -> Gap {
+            Gap::from(VertexEdgeGap {
+                gap_3d: length,
+                ..VertexEdgeGap::new()
+            })
+        }
+        fn array(lengths: &[f64]) -> GapArray {
+            let mut array = GapArray::new();
+            for &length in lengths {
+                array.add(gap(length));
+            }
+            array
+        }
+        let cases: &[(&[f64], &[f64])] = &[
+            (&[1.0], &[f64::NAN, 3.0]),
+            (&[f64::NAN], &[1.0, 3.0]),
+            (&[], &[f64::NAN, 3.0]),
+            (&[1.0], &[f64::NAN, f64::NAN]),
+            (&[f64::NEG_INFINITY], &[f64::NAN, f64::INFINITY, 3.0]),
+            (&[f64::INFINITY], &[f64::NEG_INFINITY, f64::INFINITY]),
+            (&[-4.0], &[-2.0, -3.0]),
+            (&[], &[]),
+        ];
+        for &(dst, src) in cases {
+            let mut actual = array(dst);
+            actual.append(&array(src));
+            let lengths: Vec<_> = dst.iter().chain(src).copied().collect();
+            let expected = lengths.iter().copied().enumerate().fold(
+                None,
+                |max: Option<(usize, f64)>, (index, length)| match max {
+                    None => Some((index, length)),
+                    Some((_, current)) if length > current => Some((index, length)),
+                    _ => max,
+                },
+            );
+            assert_eq!(actual.len(), lengths.len());
+            for (index, length) in lengths.iter().enumerate() {
+                assert_eq!(actual.get(index).unwrap().length().to_bits(), length.to_bits());
+            }
+            assert_eq!(actual.max_gap_index(), expected.map(|(index, _)| index));
+            assert_eq!(
+                actual.max_gap_length().to_bits(),
+                expected.map_or(0.0, |(_, length)| length).to_bits()
+            );
+        }
+    }
+
+    #[test]
     fn wr90_gap_array_append_to_empty_array() {
         let g = |l: f64| {
             Gap::from(VertexEdgeGap {
