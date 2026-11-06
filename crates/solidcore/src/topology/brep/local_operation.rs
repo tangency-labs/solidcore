@@ -41,7 +41,7 @@ use crate::offset::offset_executive::p1::{OffsetExecutive, OffsetOperation};
 use crate::offset::offset_executive::p2::OffsetNotifications;
 use crate::query::brep::{calculate_bounding_box, BoundingBoxOptions};
 use crate::surface::implicit::AnalyticSupport;
-use crate::surface::surface::{Surface, SurfaceKind};
+use crate::surface::surface::Surface;
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2;
 use crate::topology::brep::p5;
@@ -400,7 +400,7 @@ fn same_axis(p: &Axis2Placement, q: &Axis2Placement) -> bool {
 mod exact {
     use crate::math::Vec3;
 
-    /// `a + b` as `(s, e)`: `s = fl(a + b)` and its rounding error (Knuth's TwoSum).
+    /// `a + b` as `(s, e)`: `s = fl(a + b)` and its rounding error (Knuth's `TwoSum`).
     fn two_sum(a: f64, b: f64) -> (f64, f64) {
         let s = a + b;
         let bb = s - a;
@@ -521,6 +521,7 @@ mod tests {
     use crate::math::{Point3, Vec3};
     use crate::primitive::api_primitives::create_box;
     use crate::surface::plane::Plane;
+    use crate::surface::surface::SurfaceKind;
 
     use crate::geom::attribute::{AttributeStore, ObjectKey};
     use crate::geom::object::ObjectRef;
@@ -948,6 +949,142 @@ mod tests {
                 );
                 assert_eq!(s.point, t.point);
                 assert!(t.tolerance >= s.tolerance);
+            }
+        }
+    }
+
+    /// A pyramid as the difftest unit's `Solids/pyramid.smb` is made: a rectangular base
+    /// and four triangular sides, each face a bicubic B-spline patch over `[0, 1]^2` (a
+    /// side's far row collapsed onto the apex), at the file's B-rep tolerance.
+    fn bicubic_pyramid(k: &mut Kernel) -> Brep {
+        use crate::geom::extent2d::Extent2d;
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::nurbs::srf_basic::Surface as Net;
+        use crate::topology::brep::p2::ArenaNotifyState;
+        use crate::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
+        let (x, y, h) = (
+            83.555_557_250_976_56,
+            87.111_114_501_953_12,
+            101.333_335_876_464_84,
+        );
+        let base = [
+            Point3::new(-x, -y, 0.0),
+            Point3::new(x, -y, 0.0),
+            Point3::new(x, y, 0.0),
+            Point3::new(-x, y, 0.0),
+        ];
+        let apex = Point3::new(0.0, 0.0, h);
+        let third = |a: Point3, b: Point3, i: u32| a + (b - a) * (f64::from(i) / 3.0);
+        // rows along the first side, columns towards the second
+        let patch = |row: &dyn Fn(u32) -> (Point3, Point3)| {
+            let net: Vec<Vec<CPoint>> = (0..4)
+                .map(|i| {
+                    let (a, b) = row(i);
+                    (0..4)
+                        .map(|j| {
+                            let p = third(a, b, j);
+                            CPoint::new(p.x, p.y, p.z, NOW)
+                        })
+                        .collect()
+                })
+                .collect();
+            let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+            let n = Net::new(net, 3, 3, knots.clone(), knots).unwrap();
+            Surface::from(BSplineSurface::from_gw_nurb(&n))
+        };
+        let mut surfaces = vec![patch(&|i| {
+            (third(base[0], base[1], i), third(base[3], base[2], i))
+        })];
+        for s in 0..4 {
+            let (a, b) = (base[s], base[(s + 1) % 4]);
+            surfaces.push(patch(&|i| (third(a, b, i), apex)));
+        }
+        let mut b = crate::topology::brep::p3::new_brep(
+            k,
+            crate::geom::tol::USE_DEFAULT,
+            crate::geom::tol::USE_DEFAULT,
+        )
+        .unwrap();
+        {
+            let mut state = ArenaNotifyState::new(&b);
+            let mut env = state.env(None);
+            let mut marks = crate::topology::topology_traverser::Marks::default();
+            let this_face = |f: FaceId| crate::topology::loopuse::notify_ref(EntityRef::Face(f));
+            let mut fenv = FaceBuildEnv {
+                env: &mut env,
+                marks: &mut marks,
+                this_face: &this_face,
+            };
+            let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+            for s in surfaces {
+                create_face_from_surface(k, &mut b, Some(s), &domain, &mut fenv).unwrap();
+            }
+        }
+        p2::set_tolerance(k, &mut b, 0.001_013_333_358_765, false, true).unwrap();
+        p5::stitch_and_orient(k, &mut b, &p5::StitchAndOrientOptions::default()).unwrap();
+        b.refresh_cached_topology();
+        b
+    }
+
+    /// gen0044 of the difftest unit: a pyramid's side replaced by the plane through its old
+    /// edges (its middle point and normal there, so the same plane to rounding). Nothing
+    /// moves, and the neighbours' new edges must still cross the extended surfaces'
+    /// boundaries: the body is a sound manifold solid with the input's volume, the same
+    /// faces, edges and vertices, and its B-spline surfaces' knot vectors are valid.
+    #[test]
+    fn a_pyramid_side_given_the_plane_through_its_edges_stays_sound() {
+        use crate::topology::brep::validation::{check_brep, CheckLevel};
+        let mut k = Kernel::default();
+        let mut b = bicubic_pyramid(&mut k);
+        let (input, _) = volume_and_manifold(&k, &mut b);
+        let before = (b.faces().len(), b.edges().len(), b.vertices().len());
+        let side = bp1::faces(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                let s = face_ops::surface(&b, f).unwrap().unwrap();
+                let uv = b.face(f).unwrap().uv_domain.evaluate(0.5, 0.5);
+                s.evaluate_normal(&k, uv, Side::Left, Side::Left).unwrap().z > 0.0
+            })
+            .unwrap();
+        let s = face_ops::surface(&b, side).unwrap().unwrap();
+        let uv = b.face(side).unwrap().uv_domain.evaluate(0.5, 0.5);
+        let p = s.evaluate_point(&k, uv).unwrap();
+        let n = s.evaluate_normal(&k, uv, Side::Left, Side::Left).unwrap();
+        let plane = Surface::from(Plane::from_normal(Vec3::new(p.x, p.y, p.z), n));
+        with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[side], vec![plane], notes)
+        })
+        .unwrap();
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold);
+        assert!((v - input).abs() <= 1e-9 * input, "{v} vs {input}");
+        assert_eq!(
+            (b.faces().len(), b.edges().len(), b.vertices().len()),
+            before
+        );
+        b.use_arena_naming().unwrap();
+        let lines = check_brep(&mut k, &mut b, CheckLevel::Level2)
+            .unwrap()
+            .lines();
+        assert!(lines.is_empty(), "{lines:?}");
+        for (_, f) in b.faces().iter() {
+            let net = match f.surface.as_ref().map(Surface::kind) {
+                Some(SurfaceKind::BSpline(s)) => s,
+                Some(SurfaceKind::Plane(p)) => p.base(),
+                _ => continue,
+            };
+            let n = net.gw_nurb().unwrap();
+            for (knots, degree) in [(n.u_knots(), n.p()), (n.v_knots(), n.q())] {
+                let ordered = knots.iter().zip(knots.iter().skip(1)).all(|(a, b)| a <= b);
+                assert!(ordered, "{knots:?}");
+                assert!(
+                    knots
+                        .chunk_by(|a, b| a == b)
+                        .all(|run| run.len() <= degree + 1),
+                    "{knots:?} degree {degree}"
+                );
             }
         }
     }

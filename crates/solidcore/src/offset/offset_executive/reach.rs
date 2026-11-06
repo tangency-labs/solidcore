@@ -685,12 +685,12 @@ mod tests {
 
     /// The box [0, 1] x [0, 2] x [0, 3] with its top (z = 3) moved to `top`: each face's
     /// (reach, move).
-    fn moved_top(top: Surface) -> [(f64, f64); 4] {
+    fn moved_top(top: &Surface) -> [(f64, f64); 4] {
         let k = Kernel::default();
         let mut kk = Kernel::default();
         let (mut brep, _) = box_faceuses(&mut kk, false);
         let (top_face, top_fu) = box_face(&brep, Vec3::Z);
-        let moved = [(top_face, &top)];
+        let moved = [(top_face, top)];
         let mut at = |n: Vec3| {
             let fu = if n == Vec3::Z {
                 top_fu
@@ -714,7 +714,7 @@ mod tests {
             Point3::new(0.0, 0.0, 3.0 + h),
             Vec3::Z,
         ));
-        let [top, front, left, bottom] = moved_top(top);
+        let [top, front, left, bottom] = moved_top(&top);
         for (reach, shift) in [top, front, left] {
             assert!((reach - h).abs() < 1e-12, "{reach}");
             assert!((shift - h).abs() < 1e-12, "{shift}");
@@ -735,7 +735,7 @@ mod tests {
             Point3::new(0.5, 1.0, 3.0),
             Vec3::new(0.0, -s, c),
         ));
-        let [top, front, left, bottom] = moved_top(top);
+        let [top, front, left, bottom] = moved_top(&top);
         let t = theta.tan();
         for (name, (reach, shift)) in [("top", top), ("front", front), ("left", left)] {
             assert!((reach - t).abs() < 1e-12, "{name} reach {reach}");
