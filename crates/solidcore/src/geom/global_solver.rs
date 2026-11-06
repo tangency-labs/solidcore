@@ -35,7 +35,7 @@
 //! | [`GlobalSolver::identical_solutions_in`]     | `SmGlobalSolver::IdenticalSolutions` (object domains read through a caller's resolver) |
 //!
 //! Deviations:
-//! - **Projected extrema bounds (#2840).** Sphere bounds use the same
+//! - **Projected extrema bounds.** Sphere bounds use the same
 //!   `|N x V x N|` metric as the point objective: physical projected distances
 //!   and radii scale by `N . N`, with tolerance added in objective units. A zero
 //!   normal or nonfinite bound cannot certify exclusion and does not cull.

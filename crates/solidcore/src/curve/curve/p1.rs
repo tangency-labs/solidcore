@@ -26,7 +26,7 @@
 //!   exactly. Projected extrema propagate solve errors rather than publishing
 //!   uncertified partial results.
 //! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
-//!   independently of the stationary-point search (#2840). Finding a stationary
+//!   independently of the stationary-point search. Finding a stationary
 //!   point does not establish that it beats the interval endpoints.
 //! - **Out-params.** Outputs are returned: [`SpanAccuracy`], [`CurveApproximation`]
 //!   (whose `achieved_tol` is `None` where upstream leaves `rdAchievedTol` unwritten,
