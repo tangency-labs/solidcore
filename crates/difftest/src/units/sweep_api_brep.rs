@@ -1517,6 +1517,38 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    /// The two default-kernel WR-471 fixtures build radius-5 spheres. Grade their
+    /// successful volume queries against the closed form, independently of C++.
+    #[test]
+    fn whole_sphere_fixture_volumes_meet_requested_accuracy() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/sweep.api_brep/wr471-rotational-whole-sphere-volume.json"
+        )))
+        .unwrap();
+        let cases = fixture["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 2);
+        let want = 4.0 * std::f64::consts::PI * 125.0 / 3.0;
+        for case in cases {
+            let input: Inputs = serde_json::from_value(case["inputs"].clone()).unwrap();
+            let observed = rust(&input).unwrap();
+            assert!(observed.error.is_none(), "{observed:?}");
+            assert!(observed.deferred.is_none(), "{observed:?}");
+            for (key, accuracy) in [
+                ("linear_volume", 1e-6),
+                ("rotational_volume_1e8", 1e-8),
+            ] {
+                assert_eq!(observed.ints[&format!("{key}_status")], vec![0]);
+                let volume = observed.values[key][0];
+                assert!(
+                    (volume - want).abs() <= accuracy * want,
+                    "{}: {key}={volume}, closed form={want}, accuracy={accuracy}",
+                    case["name"]
+                );
+            }
+        }
+    }
+
     /// The nightly fuzz00293 input (run 41040730716, HANG-43): a disc swept along a
     /// four-point path whose third point is at `z`.
     fn from_faces(z: f64) -> Inputs {
