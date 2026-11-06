@@ -65,6 +65,7 @@ use solidcore::topology::{Brep, FaceId, LoopId};
 use solidcore::{EntityRef, SolidError};
 
 use super::topology_vertexuse::{self as shared, BrepIn, SrfIn};
+use crate::cases::topology_entities::source_magnitudes_ok;
 use crate::runner::default_cases;
 use crate::util::trim_curve::put_trim_curve;
 use crate::{Case, CaseContext, CaseSource, HarnessError, Output, Rng, UnitDiff};
@@ -925,6 +926,12 @@ fn analytic_face(
 
 #[allow(clippy::too_many_lines)] // one arm per op
 fn run_rust_case(i: &Inputs) -> Result<Output, HarnessError> {
+    // a B-rep value above 1e150 is refused (HANG-29, fuzz case fuzz00127): building a face on such a
+    // surface does not return upstream and spins in the port for tens of seconds
+    let source = serde_json::to_value(&i.brep).map_err(|e| harness(e.to_string()))?;
+    if !source_magnitudes_ok(&source) {
+        return Err(harness("B-rep value above 1e150 (HANG-29)"));
+    }
     let (mut b, counts) = match own_brep(i)? {
         Ok(x) => x,
         Err(out) => return Ok(out),

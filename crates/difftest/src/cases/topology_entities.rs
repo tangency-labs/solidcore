@@ -115,3 +115,15 @@ pub fn block_magnitudes_ok(block: &[f64]) -> bool {
         a > MAX_BLOCK_MAGNITUDE && a < f64::MAX
     })
 }
+
+/// [`block_magnitudes_ok`] over every number of a case's B-rep source as JSON (the
+/// numbers its B-rep block is made of, besides small counts and flags).
+#[must_use]
+pub fn source_magnitudes_ok(source: &serde_json::Value) -> bool {
+    match source {
+        serde_json::Value::Number(n) => n.as_f64().is_none_or(|v| block_magnitudes_ok(&[v])),
+        serde_json::Value::Array(a) => a.iter().all(source_magnitudes_ok),
+        serde_json::Value::Object(o) => o.values().all(source_magnitudes_ok),
+        _ => true,
+    }
+}

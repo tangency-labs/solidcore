@@ -48,6 +48,7 @@ use solidcore::topology::{
 };
 use solidcore::{EntityRef, SolidError};
 
+use crate::cases::topology_entities::source_magnitudes_ok;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// The difftest runner.
@@ -1292,6 +1293,12 @@ fn rust_brep(
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
+    // a B-rep value above 1e150 is refused (HANG-29, fuzz case fuzz00086): building a face on such a
+    // surface does not return upstream and spins in the port for tens of seconds
+    let source = serde_json::to_value(&i.brep).map_err(|e| harness(e.to_string()))?;
+    if !source_magnitudes_ok(&source) {
+        return Err(harness("B-rep value above 1e150 (HANG-29)"));
+    }
     let (mut b, c) = match rust_brep(i)? {
         Ok(x) => x,
         Err(o) => return Ok(o),

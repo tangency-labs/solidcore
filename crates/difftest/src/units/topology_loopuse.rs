@@ -45,6 +45,7 @@ use solidcore::topology::{
 use solidcore::{EntityRef, SolidError};
 
 use super::topology_edgeuse_p1::{gen_brep, harness, sel, BrepIn, ImportTypes, FILES};
+use crate::cases::topology_entities::source_magnitudes_ok;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// The difftest runner.
@@ -290,6 +291,12 @@ fn own_brep(i: &Inputs) -> Result<Result<Brep, Output>, HarnessError> {
 
 /// The case's B-rep ([`own_brep`]) and resolved op.
 fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
+    // a B-rep value above 1e150 is refused (HANG-29, fuzz case fuzz00839): building a face on such a
+    // surface does not return upstream and spins in the port for tens of seconds
+    let source = serde_json::to_value(&i.brep).map_err(|e| harness(e.to_string()))?;
+    if !source_magnitudes_ok(&source) {
+        return Err(harness("B-rep value above 1e150 (HANG-29)"));
+    }
     let brep = match own_brep(i)? {
         Ok(b) => b,
         Err(o) => return Ok(Err(o)),
