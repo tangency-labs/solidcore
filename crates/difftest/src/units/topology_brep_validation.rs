@@ -1,10 +1,13 @@
-//! Differential checks of B-rep pointer reports and coincidence pairs against the
-//! unchanged c9c5979 C++ reference. The Rust side builds a [`BrepIn`] source itself
-//! ([`crate::own_builder`], and the shim's `SmBrepConstructor` sheet grids through
-//! [`sheet_grid`], in the shim's call order) and reads an `.smb` file with the Rust reader
-//! ([`crate::own_reader::brep_in_order`]), both under this runner's conventions. Post-call curve samples compare the
-//! reversal repairs and lazily created UV curves made by the checks themselves.
-use super::topology_edgeuse_p1::{brep_block_of, import_raw_with_types, path_of, BrepIn};
+//! Runner for unit `topology.brep_validation`: B-rep pointer reports and coincidence pairs.
+//! Ported from upstream `SmBrep::ValidatePointers` and `ContainsCoincidentTopology`;
+//! checked against its golden. The case builds a [`BrepIn`] source
+//! ([`crate::own_builder`], and upstream's `SmBrepConstructor` sheet grids through
+//! [`sheet_grid`]) or reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::brep_in_order`]), both under this runner's conventions. Post-call
+//! curve samples record the reversal repairs and lazily created UV curves made by the
+//! checks themselves.
+
+use super::topology_edgeuse_p1::BrepIn;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,7 +34,6 @@ use solidcore::topology::{
     Vertexuse, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, Kernel, SolidError};
-use solidcore_ffi::units::topology_brep_validation as ffi;
 
 /// Native B-rep validation runner.
 pub struct Runner;
@@ -146,136 +148,28 @@ impl Reader<'_> {
         self.pos = end;
         Ok(x)
     }
-    fn list(&mut self) -> Result<Vec<usize>, HarnessError> {
-        let n = self.count()?;
-        let values = self.slice(n)?;
-        values
-            .iter()
-            .map(|&x| {
-                if x.is_finite() && x >= 0.0 && x.fract() == 0.0 && x < usize::MAX as f64 {
-                    Ok(x as usize)
-                } else {
-                    Err(herr("bad list index"))
-                }
-            })
-            .collect()
-    }
-    fn owner(&mut self) -> Result<Option<ObjectRef>, HarnessError> {
-        let t = self.num()? as i64;
-        let i = self.num()? as i64;
-        if t < 0 {
-            return Ok(None);
+}
+/// The input contract of a case (upstream's validation entry points take these ranges): a
+/// check level of 0 to 4, boolean flags, a finite tolerance and value within 1e6, a
+/// mutation of 0 to 10 (none for a coincidence search) on an index up to 1e6, a link
+/// mutation (4, 5) with a value of 0, 1 or 2, a sheet grid of 1 to 512 faces and a shared
+/// boundary mode of 1 or 2.
+fn in_contract(i: &Inputs) -> bool {
+    let link = matches!(i.mutation, 4 | 5);
+    i.level <= 4
+        && i.tolerance.is_finite()
+        && i.tolerance.abs() <= 1e6
+        && i.value.is_finite()
+        && i.value.abs() <= 1e6
+        && i.mutation <= 10
+        && !(i.coincidence && i.mutation != 0)
+        && i.index as f64 <= 1e6
+        && (!link || (i.value.fract() == 0.0 && (0.0..=2.0).contains(&i.value)))
+        && match (i.shared_boundaries, i.grid_faces) {
+            (Some(mode), _) => mode == 1 || mode == 2,
+            (None, Some(count)) => (1..=512).contains(&count),
+            (None, None) => true,
         }
-        Ok(Some(notify_key(t, i as u32)))
-    }
-}
-fn args(i: &Inputs) -> [f64; 7] {
-    [
-        f64::from(i.level),
-        f64::from(i.walk),
-        i.tolerance,
-        f64::from(i.find_all),
-        f64::from(i.mutation),
-        i.index as f64,
-        i.value,
-    ]
-}
-/// The fixture path and block the shim builds the B-rep from: a sheet grid
-/// (`shared_boundaries`, then `grid_faces`, as the shim's dispatch reads them) or a file.
-fn native_input(i: &Inputs) -> Result<(String, Vec<f64>), HarnessError> {
-    if let Some(mode) = i.shared_boundaries {
-        return Ok((String::new(), vec![101.0, f64::from(mode)]));
-    }
-    if let Some(count) = i.grid_faces {
-        return Ok((String::new(), vec![100.0, count as f64]));
-    }
-    let path = path_of(Some(&i.brep))?;
-    let block = brep_block_of(Some(&i.brep), false, false)?;
-    Ok((path, block))
-}
-fn exported(i: &Inputs) -> Result<(String, Vec<f64>, Vec<f64>), HarnessError> {
-    let (path, block) = native_input(i)?;
-    let export = ffi::eval(0, &path, &block, args(i)).map_err(|e| herr(e.to_string()))?;
-    Ok((path, block, export))
-}
-/// The C++ side's operation: pointer validation (1) or the coincidence search (2).
-fn op(i: &Inputs) -> u8 {
-    if i.coincidence {
-        2
-    } else {
-        1
-    }
-}
-fn imported(export: &[f64]) -> Result<Brep, HarnessError> {
-    let mut rd = Reader {
-        data: export,
-        pos: 0,
-    };
-    if rd.num()? != 0.0 {
-        return Err(herr("native fixture failed"));
-    }
-    let n = rd.count()?;
-    let graph = rd.slice(n)?;
-    let (mut b, types) = import_raw_with_types(graph)?;
-    if (0..b.edges().len()).any(|e| types.inexact_curve(e).is_some())
-        || (0..b.faces().len()).any(|f| types.inexact_surface(f).is_some())
-    {
-        return Err(herr("validation fixture needs exact geometry import"));
-    }
-    b.set_face_list(
-        rd.list()?
-            .into_iter()
-            .map(|i| FaceId::from_index(i as u32))
-            .collect(),
-    )
-    .map_err(|e| herr(e.to_string()))?;
-    b.set_edge_list(
-        rd.list()?
-            .into_iter()
-            .map(|i| EdgeId::from_index(i as u32))
-            .collect(),
-    )
-    .map_err(|e| herr(e.to_string()))?;
-    b.set_vertex_list(
-        rd.list()?
-            .into_iter()
-            .map(|i| VertexId::from_index(i as u32))
-            .collect(),
-    )
-    .map_err(|e| herr(e.to_string()))?;
-    for index in 0..b.faces().len() {
-        let f = FaceId::from_index(index as u32);
-        let fu = rd.num()? as i64;
-        b.face_mut(f).map_err(|e| herr(e.to_string()))?.faceuse =
-            u32::try_from(fu).ok().map(FaceuseId::from_index);
-        let owner = rd.owner()?;
-        if let Some(s) = b
-            .face_mut(f)
-            .map_err(|e| herr(e.to_string()))?
-            .surface
-            .as_mut()
-        {
-            s.set_owner(owner);
-        }
-        b.sync_face_surface_tolerance(f)
-            .map_err(|e| herr(e.to_string()))?;
-    }
-    for index in 0..b.edges().len() {
-        let owner = rd.owner()?;
-        if let Some(c) = b
-            .edge_mut(EdgeId::from_index(index as u32))
-            .map_err(|e| herr(e.to_string()))?
-            .curve
-            .as_mut()
-        {
-            c.set_owner(owner, None);
-        }
-    }
-    b.set_naming(NamingScheme::Notify);
-    if rd.pos != export.len() {
-        return Err(herr("trailing export metadata"));
-    }
-    Ok(b)
 }
 fn own_face_owner(f: FaceId) -> ObjectRef {
     key(EntityRef::Face(f))
@@ -309,7 +203,7 @@ const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder
 /// ([`crate::own_reader::brep_in_order`]): native lists, face uses and geometry owners
 /// under [`CONVENTIONS`], `Notify` naming as [`imported`] sets it. A failed build is the
 /// shim's failed construction; a failed read is a Rust divergence, reported as an error.
-fn own_brep(i: &Inputs) -> Result<Option<Result<Brep, Output>>, HarnessError> {
+fn own_brep(i: &Inputs) -> Result<Result<Brep, Output>, HarnessError> {
     use crate::own_builder::{finish, in_new_brep, Built};
     let mut k = Kernel::default();
     // the sheet grids (`shared_boundaries` first, as the shim's dispatch reads it)
@@ -326,7 +220,7 @@ fn own_brep(i: &Inputs) -> Result<Option<Result<Brep, Output>>, HarnessError> {
         }
         None => crate::own_reader::brep_in_order(&mut k, &i.brep, false, false, &CONVENTIONS)?,
     };
-    Ok(Some(match built {
+    Ok(match built {
         Built::Brep(b) => {
             let mut b = *b;
             b.set_naming(NamingScheme::Notify);
@@ -339,7 +233,7 @@ fn own_brep(i: &Inputs) -> Result<Option<Result<Brep, Output>>, HarnessError> {
                 Output::rejected("native fixture construction failed")
             }
         })),
-    }))
+    })
 }
 fn orient(v: f64) -> OrientType {
     match v as u8 {
@@ -556,31 +450,17 @@ impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_validation"
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let (path, block, _) = exported(&i)?;
-        output(&ffi::eval(op(&i), &path, &block, args(&i)).map_err(|e| herr(e.to_string()))?)
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        // an input the FFI refuses is a harness error on both sides (PR #502's
-        // convention): the shim never runs it, so the Rust side must not either. Fuzz
-        // case fuzz00074 (`--seeds 24`) mutated `grid_faces` to 2^32: the FFI refuses a
-        // sheet grid of more than 512 faces for the C++ side, while this side's
-        // `sheet_grid` built faces until the 4 GiB fuzz address-space limit aborted the
-        // process. The checks see the same operation, block and arguments as `run_cpp`.
-        let (path, block) = native_input(&i)?;
-        ffi::validate(op(&i), &path, &block, args(&i)).map_err(|e| herr(e.to_string()))?;
+        // an input outside the contract is a harness error (PR #502's convention). Fuzz
+        // case fuzz00074 (`--seeds 24`) mutated `grid_faces` to 2^32, and `sheet_grid`
+        // built faces until the 4 GiB fuzz address-space limit aborted the process.
+        if !in_contract(&i) {
+            return Err(herr("invalid argument: invalid B-rep validation arguments"));
+        }
         let mut b = match own_brep(&i)? {
-            Some(Ok(b)) => b,
-            Some(Err(o)) => return Ok(o),
-            None => {
-                let (_, _, export) = exported(&i)?;
-                if export.first() != Some(&0.0) {
-                    return Ok(Output::rejected("native fixture construction failed"));
-                }
-                imported(&export)?
-            }
+            Ok(b) => b,
+            Err(o) => return Ok(o),
         };
         mutate(&mut b, &i)?;
         let kernel = Kernel::default();
@@ -1157,27 +1037,22 @@ mod tests {
     }
 
     /// Fuzz case `topology.brep_validation/fuzz00074` (`--fuzz 300 --seeds 24`): a sheet
-    /// grid of 2^32 faces. The FFI refuses more than 512 faces for the C++ side, and the
-    /// Rust side must be refused the same way instead of building faces until the
-    /// allocator aborts.
+    /// grid of 2^32 faces is refused instead of building faces until the allocator aborts.
     #[test]
-    fn huge_sheet_grid_is_refused_on_both_sides() {
+    fn huge_sheet_grid_is_refused() {
         for coincidence in [false, true] {
             let case = grid_case(4_294_967_296, coincidence);
-            let cpp = Runner.run_cpp(&case).unwrap_err().to_string();
             let rust = Runner.run_rust(&case).unwrap_err().to_string();
-            assert_eq!(cpp, "invalid argument: invalid B-rep validation arguments");
-            assert_eq!(rust, cpp);
+            assert_eq!(rust, "invalid argument: invalid B-rep validation arguments");
         }
     }
 
-    /// The largest sheet grid the FFI accepts still runs on both sides.
+    /// The largest sheet grid the contract accepts runs.
     #[test]
-    fn max_sheet_grid_runs_on_both_sides() {
-        let case = grid_case(512, false);
-        let cpp = Runner.run_cpp(&case).unwrap();
-        let rust = Runner.run_rust(&case).unwrap();
-        assert!(crate::compare(&cpp, &rust, &[]).mismatches.is_empty());
+    fn max_sheet_grid_runs() {
+        let rust = Runner.run_rust(&grid_case(512, false)).unwrap();
+        assert!(rust.error.is_none() && rust.rejected.is_none());
+        assert!(!rust.ints["geometry"].is_empty());
     }
 
     #[test]
@@ -1189,23 +1064,17 @@ mod tests {
                 source: crate::CaseSource::Inline,
                 inputs: serde_json::json!({"shared_boundaries": mode, "coincidence": true}),
             };
-            let cpp = Runner
-                .run_cpp(&case)
-                .expect("native shared-boundary fixture");
             let rust = Runner
                 .run_rust(&case)
                 .expect("Rust shared-boundary fixture");
-            for result in [&cpp, &rust] {
-                assert!(result.error.is_none());
-                assert!(result.rejected.is_none());
-                assert!(result.deferred.is_none());
-                assert!(result.ints["pairs"]
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .any(|p| p[0] == expected_type && p[2] == expected_type));
-            }
-            assert_eq!(cpp, rust);
+            assert!(rust.error.is_none());
+            assert!(rust.rejected.is_none());
+            assert!(rust.deferred.is_none());
+            assert!(rust.ints["pairs"]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|p| p[0] == expected_type && p[2] == expected_type));
         }
     }
 }
