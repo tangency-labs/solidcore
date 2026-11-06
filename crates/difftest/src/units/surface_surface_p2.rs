@@ -65,6 +65,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::contract::{self, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -1692,6 +1693,411 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The size bounds of surface and curve blocks.
+const LIMITS: Limits = Limits {
+    max_index: 128,
+    max_degree: 9,
+    max_coord: 1e6,
+};
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn fins(vs: &[f64]) -> bool {
+    vs.iter().all(|&v| fin(v))
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+fn vecs(vs: &[[f64; 3]], max: usize) -> bool {
+    vs.len() <= max && vs.iter().all(vec3)
+}
+
+fn nonzero3(v: &[f64; 3]) -> bool {
+    contract::nonzero3(v, LIMITS.max_coord)
+}
+
+fn positive(v: f64) -> bool {
+    fin(v) && v > 0.0
+}
+
+/// A finite pair `a ≤ b`.
+fn ordered([a, b]: [f64; 2]) -> bool {
+    fin(a) && fin(b) && a <= b
+}
+
+/// A finite domain `[umin, vmin, umax, vmax]` with `umin ≤ umax`, `vmin ≤ vmax`.
+fn domain(d: &[f64; 4]) -> bool {
+    contract::domain(d, LIMITS.max_coord)
+}
+
+/// The domain of a B-spline surface block: a form up to 11 and a surface as
+/// [`contract::surface_block`] takes it.
+fn bspline_block(b: &BssIn) -> Option<[f64; 4]> {
+    let s = srf(&b.srf).ok()?;
+    let blk = contract::surface_block(&s.net, s.p, s.q, &s.u, &s.v, &LIMITS)?;
+    (b.form <= 11).then_some(blk.dom)
+}
+
+/// The knot range of a curve as [`contract::curve_block`] takes it.
+fn curve_range(c: &CrvIn) -> Option<(f64, f64)> {
+    if !contract::curve_block(c.dim, &c.cpts, c.p, &c.u, &LIMITS) {
+        return None;
+    }
+    contract::clamped(&c.u, c.p)
+}
+
+/// An [`ordered`] interval `x < y` inside the curve's range.
+fn interval_in(c: &CrvIn, [x, y]: [f64; 2]) -> bool {
+    curve_range(c).is_some_and(|(a, b)| ordered([x, y]) && x >= a && y <= b && x < y)
+}
+
+/// Whether the cone between the boxes `s` and `c` is wider than 90 degrees: the grown other
+/// box contains the centre of this box.
+fn cone_wider_than_90(s: [[f64; 3]; 2], c: [[f64; 3]; 2]) -> bool {
+    let [s0, s1] = s;
+    let [c0, c1] = c;
+    (0..3).all(|k| {
+        let at = |v: [f64; 3]| v.get(k).copied().unwrap_or(f64::NAN);
+        let (s0, s1, c0, c1) = (at(s0), at(s1), at(c0), at(c1));
+        let half = (s1 - s0).abs() / 2.0;
+        let ctr = (s0 + s1) / 2.0;
+        ctr >= c0.min(c1) - half && ctr <= c0.max(c1) + half
+    })
+}
+
+/// Whether a revolution record keeps the contract: an orthonormal placement (to `1e-12`)
+/// within range, and a torus of radii in `[1e-3, 1e3]` with the minor below the major, or
+/// a cone of radii in `[0, 1e3]`, one of them in `[1e-3, 1e3]`, and a height in
+/// `[1e-3, 1e3]`.
+fn revolution_record(r: &RevIn) -> bool {
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let (x, y) = (r.x, r.y);
+    let [a, b, c] = r.r;
+    let sized = |v: f64| (1e-3..=1e3).contains(&v);
+    let radii = if r.cone {
+        a >= 0.0 && b >= 0.0 && a <= 1e3 && b <= 1e3 && (sized(a) || sized(b)) && sized(c)
+    } else {
+        sized(a) && sized(b) && b < a
+    };
+    vec3(&r.origin)
+        && vec3(&x)
+        && vec3(&y)
+        && (dot(x, x) - 1.0).abs() <= 1e-12
+        && (dot(y, y) - 1.0).abs() <= 1e-12
+        && dot(x, y).abs() <= 1e-12
+        && fins(&r.r)
+        && radii
+}
+
+/// Whether a static op's own data keep the contract (see [`keeps_contract`]).
+#[allow(clippy::too_many_lines)]
+fn static_ok(op: &OpIn) -> Option<bool> {
+    Some(match op {
+        OpIn::Lift2 { v } => v.len() == 7 && vecs(v, 7),
+        OpIn::Lift3 { v } => v.len() == 12 && vecs(v, 12),
+        OpIn::Geom { e } => e.len() == 9 && vecs(e, 9),
+        OpIn::ScaleStep { hu, hv, d, .. } => {
+            *hu <= 4 && *hv <= 4 && d.len() == (hu + 1) * (hv + 1) && vecs(d, d.len())
+        }
+        OpIn::PointType {
+            n,
+            duu,
+            dvv,
+            want_uu,
+            want_vv,
+            side_uu,
+        } => vecs(&[*n, *duu, *dvv], 3) && *side_uu <= 2 && (*want_uu || !*want_vv),
+        OpIn::DropVecs { du, dv, v } => vec3(du) && vec3(dv) && vecs(v, 16),
+        OpIn::ParamDelta { t, d } => vec3(t) && vec3(d),
+        OpIn::Merge { a, b } => a.len() <= 64 && b.len() <= 64 && fins(a) && fins(b),
+        OpIn::MapUv { uv, orient, dir } => fins(uv) && *orient <= 2 && fins(dir),
+        OpIn::IsEven { i } => f64::from(*i).abs() <= 1e6,
+        OpIn::Breaks { ivl, b } => ordered(*ivl) && (1..=64).contains(&b.len()) && fins(b),
+        OpIn::Limits { p } => vec3(p),
+        OpIn::DerivAssert {
+            samples,
+            tt,
+            dir_angles,
+            tan,
+            angles,
+            vector,
+            ct,
+            bet,
+            radii,
+            ..
+        } => {
+            *samples <= 1000
+                && *tt <= 8
+                && fins(dir_angles)
+                && fins(tan)
+                && fins(angles)
+                && vec3(vector)
+                && *ct <= 4
+                && *bet <= 3
+                && fins(radii)
+        }
+        OpIn::Cross { sets } => cross_sets(sets),
+        OpIn::CrossSkin {
+            sets,
+            params,
+            rail1,
+            rail2,
+            tol,
+        } => {
+            cross_sets(sets)
+                && params.len() <= 64
+                && fins(params)
+                && curve_range(rail1).is_some()
+                && rail2.as_ref().is_none_or(|r| curve_range(r).is_some())
+                && fin(*tol)
+                && *tol >= 0.0
+        }
+        OpIn::Dcf {
+            status,
+            from,
+            path,
+            dom,
+            ivl,
+            tols,
+            flags,
+            max_drop,
+            closed,
+            closure,
+            sing,
+            poles,
+            normals,
+            poly,
+            knots,
+            curves,
+            ..
+        } => {
+            (0..=5000).contains(status)
+                && *from <= 3
+                && *path <= 24
+                && domain(dom)
+                && ordered(*ivl)
+                && fins(tols)
+                && flags.iter().all(|&f| f <= 2)
+                && fin(*max_drop)
+                && closed.iter().all(|&c| c <= 2)
+                && *closure <= 9
+                && sing.iter().all(|&s| s <= 15)
+                && vecs(poles, 8)
+                && vecs(normals, 8)
+                && vecs(poly, 16)
+                && knots.len() <= 16
+                && fins(knots)
+                && curves.len() <= 4
+                && curves.iter().all(|c| curve_range(c).is_some())
+        }
+        OpIn::CcLocal {
+            c1,
+            i1,
+            k1,
+            c2,
+            i2,
+            k2,
+            sop,
+            tol,
+        } => {
+            interval_in(c1, *i1)
+                && interval_in(c2, *i2)
+                && k1.iter().chain(k2).all(|&k| k <= 13)
+                && (*sop == 3 || *sop == 4)
+                && positive(*tol)
+        }
+        OpIn::IsectSplit { c, ivl, pp, pn, s } => {
+            interval_in(c, *ivl) && vec3(pp) && nonzero3(pn) && s.len() <= 32 && fins(s)
+        }
+        OpIn::IsectCurveSplit {
+            c,
+            ivl,
+            lp,
+            lv,
+            livl,
+            zero,
+            s,
+        } => {
+            interval_in(c, *ivl)
+                && vec3(lp)
+                && nonzero3(lv)
+                && ordered(*livl)
+                && livl[1] - livl[0] >= 1e-6
+                && positive(*zero)
+                && s.len() <= 32
+                && fins(s)
+        }
+        OpIn::Lsi {
+            bbox,
+            lp,
+            lv,
+            ivl,
+            tol,
+            ..
+        } => {
+            vecs(bbox, 2)
+                && vec3(lp)
+                && nonzero3(lv)
+                && ordered(ivl.unwrap_or([0.0, 1.0]))
+                && fin(*tol)
+                && *tol >= 0.0
+        }
+        OpIn::CsPerpen {
+            caux,
+            cbox,
+            saux,
+            sbox,
+        } => {
+            *caux <= 8
+                && vecs(cbox, 2)
+                && *saux <= 8
+                && vecs(sbox, 2)
+                && (!(*saux == 3 || *saux == 4) || cone_wider_than_90(*sbox, *cbox))
+        }
+        OpIn::Plane3d { curves, tol } => {
+            curves.len() <= 8
+                && curves.iter().all(|c| curve_range(c).is_some())
+                && positive(*tol)
+        }
+        OpIn::ReadDb {
+            ty, version, db, ..
+        } => {
+            (0..=1_000_000).contains(ty)
+                && !((15000..=15500).contains(ty) && *ty != 15002)
+                && *version <= 100
+                && db_bytes(db).is_ok_and(|b| b.len() <= 1 << 20)
+        }
+        _ => return None,
+    })
+}
+
+/// Whether cross-section sets keep the contract: up to 32 vectors in each.
+fn cross_sets(s: &CrossSets) -> bool {
+    vecs(&s.pos, 32) && vecs(&s.d1, 32) && s.opt.iter().flatten().all(|v| vecs(v, 32))
+}
+
+/// Whether a member op's data keep the contract on a surface of domain `dom` (`None` for
+/// the base class or a revolution record); `None` for a static op.
+fn surface_op_ok(op: &OpIn, dom: Option<[f64; 4]>) -> Option<bool> {
+    let sized = |d: &[f64; 4]| domain(d) && d[2] - d[0] >= 1e-6 && d[3] - d[1] >= 1e-6;
+    Some(match op {
+        OpIn::Eval {
+            uv, hu, hv, upper, ..
+        } => fins(uv) && *hu <= 4 && *hv <= 4 && (!*upper || hu == hv),
+        OpIn::EvalPt { uv } | OpIn::ConvertUv { uv } => fins(uv),
+        OpIn::Queries | OpIn::Swap | OpIn::MaxAnal | OpIn::Copy | OpIn::CopyAnal => true,
+        OpIn::Knots { dir, ivl } => *dir <= 1 && ordered(ivl.unwrap_or([0.0, 1.0])),
+        OpIn::Parallel { v } => vec3(v),
+        OpIn::Reverse { dir } => *dir <= 1,
+        OpIn::Reparam { dom: d } | OpIn::Trim { dom: d } | OpIn::AdjustStep { dom: d } => {
+            sized(d)
+        }
+        OpIn::Transform {
+            origin,
+            x,
+            y,
+            scale,
+        } => {
+            let cross = [
+                x[1] * y[2] - x[2] * y[1],
+                x[2] * y[0] - x[0] * y[2],
+                x[0] * y[1] - x[1] * y[0],
+            ];
+            let s = scale.unwrap_or([1.0; 3]);
+            vec3(origin)
+                && nonzero3(x)
+                && nonzero3(y)
+                && contract::len_sq(cross) >= 1e-6
+                && vec3(&s)
+                && s.iter().all(|c| c.abs() >= 1e-3)
+        }
+        OpIn::Split { t, dir } => {
+            let inside = dom.is_none_or(|d| {
+                let (a, b) = if *dir == 0 { (d[0], d[2]) } else { (d[1], d[3]) };
+                *t > a && *t < b
+            });
+            fin(*t) && *dir <= 1 && inside
+        }
+        OpIn::StepInv { dom: d, p, tol, guess } => {
+            domain(d) && vec3(p) && positive(*tol) && fins(&guess.unwrap_or([0.0, 0.0]))
+        }
+        OpIn::DropFast { dom: d, p } => domain(d) && vec3(p),
+        OpIn::SEval {
+            ctor,
+            uv,
+            dir,
+            steps,
+        } => {
+            dom.is_some()
+                && *ctor <= 2
+                && fins(uv)
+                && vec3(dir)
+                && steps.len() <= 32
+                && steps.iter().all(|[k, a, b, c]| {
+                    k.fract() == 0.0 && (0.0..=3.0).contains(k) && fins(&[*a, *b, *c])
+                })
+        }
+        OpIn::Gssi {
+            dom: d,
+            other,
+            other_dom,
+            tol,
+            translate,
+        } => {
+            dom.is_some()
+                && domain(d)
+                && bspline_block(other).is_some()
+                && domain(other_dom)
+                && tol.is_none_or(positive)
+                && vec3(&translate.unwrap_or([0.0; 3]))
+        }
+        _ => return None,
+    })
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_p2.rs`, `validate`): a static op
+/// without a surface, or a member op on the base class, a B-spline surface
+/// ([`bspline_block`]: n, m up to 128, degree up to 9) or a [`revolution_record`] (only
+/// `step_inv`, `eval_pt` and `convert_uv`); finite values, enumerators, counts and
+/// orders in range, ordered intervals and domains (of sides at least `1e-6` where
+/// upstream reparameterises, trims or adjusts), non-zero and non-parallel axes, scales
+/// of at least `1e-3`, split parameters inside the domain, positive tolerances, B-spline
+/// curves ([`contract::curve_block`]) with intervals inside their range, and the
+/// combinations upstream does not dereference null pointers in (`point_type` asks for
+/// the `v` side only with the `u` side; `cs_perpen` with a Bezier surface node only when
+/// the cone between the boxes is wider than 90 degrees; `breaks` needs a break; `s_eval`
+/// and `gssi` need a B-spline; `cc_local` minimises or maximises).
+fn keeps_contract(i: &Inputs) -> bool {
+    let Some(t) = &i.this else {
+        return static_ok(&i.op).unwrap_or(false);
+    };
+    let dom = if t.base {
+        None
+    } else if let Some(r) = &t.rev {
+        let member = matches!(
+            i.op,
+            OpIn::StepInv { .. } | OpIn::EvalPt { .. } | OpIn::ConvertUv { .. }
+        );
+        if !(member && revolution_record(r)) {
+            return false;
+        }
+        None
+    } else {
+        let Some(d) = t.bss.as_ref().and_then(bspline_block) else {
+            return false;
+        };
+        Some(d)
+    };
+    surface_op_ok(&i.op, dom).unwrap_or(false)
+}
+
 // ---- generated cases ----------------------------------------------------------------
 
 fn gen_knots(rng: &mut Rng, p: usize, n: usize) -> Vec<f64> {
@@ -2437,7 +2843,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        for _ in 0..64 {
+            let i = gen_case(rng);
+            if keeps_contract(&i) {
+                return serde_json::to_value(i).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -2500,6 +2912,9 @@ mod tests {
         for seed in 0..2000u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
             let i = gen_case(&mut rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             let op = format!("{:?}", i.op);
             let op = op.split(|c: char| !c.is_alphanumeric()).next().unwrap_or_default();
             let base = i.this.as_ref().is_some_and(|t| t.base);
