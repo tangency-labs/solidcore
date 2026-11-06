@@ -3209,6 +3209,127 @@ mod tests {
         assert!(lin_pos.x_axis().dot(lin_pos.y_axis()).abs() < 1e-12);
     }
 
+    /// #2539's near-line ellipse as the part's last cut leaves it: a slanted face meets a
+    /// notch cylinder of radius 8 whose axis it nearly holds, in an ellipse of radii 1.8e7
+    /// and 8 over 1.3e-4 degrees (SolidCraft's `periph_case_R` minus `t24`; its data as the
+    /// cut made them), with its NURB's middle control point moved by `moved` across the
+    /// line (along y, the ellipse's minor axis).
+    fn near_line_ellipse(k: &Kernel, moved: f64) -> Ellipse {
+        let w = |x: f64, y: f64, z: f64, w: f64| crate::nurbs::math::CPoint { x, y, z, w };
+        let mut pw = [
+            w(
+                13.253602627358246,
+                1.4999999999963078,
+                -16.00000000516967,
+                0.999999999999005,
+            ),
+            w(
+                14.619122958128635,
+                1.4999999999894964,
+                -35.49973670088171,
+                0.9999999999989054,
+            ),
+            w(
+                15.984680084201354,
+                1.499999999965369,
+                -54.99999883617046,
+                1.0,
+            ),
+        ];
+        pw[1].y += moved * pw[1].w;
+        let t = 0.4545515805799034;
+        let nurb = BSplineCurve::from_data(3, 2, 5, 2, &pw, &[t, t, t, 1.0, 1.0, 1.0]).unwrap();
+        Ellipse::new(
+            k,
+            Point3::new(12.307600253960118, -6.499999999999879, -2.4910124205052853),
+            Vec3::new(
+                -0.0698565549801471,
+                2.2800287367674085e-15,
+                0.997557046853114,
+            ),
+            Vec3::new(
+                1.1061963785363063e-13,
+                1.0000000000000002,
+                5.460818600824158e-15,
+            ),
+            Extent1d::from_min_max(90.00004337355625, 90.00016859157368),
+            17888859.871344022,
+            8.0,
+            &EllipseOptions {
+                nurb: Some(&nurb),
+                ..EllipseOptions::default()
+            },
+        )
+        .unwrap()
+    }
+
+    /// #2539 (WR-741): the near-line ellipse's NURB is exact, but its analytic form is
+    /// evaluated to about `rx` times an ulp of its angle. At one of the check's samples its
+    /// NURB and STEP points lie farther apart than upstream's `100 SM_EFF_ZERO (1 + |p|)`
+    /// (4.6e-9 against 1.7e-9 at its start), within the rounding the evaluation carries,
+    /// and the check passes it; moved 1e-3 off the line, it is refused. An ordinary ellipse
+    /// (radii 8 and 5) whose NURB has a control point moved 1e-8, about 5e-9 off the curve,
+    /// is still refused: the rounding is 2.5e-14 there.
+    #[test]
+    fn a_near_line_ellipse_passes_with_the_rounding_its_radii_carry() {
+        let k = kernel();
+        let mut e = near_line_ellipse(&k, 0.0);
+        let beyond_upstream = (0..5).any(|ii| {
+            let step_t = e.anal_domain.evaluate(f64::from(ii) / 4.0);
+            let nurb_t = e
+                .polar
+                .convert_to_nurbs_parameter_or_written(&k, &e, step_t, 0.0)
+                .unwrap()
+                .unwrap();
+            let p = e.base.evaluate_point(nurb_t).unwrap();
+            (p - e.step_point(step_t)).length() > EFF_ZERO * 100.0 * (1.0 + p.max_dimension())
+        });
+        assert!(beyond_upstream, "upstream's tolerance passes it");
+        assert!(e
+            .assert_valid(&k, None, false, ObjectKey(0), ObjectKey(0))
+            .unwrap());
+        // The same ellipse with its NURB moved 1e-3 off the line at its middle control point
+        // (about 5e-4 off the curve, far beyond the 5.6e-8 the rounding allows) is refused.
+        assert!(
+            !near_line_ellipse(&k, 1e-3)
+                .assert_valid(&k, None, false, ObjectKey(0), ObjectKey(0))
+                .unwrap(),
+            "a near-line ellipse whose NURB is moved 1e-3"
+        );
+
+        let (o, x, y) = (
+            Point3::new(1.0, 2.0, 3.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let arc = Extent1d::from_min_max(0.0, 90.0);
+        let exact = Ellipse::new(&k, o, x, y, arc, 8.0, 5.0, &EllipseOptions::default()).unwrap();
+        let made = exact.base.nurb.as_ref().unwrap();
+        let mut pw = made.cpts().to_vec();
+        pw[1].z += 1e-8 * pw[1].w;
+        let off = BSplineCurve::from_data(3, made.n(), made.m(), made.degree(), &pw, made.knots())
+            .unwrap();
+        let mut e = Ellipse::new(
+            &k,
+            o,
+            x,
+            y,
+            arc,
+            8.0,
+            5.0,
+            &EllipseOptions {
+                nurb: Some(&off),
+                ..EllipseOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            !e.assert_valid(&k, None, false, ObjectKey(0), ObjectKey(0))
+                .unwrap(),
+            "an ordinary ellipse whose NURB is moved 1e-8"
+        );
+    }
+
     /// The trimmed arc of the fork's capi test `scenario_ellipse_trimmed_just_short_of_its_seam`
     /// (tangency-labs/smlib 4e0d0e8): radii 0.5 and sqrt(0.5) over 313.53 to 360 degrees,
     /// trimmed 2.57e-8 of its NURBS parameter (1.17e-6 degrees) short of its end. Returns
