@@ -616,7 +616,10 @@ impl OffsetExecutive {
     /// faces staying where they are), and one offset distance, so that the meetings cross
     /// the extended surface's boundary rather than touch it. In a local operation, for its
     /// neighbours' new surfaces to meet its own ([`super::reach::local_extension_reach`]),
-    /// and the largest move beside it.
+    /// and the largest move beside it, and at least the input body's tolerance (the
+    /// offset body takes it): a new edge must cross each neighbouring surface's boundary,
+    /// not sit on it, and the mate and the intersection identify points within that
+    /// tolerance, so a shorter crossing is indistinguishable from touching the boundary.
     ///
     /// # Errors
     ///
@@ -636,7 +639,8 @@ impl OffsetExecutive {
         // (a tolerance-sized margin is below what an extension can certify). A face with
         // no neighbour meets no offset and is not extended. A local operation's faces move to
         // surfaces of their own, and the move takes the offset's place: the margin is the
-        // reach of the new surfaces' meetings and the largest move beside the face.
+        // reach of the new surfaces' meetings and the largest move beside the face, and
+        // at least the body's tolerance.
         let reach = if self.local_faces.is_empty() {
             super::reach::extension_reach(
                 kernel,
@@ -666,7 +670,13 @@ impl OffsetExecutive {
                 &moved,
                 self.tangency_tol_radians,
             )?
-            .map_or(0.0, |(reach, shift)| reach + shift)
+            // A new edge must cross each neighbouring surface's boundary, not sit on it:
+            // the mate and the intersection identify points within the body's tolerance,
+            // so a crossing shorter than that is indistinguishable from touching the
+            // boundary, and the extension reaches at least that far. With nothing moved
+            // beside the face (a face given the plane through its own edges), this floor
+            // is the only margin (the offset branch's is the offset's size).
+            .map_or(0.0, |(reach, shift)| (reach + shift).max(original.tolerance()))
         };
         self.extension_reaches.insert(face, reach);
         let (primary, mate) = crate::topology::face::p2::faceuses(original, face)?;
