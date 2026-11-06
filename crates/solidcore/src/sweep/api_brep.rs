@@ -77,6 +77,7 @@
 //!   [`create_curve_sweep_with_placements`], so [`create_curve_sweep`] keeps its
 //!   signature and does no extra work; the fork's `bProfileAtPathStart` is
 //!   [`SweepOptions::profile_at_path_start`] (WR-522), off by default.
+//! - Cancellation: a sweep under a fired cancel token (#2136, #2372) returns `Cancelled`, not `Ok`.
 
 use crate::curve::curve::p2::CurveKind;
 use crate::curve::curve::Curve;
@@ -99,6 +100,7 @@ use crate::topology::brep::p1::is_live_topology_member;
 use crate::topology::{Brep, EdgeId, FaceId, VertexId};
 
 const OP_COPY: &str = "sweep::api_brep::copy_curves_for_consuming_sweep";
+const OP_SWEEP: &str = "sweep::api_brep";
 const OP_PIPE: &str = "sweep::api_brep::create_pipe_sweep";
 const OP_PLANAR_PATH: &str = "sweep::api_brep::create_sweep_along_planar_path";
 const OP_CURVE_SWEEP: &str = "sweep::api_brep::create_curve_sweep";
@@ -131,7 +133,7 @@ pub enum TaperExtrude {
 }
 
 /// A swept solid and its faces (the outputs of the curve sweeps).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct CurveSweep {
     /// `rpResult`: the swept solid.
     pub brep: Brep,
@@ -145,7 +147,7 @@ pub struct CurveSweep {
 
 /// A curve sweep and where it placed the profile (the outputs of
 /// [`create_curve_sweep_with_placements`]; the SolidCraft fork's `pOptPlacements`).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PlacedCurveSweep {
     /// The swept solid and its faces, as [`create_curve_sweep`] returns them.
     pub sweep: CurveSweep,
@@ -191,6 +193,7 @@ pub fn create_linear_sweep(
     sweep_dist: f64,
     cap_ends: bool,
 ) -> Result<Brep> {
+    crate::profile::profile_scope!(k, "sweep::linear");
     // Sweep copies of the inputs: CreateLinearSweep consumes the curves.
     let curve_copies = copy_curves_for_consuming_sweep(k, curves_to_sweep)?;
 
@@ -224,6 +227,7 @@ pub fn create_rotational_sweep(
     angle_deg: f64,
     cap_ends: bool,
 ) -> Result<Brep> {
+    crate::profile::profile_scope!(k, "sweep::rotational");
     // Sweep copies of the inputs: CreateRotationalSweep consumes the curves.
     let curve_copies = copy_curves_for_consuming_sweep(k, curves_to_sweep)?;
 
@@ -302,6 +306,7 @@ pub fn create_pipe_sweep(
     path_curve: Option<&Curve>,
     cap_ends: bool,
 ) -> Result<Brep> {
+    crate::profile::profile_scope!(k, "sweep::pipe");
     let Some(path_curve) = path_curve else {
         return Err(SolidError::invalid_input(OP_PIPE, "no path curve"));
     };
@@ -402,6 +407,7 @@ pub fn create_curve_sweep(
     scale_curve: Option<&Curve>,
     options: Option<&SweepOptions>,
 ) -> Result<CurveSweep> {
+    crate::profile::profile_scope!(k, "sweep::curve");
     let Some(path_curve) = path_curve.filter(|_| !profile_curves.is_empty()) else {
         return Err(SolidError::invalid_input(
             OP_CURVE_SWEEP,
@@ -936,11 +942,15 @@ fn build(
     k: &mut Kernel,
     body: impl FnOnce(&mut PrimitiveCreation, &mut PrimitiveModel<'_>) -> Result<()>,
 ) -> Result<Brep> {
-    PrimitiveModel::build_new(k, body).map(|(mut brep, ())| {
+    let brep = PrimitiveModel::build_new(k, body).map(|(mut brep, ())| {
         // (not upstream: the port's cached topology fields, true for the caller)
         brep.refresh_cached_topology();
         brep
-    })
+    })?;
+    // (not upstream, #2136 / #2372: a cancel a status-ignoring helper absorbed still
+    // ends the sweep as `Cancelled`, never `Ok`)
+    k.check_cancelled(OP_SWEEP)?;
+    Ok(brep)
 }
 
 /// The start, side and end faces of a curve sweep.
@@ -967,6 +977,8 @@ fn curve_sweep_with<R>(
         })?;
     // (not upstream: the port's cached topology fields, true for the caller)
     brep.refresh_cached_topology();
+    // (not upstream, #2136 / #2372: as in `build`)
+    k.check_cancelled(OP_SWEEP)?;
     Ok((
         CurveSweep {
             brep,
@@ -1545,11 +1557,12 @@ mod tests {
         assert!((area - want).abs() <= 1e-6 * want, "{area} vs {want}");
     }
 
-    /// The volume of `wr471_whole_sphere`, 4/3 pi 5^3. `brep_volume` fails with
-    /// `mass::integrator` `SM_ERR` on this face, and on the whole revolved sphere the same
-    /// profile gives with the flag off, so it is not this flag's (see the finding).
+    /// The volume of `wr471_whole_sphere`, 4/3 pi 5^3. WR-472's existing body-length error
+    /// scale converges on the face at 1e-8 and 1e-10. Without it the default integrator
+    /// converges at 1e-8 since #2890 (523.5987756272146, 5.5e-11 relative; upstream's
+    /// `SM_ERR` before) and still fails at 1e-10 (its step control: upstream's `SM_ERR`,
+    /// named by its cause). This is separate from WR-471's placement of the sphere's poles.
     #[test]
-    #[ignore = "plan/findings/mass.integrator--whole-revolved-sphere-volume-fails.md"]
     fn wr471_whole_sphere_volume() {
         use crate::geom::attribute::{AttributeStore, ObjectKey};
         use crate::mass::integrator::properties::{brep_volume, PropertyAttributes};
@@ -1559,9 +1572,32 @@ mod tests {
             store: &store,
             key_of: &key_of,
         };
-        let (k, mut b) = wr471_whole_sphere();
-        let volume = brep_volume(&k, &mut b, 1e-8, &attributes).unwrap();
-        let want = 4.0 / 3.0 * std::f64::consts::PI * 125.0;
-        assert!((volume - want).abs() <= 1e-6 * want, "{volume} vs {want}");
+        for accuracy in [1e-8, 1e-10] {
+            for scaled in [false, true] {
+                let (mut k, mut b) = wr471_whole_sphere();
+                k.fixes.precise_properties_body_length_scale = scaled;
+                let result = brep_volume(&k, &mut b, accuracy, &attributes);
+                if scaled || accuracy >= 1e-8 {
+                    let volume = result.unwrap();
+                    let want = 4.0 / 3.0 * std::f64::consts::PI * 125.0;
+                    assert!(
+                        (volume - want).abs() <= accuracy * want,
+                        "accuracy={accuracy}: {volume} vs {want}"
+                    );
+                } else {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(SolidError::Upstream {
+                                operation: crate::mass::integrator::OP_STEP_CONTROL,
+                                code: crate::error::SM_ERR,
+                                ..
+                            })
+                        ),
+                        "accuracy={accuracy}: {result:?}"
+                    );
+                }
+            }
+        }
     }
 }

@@ -32,7 +32,7 @@
 //! | [`series::V3`], [`series::VSer`] and its methods | `sm_V3`, `sm_V3From`, `sm_VSer`, `sm_VSerConst`, `sm_VSerAdd`, `sm_VSerSub`, `sm_VSerTimes`, `sm_VSerDot`, `sm_VSerCross` |
 //! | [`form::bern_mul`], [`form::bern_pow`] | `sm_BernMul`, `sm_BernPow`                       |
 //! | [`form::GnSectionForm`], [`form::gn_form`] | `sm_GnSectionForm`, `sm_GnForm`              |
-//! | [`form::hermite_points`], [`form::hermite_knots`] | `sm_HermitePoints`, `sm_HermiteKnots` |
+//! | [`form::hermite_points_sided`], [`form::hermite_knots`] | `sm_HermitePoints`, `sm_HermiteKnots` |
 //! | [`station::Partials`], [`station::Nurbs`], [`station::Nurbs::of`] | `sm_Partials`, `sm_Nurbs`, `sm_NurbsOf` |
 //! | [`station::span`], [`station::ders_basis`], [`station::nurbs_partials`] | `sm_Span`, `sm_DersBasis`, `sm_NurbsPartials` |
 //! | [`station::as_b_spline`], [`station::surface_partials`] | `IsKindOf(SmBSplineSurface_TYPE)` and the cast, `sm_SurfacePartials` |
@@ -40,9 +40,10 @@
 //! | [`station::GnStation`], [`station::leader_series`], [`station::gn_solve_station`], [`station::gn_solve_station_counted`] | `sm_GnStation`, `sm_LeaderSeries`, `sm_GnSolveStation` (its `pR` and `lSteps`, 014f66f) |
 //! | [`definition::T2`], [`definition::t2_pow`], [`definition::Tv`], [`definition::bern_taylor`], [`definition::StationMemo`], [`definition::evaluate_definition`] | `sm_T2`, `sm_T2Pow`, `sm_TV`, `sm_BernTaylor`, `sm_StationMemo`, `SmProceduralBlend::EvaluateDefinition` (014f66f, c6d9b9a, 0136260) |
 //! | [`section::GN_MAX_ORDER`], [`section::GN_DEFAULT_THUMBWEIGHT`], [`section::GN_THUMBWEIGHT_EQUAL_AREA`] | `SM_GN_MAX_ORDER`, `SM_GN_DEFAULT_THUMBWEIGHT`, `SM_GN_THUMBWEIGHT_EQUAL_AREA` (6148773 = 1947a45) |
-//! | [`section::GnSectionFsg::equal_area_thumbweight`], [`section::GnSectionFsg::thumbweight_at`], `gn_equal_area_w`, `gn_station_thumbweight` (private) | `EqualAreaThumbweight` (6148773 = 1947a45; b9d6a72, 7102bc5), `ThumbweightAt`, `sm_GnEqualAreaW`, `sm_GnStationThumbweight` (7102bc5) |
+//! | [`section::GnSectionFsg::equal_area_thumbweight`], [`section::GnSectionFsg::thumbweight_at`], `gn_equal_area_w`, `gn_equal_area_w_solve`, `gn_station_thumbweight` (private) | `EqualAreaThumbweight` (6148773 = 1947a45; b9d6a72, 7102bc5), `ThumbweightAt`, `sm_GnEqualAreaW` (memoized, b8ec238), `sm_GnEqualAreaWSolve` (b8ec238), `sm_GnStationThumbweight` (7102bc5) |
+//! | [`section::ThumbweightMemo`], [`section::OperationScope`] | `t_sWMemo` and `SM_GN_W_MEMO`, `SmGnSectionFSG::OperationScope` and `t_lOperationScopes` (b8ec238, smlib#109) |
 //! | [`tay::Tay`], [`tay::Ring`], [`tay::TayScalar`], [`tay::tay_sqrt`], [`tay::tay_sin_cos`], [`tay::pow_n`], [`tay::wide`], [`tay::acos_clamped`] | `sm_Tay`, `sm_TayOf`, its operators, the templates' `Z` and `S`, `sm_TaySqrt`, `sm_TaySinCos`, `sm_PowN`, `sm_Wide`, `sm_Acos`, `sm_SinCos` (7102bc5) |
-//! | [`tay::gn_area_integrand`], [`tay::gn_area_sum`], [`tay::gn_wedge_cos`], [`tay::gn_half_angle`], [`tay::gn_target`], [`tay::gn_invert`], [`tay::GnAreaCells`] | `sm_GnAreaIntegrand`, `sm_GnAreaSum` (in place of `sm_GnSectionAreaIntegral`), `sm_GnWedgeCos`, `sm_GnHalfAngle`, `sm_GnTarget`, `sm_GnInvert`, `sm_GnAreaCells` (7102bc5) |
+//! | [`tay::gn_area_integrand`], [`tay::gn_area_sum`], [`tay::gn_wedge_cos`], [`tay::gn_half_angle`], [`tay::gn_target`], [`tay::gn_invert`], [`tay::GnAreaCells`] | `sm_GnAreaIntegrand`, `sm_GnAreaSum` (in place of `sm_GnSectionAreaIntegral`), `sm_GnWedgeCos`, `sm_GnHalfAngle`, `sm_GnTarget`, `sm_GnInvert`, `sm_GnAreaCells` (7102bc5; `At`, `sOff`, `sAt` f9b133a) |
 //! | [`form::binom`], [`form::GnSectionFormT`], [`form::gn_form_t`], [`form::gn_form_normalized`] | `sm_Binom`, `sm_GnSectionFormT`, `sm_GnFormT`, `sm_GnFormNormalized` (7102bc5) |
 //! | [`certificate::GnVarying`], [`certificate::GnRowTerms`], [`certificate::centred`], [`certificate::gn_row_terms_over`], [`certificate::PieceSeries`], [`certificate::gn_fourth_over_series`] | `sm_GnVarying`, `sm_GnRowTerms`, `sm_Centred`, `sm_GnRowTermsOver`, `sm_GnFourthOver`'s `pF`, `pV`, `pFm`, `pVm`, `pdMid` (7102bc5) |
 //! | [`section::GnSectionFsg`], [`section::GnSectionFsg::new`], [`section::GnSectionFsg::is_valid`] | `SmGnSectionFSG`, its constructor, `IsValid` (and `GetOrder`, `GetThumbweight`, `GetCertifiedBound`, `GetCertifiedSpans` as fields) |
@@ -50,6 +51,10 @@
 //! | [`section::GnSectionFsg::contact_order_at`] | `ContactOrderAt` |
 //! | [`section::ArcSection`], [`section::GnSectionFsg::circle`], [`section::GnSectionFsg::build_with_radius`] | `SmArcSection`, `SmGnSectionFSG(const SmArcSection &)` (3aae1c4), `Build`'s `dRadius` and its order 1 (cc08236) |
 //! | [`certificate::arc_rows`], [`certificate::arc_row_terms_over`] | `sm_ArcRows`, `sm_ArcRowTermsOver` (cc08236) |
+//! | [`definition::T2Of`], [`definition::TvOf`], [`definition::T2Scalar`] | `sm_T2Of`, `sm_TVT`, `sm_PositiveFinite`, `sm_PowOf` (c5b6bb7: `sm_T2` and `sm_TV` over `double` or `sm_Ivl`) |
+//! | [`certificate::SpanAt`], [`certificate::gn_enclose_over`], [`certificate::face_partials_over`] | `sm_GnSpanAt`, `sm_GnEncloseOver`, `sm_FacePartialsOver` (c5b6bb7) |
+//! | [`definition_box`] | `sm_GnDefPiece`, `sm_GnDefFace`, `sm_GnDefs`, `sm_DefinitionEnclosable`, `sm_GnDefFaceOf`, `sm_DefPieceAt`, `sm_BernTaylorOver`, `sm_DefinitionPartialsNaive`, `sm_DefinitionPartialsOverBox` (c5b6bb7) |
+//! | [`station::feet_on_knots`] | `sm_FeetOnKnots` (c5b6bb7) |
 //!
 //! Deviations:
 //! - **The equal area thumbweight.** Resolved at every station (the fork's 7102bc5), so
@@ -57,6 +62,13 @@
 //!   the solvers' copies of one generator need nothing shared. The
 //!   station's `dW` and `dWds` start NaN, as the fork's do.
 //! - **The area cells.** `sm_GnAreaCells`' `sHave` and `sI` are one `Option` per cell.
+//!   Its sums off the grid and at points count into the kernel's
+//!   [`crate::surface::procedural_blend::BlendCounts`], so `Over` and `At` take the kernel.
+//! - **The thumbweight memo (b8ec238).** The fork's `thread_local` memo and scope count
+//!   are the kernel's (`blend_w_memo`, `blend_operation_scopes`), so the solves that read
+//!   them take the kernel; the scope count is a shared atomic, so a fillet session holds
+//!   its scope while it takes `&mut Kernel`. The memo keeps what the solve gives, so every
+//!   result is the same with or without it.
 //! - **Bounds.** `sm_Trunc`'s orders are checked against the series' fixed size
 //!   (`SM_GN_MAXS`, `SM_GN_MAXE`) when a [`series::Trunc`] is made; the fork leaves them
 //!   to its callers. An empty Bernstein polynomial (which the fork never forms) multiplies
@@ -81,12 +93,22 @@
 //! - **Generator state.** `CreateSurface`'s solver argument is replaced by its tolerance;
 //!   `Build` stores the certified bound and span count as the fork does (`&mut self`). The
 //!   fork's `SM_ERR_MESSAGE` report of them is not logged.
+//! - **Cancellation (#2136, #2371).** `Build` polls the kernel's cancel token
+//!   ([`crate::kernel::Kernel::check_cancelled`]) once per station (before the
+//!   certificate, and again where each station is solved for the span ending there),
+//!   once per row or station of the skin's net, and its certificate block once per span, per knot-line secant step and per
+//!   halved span; `sm_GnCertifySpan` once per level, piece's end station and piece's bound.
+//!   A fired token returns `Cancelled`; one that never fires changes nothing.
 
 pub mod certificate;
 pub mod definition;
+pub mod definition_box;
 pub mod form;
 pub mod interval;
+pub mod recertify;
 pub mod section;
 pub mod series;
+pub mod smooth_interior;
+pub mod smooth_interior_plan;
 pub mod station;
 pub mod tay;

@@ -111,7 +111,6 @@ fn solidcraft_fixes() -> UpstreamFixes {
     f.offset_resolve_crossing_loops = true;
     f.offset_walls_touch_refused = true;
     f.offset_analytic_mate_edges = true;
-    f.precise_properties_split_at_surface_knots = true;
     f.nurb_cylinder_inside_out_frame = true;
     f.shell_inner_shell_of_statuses = true;
     f.offset_collapsed_rounds_mated = true;
@@ -138,13 +137,10 @@ fn solidcraft_fixes() -> UpstreamFixes {
     f.torus_signed_gen_curve_interval = true;
     f.sheet_sweep_joins_profile_wires = true;
     f.point_solve_keeps_triangle_guess = true;
-    f.fillet_setback_from_start_vertex = true;
     f.imprint_trims_edge_to_proto_vertex = true;
     f.imprint_extends_edge_to_proto_vertex = true;
     f.fillet_point_step_per_point = true;
     f.analytic_copy_keeps_parameterization = true;
-    f.fillet_point_bigger_step_retry = true;
-    f.fillet_through_extended_rail_end = true;
     f.precise_properties_body_length_scale = true;
     f.offset_extension_from_base = true;
     f.corner_blend_stays_inside_neighbours = true;

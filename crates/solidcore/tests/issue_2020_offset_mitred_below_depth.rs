@@ -9,11 +9,16 @@
 //! V = integral of (34 + 2w)(24 + 2w) dz over 0..10 + d.
 //!
 //! With SolidCraft's flags (183 `UpstreamFixes`, among them the fork's cliff-overflow
-//! and side-edge run-on fixes), every depth but -9 builds. At -9 the rail meets the
-//! side edge's run-on line exactly at the end of its extended interval (top 1, rail
-//! at z -2, run-on reach 2 at the doubled extension factor), and the put-back fails;
-//! the fork (2fc375f) builds it with 6 faces and V 1006.320632128887. That stays open
-//! (#2020). With the flags off, the put-back fails at -7.5 (a corner edge) and at -9
+//! and side-edge run-on fixes), every depth builds. Below the floor the rails meet the
+//! side edges' lines past the moved side edges' lower ends; each rail's search runs the
+//! side edge on along its line as far as the rail's base surface's domain is extended
+//! (#2769). Bounded by the edge's own length alone (where the trace's reach was not set,
+//! a face an offset had widened), one rail at a corner was found and the other not, and
+//! the corner's bevel adjustment read the unsolved rail's crossing as parameter 0 (d =
+//! -9.5, a put-back refused); at -9 the rail met the run-on exactly at the end of its
+//! widened interval, and the put-back was refused as the fork's since 779cb9b. -9 now
+//! builds the fork's 2fc375f body (6 faces, V 1006.320632128887 through SolidCraft's
+//! capi). With the flags off, the put-back fails at -7.5 (a corner edge) and at -9
 //! (a rollover). Each such failure is now a typed refusal,
 //! `OffsetFacesRefusal::NotPutBack`, where it had none.
 #![allow(
@@ -35,7 +40,7 @@ use solidcore::topology::face::p2 as face2;
 use solidcore::topology::{edge, vertex, Brep, EdgeId, FaceId};
 use solidcore::Kernel;
 
-/// The fork's volume at d = -9 (2fc375f, `smlib_offset_faces`): 6 faces.
+/// The fork's volume at d = -9 before 779cb9b (2fc375f, `smlib_offset_faces`): 6 faces.
 const FORK_VOLUME_D9: f64 = 1006.320632128887;
 
 /// The edge whose midpoint is `p`.
@@ -160,53 +165,22 @@ fn solidcraft_flags_build_the_depths_below_the_rounds() {
     }
 }
 
+/// At -9 the rails meet the side edges' lines 3 below the moved side edges' lower ends
+/// (z = -2). With the run-on bounded by the base surface's domain as the solve extends it
+/// (#2769), each rail's search reaches that point, not only the one whose solver's trace
+/// reach was set: it builds, as the fork's 2fc375f did.
 #[test]
-fn solidcraft_flags_refuse_minus_nine_typed() {
-    // #2020 stays open here: the fork builds it (FORK_VOLUME_D9)
-    let k = &mut Kernel::default();
-    solidcraft_flags(k);
-    let (_, ex, r) = moved(k, -9.0);
-    assert!(r.is_err());
-    assert_eq!(
-        ex.refusal(),
-        OffsetFacesRefusal::NotPutBack,
-        "{}",
-        ex.reason()
-    );
-    assert!(
-        ex.reason().starts_with("putting back a blend"),
-        "{}",
-        ex.reason()
-    );
-}
-
-#[test]
-#[ignore = "#2020: the fork builds d = -9; the port refuses it (see the module docs)"]
 fn solidcraft_flags_build_minus_nine_as_the_fork() {
     let k = &mut Kernel::default();
     solidcraft_flags(k);
     let (mut b, ex, r) = moved(k, -9.0);
     assert!(r.is_ok(), "{r:?}: {:?} {}", ex.refusal(), ex.reason());
+    assert_eq!(ex.refusal(), OffsetFacesRefusal::None);
+    assert!(brep_is_manifold_solid(&b).unwrap());
     assert_eq!(b.face_list().len(), 6);
     let v = volume(k, &mut b);
+    assert!((v - analytic(-9.0)).abs() <= 1e-6 * analytic(-9.0), "V {v}");
     assert!((v - FORK_VOLUME_D9).abs() <= 1e-9 * FORK_VOLUME_D9, "V {v}");
-}
-
-#[test]
-fn flags_off_put_back_failures_are_typed() {
-    // refusals A (-7.5, a corner edge) and B (-9, a rollover) of the issue
-    for (d, comment) in [(-7.5, "Fillet Corner Error"), (-9.0, "Fillet Solver Error")] {
-        let k = &mut Kernel::default();
-        let (_, ex, r) = moved(k, d);
-        assert!(r.is_err(), "d {d}");
-        assert_eq!(
-            ex.refusal(),
-            OffsetFacesRefusal::NotPutBack,
-            "d {d}: {}",
-            ex.reason()
-        );
-        assert!(ex.reason().contains(comment), "d {d}: {}", ex.reason());
-    }
 }
 
 #[test]
@@ -289,9 +263,7 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.fillet_nx1_opposite_continuation_side_edge = true;
     k.fixes.fillet_nx1_tangent_corner_edge = true;
     k.fixes.fillet_nx1_tangent_side_edge = true;
-    k.fixes.fillet_nx1_tangent_side_edge_same_convexity = true;
     k.fixes.fillet_patch_keeps_fillet_edges = true;
-    k.fixes.fillet_point_bigger_step_retry = true;
     k.fixes.fillet_point_step_per_point = true;
     k.fixes.fillet_rail_end_on_continued_surface = true;
     k.fixes.fillet_rail_rim_on_face = true;
@@ -305,10 +277,8 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.fillet_removal_takes_ring_fillets = true;
     k.fixes.fillet_retry_radius_as_first = true;
     k.fixes.fillet_run_on_past_far_end_only = true;
-    k.fixes.fillet_setback_from_start_vertex = true;
     k.fixes.fillet_split_edge_keeps_near_half = true;
     k.fixes.fillet_tangent_point_one_sided_step = true;
-    k.fixes.fillet_through_extended_rail_end = true;
     k.fixes.fillet_torus_center_on_axis = true;
     k.fixes.fillet_torus_rail_on_axis = true;
     k.fixes.fillet_torus_span_from_start_section = true;
@@ -350,7 +320,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.offset_collapsed_rounds_mated = true;
     k.fixes.offset_excess_faces_after_merge = true;
     k.fixes.offset_extended_edges_mated = true;
-    k.fixes.offset_extends_cones_as_themselves = true;
     k.fixes.offset_extension_as_itself = true;
     k.fixes.offset_extension_from_base = true;
     k.fixes.offset_missing_surface_fails = true;
@@ -365,7 +334,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.planar_path_uncapped_open_profiles = true;
     k.fixes.point_solve_keeps_triangle_guess = true;
     k.fixes.precise_properties_body_length_scale = true;
-    k.fixes.precise_properties_split_at_surface_knots = true;
     k.fixes.primitive_path_curve_statuses = true;
     k.fixes.proto_edge_self_loop_on_vertex_degenerate = true;
     k.fixes.proto_edge_splits_at_captured_vertices = true;
@@ -389,7 +357,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.slice_coincident_faces_sheet_side = true;
     k.fixes.sphere_small_circle_not_touching = true;
     k.fixes.ssi_low_angle_start_on_probation = true;
-    k.fixes.ssi_no_reverse_of_empty_trace = true;
     k.fixes.ssi_pole_point_keeps_its_tangent = true;
     k.fixes.ssi_singular_start_inside_direction = true;
     k.fixes.ssi_tangent_contact_points = true;

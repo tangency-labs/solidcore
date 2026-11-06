@@ -145,6 +145,7 @@ fn evaluate_geometric_at(k: &Kernel, surface: &Surface, uv: Point2) -> Result<Ge
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
         | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::Plane(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)
@@ -172,6 +173,7 @@ fn evaluate_normal_section(
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
         | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::Plane(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)
@@ -476,7 +478,6 @@ impl<'s> SurfaceSilhouette<'s> {
                     );
                     let ivl = Extent1d::from_min_max(0.0, 1.0);
                     let mut ls = LocalSolve1d::with_interval(ivl, false);
-                    ls.set_failed_guess_no_sign_change(k.fixes.oscillating_skips_failed_guesses);
                     match ls.solve_it(&mut efo, 0.5, 1.0e-8) {
                         Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => {}
@@ -556,7 +557,6 @@ impl<'s> SurfaceSilhouette<'s> {
                     );
                     let mut ivl = Extent1d::from_min_max(-5.0, 5.0);
                     let mut ls = LocalSolve1d::with_interval(ivl, false);
-                    ls.set_failed_guess_no_sign_change(k.fixes.oscillating_skips_failed_guesses);
                     // Guess param: linearly interpolate between PrevDot (at t==0) and
                     // CurrDot (at t==1) to where Dot would be zero.
                     let mut guess_t = 0.5; // in case we can't get a guess

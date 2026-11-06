@@ -32,7 +32,7 @@
 )] // test helpers
 
 use solidcore::blend::blend_setback::{
-    containment, distances, ease_surface, fill_hole, EaseRamp, Edge, Face, Round,
+    certified_scale, containment, distances, ease_surface, fill_hole, EaseRamp, Edge, Face, Round,
 };
 use solidcore::blend::fillet_section::section::{GnFaces, GnSectionFsg};
 use solidcore::error::SolidError;
@@ -60,6 +60,7 @@ fn box_corner_faces() -> Vec<Face> {
         .map(|f| Face {
             point: Point3::new(0.0, 0.0, 0.0),
             normal: -unit(f),
+            ..Face::default()
         })
         .collect()
 }
@@ -304,6 +305,24 @@ fn cross_curvature(k: &Kernel, s: &Surface, uv: Point2, w: Vec3) -> Option<f64> 
     Some(nrm.dot(d2) / d1.dot(d1))
 }
 
+/// The Gaussian curvature of `s` at `uv`, from its first and second derivatives.
+fn gaussian_curvature(k: &Kernel, s: &Surface, uv: Point2) -> Option<f64> {
+    let flags = EvaluateFlags {
+        non_zero_tangents: false,
+        ..EvaluateFlags::default()
+    };
+    let d = s.evaluate(k, uv, 2, 2, flags).ok()?;
+    let (su, sv, suu, suv, svv) = (d[1][0], d[0][1], d[2][0], d[1][1], d[0][2]);
+    let nrm = su.cross(sv).unitize().ok()?;
+    let (g11, g12, g22) = (su.dot(su), su.dot(sv), sv.dot(sv));
+    let (l, m, n) = (suu.dot(nrm), suv.dot(nrm), svv.dot(nrm));
+    let det = g11 * g22 - g12 * g12;
+    if !(det > 0.0) {
+        return None;
+    }
+    Some((l * n - m * m) / det)
+}
+
 /// One side of a seam: the surface, its uv along the seam (t in [0, 1]) and a uv step into it.
 struct SeamSide<'a> {
     s: &'a Surface,
@@ -382,10 +401,21 @@ fn grade_seam(k: &Kernel, name: &str, a: &SeamSide<'_>, b: &SeamSide<'_>, size: 
 fn setback_box_corner(radii: [f64; 3], round_order: usize, ease: f64, order: usize) {
     let k = Kernel::default();
     let faces = box_corner_faces();
-    let setbacks = distances(&faces, &box_corner_edges(radii))
+    let mut setbacks = distances(&faces, &box_corner_edges(radii))
         .unwrap()
         .setbacks;
     assert_eq!(setbacks.len(), 3);
+    if order == 1 {
+        // a G1 fill is the graph fill (smlib#104), certified convex only past the least
+        // scale of the setbacks that certifies it (the fork's capi `box_corner_g1_setbacks`)
+        let scale = certified_scale(&k, &faces, &box_corner_edges(radii), &setbacks, None)
+            .unwrap()
+            .scale;
+        assert!(scale >= 1.0);
+        for x in &mut setbacks {
+            *x *= scale;
+        }
+    }
     let len = 10.0;
     let mut rounds = Vec::new();
     for a in 0..3 {
@@ -403,18 +433,22 @@ fn setback_box_corner(radii: [f64; 3], round_order: usize, ease: f64, order: usi
             }];
             own = ease_surface(&own, &g2, SurfParamType::U, &ramp).unwrap();
         }
-        rounds.push(own);
+        rounds.push(Surface::from(own));
     }
     let input: Vec<Round<'_>> = rounds
         .iter()
         .map(|own| Round {
             surface: own,
             along: SurfParamType::U,
-            end: own.natural_uv_domain().u_interval().min(),
+            end: own
+                .natural_uv_domain_with_nurb(&k)
+                .unwrap()
+                .u_interval()
+                .min(),
             corner_above: false,
         })
         .collect();
-    let fill = fill_hole(&faces, &input, order, 1e-9);
+    let fill = fill_hole(&k, &faces, &input, order, 1e-9);
     match &fill {
         Ok(f) => println!(
             "  setbacks {:.9}, {:.9}, {:.9}; fill status 0 (no refusal), interior degree {}",
@@ -445,7 +479,7 @@ fn setback_box_corner(radii: [f64; 3], round_order: usize, ease: f64, order: usi
         })
         .collect();
     let patches: Vec<Surface> = fill.patches.iter().cloned().map(Surface::from).collect();
-    let round_surfaces: Vec<Surface> = rounds.iter().cloned().map(Surface::from).collect();
+    let round_surfaces: Vec<Surface> = rounds.clone();
     let at = |x: f64, y: f64| Point2::new(x, y);
     let origin = |_: f64| Point2::new(0.0, 0.0);
     for m in 0..3 {
@@ -461,7 +495,7 @@ fn setback_box_corner(radii: [f64; 3], round_order: usize, ease: f64, order: usi
             let t = f64::from(j) / 8.0;
             let p = sp.evaluate_point(at(0.0, t)).unwrap();
             let q = round
-                .evaluate_point(at(end, if rev { 1.0 - t } else { t }))
+                .evaluate_point(&k, at(end, if rev { 1.0 - t } else { t }))
                 .unwrap();
             let pa = sp.evaluate_point(at(t, 0.0)).unwrap();
             let pb = sp.evaluate_point(at(t, 1.0)).unwrap();
@@ -550,9 +584,38 @@ fn setback_box_corner(radii: [f64; 3], round_order: usize, ease: f64, order: usi
             order,
         );
     }
-    let worst = containment(&fill, &faces, true).unwrap();
+    let worst = containment(&k, &fill, &faces, true, 1e-12 * size).unwrap();
     println!("  stands past a face by at most {worst:.3e} (certified)");
     assert!(worst <= 1e-12 * size);
+    // a G1 fill is held convex: the Gaussian curvature of every patch is not negative
+    // (sampled here; the fill is certified on its Bernstein coefficients before it is
+    // returned). The G2 fill is the least-energy one, not held convex yet (#2347)
+    let mut least = f64::MAX;
+    for (p, patch) in patches.iter().enumerate().filter(|_| order == 1) {
+        for i in 0..=16 {
+            for j in 0..=16 {
+                let uv = at(f64::from(i) / 16.0, f64::from(j) / 16.0);
+                // only the patch's boundary may hold a degenerate point (a corner where
+                // the setback's sides meet); inside, the curvature must evaluate
+                let on_boundary = i == 0 || i == 16 || j == 0 || j == 16;
+                let Some(kg) = gaussian_curvature(&k, patch, uv) else {
+                    assert!(
+                        on_boundary,
+                        "patch {p} at {uv:?}: no curvature inside the patch"
+                    );
+                    continue;
+                };
+                least = least.min(kg);
+                assert!(
+                    kg >= -1e-9 / (size * size),
+                    "patch {p} at {uv:?}: Gaussian curvature {kg:e}"
+                );
+            }
+        }
+    }
+    if order == 1 {
+        println!("  least Gaussian curvature over the fill {least:.3e}");
+    }
 }
 
 /// `setback_distances_box_corner`: the setbacks by the owner's rule, `max(1.5 r, least +
@@ -621,8 +684,8 @@ fn box_corner_unequal_g1() {
 #[test]
 fn g2_fill_of_uneased_rounds_refused() {
     let faces = box_corner_faces();
-    let rounds: Vec<BSplineSurface> = (0..3)
-        .map(|a| box_corner_round(a, 2.0, 3.0, 10.0, 1))
+    let rounds: Vec<Surface> = (0..3)
+        .map(|a| Surface::from(box_corner_round(a, 2.0, 3.0, 10.0, 1)))
         .collect();
     let input: Vec<Round<'_>> = rounds
         .iter()
@@ -633,7 +696,7 @@ fn g2_fill_of_uneased_rounds_refused() {
             corner_above: false,
         })
         .collect();
-    let refusal = fill_hole(&faces, &input, 2, 1e-9).unwrap_err();
+    let refusal = fill_hole(&Kernel::default(), &faces, &input, 2, 1e-9).unwrap_err();
     assert!(matches!(refusal.error, SolidError::InvalidInput { .. }));
     let why = refusal.reason.expect("a reason");
     println!("  refused: {why}");

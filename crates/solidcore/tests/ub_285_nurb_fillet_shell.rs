@@ -33,6 +33,11 @@ fn nurb_fillet(k: &mut Kernel) -> Option<Brep> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../upstream/TestFiles/pt_TestFiles/Solids/nurb_fillet.smb");
     let Ok(bytes) = std::fs::read(&path) else {
+        assert!(
+            std::env::var_os("SOLIDCORE_REQUIRE_UPSTREAM").is_none(),
+            "SOLIDCORE_REQUIRE_UPSTREAM is set and the upstream test file is missing: {}",
+            path.display()
+        );
         eprintln!("unavailable upstream test file: {}", path.display());
         return None;
     };
@@ -71,7 +76,7 @@ fn ub_285_nurb_fillet_shell_returns_for_every_open_face() {
         let faces = part.face_list().to_vec();
         let mut outcomes = Vec::new();
         for (i, &face) in faces.iter().enumerate().take(2) {
-            let mut copy = part.clone();
+            let mut copy = part.clone_standing_for_self().unwrap();
             let r = offset_fixture::api_shell(
                 &mut k,
                 &mut copy,

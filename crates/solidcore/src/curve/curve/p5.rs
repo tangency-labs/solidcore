@@ -126,8 +126,9 @@ use crate::geom::solution_array::{Solution, SolutionType};
 use crate::geom::tol::are_same;
 use crate::geom::vector3d::{acos, sqrt, Point3, Vec3};
 use crate::kernel::Kernel;
-use crate::math::{max2, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
+use crate::math::{max2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::p2::ArcData;
+use crate::nurbs::b_spline_curve::speed::SpanSpeed;
 use crate::nurbs::b_spline_curve::{BSplineCurve, GapFix};
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::surface::surface::p2::MAX_GEOMETRY_NESTING;
@@ -1802,13 +1803,29 @@ impl Curve {
     /// (chord height `ApproximateLength(5) / 10`, 90 degrees) of the span chord for a
     /// degree 1 curve, else the Romberg integral of `|C'|`; the end point distance
     /// for an interval shorter than `SM_EFF_ZERO` or a curve that does not
-    /// tessellate (kinds not derived from `SmBSplineCurve`).
+    /// tessellate (kinds not derived from `SmBSplineCurve`). Not upstream: each span's
+    /// end is evaluated in its own knot span (upstream: the span above), and the
+    /// integral's steps are accepted on the quadrature estimate
+    /// ([`crate::mass::integrator::integrate_rounded_with_kernel`]). For the kinds with
+    /// control points the speed is evaluated in difference form on the span's knot span
+    /// ([`BSplineCurve::span_speed`]), so its rounding scales with the curve's size, not
+    /// with its distance from the origin, and a span whose control points are one point
+    /// has length 0 exactly.
+    ///
+    /// The contract: each span's integral is within its share of `desired_accuracy`
+    /// by the step control's estimates, the steps accepted at the rounding of the
+    /// computed speed included (their errors, together, within that share of the
+    /// span's length: [`crate::mass::integrator::OdeOptions::rounding`]), or the span is
+    /// refused (`SM_ERR`, operation `mass::integrator::step_control`): the accuracy asks
+    /// for less than the computed speed resolves. The refusal is returned with
+    /// [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] and is a zero
+    /// length without it, as every failed span integration (WR-94).
     ///
     /// # Errors
     ///
     /// Those of the length estimate and of the degree query (and of the span
     /// integration when [`crate::kernel::UpstreamFixes::integrator_propagates_failure`]
-    /// is enabled, WR-94);
+    /// is enabled, WR-94); those of [`BSplineCurve::span_speed`];
     /// [`SolidError::Unported`] from the tessellation or curve evaluator, and for an
     /// edge's curve borrowed from its record (`SmTol::GetZoneTol3d`: the cache's
     /// tolerance is the edge's, which the curve cannot reach; use
@@ -1882,6 +1899,9 @@ impl Curve {
         let span_accuracy = desired_accuracy / span_count as f64;
 
         let bsp = cache.curve();
+        // (a kind with control points; a Hermite curve tessellates without them, and its
+        // speed's rounding is not bounded here)
+        let nurb = bsp.b_spline_base();
         for i in 0..span_count {
             let bez_elem = cache.span(i)?;
             let (p1, p2, seg_ivl) = bez_elem.aux.ends_on(k, bsp)?;
@@ -1893,17 +1913,34 @@ impl Curve {
                 continue;
             }
 
+            // The speed in difference form on the span's knot span, with the bound on its
+            // rounding; a span whose control points are one point is that point: length
+            // 0, exactly.
+            let speed = match nurb.map(|n| n.span_speed(&seg_ivl)).transpose()? {
+                Some(None) => continue,
+                Some(Some(speed)) => Some(speed),
+                None => None,
+            };
+
             // Greater than degree 1 if make it to here
             // Do an integration to get the length of the
-            // first derivatives integrated over the entire curve.
-            total_length += crate::mass::integrator::integrate_with_kernel(
+            // first derivatives integrated over the entire curve, refused where the
+            // accuracy asks for less than the computed speed resolves.
+            total_length += crate::mass::integrator::integrate_rounded_with_kernel(
                 k,
                 seg_ivl.min(),
                 seg_ivl.max(),
-                crate::mass::integrator::IntegrationAlgorithm::Romberg,
                 span_accuracy,
+                speed.as_ref().map(SpanSpeed::rounding_bound),
                 |t| {
-                    let pv = bsp.evaluate(k, t, 1, true, false)?;
+                    if let Some(speed) = &speed {
+                        // the span's own piece, its end (a knot) included
+                        return speed.speed(t);
+                    }
+                    // The span's end, `x2` exactly as the integrator's last node, is
+                    // evaluated from below (`bFromLeft = FALSE`), every other t as
+                    // upstream (`TRUE`).
+                    let pv = bsp.evaluate(k, t, 1, t != seg_ivl.max(), false)?;
                     pv.get(1)
                         .map(|v| v.length())
                         .ok_or_else(|| SolidError::sm_err("curve::length"))
@@ -1962,9 +1999,6 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
     let set_periodic = false; // IsPeriodic( crInterval );
 
     let mut ls = LocalSolve1d::with_interval(*interval, set_periodic);
-    // Not upstream (WR-253, tangency-labs/solidcore#481): opt-in, a failed evaluation
-    // (e.g. the radius of curvature of a straight piece) is no sign change
-    ls.set_failed_guess_no_sign_change(k.fixes.oscillating_skips_failed_guesses);
 
     // select the solver and the desired accuracy.
     if property == CurvePropertyType::MinimizeFirstDerivative
@@ -1994,15 +2028,25 @@ pub fn local_property_analysis<C: CurveEvaluate + ?Sized, O: Copy>(
     let found_t = outcome.t;
     let pass_on = k.fixes.query_statuses_pass_on;
 
-    // when no solution was found
+    // A search that found nothing has no solution to report, with one exception: the
+    // minimisations and maximisations stop at the extremum they reached, and their `found`
+    // is decided by `|F| < acceptable_accuracy`, a test their objectives are not built for
+    // (a radius of curvature or a derivative length is not near zero at an extremum). For
+    // them the stop point is the solution, but only when `F` there is a value the search
+    // really has: `BIG_DOUBLE` is what the objective answers where it has no finite value
+    // (an uncurved piece), and a failed evaluation leaves no value at all. Upstream reports
+    // the stop point whatever `ls.curr.f` holds, which on a straight trim is the zero a
+    // failed evaluation left behind (#2574).
     if !outcome.found {
-        // If we terminate for minimization or maximization problem
-        // for any normal reason then we don't need to fail.
-        if property != CurvePropertyType::MinimizeFirstDerivative
-            && property != CurvePropertyType::MaximizeFirstDerivative
-            && property != CurvePropertyType::MinimizeRadiusOfCurvature
-            && property != CurvePropertyType::MaximizeRadiusOfCurvature
-        {
+        let stops_at_its_extremum = matches!(
+            property,
+            CurvePropertyType::MinimizeFirstDerivative
+                | CurvePropertyType::MaximizeFirstDerivative
+                | CurvePropertyType::MinimizeRadiusOfCurvature
+                | CurvePropertyType::MaximizeRadiusOfCurvature
+        );
+        let value = ls.curr.f.abs();
+        if !stops_at_its_extremum || !value.is_finite() || value >= BIG_DOUBLE {
             return Ok(false);
         }
     } // end no solution check
@@ -2939,6 +2983,31 @@ mod tests {
     }
 
     #[test]
+    fn memo_hit_shares_completed_curve_tree_data() {
+        let k = Kernel {
+            memoize_curve_caches: true,
+            ..Kernel::default()
+        };
+        let curve = ellipse_spline();
+        let first = make_curve_cache(&k, &curve, Some(7u32)).unwrap();
+        let hit = make_curve_cache(&k, &curve, Some(-1i64)).unwrap();
+        assert!(!first.spans().is_empty());
+        assert!(!first.parents().is_empty());
+        assert_eq!(first.spans(), hit.spans());
+        assert_eq!(first.parents(), hit.parents());
+        assert!(
+            std::ptr::eq(first.spans().as_ptr(), hit.spans().as_ptr()),
+            "memo hit copied completed curve spans"
+        );
+        assert!(
+            std::ptr::eq(first.parents().as_ptr(), hit.parents().as_ptr()),
+            "memo hit copied completed curve parents"
+        );
+        assert_eq!(first.tree().unwrap().owner_object().unwrap(), Some(7));
+        assert_eq!(hit.tree().unwrap().owner_object().unwrap(), Some(-1));
+    }
+
+    #[test]
     fn memo_follows_edits_and_kernel_state() {
         let k = Kernel {
             memoize_curve_caches: true,
@@ -3080,29 +3149,17 @@ mod tests {
     /// every point the bisection tries below it can.
     const STALL_AT_LAST_GUESS: f64 = 0.989_999_999_999_999_2;
 
-    /// WR-253 (tangency-labs/solidcore#481) through the Kernel: with
-    /// `fixes.oscillating_skips_failed_guesses` the failed last guess is no sign
-    /// change, so the perpendicular solve on a curve whose `F` stays above 0.9
-    /// finds nothing.
+    /// WR-253 (tangency-labs/solidcore#481, #2574): the failed last guess is no sign
+    /// change, so the perpendicular solve on a curve whose `F` stays above 0.9 finds
+    /// nothing. Upstream reads the failed guess's zeroed `F` as a sign change, brackets
+    /// it, and reports a root exactly at the unevaluable point with value 0, although
+    /// `F` is near 1.98 on both sides of it.
     #[test]
-    fn issue_481_kernel_fix_skips_the_failed_last_guess() {
-        let mut k = Kernel::default();
-        k.fixes.oscillating_skips_failed_guesses = true;
+    fn issue_481_the_failed_last_guess_is_no_root() {
+        let k = Kernel::default();
         let (found, _, _) = perpendicular_on_stalled_quartic(&k, STALL_AT_LAST_GUESS).unwrap();
         assert!(!found);
-    }
 
-    /// The default (upstream) reads the failed guess's zeroed `F` as a sign
-    /// change, brackets it, and reports a root exactly at the unevaluable point,
-    /// with value 0, although `F` is near 1.98 on both sides of it.
-    #[test]
-    fn oscillating_failed_guess_is_a_root_by_default() {
-        let k = Kernel::default();
-        assert!(!k.fixes.oscillating_skips_failed_guesses);
-        let (found, t, value) = perpendicular_on_stalled_quartic(&k, STALL_AT_LAST_GUESS).unwrap();
-        assert!(found);
-        assert_eq!(t.to_bits(), STALL_AT_LAST_GUESS.to_bits());
-        assert_eq!(value, 0.0);
         // the point really cannot be evaluated, and its neighbour below is far from 0
         let curve = stalled_quartic(STALL_AT_LAST_GUESS);
         let v = [Vec3::new(1.0, 0.0, 0.0)];
@@ -3123,11 +3180,7 @@ mod tests {
         )
         .unwrap();
         assert!(out.f > 1.9, "{out:?}");
-        // a stall that misses the guess changes nothing: both settings find no root
-        let mut fixed = Kernel::default();
-        fixed.fixes.oscillating_skips_failed_guesses = true;
-        for k in [&Kernel::default(), &fixed] {
-            assert!(!perpendicular_on_stalled_quartic(k, 0.991).unwrap().0);
-        }
+        // a stall that misses the guess finds no root either
+        assert!(!perpendicular_on_stalled_quartic(&k, 0.991).unwrap().0);
     }
 }

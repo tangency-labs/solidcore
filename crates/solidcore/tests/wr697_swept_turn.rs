@@ -1,8 +1,7 @@
 //! WR-697 (smlib#79 step 4b, the fork's tangency-labs/smlib@e647dac, 1fcbdb7, af7a4d9):
 //! with the session's swept turns (`FilletSession::set_swept_turns`, the fork's
 //! `SetSweptTurns`) the blend corner's Turn is Swept: each round ends on its own section
-//! and the corner's face is the end section revolved about the side edge, an exact torus
-//! (`Kernel::fixes.fillet_blend_corner`).
+//! and the corner's face is the end section revolved about the side edge, an exact torus.
 //!
 //! The fork's capi case `turn swept_boss_base`: a 40 x 30 x 10 plate with a 10 x 10 x 5
 //! boss on it (x 15..25, y 10..20), the boss's four base edges rounded r 1 together. At
@@ -39,12 +38,12 @@ use solidcore::topology::face::p2 as face2;
 use solidcore::topology::{edge, EdgeId};
 use solidcore::{Brep, Kernel};
 
-/// Every fix but `geometric_g2_continuity`, with or without `fillet_blend_corner`.
-fn all_fixes(blend: bool) -> Kernel {
+/// Every fix but `geometric_g2_continuity`.
+fn all_fixes() -> Kernel {
     let mut k = Kernel::default();
     let mut f = UpstreamFixes::default();
     for &name in UpstreamFixes::NAMES {
-        if name != "geometric_g2_continuity" && (blend || name != "fillet_blend_corner") {
+        if name != "geometric_g2_continuity" {
             *f.flag_mut(name).unwrap() = true;
         }
     }
@@ -154,7 +153,7 @@ const FORK_SWEPT_VOLUME: f64 = 12_508.885_258_803_208;
 
 #[test]
 fn boss_base_swept_turns_are_horn_tori() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = boss_base(&mut k);
     round(&mut k, &mut b, &BASE, &[1.0; 4]).unwrap();
     let v = volume(&k, &mut b);
@@ -177,17 +176,8 @@ fn boss_base_swept_turns_are_horn_tori() {
 }
 
 #[test]
-fn without_the_flag_the_swept_turns_are_mitres() {
-    let mut k = all_fixes(false);
-    let mut b = boss_base(&mut k);
-    round(&mut k, &mut b, &BASE, &[1.0; 4]).unwrap();
-    assert_eq!(get_faces(&b).unwrap().len(), 15);
-    assert!(tori(&b).is_empty());
-}
-
-#[test]
 fn a_pocket_rim_is_refused_naming_the_radius() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = pocket(&mut k);
     let (code, why) = round(&mut k, &mut b, &RIM, &[1.0; 4]).unwrap_err();
     assert_eq!(code, FilletErrorType::NoRoom as i32);
@@ -202,7 +192,7 @@ fn a_pocket_rim_is_refused_naming_the_radius() {
 /// round's edge.
 #[test]
 fn a_pocket_rim_notes_that_no_radius_fits() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = pocket(&mut k);
     let edges: Vec<EdgeId> = RIM.iter().map(|&p| pick(&k, &b, p)).collect();
     let xs = vec![FilletSurfaceGeneratorType::Circular; edges.len()];
@@ -219,7 +209,7 @@ fn a_pocket_rim_notes_that_no_radius_fits() {
 
 #[test]
 fn unequal_rounds_are_not_swept_yet() {
-    let mut k = all_fixes(true);
+    let mut k = all_fixes();
     let mut b = boss_base(&mut k);
     let (code, why) = round(&mut k, &mut b, &BASE, &[1.0, 1.5, 1.0, 1.5]).unwrap_err();
     // the fork's SM_FILERR_CORNER_UNSUPPORTED (10 there: this port has no 9 before it)
@@ -229,12 +219,10 @@ fn unequal_rounds_are_not_swept_yet() {
 
 /// The swept boss base's torus faces turned round (`SmFace::SwapUV`, rebuilding each torus
 /// from its NURB) `times` times: the volume, check lines and tori after.
-fn turned_round(fixed: bool, times: usize) -> (f64, Vec<String>, Vec<(f64, f64)>) {
-    let mut k = all_fixes(true);
-    k.fixes.fillet_blend_corner = true;
+fn turned_round(times: usize) -> (f64, Vec<String>, Vec<(f64, f64)>) {
+    let mut k = all_fixes();
     let mut b = boss_base(&mut k);
     round(&mut k, &mut b, &BASE, &[1.0; 4]).unwrap();
-    k.fixes.fillet_blend_corner = fixed;
     // the rebuild from the NURB is what `SwapUV` runs without WR-701's
     // `swap_uv_keeps_analytic_definition` (which keeps the analytic torus instead)
     k.fixes.swap_uv_keeps_analytic_definition = false;
@@ -265,7 +253,7 @@ fn turned_round(fixed: bool, times: usize) -> (f64, Vec<String>, Vec<(f64, f64)>
 #[test]
 fn horn_tori_turned_round_stay_horn_tori() {
     for times in [1, 2] {
-        let (v, lines, tori) = turned_round(true, times);
+        let (v, lines, tori) = turned_round(times);
         eprintln!("turned {times}: volume {v:.12}, tori {tori:?}, {lines:?}");
         assert!(lines.is_empty(), "{lines:?}");
         for (major, minor) in tori {
@@ -278,15 +266,152 @@ fn horn_tori_turned_round_stay_horn_tori() {
     }
 }
 
+// ---- #2488: a Swept turn's torus keeps its definition ----
+
+use solidcore::surface::procedural_blend::convert::{corner_rebuild, corner_to_record};
+use solidcore::surface::procedural_blend::corner::CornerKind;
+use solidcore::surface::procedural_blend::record::{CornerRecord, SupportRecord};
+use solidcore::surface::procedural_blend::BlendNet;
+use solidcore::surface::surface::Surface;
+
+/// The swept boss base, with or without `fillet_round_as_definition`.
+fn swept_boss_base(definition: bool) -> (Kernel, Brep) {
+    let mut k = all_fixes();
+    k.fixes.fillet_round_as_definition = definition;
+    let mut b = boss_base(&mut k);
+    round(&mut k, &mut b, &BASE, &[1.0; 4]).unwrap();
+    (k, b)
+}
+
+/// The faces' surfaces whose definition is a corner's of `kind`.
+fn corner_faces(b: &Brep, kind: CornerKind) -> Vec<Surface> {
+    get_faces(b)
+        .unwrap()
+        .into_iter()
+        .filter_map(|f| face2::surface(b, f).unwrap().cloned())
+        .filter(|s| {
+            s.procedural_blend()
+                .and_then(|d| d.corner())
+                .is_some_and(|c| c.kind() == kind)
+        })
+        .collect()
+}
+
+/// Every face's surface over a 9 x 9 grid of its natural domain, as bits.
+fn face_bits(k: &Kernel, b: &Brep) -> Vec<Vec<[u64; 3]>> {
+    get_faces(b)
+        .unwrap()
+        .into_iter()
+        .filter_map(|f| face2::surface(b, f).unwrap())
+        .map(|s| {
+            let d = s.natural_uv_domain_with_nurb(k).unwrap();
+            let mut pts = Vec::new();
+            for i in 0..=8 {
+                for j in 0..=8 {
+                    let u = d.min().x + (d.max().x - d.min().x) * f64::from(i) / 8.0;
+                    let v = d.min().y + (d.max().y - d.min().y) * f64::from(j) / 8.0;
+                    let p = s
+                        .evaluate_point(k, solidcore::geom::vector2d::Point2::new(u, v))
+                        .unwrap();
+                    pts.push([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]);
+                }
+            }
+            pts
+        })
+        .collect()
+}
+
+/// `rec` with its first NURBS support's form moved by `by` along x, y and z.
+fn moved(rec: &SupportRecord, by: f64) -> SupportRecord {
+    let mut rec = rec.clone();
+    if let SupportRecord::Nurbs { form, .. } = &mut rec {
+        let w = form.weights.clone();
+        for (i, p) in form.points.iter_mut().enumerate() {
+            let wi = w.as_ref().map_or(1.0, |w| w[i]);
+            for x in p.iter_mut() {
+                *x += by * wi;
+            }
+        }
+    }
+    rec
+}
+
 #[test]
-fn without_the_flag_turned_horn_tori_are_rebuilt_as_upstream() {
-    // upstream's rebuild: the start directions from the NURB's corner points on the axis
-    // (zero), a spindle torus whose edges are up to 1.41 off it
-    let (v, lines, tori) = turned_round(false, 1);
-    eprintln!("unfixed: volume {v:.12}, tori {tori:?}, {lines:?}");
-    assert!(lines.iter().any(|l| l.contains("Bad Gap")), "{lines:?}");
-    assert!(
-        tori.iter().any(|&(major, minor)| major != minor),
-        "{tori:?}"
-    );
+fn the_swept_tori_are_their_definitions() {
+    let (k, mut b) = swept_boss_base(true);
+    let tori = corner_faces(&b, CornerKind::Swept);
+    assert_eq!(tori.len(), 4);
+    for s in &tori {
+        assert!(matches!(s.kind(), SurfaceKind::Torus(_)));
+        let d = s.procedural_blend().unwrap();
+        assert!(matches!(d.net(), BlendNet::Exact(_)));
+        assert_eq!(d.bound(), 0.0);
+        assert_eq!(d.order(), 1);
+        assert!(d.support(0).is_some());
+        assert_eq!(d.recertify(&k).unwrap(), 0.0);
+    }
+    // the volume and every surface bit for bit as without the definition
+    let (k0, mut b0) = swept_boss_base(false);
+    assert!(corner_faces(&b0, CornerKind::Swept).is_empty());
+    assert_eq!(volume(&k, &mut b).to_bits(), volume(&k0, &mut b0).to_bits());
+    assert_eq!(face_bits(&k, &b), face_bits(&k0, &b0));
+}
+
+#[test]
+fn a_swept_torus_round_trips_through_its_record() {
+    let (k, b) = swept_boss_base(true);
+    for s in corner_faces(&b, CornerKind::Swept) {
+        let rec = corner_to_record(&k, &s).unwrap();
+        let json = serde_json::to_string(&rec).unwrap();
+        let back = corner_rebuild(&k, &serde_json::from_str(&json).unwrap()).unwrap();
+        assert!(matches!(back.kind(), SurfaceKind::Torus(_)));
+        assert_eq!(corner_to_record(&k, &back).unwrap(), rec);
+        assert_eq!(back.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
+    }
+}
+
+#[test]
+fn a_swept_torus_off_its_common_face_or_its_axis_is_refused() {
+    let (k, b) = swept_boss_base(true);
+    let s = &corner_faces(&b, CornerKind::Swept)[0];
+    let CornerRecord::Swept(rec) = corner_to_record(&k, s).unwrap() else {
+        panic!("not a swept record");
+    };
+    // the common face moved apart from the torus
+    let mut off = rec.clone();
+    off.common = moved(&rec.common, 1e-3);
+    let why = corner_rebuild(&k, &CornerRecord::Swept(off))
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("do not touch its common face"), "{why}");
+    // the side edge moved: the torus is not its end section's about it
+    let mut off = rec.clone();
+    off.axis_point[0] += 1e-3;
+    let why = corner_rebuild(&k, &CornerRecord::Swept(off))
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("side edge"), "{why}");
+    // the net moved off its definition
+    let mut off = rec;
+    off.net = moved(&off.net, 1e-3);
+    let why = corner_rebuild(&k, &CornerRecord::Swept(off))
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("torus"), "{why}");
+}
+
+#[test]
+fn a_moved_swept_torus_is_certified_again() {
+    let (k, b) = swept_boss_base(true);
+    for s in corner_faces(&b, CornerKind::Swept) {
+        let mut s = s.copy(&k).unwrap();
+        let mut place = solidcore::geom::axis2_placement::Axis2Placement::default();
+        place.rotate_about_axis(
+            0.3,
+            solidcore::math::Vec3::new(1.0, 2.0, 3.0).unitize().unwrap(),
+        );
+        place.translate(solidcore::math::Vec3::new(1e2, -2e2, 5e1));
+        s.transform(&k, &place, None).unwrap();
+        assert_eq!(s.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
+    }
 }

@@ -35,6 +35,7 @@
 //! | `make_exact_b_spline_1st_out_surface` (private) | `SmVolume`/`SmBSplineVolume`/`SmTransform::MakeExactBSpline1stOutSurface` |
 //! | `transform_axis2_placement` (private) | `SmTransform::LoadAxis2Placement`, `IsUnitOrthonormal` |
 //! | [`SrfInVolume::read_from_db`]                  | `ReadFromDB`                                      |
+//! | [`SrfInVolume::write_to_db`]                   | `WriteToDB`                                       |
 //!
 //! Deviations:
 //! - **Nesting.** `new`, `set_base_surface` and `set_volume` return `InvalidInput` when the surface or the volume would nest
@@ -101,12 +102,14 @@ use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::geom_utility::p1::determinate_4x4;
+use crate::geom::object::NotifyOperation;
 use crate::geom::tol::is_zero;
 use crate::geom::transform::Transform;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::EFF_ZERO;
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{LocationType, SurfParamType};
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
@@ -118,7 +121,8 @@ use crate::surface::volume::p1::{
     lift_first_derivative_srf, lift_second_derivative_srf, lift_third_derivative_srf_opt_in,
 };
 use crate::surface::volume::{EvalOptions, Volume, VolumeKind};
-use crate::topology::database_io::{DatabaseReader, FileType};
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
+use crate::topology::geometry_write::write_surface_at;
 
 const OP: &str = "surface::srf_in_volume::SrfInVolume";
 const OP_EVAL: &str = "surface::srf_in_volume::SrfInVolume::evaluate";
@@ -1161,14 +1165,17 @@ impl SrfInVolume {
     ///
     /// Those of [`Volume::transform`].
     pub fn transform(&mut self, rotate_n_move: &Axis2Placement, scale: Option<Vec3>) -> Result<()> {
-        self.transform_at_depth(rotate_n_move, scale, 0)
+        self.transform_at_depth(rotate_n_move, scale, 0, &mut |_| Ok(()))
     }
 
+    /// [`SrfInVolume::transform`] at geometry depth `depth`, with this surface's
+    /// `SM_NO_PRE_EDIT` and `SM_NO_POST_EDIT` notifications sent through `notify`.
     pub(crate) fn transform_at_depth(
         &mut self,
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
         depth: usize,
+        notify: &mut EditNotify<'_>,
     ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
@@ -1178,9 +1185,13 @@ impl SrfInVolume {
             return Ok(());
         }
 
+        notify(NotifyOperation::PreEdit)?;
+
         // compounding volume transform
         self.volume
-            .transform_at_depth(rotate_n_move, scale, depth + 1)
+            .transform_at_depth(rotate_n_move, scale, depth + 1)?;
+
+        notify(NotifyOperation::PostEdit)
     }
 
     /// The two halves of the surface split at `param` in `surf_param`'s direction
@@ -1256,6 +1267,37 @@ impl SrfInVolume {
             volume,
             owner_flag: 3,
         })
+    }
+
+    /// `WriteToDB`, the record [`SrfInVolume::read_from_db`] reads: the base
+    /// surface's type header and record, the parameter space flag (as text in either
+    /// file type, as upstream writes and reads it), then the volume's type header and
+    /// record, as a surface nested `depth` levels deep.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`write_surface_at`] for the base surface and of
+    /// [`Volume::write_to_db`].
+    pub fn write_to_db(&self, db: &mut DatabaseWriter, version: u64, depth: usize) -> Result<()> {
+        let ascii = db.file_type() == FileType::Ascii;
+
+        // base surface
+        if ascii {
+            db.out_str(" SrfInVolume->BaseSurface \n");
+        }
+        db.write_type(self.surface.type_code(), None);
+        write_surface_at(&self.surface, db, version, depth + 1)?;
+
+        // bInParamSpace value
+        db.out_i64(i32::from(self.in_param_space).into());
+        db.out_str(" InParamSpace: 0=Curve in Volume's ParamSpace, 1=Curve in InSpace\n");
+
+        // compounding volume
+        if ascii {
+            db.out_str(" SrfInVolume->Volume \n");
+        }
+        db.write_type(self.volume.type_code(), None);
+        self.volume.write_to_db(db, depth + 1)
     }
 }
 

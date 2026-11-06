@@ -12,10 +12,12 @@
 //! | [`FilletSolver::calc_torus_fillet_geom`], [`FilletSolver::torus_fillet_geom_parts`]       | `SmFilletSolver::CalcTorusFilletGeom`    |
 //! | [`FilletSolver::calc_line_spine_fillet_geom`]            | `SmFilletSolver::CalcLineSpineFilletGeom` (fork) |
 //! | [`FilletSolver::calc_circle_spine_fillet_geom`]          | `SmFilletSolver::CalcCircleSpineFilletGeom` (fork) |
+//! | [`FilletSolver::calc_ball_triangle_fillet_geom`], [`FilletSolver::ball_triangle_fillet_geom_parts`] | none (solidcore #2403) |
 //! | [`FilletSolver::point_on_plane_solve`]                   | `SmFilletSolver::PointOnPlaneSolve`          |
 //! | [`FilletSolver::rail_edgeuse_intersect`]                 | `SmFilletSolver::RailEdgeuseIntersect`       |
 //! | [`FilletSolver::rail_rail_intersect`]                    | `SmFilletSolver::RailRailIntersect`          |
 //! | [`find_rollover_side_edge`]                              | `sm_FindRolloverSideEdge` (static)           |
+//! | `rolls_over_tangent_edge` (private)                      | none (#2406)                                 |
 //! | [`FilletSolver::create_cliff_roll_over_side_fg`]         | `SmFilletSolver::CreateCliffRollOverSideFG`  |
 //! | [`FilletSolver::record_fillet_error`], [`FilletSolver::record_fillet_error_in`], [`SolverErrorObject`] | `SmFilletSolver::RecordFilletError` |
 //!
@@ -73,9 +75,8 @@
 //!   tangency-labs/smlib@7224896). With `fixes.fillet_run_on_bspline_trims` too, a widened
 //!   side edge's B-spline UV trim (its local copy) evaluates out of bounds, so it runs on
 //!   along its line as a line trim does instead of clamping to its ends
-//!   (`continue_bspline_trim_past_its_ends`, WR-654, #1981). With far-end-only and
-//!   `fixes.fillet_nx1_tangent_side_edge_same_convexity` (WR-600's flag, the fork's
-//!   tangency-labs/smlib@856b54e), a side edge whose faces meet tangentially at the
+//!   (`continue_bspline_trim_past_its_ends`, WR-654, #1981). With far-end-only (and WR-600,
+//!   the fork's tangency-labs/smlib@856b54e), a side edge whose faces meet tangentially at the
 //!   filleted edge's vertex (a tangent seam) still runs on past both ends.
 //! - **Exact round classes (WR-669, #2085).** For `fixes.fillet_exact_round_classes`, the
 //!   SolidCraft fork's (tangency-labs/smlib@7ac037e) class builders: the line spine's is the
@@ -83,10 +84,18 @@
 //!   body without its generator and `IsArc` gates, its frame from the class axis (no `IsArc`
 //!   start angle: the span from the start section) and no blend-curve section; the point
 //!   spine's is [`FilletSolver::calc_sphere_fillet_geom`] as it is (the fork's ignores the
-//!   class). The bodies' own fork-fix flags apply unchanged.
+//!   class). The bodies' own fork-fix flags apply unchanged. Not the fork (#2405): the
+//!   line spine's cylinder is built on the class's exact line (its centres the stations'
+//!   on it, its rails' ends their feet on the faces' quadrics) and stored on the frame it
+//!   was built on (`class_cylinder`), not recognised again from its patch.
+//! - **The ball's triangle (solidcore #2403, not in the fork).** A point spine whose one
+//!   face's offset collapsed onto a line or circle (a round of the ball's radius) and the
+//!   other's not ([`crate::blend::fillet_exact::classify_ball_on_collapsed_offset`]) is
+//!   [`FilletSolver::calc_ball_triangle_fillet_geom`]: the blend
+//!   corner's Ball patch (`sm_BallTrianglePatch`) on the ball's sphere.
 
 use crate::blend::fillet_custom_solver::OffsetSurface;
-use crate::blend::fillet_exact::ExactBlend;
+use crate::blend::fillet_exact::{BlendQuadric, ExactBlend, QuadricKind};
 use crate::blend::fillet_executive::p3::ErrorInfo;
 use crate::blend::fillet_geom::p1::{
     FilletBrep, FilletCornerId, FilletEdgeType, FilletErrorType, FilletGeom, FilletGeomId,
@@ -108,7 +117,6 @@ use crate::error::{ignore_status, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::{Extent1d, ExtentNd};
 use crate::geom::extent2d::Extent2d;
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::local_solve_nd::{BoundaryHandler, EvalNFunctions, LocalSolveNd};
 use crate::geom::matrix::Matrix;
@@ -128,6 +136,7 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use crate::surface::cone::Cone;
 use crate::surface::plane::Plane;
 use crate::surface::surf_of_revolution::SurfOfRevolution;
 use crate::surface::surface::Surface;
@@ -540,6 +549,14 @@ fn bspline_part(curve: &Curve) -> Result<&BSplineCurve> {
 /// edge is a line, its UV trim curve is linear and the rail's base surface is planar:
 /// by the trace's reach or the extension factor times the edge's length, whichever is
 /// larger, in the UV trim curve's parameters. Returns whether it widened the interval.
+///
+/// Not the fork's (#2769): and at each end at least as far as the trim's line stays in
+/// `domain`, the base surface's domain as the solve extends it. The trace's reach is set
+/// only where the base domains' default extension falls short of the rails
+/// (`extend_trace_to_its_rails`); where it does not (a wide face, such as one an offset
+/// widened), the edge's own length bounded the run-on, and of the two rails meeting a
+/// side edge's line past its end one was found and the other not.
+#[allow(clippy::too_many_arguments)] // the solve's state, read in place
 fn run_side_edge_on_along_its_line(
     k: &Kernel,
     b: &mut Brep,
@@ -547,6 +564,7 @@ fn run_side_edge_on_along_its_line(
     side_edge: EdgeId,
     uv_trim: &Curve,
     base: &Surface,
+    domain: &Extent2d,
     solver: &FilletSolver,
     intervals: &mut ExtentNd,
 ) -> Result<bool> {
@@ -582,11 +600,13 @@ fn run_side_edge_on_along_its_line(
     };
     if length > EFF_ZERO_SQRT {
         let past = reach * edge_ivl.length() / length;
+        let (in_lo, in_hi) = line_in_domain(k, uv_trim, &edge_ivl, domain)?;
+        let (past_lo, past_hi) = (past.max(in_lo), past.max(in_hi));
         if !k.fixes.fillet_run_on_past_far_end_only {
             set_interval(
                 intervals,
                 0,
-                Extent1d::from_min_max(edge_ivl.min() - past, edge_ivl.max() + past),
+                Extent1d::from_min_max(edge_ivl.min() - past_lo, edge_ivl.max() + past_hi),
             );
             return Ok(true);
         }
@@ -609,15 +629,13 @@ fn run_side_edge_on_along_its_line(
         let (side_start, side_end) = edge::start_end_vertices(b, side_edge)?;
         let corner_at_start = on_filleted(side_start);
         let corner_at_end = on_filleted(side_end);
-        // With `fixes.fillet_nx1_tangent_side_edge_same_convexity` too (WR-600's flag; the
-        // fork's tangency-labs/smlib@856b54e), a tangent seam T (the side edge's faces meet
+        // WR-600 (the fork's tangency-labs/smlib@856b54e, the blend corner's End): a
+        // tangent seam T (the side edge's faces meet
         // tangentially at that vertex) is the exception: past the vertex T runs on in the
         // rail's face, which continues across it into the end face, and a rail that leaves
         // the filleted edge's end on that side (a concave round on the wall above a flat
         // side running tangent into it) crosses T there.
-        let tangent_seam = if k.fixes.fillet_nx1_tangent_side_edge_same_convexity
-            && (corner_at_start || corner_at_end)
-        {
+        let tangent_seam = if corner_at_start || corner_at_end {
             let corner_vertex = if corner_at_start {
                 side_start
             } else {
@@ -641,12 +659,12 @@ fn run_side_edge_on_along_its_line(
         let before = if corner_at_start && !corner_at_end && !tangent_seam {
             0.0
         } else {
-            past
+            past_lo
         };
         let after = if corner_at_end && !corner_at_start && !tangent_seam {
             0.0
         } else {
-            past
+            past_hi
         };
         set_interval(
             intervals,
@@ -656,6 +674,47 @@ fn run_side_edge_on_along_its_line(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// How far (in its parameters) the linear UV trim `uv_trim` runs on past the start and
+/// past the end of `ivl` before it leaves `domain`: 0 at an end already outside, or where
+/// the trim does not move.
+fn line_in_domain(
+    k: &Kernel,
+    uv_trim: &Curve,
+    ivl: &Extent1d,
+    domain: &Extent2d,
+) -> Result<(f64, f64)> {
+    let a = uv_trim.evaluate_point(k, ivl.min())?;
+    let c = uv_trim.evaluate_point(k, ivl.max())?;
+    let span = ivl.length();
+    if span.is_nan() || span <= 0.0 {
+        return Ok((0.0, 0.0));
+    }
+    // the trim's velocity per parameter
+    let vel = [(c.x - a.x) / span, (c.y - a.y) / span];
+    let (lo, hi) = ([domain.min.x, domain.min.y], [domain.max.x, domain.max.y]);
+    // the largest s >= 0 with `from + s dir` in the box, dir = sign * vel
+    let reach = |from: [f64; 2], sign: f64| {
+        let mut s = f64::INFINITY;
+        for ((&p, &v), (&l, &h)) in from.iter().zip(&vel).zip(lo.iter().zip(&hi)) {
+            let d = sign * v;
+            if p.is_nan() || p < l || p > h {
+                return 0.0;
+            }
+            if d > 0.0 {
+                s = s.min((h - p) / d);
+            } else if d < 0.0 {
+                s = s.min((l - p) / d);
+            }
+        }
+        if s.is_finite() {
+            s
+        } else {
+            0.0
+        }
+    };
+    Ok((reach([a.x, a.y], -1.0), reach([c.x, c.y], 1.0)))
 }
 
 /// Opt-in (`fixes.fillet_run_on_bspline_trims`, WR-654, #1981), not upstream: turns
@@ -691,6 +750,38 @@ fn line_segment(a: Point3, b: Point3, ivl: &Extent1d) -> Result<Line> {
     let mut l = Line::create_line_segment(3, a, b, None)?;
     l.edit_parameterization(ivl)?;
     Ok(l)
+}
+
+/// The line class's cylinder (not the fork, #2405): the analytic cone `CopyAndAddAnalytics`
+/// recognises (`SmCone::IsNurbSurfaceCone`) in `patch`, the
+/// `CreateConePatch(placement, radius, radius, 0, angle_deg, height)` patch swapped to u
+/// along the axis, on `placement` itself instead of the frame its end circles' `IsArc`
+/// fits give back: the patch's bottom circle's origin and X axis, Z along its linear
+/// direction, the angles `[0, angle_deg]`, not inside out, its NURB reparameterised to the
+/// patch's domain (status ignored, as by `IsNurbSurfaceCone`).
+fn class_cylinder(
+    k: &Kernel,
+    placement: &Axis2Placement,
+    radius: f64,
+    angle_deg: f64,
+    height: f64,
+    patch: &BSplineSurface,
+) -> Result<Cone> {
+    let mut cone = Cone::new_bounded(
+        placement.origin(),
+        placement.x_axis(),
+        placement.y_axis(),
+        radius,
+        radius,
+        0.0,
+        angle_deg,
+        height,
+        true,
+        false,
+        false,
+    );
+    ignore_status(cone.reparameterize(k, &patch.natural_uv_domain()))?;
+    Ok(cone)
 }
 
 impl FilletSolver {
@@ -839,6 +930,20 @@ impl FilletSolver {
         let mut end_pnt1 = eval_offset(k, s, 1, end_uv1)?;
         s.reload_surface_offsets()?;
 
+        // Not the fork (#2405): the class's centres are the stations' on its exact line,
+        // the rails' ends their feet on the faces' quadrics
+        if let Some(class) = class {
+            let on_line = |c: Point3| class.point + class.dir * (c - class.point).dot(class.dir);
+            center0 = on_line(center0);
+            center1 = on_line(center1);
+            let [face0, face1] = &class.faces;
+            let foot = |q: &BlendQuadric, c: Point3| q.foot(c).ok_or_else(sm_err);
+            start_pnt0 = foot(face0, center0)?;
+            start_pnt1 = foot(face1, center0)?;
+            end_pnt0 = foot(face0, center1)?;
+            end_pnt1 = foot(face1, center1)?;
+        }
+
         // get extension vectors along each rail curve and the center curve
         let f = s.surface_extension_factor;
         let ext0 = f * (end_pnt0 - start_pnt0);
@@ -923,8 +1028,21 @@ impl FilletSolver {
             k.fixes.fillet_statuses_pass_on,
         )?)?;
 
-        // Copy pConePatch, when possible as an analytic surface
-        let cylinder = cone_patch.copy_and_add_analytics(k)?;
+        // Copy pConePatch, when possible as an analytic surface. Not the fork (#2405): the
+        // class's cylinder is the analytic cone CopyAndAddAnalytics recognises in the patch,
+        // on the frame the patch was built on, not one refitted from its end circles
+        let cylinder = if class.is_some() {
+            Surface::from(class_cylinder(
+                k,
+                &placement,
+                radius0,
+                angle,
+                height,
+                &cone_patch,
+            )?)
+        } else {
+            cone_patch.copy_and_add_analytics(k)?
+        };
 
         // get cylinder u parameter range
         let uv_domain = cylinder.natural_uv_domain_with_nurb(k)?;
@@ -1786,6 +1904,149 @@ impl FilletSolver {
         })
     }
 
+    /// Not in the fork (solidcore #2403): the round of a point
+    /// spine one of whose faces is a round of the ball's radius
+    /// ([`crate::blend::fillet_exact::classify_ball_on_collapsed_offset`]), built
+    /// ([`FilletSolver::ball_triangle_fillet_geom_parts`]) and stored into `fillet_geom`
+    /// (`m_vFilletGeoms[0]` for `None`) of the pseudo B-rep `pseudo`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`FilletSolver::ball_triangle_fillet_geom_parts`] and of the store.
+    pub fn calc_ball_triangle_fillet_geom(
+        ops: &mut dyn FilletSolverOps,
+        k: &Kernel,
+        pseudo: &mut FilletBrep,
+        blend: &ExactBlend,
+        tsects: &[TsectPnt],
+        fillet_geom: Option<FilletGeomId>,
+    ) -> Result<()> {
+        let parts = Self::ball_triangle_fillet_geom_parts(ops, k, blend, tsects)?;
+        store_parts(ops.solver(), pseudo, fillet_geom, parts)
+    }
+
+    /// The geometry of [`FilletSolver::calc_ball_triangle_fillet_geom`]. Every ball touching
+    /// both faces is the one about `blend.point` (`C`): it touches the face whose offset
+    /// collapsed (a cylinder or torus as wide as the ball) along that face's section through
+    /// `C`, the great circle of the ball square to the face's spine there, and the other
+    /// face at one point `P`, the foot of `C` on it. The round is the ball's triangle with
+    /// the pole at `P` and its third side the arc of that great circle between the rail
+    /// ends the corners placed (the feet on the collapsed face at the first and last trace
+    /// points, put on the circle), one rational patch of degree `(4, 2)` exactly on the
+    /// sphere: the blend corner's Ball patch (`sm_BallTrianglePatch`, an `SmBallPatch`
+    /// carrying the sphere as its definition). Its two other sides are the ball's great circles through
+    /// `P`, the end sections of the rounds it joins. `u` runs along the edge from the first
+    /// trace point, `v` from rail 0 to rail 1 (the pole's side a point), and the rails are
+    /// its `v` = min and max iso curves, as for the other exact classes.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` when the generator is not circular, the class is not one face collapsed
+    /// and one not, the radius is tiny or changes, a foot on the collapsed face is off the
+    /// ball, or the triangle has no patch (its side through the pole, its arc half a turn
+    /// or more); those of `SetupOffsetValues`, the evaluations and the patch.
+    pub fn ball_triangle_fillet_geom_parts(
+        ops: &mut dyn FilletSolverOps,
+        k: &Kernel,
+        blend: &ExactBlend,
+        tsects: &[TsectPnt],
+    ) -> Result<FilletGeomParts> {
+        use crate::blend::blend_corner::ball::ball_triangle_patch;
+        use crate::surface::ball_patch::BallPatch;
+        if !is_circular_fsg(ops.solver())? {
+            return Err(sm_err());
+        }
+        let (t_first, t_last) = first_last(tsects)?;
+
+        // the face whose offset collapsed (its contact a great circle) and the other (the pole)
+        let collapsed =
+            |q: &BlendQuadric| matches!(q.kind, QuadricKind::Line | QuadricKind::Circle);
+        let [o0, o1] = blend.offsets;
+        let (ring, pole) = match (collapsed(&o0), collapsed(&o1)) {
+            (false, true) => (1, 0),
+            (true, false) => (0, 1),
+            _ => return Err(sm_err()),
+        };
+        let ring_spine = if ring == 0 { o0 } else { o1 };
+        let pole_offset = if pole == 0 { o0 } else { o1 };
+        let pole_contact = *blend.contact.get(pole).ok_or_else(sm_err)?;
+
+        // constant radius, the class's
+        let centre = blend.point;
+        let radius = blend.radius;
+        let radius0 = offset_radius(ops, t_first)?.abs();
+        let radius1 = offset_radius(ops, t_last)?.abs();
+        if radius < EFF_ZERO
+            || (radius0 - radius).abs() > EFF_ZERO
+            || (radius1 - radius).abs() > EFF_ZERO
+        {
+            return Err(sm_err());
+        }
+        let tol = ops.solver().approx_tol_3d;
+
+        // the pole: the ball touches the face at its centre plus the radius times the contact
+        // sign times the face's normal there, the offset's normal at the centre
+        let to_pole = (pole_offset.normal(centre) * pole_contact).unitize()?;
+
+        // the collapsed face's spine's tangent at the centre: its contact circle is the
+        // ball's great circle square to it
+        let tangent = if ring_spine.kind == QuadricKind::Line {
+            ring_spine.dir
+        } else {
+            let radial = centre - ring_spine.point;
+            let radial = radial - ring_spine.dir * radial.dot(ring_spine.dir);
+            ring_spine.dir.cross(radial).unitize()?
+        };
+        let index = if ring == 0 {
+            SrfIndex::First
+        } else {
+            SrfIndex::Second
+        };
+        let mut ends = [Vec3::ZERO; 2];
+        for (end, t) in ends.iter_mut().zip([t_first, t_last]) {
+            let foot = ops
+                .solver()
+                .surface(ring)?
+                .ok_or_else(|| invalid("no offset surface"))?
+                .surface
+                .base_surface()
+                .evaluate_point(k, t.uv_pos(index))?;
+            let off = foot - centre;
+            if (off.length() - radius).abs() > tol {
+                return Err(sm_err());
+            }
+            *end = (off - tangent * off.dot(tangent)).unitize()?;
+        }
+
+        // the ball's triangle: the pole at v = 0, its third side (the arc) at v = 1, u from the
+        // first trace point to the last; v turned round when rail 0 is the arc
+        let (net, _, _) =
+            ball_triangle_patch(centre, radius, &[to_pole, ends[0], ends[1]], 0, false)?;
+        // the face's surface carries its sphere as its definition, as the corner's does
+        let mut patch = Surface::from(BallPatch::create(&net, centre, radius)?);
+        if ring == 0 {
+            patch.reverse(k, SurfParamType::V)?;
+        }
+
+        // rails: the patch's v = min and v = max isoparameter curves
+        let uv_domain = patch.natural_uv_domain_with_nurb(k)?;
+        let rail_crv0 = patch
+            .create_iso_parametric_curve(k, SurfParamType::V, uv_domain.min.y, 0.0, None, false)?
+            .curve;
+        let crv_ivl0 = rail_crv0.natural_interval();
+        let rail_crv1 = patch
+            .create_iso_parametric_curve(k, SurfParamType::V, uv_domain.max.y, 0.0, None, false)?
+            .curve;
+        let crv_ivl1 = rail_crv1.natural_interval();
+
+        Ok(FilletGeomParts {
+            surface: patch,
+            rails: [rail_crv0, rail_crv1],
+            rail_intervals: [Some(crv_ivl0), Some(crv_ivl1)],
+            center_line: None,
+        })
+    }
+
     /// `PointOnPlaneSolve(crPlaneOrig, crPlaneNormal, crUVDomain1, crUVDomain2, rUV1,
     /// rUV2, rbFoundSolution, rTsectPnt)`: the fillet point on the plane through
     /// `plane_orig` normal to `plane_normal`, solved with `ops`'s equations
@@ -1981,6 +2242,7 @@ impl FilletSolver {
                     side_edge,
                     &uv_trim,
                     &base,
+                    &domain,
                     ops.solver(),
                     &mut intervals,
                 )?;
@@ -2383,7 +2645,14 @@ impl FilletSolver {
             adj_surface
         } else {
             let adj = adj_surface.ok_or_else(nul)?;
-            let new_surface = adj.create_extended_surface(k, extension_dist, ContinuityType::G1)?;
+            let new_surface = adj
+                .extended_sides(
+                    k,
+                    &crate::surface::side::BoxSide::ALL,
+                    crate::surface::extend::Continuity::Tangent,
+                    extension_dist,
+                )?
+                .surface;
             // Copy pNewSurface, when possible as an analytic surface
             let copy = new_surface.copy_and_add_analytics(k)?;
             pseudo
@@ -2828,6 +3097,17 @@ fn eu_vertex(b: &Brep, e: EdgeuseId) -> Result<Option<VertexId>> {
     vertexuse::vertex(b, vu)
 }
 
+/// Not upstream (#2406): whether the side edge `io` found
+/// is a tangent edge the ball rolls over. The two faces continue each other there (their
+/// normals agree, not opposite: no knife edge), so their offsets continue each other
+/// across the edge's offset and the spine runs on onto the face beyond: the blend neither
+/// crashes into that face nor hangs over a cliff, whatever the edge's convexity (the
+/// convexity of a tangent edge does not say which way the side face run on past it leaves
+/// the face beyond). Upstream decides a tangent edge by its convexity as a sharp one.
+const fn rolls_over_tangent_edge(io: &RolloverSideEdge) -> bool {
+    io.is_tangential_side_edge && !io.opposite_normals
+}
+
 /// `sm_FindRolloverSideEdge(pCC, rlCurrIndx, pRail, pOrigRailCurve, pOrigRailUVCurve,
 /// pOrigFillet, bConvexFillet, rpSideEdge, rbIsTangentialSideEdge, rbTrimSideFaces,
 /// rbOppositeNormals, rpRolloverCornerEU, rpRolloverCornerV, dTangencyTolRad,
@@ -2909,7 +3189,7 @@ pub fn find_rollover_side_edge<O: ClassObject>(
 
             // Same convexity: the fillet crashes into the adjoining face (trim it);
             // otherwise it hangs over a cliff.
-            if convex_fillet == convex_side_edge {
+            if convex_fillet == convex_side_edge && !rolls_over_tangent_edge(io) {
                 // Trimming process
                 io.trim_side_faces = true;
                 io.curr_index += 1;
@@ -3050,7 +3330,7 @@ pub fn find_rollover_side_edge<O: ClassObject>(
             test_side_edge_convexity(k, b, side_edge, io.is_tangential_side_edge)?;
 
         // Cliff or crash (comment above).
-        if convex_fillet == convex_side_edge {
+        if convex_fillet == convex_side_edge && !rolls_over_tangent_edge(io) {
             // Trimming process
             io.trim_side_faces = true;
             return Ok(());

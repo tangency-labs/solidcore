@@ -11,16 +11,19 @@
 //! A corner with no side edge use (upstream then reads `m_vVertices[0]` of an empty
 //! list) and a closed corner with more than two edge uses but fewer than two fillet
 //! vertices are input errors. There is no recursion.
+//!
+//! The corner does not test its edge for G1 (WR-697; the fork's smlib#113 caa67d0):
+//! `FilletCorner::create` makes a closed edge meeting itself G1 the blend corner's Join
+//! (543d25a), so this corner only sees an edge meeting itself at an angle, and its G1
+//! branches (a `MATE` vertex, a `CROSS_SECTION` edge, blending) are gone (#2400).
 
 use super::{need, new_corner_vertex, Nx1TopologyEnv};
-use crate::blend::fillet_corner::p1::test_g1_continuity;
 use crate::blend::fillet_corner::p3::{FilletCorner, FilletCornerKind};
 use crate::blend::fillet_geom::p1::{
     CornerLookup, FilletCornerId, FilletEdgeType, FilletVertexType,
 };
 use crate::error::{EntityRef, Result, SolidError};
 use crate::intersect::point_class::PointClassType;
-use crate::math::rad_to_deg;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::topology::edge;
 use crate::topology::edgeuse::{p1 as eu1, p3 as eu3};
@@ -35,8 +38,8 @@ impl FilletCorner {
     /// Construct the rail vertices and the single cross edge of an actual
     /// `NByOneClosed` corner (`SmFilletNx1ClosedCorner::MakeCornerTopology`).
     ///
-    /// Sets the corner's G1 flag and blending state, and the fillet geometry's split
-    /// flag when the closed edge is not G1 at the vertex. Allocations and
+    /// The closed edge meets itself at an angle (a G1 one is the blend corner's Join): the
+    /// corner is not blending, and the fillet geometry's split flag is set. Allocations and
     /// corner-list insertions occur in native order and remain visible if a later
     /// operation fails. Vertex geometry is computed later.
     ///
@@ -79,17 +82,9 @@ impl FilletCorner {
         let total = all.len();
         let mut seam_edgeuse = None;
 
-        // Test if the filleted edge is G1-closed
+        // The filleted edge is not G1-closed: `FilletCorner::create` made an edge that is
+        // the blend corner's Join (WR-697; smlib#113 caa67d0)
         let filleted_edge = eu1::edge(target, fil_edgeuse)?;
-        self.g1_case = test_g1_continuity(
-            k,
-            target,
-            self.vertex,
-            filleted_edge,
-            filleted_edge,
-            rad_to_deg(self.tangency_tol_radians),
-        )?
-        .0;
 
         // for all edges connected to this corner
         for &eu in &all {
@@ -188,20 +183,10 @@ impl FilletCorner {
                 .fillet_vertex_mut(fv)?
                 .set_point_class(PointClassType::Face, face.map(EntityRef::Face));
 
-            if self.g1_case {
-                // for tangent closed-curves - vertex is mate to vertex on seam edge
-                {
-                    let v = pseudo.fillet_vertex_mut(fv)?;
-                    v.set_fillet_vertex_type(FilletVertexType::Mate);
-                    v.set_mate(0, Some(fv0));
-                }
-                pseudo.fillet_vertex_mut(fv0)?.set_mate(0, Some(fv));
-            } else {
-                // for non-g1 closed curves - vertex is located at fillet/fillet intersection
-                pseudo
-                    .fillet_vertex_mut(fv)?
-                    .set_fillet_vertex_type(FilletVertexType::FilletXFillet);
-            }
+            // for non-g1 closed curves - vertex is located at fillet/fillet intersection
+            pseudo
+                .fillet_vertex_mut(fv)?
+                .set_fillet_vertex_type(FilletVertexType::FilletXFillet);
 
             // add the 2nd vertex to the FilletCorner list
             self.vertices.push(fv);
@@ -229,20 +214,12 @@ impl FilletCorner {
             "corner with one fillet vertex",
         )?;
         let fillet_edge = pseudo.make_fillet_edge(Some(fv0), Some(fv1), Some(corner))?;
-        if self.g1_case {
-            // edge shape is same as filletSurface crossSection shape
-            pseudo
-                .fillet_edge_mut(fillet_edge)?
-                .set_fillet_edge_type(FilletEdgeType::CrossSection);
-            self.blending = true;
-        } else {
-            // Split the fillet so that we don't self-intersect
-            pseudo.geom_mut(fillet_geom)?.need_split = true;
-            pseudo
-                .fillet_edge_mut(fillet_edge)?
-                .set_fillet_edge_type(FilletEdgeType::FilletXFillet);
-            self.blending = false;
-        }
+        // Split the fillet so that we don't self-intersect
+        pseudo.geom_mut(fillet_geom)?.need_split = true;
+        pseudo
+            .fillet_edge_mut(fillet_edge)?
+            .set_fillet_edge_type(FilletEdgeType::FilletXFillet);
+        self.blending = false;
 
         // get edgeuses marking filletEdge sector
         if edge::edgeuses(pseudo.brep(), fillet_edge, None, None)?.len() != 2 {

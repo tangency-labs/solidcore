@@ -19,15 +19,17 @@
 //! | `write_crv_on_surf` (private) | `SmCrvOnSurf::WriteToDB`                        |
 //! | `write_tangent_field` (private) | `SmTangentField::WriteToDB`                   |
 //! | `write_procedural_blend`, `write_definition_curve` (private) | the fork's `SmProceduralBlend::WriteToDB`, `sm_WriteCurve` (014f66f, opt-in) |
+//! | `write_ball_patch` (private) | the fork's `SmBallPatch::WriteToDB` (f8e6709, opt-in) |
 //!
 //! Deviations:
 //! - **Kinds without a writer.** The write side is not in the plan (see
-//!   `plan/findings.md`); only the kinds B-rep files hold are ported: B-spline curves,
-//!   lines, ellipses and circles, Hermite curves (the UV curves of tangent fields),
-//!   curves on surfaces and tangent fields; B-spline
-//!   surfaces, planes, cones and cylinders, spheres, tori, surfaces of revolution and
-//!   extrusion, offset surfaces. Another
-//!   kind is [`SolidError::Unported`] with its `WriteToDB` symbol and unit
+//!   `plan/findings.md`); the kinds B-rep files hold and the kinds a read body can hold
+//!   are ported: B-spline curves, lines, ellipses and circles, hyperbolas, composite
+//!   and offset curves, Hermite curves (the UV curves of tangent fields), curves on
+//!   surfaces and tangent fields; B-spline surfaces, planes, cones and cylinders,
+//!   spheres, tori, surfaces of revolution and extrusion, offset, curve-bounded and
+//!   STEP surfaces, surfaces in volumes. Each kind's writer is beside its reader.
+//!   Another kind is [`SolidError::Unported`] with its `WriteToDB` symbol and unit
 //!   `(not in plan)`.
 //! - **Missing NURB.** Upstream's analytic writers ignore the status of the B-spline
 //!   part they end with; it cannot fail there, as the virtual
@@ -44,6 +46,7 @@ use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::tangent_field::TangentFieldCurve;
 use crate::error::{ignore_status, Result, SolidError};
 use crate::nurbs::b_spline_curve::BSplineCurve;
+use crate::surface::ball_patch::BallPatch;
 use crate::surface::cone::Cone;
 use crate::surface::procedural_blend::ProceduralBlend;
 use crate::surface::sphere::Sphere;
@@ -86,16 +89,16 @@ pub fn write_curve_at(
         CurveKind::Line(l) => l.write_to_db(db, version),
         CurveKind::Ellipse(e) => e.write_to_db(db, version),
         CurveKind::Hermite(h) => h.write_to_db(db, version),
-        CurveKind::Hyperbola(_) => Err(unported("SmHyperbola::WriteToDB")),
+        CurveKind::Hyperbola(h) => h.write_to_db(db, version),
         CurveKind::Projected(_) => Err(unported("SmProjectedCurve::WriteToDB")),
         CurveKind::Iso(_) => Err(unported("SmIsoCurve::WriteToDB")),
-        CurveKind::Offset(_) => Err(unported("SmOffsetCurve::WriteToDB")),
+        CurveKind::Offset(o) => o.write_to_db(db, version, depth),
         CurveKind::Conic(_) => Err(unported("SmConic::WriteToDB")),
         CurveKind::CrvInVolume(_) => Err(unported("SmCrvInVolume::WriteToDB")),
         CurveKind::CrvOnSurf(c) => write_crv_on_surf(c, db, version, depth),
         CurveKind::TangentField(t) => write_tangent_field(t, db, version, depth),
         CurveKind::Parabola(_) => Err(unported("SmParabola::WriteToDB")),
-        CurveKind::Composite(_) => Err(unported("SmCompositeCurve::WriteToDB")),
+        CurveKind::Composite(c) => c.write_to_db(db, version, depth),
     }
 }
 
@@ -127,6 +130,8 @@ pub fn write_surface_at(
         SurfaceKind::BSpline(b) => b.write_to_db(db, version),
         // the fork writes the definition, then the net (SmProceduralBlend::WriteToDB)
         SurfaceKind::ProceduralBlend(pb) => write_procedural_blend(pb, db, version, depth),
+        // the fork writes the definition, then the net (SmBallPatch::WriteToDB)
+        SurfaceKind::BallPatch(bp) => write_ball_patch(bp, db, version),
         SurfaceKind::Plane(p) => p.write_to_db(db, version),
         SurfaceKind::Cone(c) => write_cone(c, db, version, depth),
         SurfaceKind::Sphere(sp) => write_sphere(sp, db, version, depth),
@@ -134,10 +139,27 @@ pub fn write_surface_at(
         SurfaceKind::SurfOfRevolution(r) => write_surf_of_revolution(r, db, version, depth),
         SurfaceKind::SurfOfExtrusion(e) => write_surf_of_extrusion(e, db, version, depth),
         SurfaceKind::OffsetSurface(o) => o.write_to_db(db, version, depth),
-        SurfaceKind::CurveBounded(_) => Err(unported("SmCurveBoundedSurface::WriteToDB")),
-        SurfaceKind::Step(_) => Err(unported("SmSTEPSurface::WriteToDB")),
-        SurfaceKind::SrfInVolume(_) => Err(unported("SmSrfInVolume::WriteToDB")),
+        SurfaceKind::CurveBounded(c) => c.write_to_db_at(db, version, depth),
+        SurfaceKind::Step(st) => st.write_to_db(db, version, depth),
+        SurfaceKind::SrfInVolume(siv) => siv.write_to_db(db, version, depth),
     }
+}
+
+/// `SmBallPatch::WriteToDB` (the fork's f8e6709): the centre and the radius, then the
+/// net's `SmBSplineSurface` record.
+fn write_ball_patch(bp: &BallPatch, db: &mut DatabaseWriter, version: u64) -> Result<()> {
+    let c = bp.centre();
+    let values = [c.x, c.y, c.z, bp.radius()];
+    if is_ascii(db) {
+        for &v in &values {
+            db.out_f64(v);
+            db.out_str(" ");
+        }
+        db.out_str(" SmBallPatch centre, radius\n");
+    } else {
+        db.write_doubles(&values);
+    }
+    bp.net().write_to_db(db, version)
 }
 
 /// `SmProceduralBlend::WriteToDB` (the fork's 014f66f): the definition, then the net.
@@ -188,6 +210,22 @@ fn write_procedural_blend(
         db.write_boolean(swapped);
         db.write_boolean(has_law);
         db.write_doubles(&values);
+    }
+    // a chord's sizes (order 0, not the fork's, #2486)
+    if let Some(c) = &def.chamfer {
+        let (kind, sizes) = crate::surface::procedural_blend::chamfer_to_db(c);
+        if ascii {
+            db.out_i64(kind);
+            db.out_str(" ");
+            for &v in &sizes {
+                db.out_f64(v);
+                db.out_str(" ");
+            }
+            db.out_str(" SmProceduralBlend chamfer kind, sizes, wedge\n");
+        } else {
+            db.write_long(kind);
+            db.write_doubles(&sizes);
+        }
     }
     for support in &def.supports {
         if ascii {

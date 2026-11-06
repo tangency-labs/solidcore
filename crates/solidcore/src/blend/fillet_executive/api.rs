@@ -79,25 +79,28 @@ const OP: &str = "blend::fillet_executive::api";
 /// Run `fillet` (a session's set-up, `do_fillet` and the stitch) on `brep`; with
 /// `fixes.fillet_refuse_non_manifold_result` (WR-212, not upstream), a refusal of a
 /// result that is not a closed manifold solid puts back the body as it was before the
-/// call (a [`Brep::clone_for_rollback`] taken first) and names no entity, as the
+/// call (a [`Brep::snapshot`] taken first) and names no entity, as the
 /// refused result's edge is gone with it. Every other result is `fillet`'s own, and
 /// a result the check keeps is the flag-off result: the copy shares nothing with
 /// `brep`, so `fillet` edits the caller's own objects (curve owners included). The
 /// copy fails only on geometry nested deeper than `MAX_GEOMETRY_NESTING`.
+///
+/// A kernel whose cancel token fired returns `Cancelled` in place of `Ok` (#2136), with
+/// the body as the operation left it, as on any other failure.
 fn refusing_non_manifold_result(
     k: &mut Kernel,
     brep: &mut Brep,
     fillet: impl FnOnce(&mut Kernel, &mut Brep) -> Result<()>,
 ) -> Result<()> {
     let saved = if k.fixes.fillet_refuse_non_manifold_result {
-        Some(brep.clone_for_rollback()?)
+        Some(brep.snapshot()?)
     } else {
         None
     };
     let result = fillet(k, brep);
     match (saved, result) {
         (Some(saved), Err(error)) if is_non_manifold_refusal(&error) => {
-            brep.restore_from(saved);
+            brep.restore(saved);
             Err(without_entity(error))
         }
         (_, result) => {
@@ -105,7 +108,9 @@ fn refusing_non_manifold_result(
             // caller; the body keeps the edits the executive made before a failure,
             // as upstream)
             brep.refresh_cached_topology();
-            result
+            // (not upstream, #2136 / #2371: a cancel that a status-ignoring helper
+            // inside the operation absorbed still ends it as `Cancelled`, never `Ok`)
+            result.and_then(|()| k.check_cancelled(OP))
         }
     }
 }
@@ -475,23 +480,7 @@ pub fn create_face_from_surface(
     surface: &Surface,
 ) -> Result<FaceId> {
     let domain = surface.natural_uv_domain_with_nurb(k)?;
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::new(brep);
-    let mut env = state.env(None);
-    let mut marks = crate::topology::topology_traverser::Marks::default();
-    let this_face =
-        |f: FaceId| crate::topology::loopuse::notify_ref(crate::error::EntityRef::Face(f));
-    let mut fenv = crate::topology::brep::p8::FaceBuildEnv {
-        env: &mut env,
-        marks: &mut marks,
-        this_face: &this_face,
-    };
-    crate::topology::brep::p8::create_face_from_surface(
-        k,
-        brep,
-        Some(surface.clone()),
-        &domain,
-        &mut fenv,
-    )
+    crate::topology::brep::sheet::face_on(k, brep, surface.clone(), &domain)
 }
 
 /// One surface argument of [`surface_surface_fillet`] (upstream an `SmSurface*` that

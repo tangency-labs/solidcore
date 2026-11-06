@@ -706,9 +706,11 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             overflow_edges: Vec::new(),
             mitred_edges: Vec::new(),
             fan_split_points: Vec::new(),
+            earlier_pass_faces: Vec::new(),
             fit_radius: -1.0,
             fit_edge: None,
             fit_kind: super::p3::FitKind::Radius,
+            fit_setback: -1.0,
         }
     }
 
@@ -859,6 +861,18 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     /// `CreateFilletBrep`.
     pub fn set_overflow_first(&mut self, value: bool) {
         self.overflow_first = value;
+    }
+
+    /// `AddEarlierPassFace` (the fork's, tangency-labs/smlib@9822462, smlib#130): a face
+    /// an earlier pass of the same blend made (the rounds that overflow go first).
+    pub fn add_earlier_pass_face(&mut self, face: O) {
+        self.earlier_pass_faces.push(face);
+    }
+
+    /// `IsEarlierPassFace` (the fork's, tangency-labs/smlib@9822462): whether `face` is
+    /// one an earlier pass of the same blend made ([`Self::add_earlier_pass_face`]).
+    pub fn is_earlier_pass_face(&self, face: &O) -> bool {
+        self.earlier_pass_faces.contains(face)
     }
 
     /// `SetClassifyOnly` (the fork's, WR-634, tangency-labs/smlib@241f7ba): before
@@ -1095,6 +1109,9 @@ pub enum CornerCreation<O> {
         /// The blended edge no size builds (the fork's `NoteFitRadius(0.0, edge)`), noted
         /// before the refusal.
         fit_edge: Option<O>,
+        /// The size of `fit_edge`'s blend that builds and what it sizes, where one does
+        /// (the chamfer event's, WR-716); `None` notes 0, no size.
+        fit: Option<(f64, crate::blend::fillet_executive::FitKind)>,
     },
 }
 
@@ -1146,8 +1163,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     /// `"Corner case not implemented"` (the fork's note) and still keeps the pending
     /// entry: retaining the note does not change the operation's result or topology.
     ///
-    /// A [`CornerCreation::Refused`] corner (the fork's, only with
-    /// `Kernel::fixes.fillet_blend_corner`) is noted at its vertex with its own error and
+    /// A [`CornerCreation::Refused`] corner (the fork's) is noted at its vertex with its own error and
     /// reason, no later unsupported corner's note replaces it, and the operation fails
     /// (`SM_ERR`) after the loop, once the error info is assigned (the fork's
     /// `bRefused` and `bMissingCorner`).
@@ -1184,12 +1200,15 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                     error,
                     comment,
                     fit_edge,
+                    fit,
                 } => {
-                    // NoteFitRadius(0.0, edge)
+                    // NoteFitRadius(0.0, edge), or the size that builds where one does
                     if let Some(edge) = fit_edge {
-                        self.fit_radius = 0.0;
+                        let (size, kind) =
+                            fit.unwrap_or((0.0, crate::blend::fillet_executive::FitKind::Radius));
+                        self.fit_radius = size;
                         self.fit_edge = Some(edge);
-                        self.fit_kind = crate::blend::fillet_executive::FitKind::Radius;
+                        self.fit_kind = kind;
                     }
                     self.error.note_vertex_error(
                         vertex,

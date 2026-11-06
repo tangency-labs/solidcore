@@ -28,7 +28,7 @@ mod offset_fixture;
 use offset_fixture::{planar_faces_at, report, shell};
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::curve::curve::Curve;
-use solidcore::error::{SolidError, SM_ERR};
+use solidcore::error::SM_ERR;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::math::{Point3, Vec3};
 use solidcore::primitive::api_curves::{create_arc, create_line_segment};
@@ -93,6 +93,21 @@ fn wr_578_box_and_cylinder_shell_closes_the_loop_gaps() {
     }
 }
 
+/// Seam 200 with the opt-in alone: each face's surface extended by its offset's reach (not
+/// five offsets), the shell is sound as at seams 30 and 55 (manifold, integrity clean), its
+/// volume 1.5e-7 off the fork's closed form as theirs are (WR-578's divergence).
+#[test]
+fn wr_578_seam_200_shells_sound() {
+    let (k, result) = shell_1494(true, 200.0);
+    assert!(report(
+        &k,
+        "wr_578 shell/1494 seam 200",
+        result,
+        Some(SHELL_1494),
+        1e-6
+    ));
+}
+
 /// Seams 125 and 200 degrees off the front face: the fork shells these too; the port
 /// returns a body that is not a manifold solid (WR-578).
 #[test]
@@ -110,14 +125,14 @@ fn wr_578_box_and_cylinder_shell_other_seams() {
     }
 }
 
-/// Seams 125 and 200 with the opt-in alone: the offset is no closed solid, and the shell
-/// refuses it (`SM_ERR`) instead of handing it back as upstream's `ShellBrep` does
-/// (WR-454), so the flag never turns upstream's refusal into a broken body.
+/// Seam 125 with the opt-in alone: the offset is no closed solid, and the shell refuses it
+/// (`SM_ERR`) instead of handing it back as upstream's `ShellBrep` does (WR-454), so the
+/// flag never turns upstream's refusal into a broken body.
 #[test]
 fn wr_578_other_seams_are_refused() {
-    for seam in [125.0, 200.0] {
+    for seam in [125.0] {
         match shell_1494_with(kernel(true), seam).1 {
-            Err(SolidError::Upstream { code, .. }) => assert_eq!(code, SM_ERR, "seam {seam}"),
+            Err(e) => assert_eq!(e.sm_status(), Some(SM_ERR), "seam {seam}"),
             other => panic!("seam {seam}: {other:?}"),
         }
     }
@@ -151,7 +166,7 @@ fn wr_578_shell_thicker_than_a_step_is_edge_vanishes() {
     let strip = planar_faces_at(&k, &b, 1, 35.0);
     assert_eq!(strip.len(), 1, "the far side under the notch");
     match shell(&mut k, b, -1.5, &strip) {
-        Err(SolidError::Upstream { code, .. }) => assert_eq!(code, 1043),
+        Err(e) => assert_eq!(e.sm_status(), Some(1043)),
         other => panic!("SM_ERR_OFFSET_EDGE_VANISHES expected: {other:?}"),
     }
 }
@@ -234,7 +249,10 @@ fn wr_578_issue_1528_plate_shells_on_a_clean_operand() {
         &k,
         "wr_578 #1528 plate opt-in",
         Ok(fixed),
-        Some(10400.21299138017),
+        // since #2890 (precise properties integrate from the trims' base): +4.8e-4 from the
+        // closed form 10400.212373846494 (issue_1950's), within the volume's accuracy
+        // (1e-6); it was 10400.21299138017, +6.2e-4
+        Some(10400.212852557255),
         1e-9
     ));
 }

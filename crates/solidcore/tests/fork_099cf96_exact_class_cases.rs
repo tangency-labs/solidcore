@@ -23,21 +23,39 @@
 //! | `sphere_plane` | status 1001 | status 1001 |
 //! | `tee_is_fitted` | 1.47e-3 off, tolerance 1e-3 | 1.47e-3 off, tolerance 1e-3 |
 //!
-//! The fork's later marks say where its 1001s come from: `SmFilletNx1Corner`, after the
-//! exact round is built, where the round ends on the cut (the pipes) or at the rim's one
-//! vertex on the sphere's seam (the ball). Only the status is checked here: which step of
-//! the fillet returned it isn't visible through `fillet_edges`.
+//! Those two columns were checked on the default kernel and with `fillet_exact_round_classes`
+//! alone while the default was the pinned corner; the blend corner, always built since #2400,
+//! builds `sphere_plane` (its End at a smooth vertex, as the fork since smlib#124) and, on
+//! the default kernel with the exact classes but no other fix, builds the pipes (traced, and
+//! failing a validity test), so neither profile has these marks now. Since #2864 the ball's
+//! half rim is refused again, its round ending at the sphere's seam. With SolidCraft's
+//! current section fixes, the fitted tee meets its original tolerance even with procedural rounds off.
+//! With `fillet_round_as_definition` enabled (#2274), a fitted round is instead a
+//! `ProceduralBlend`: check its definition's ball contact to 1e-9, and its stored net
+//! against the unchanged fitted tolerance. The historical 1.47e-3 mark describes the
+//! earlier fitted surface, not this definition.
 //!
-//! The left column is checked on the default kernel and the right one with every fix
-//! SolidCraft turns on and with `fillet_exact_round_classes` alone. One difference from the
-//! fork: the two pipes' union itself fails 1001 here without
+//! Each case selects a point on every edge of the rim it rounds, as the fork's capi has since
+//! tangency-labs/smlib@18bd2f5 (#2441). Two rims are more than one edge: the ball's rim
+//! z = 4 is two edges, joined at (+-sqrt 84, 0, 4), and B's seam at (5, 5 sqrt 3, -5) splits
+//! the pipes' arc into a long piece and a short one up to the cut. The fork's one point per
+//! rim reached only part of these two, so its round had to end at a smooth vertex where the
+//! unselected part carries on, and `SmFilletNx1Corner` returned 1001 there: the two 1001s
+//! above are that End, not the exact classes. Half a rim, built (#2660) or refused (#2864), is
+//! not the body the case's volume is for.
+//!
+//! `sphere_plane` is checked against its closed form, `sphere_plane_closed_form`: the ball
+//! R 10 below z = 4 is 4000 pi / 3 - 288 pi = 3284.011520552530, and the round r 2 (the
+//! ball's centre ring at z = 2, radius sqrt 60) takes away pi (40.5 - 2 sqrt 60 (pi -
+//! sqrt 3.75 / 4 - 2 asin 1 / 4)) = 22.492758031488, which leaves 3261.518762521043.
+//! One difference from the fork: the two pipes' union itself fails 1001 here without
 //! `ssi_split_curves_at_singular_points` (WR-77), so the pipes get that flag wherever the
 //! fork's mark is about their round.
 //!
 //! How this test drives the kernel differs from the capi: edges are picked as the nearest
 //! within 0.1 of each point, and `fillet_edges` runs with section type 1, continuity 1 and
 //! thumbweight 1, the arguments `round_edges` gives `SetFilletParameters`, without the capi's
-//! overflow handling, which takes more than one edge (each case here rounds one).
+//! overflow handling, which acts only when the blends of several edges overflow their faces.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -45,7 +63,9 @@
     clippy::indexing_slicing
 )] // test helpers
 
+use solidcore::blend::blend_corner::end::RUNS_ON_ACROSS_SEAM;
 use solidcore::blend::fillet_executive::api::fillet_edges;
+use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
@@ -67,6 +87,13 @@ const X_AXIS: V3 = [1.0, 0.0, 0.0];
 const Y_AXIS: V3 = [0.0, 1.0, 0.0];
 const Z_AXIS: V3 = [0.0, 0.0, 1.0];
 const DOWN: V3 = [0.0, 0.0, -1.0];
+
+/// The ball R 10 below z = 4 less the round r 2 on its whole rim, in closed form.
+fn sphere_plane_closed_form() -> f64 {
+    let cut_ball = 4000.0 * PI / 3.0 - 288.0 * PI;
+    let ring = 2.0 * 60f64.sqrt() * (PI - 3.75f64.sqrt() / 4.0 - 2.0 * 0.25f64.asin());
+    cut_ball - PI * (40.5 - ring)
+}
 
 fn pt(a: V3) -> Point3 {
     Point3::new(a[0], a[1], a[2])
@@ -119,12 +146,15 @@ enum RoundKind {
     Revolved,
     /// A B-spline within the fillet's tolerance of the canal surface.
     Fitted,
+    /// A procedural canal definition, with a certified approximating net.
+    Procedural,
 }
 
 /// One case: the fork's body, edge points, radius, volume, surface kind and faces.
 struct Case {
     name: &'static str,
     build: fn(&mut Kernel) -> Result<Brep>,
+    /// A point on every edge of the rim to round. Two points on one edge pick it once.
     points: Vec<V3>,
     r: f64,
     want: f64,
@@ -245,6 +275,12 @@ fn cases() -> Vec<Case> {
         / (2.0 * g).cos();
     let zq = -5.0 - 5.0 * 1f64.cos();
     let yq = (100.0 - (zq + 10.0) * (zq + 10.0)).sqrt();
+    // B's seam at (5, 5 sqrt 3, -5) splits the pipes' arc, and the fork's two points both lie
+    // on its long piece. `hs` is halfway along the short one, from the seam (B's angle 0) to
+    // the cut at z = -2 (B's angle asin 0.6).
+    let hs = 0.5 * 0.6f64.asin();
+    let zs = -5.0 + 5.0 * hs.sin();
+    let ys = (100.0 - (zs + 10.0) * (zs + 10.0)).sqrt();
     vec![
         Case {
             name: "coaxial_cones",
@@ -273,7 +309,11 @@ fn cases() -> Vec<Case> {
         Case {
             name: "cylinders_touching_at_a_point",
             build: cylinders_touching_at_a_point,
-            points: vec![[5.0 * 1f64.sin(), yq, zq], [-5.0 * 1f64.sin(), yq, zq]],
+            points: vec![
+                [5.0 * 1f64.sin(), yq, zq],
+                [-5.0 * 1f64.sin(), yq, zq],
+                [5.0 * hs.cos(), ys, zs],
+            ],
             r: 1.0,
             want: 13442.703130586538,
             kind: RoundKind::Rational(12, 2),
@@ -321,9 +361,9 @@ fn cases() -> Vec<Case> {
         Case {
             name: "sphere_plane",
             build: sphere_plane,
-            points: vec![[0.0, 84f64.sqrt(), 4.0]],
+            points: vec![[0.0, 84f64.sqrt(), 4.0], [0.0, -(84f64.sqrt()), 4.0]],
             r: 2.0,
-            want: 3261.518762521006,
+            want: sphere_plane_closed_form(),
             kind: RoundKind::Revolved,
             faces: vec![
                 Quadric::Plane([0.0, 0.0, 4.0], Z_AXIS),
@@ -415,7 +455,7 @@ enum Graded {
     Body(String),
     /// The round returned an error.
     Round(String),
-    /// The round built: what's wrong with it, and how far it lies off the ball.
+    /// The round built: what's wrong with it and how far it lies off the ball.
     Built { problems: Vec<String>, off: f64 },
 }
 
@@ -456,15 +496,31 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
         let Some(s) = face::surface(&b, f).unwrap() else {
             continue;
         };
-        let (spline, revolved, degrees, rational) = match s.kind() {
+        let (spline, revolved, definition, degrees, rational) = match s.kind() {
             SurfaceKind::BSpline(bs) => (
                 true,
+                false,
                 false,
                 (bs.degree(SurfParamType::U), bs.degree(SurfParamType::V)),
                 bs.is_rational(),
             ),
             SurfaceKind::SurfOfRevolution(_) | SurfaceKind::Torus(_) => {
-                (false, true, (0, 0), false)
+                (false, true, false, (0, 0), false)
+            }
+            SurfaceKind::ProceduralBlend(pb) => {
+                let net_off = off_ball(k, &pb.net().clone().into(), case.r, &case.faces);
+                if !pb.bound().is_finite() || pb.bound() < 0.0 || pb.bound() > fitted_tol {
+                    problems.push(format!(
+                        "definition net bound {} exceeds {fitted_tol}",
+                        pb.bound()
+                    ));
+                }
+                if !net_off.is_finite() || net_off > fitted_tol {
+                    problems.push(format!(
+                        "definition net {net_off:.3e} off the ball (allowed {fitted_tol:.3e})"
+                    ));
+                }
+                (false, false, true, (0, 0), false)
             }
             _ => continue,
         };
@@ -475,10 +531,11 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
             }
             RoundKind::Revolved => revolved,
             RoundKind::Fitted => spline,
+            RoundKind::Procedural => definition,
         };
         if !kind_ok {
             problems.push(format!(
-                "round face of the wrong kind: degrees {degrees:?}, rational {rational}"
+                "round face of the wrong kind: degrees {degrees:?}, rational {rational}, definition {definition}"
             ));
         }
         off = off.max(off_ball(k, s, case.r, &case.faces));
@@ -498,8 +555,6 @@ enum Mark {
     Passes,
     /// Status 1001 from the round.
     Status1001,
-    /// A polynomial (3, 3) B-spline, this far off the ball, where an exact round is wanted.
-    Traced(f64),
     /// The kind is right, but it lies this far off the ball, over the tolerance.
     OverTolerance(f64),
 }
@@ -513,46 +568,38 @@ fn holds(mark: Mark, got: &Graded) -> bool {
     match (mark, got) {
         (Mark::Passes, Graded::Built { problems, .. }) => problems.is_empty(),
         (Mark::Status1001, Graded::Round(e)) => e.contains("code: 1001"),
-        (Mark::Traced(m), Graded::Built { problems, off }) => {
-            about(*off, m)
-                && problems
-                    .iter()
-                    .any(|p| p.contains("degrees (3, 3), rational false"))
-        }
-        (Mark::OverTolerance(m), Graded::Built { problems, off }) => {
+        (Mark::OverTolerance(m), Graded::Built { problems, off, .. }) => {
             about(*off, m) && problems.len() == 1 && problems[0].contains("off the ball")
         }
         _ => false,
     }
 }
 
-/// The fork's mark at 099cf96, before the exact classes.
-fn mark_before(name: &str) -> Mark {
+/// The fork's mark at 7ac037e (smlib#77 merged) and still at d01d7b0 for the six rims of
+/// one edge; the two rims of more than one edge, selected whole, pass (#2441).
+fn mark_after(name: &str) -> Mark {
     match name {
-        "cone_cylinder_sharing_a_ball" => Mark::Traced(3.96e-4),
-        "oblique_plane_cone" => Mark::Traced(9.4e-4),
-        "oblique_plane_cylinder" => Mark::Traced(2.26e-3),
-        "sphere_coaxial_cone" => Mark::Traced(1.47e-3),
-        "cylinders_touching_at_a_point" | "sphere_plane" => Mark::Status1001,
         "tee_is_fitted" => Mark::OverTolerance(1.47e-3),
         _ => Mark::Passes,
     }
 }
 
-/// The fork's mark at 7ac037e (smlib#77 merged) and still at d01d7b0.
-fn mark_after(name: &str) -> Mark {
+/// The current section construction fixes the fitted tee. The other marks are unchanged.
+fn mark_with_section_fixes(name: &str) -> Mark {
     match name {
-        "cylinders_touching_at_a_point" | "sphere_plane" => Mark::Status1001,
-        "tee_is_fitted" => Mark::OverTolerance(1.47e-3),
-        _ => Mark::Passes,
+        "tee_is_fitted" => Mark::Passes,
+        _ => mark_after(name),
     }
 }
 
 const PIPES: &str = "cylinders_touching_at_a_point";
 
-fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel) {
+fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel, fitted_kind: RoundKind) {
     let mut wrong = Vec::new();
-    for case in cases() {
+    for mut case in cases() {
+        if case.kind == RoundKind::Fitted {
+            case.kind = fitted_kind;
+        }
         let mut k = kernel();
         if case.name == PIPES {
             k.fixes.ssi_split_curves_at_singular_points = true;
@@ -570,7 +617,7 @@ fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel) {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// SolidCraft's fixes: every `UpstreamFixes` field on except `geometric_g2_continuity`.
+/// All current fixes, including the later procedural representation.
 fn solidcraft_kernel() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     let mut f = UpstreamFixes::default();
@@ -589,19 +636,28 @@ fn exact_kernel() -> Kernel {
     k
 }
 
-#[test]
-fn without_the_flag_the_cases_have_the_fork_s_marks_before_the_exact_classes() {
-    check_all(mark_before, Kernel::default);
+fn solidcraft_before_definitions() -> Kernel {
+    let mut k = solidcraft_kernel();
+    k.fixes.fillet_round_as_definition = false;
+    k
 }
 
 #[test]
-fn with_solidcraft_s_fixes_the_cases_have_the_fork_s_marks_after_the_exact_classes() {
-    check_all(mark_after, solidcraft_kernel);
+fn with_solidcraft_s_fixes_without_definitions_the_fitted_round_meets_tolerance() {
+    check_all(
+        mark_with_section_fixes,
+        solidcraft_before_definitions,
+        RoundKind::Fitted,
+    );
 }
 
 #[test]
-fn the_flag_alone_gives_the_fork_s_marks_after_the_exact_classes() {
-    check_all(mark_after, exact_kernel);
+fn with_solidcraft_s_fixes_the_fitted_round_is_its_definition() {
+    check_all(
+        mark_with_section_fixes,
+        solidcraft_kernel,
+        RoundKind::Procedural,
+    );
 }
 
 #[test]
@@ -616,6 +672,37 @@ fn the_pipes_join_only_with_wr77() {
 
 /// The grading sees what it's for: on a case that passes, a volume one part in 1e5 off and
 /// each wrong surface kind are refused, and the fork's marks on it don't hold.
+/// The ball's rim with one of its two edges picked, as the case was before #2441: the half
+/// rim's round would end at the sphere's seam, and a round does not end at a seam (#2864).
+/// The session, driven as `fillet_edges` drives it, says that is why (the 1001 is the status
+/// `fillet_edges` returns, checked by `holds`).
+#[test]
+fn the_ball_s_half_rim_is_refused() {
+    let mut case = cases()
+        .into_iter()
+        .find(|c| c.name == "sphere_plane")
+        .unwrap();
+    case.points.truncate(1);
+    for kernel in [solidcraft_kernel, solidcraft_before_definitions] {
+        let got = grade(&case, &mut kernel());
+        assert!(holds(Mark::Status1001, &got), "{got:?}");
+
+        let mut k = kernel();
+        let mut b = sphere_plane(&mut k).unwrap();
+        let e = pick(&k, &b, case.points[0]).unwrap();
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        let r = s
+            .prepare_constant_radius_edges(&mut k, &[e], case.r, 1, 1, 1.0)
+            .and_then(|()| s.do_fillet(&mut k));
+        assert!(r.is_err(), "the half rim's round refused");
+        assert_eq!(
+            s.error_info().comment,
+            RUNS_ON_ACROSS_SEAM,
+            "refused at the seam"
+        );
+    }
+}
+
 #[test]
 fn the_grading_refuses_a_wrong_volume_and_a_wrong_kind() {
     let graded = |want_factor: f64, kind: RoundKind| {
@@ -632,8 +719,39 @@ fn the_grading_refuses_a_wrong_volume_and_a_wrong_kind() {
         graded(1.00001, RoundKind::Revolved),
         graded(1.0, RoundKind::Rational(4, 2)),
         graded(1.0, RoundKind::Fitted),
+        graded(1.0, RoundKind::Procedural),
     ] {
         assert!(!holds(Mark::Passes, &got), "{got:?}");
         assert!(!holds(Mark::Status1001, &got), "{got:?}");
+    }
+}
+
+/// A procedural face is required explicitly: neither its net nor another surface kind
+/// can satisfy the definition check, and the existing volume gate still applies.
+#[test]
+fn the_grading_distinguishes_a_definition_from_a_fitted_surface() {
+    let graded = |kernel: &mut Kernel, kind: RoundKind, volume_factor: f64| {
+        let mut case = cases()
+            .into_iter()
+            .find(|c| c.name == "tee_is_fitted")
+            .unwrap();
+        case.kind = kind;
+        case.want *= volume_factor;
+        grade(&case, kernel)
+    };
+    assert!(holds(
+        Mark::Passes,
+        &graded(&mut solidcraft_kernel(), RoundKind::Procedural, 1.0)
+    ));
+    for got in [
+        graded(&mut solidcraft_kernel(), RoundKind::Fitted, 1.0),
+        graded(&mut solidcraft_kernel(), RoundKind::Procedural, 1.00001),
+        graded(
+            &mut solidcraft_before_definitions(),
+            RoundKind::Procedural,
+            1.0,
+        ),
+    ] {
+        assert!(!holds(Mark::Passes, &got), "{got:?}");
     }
 }

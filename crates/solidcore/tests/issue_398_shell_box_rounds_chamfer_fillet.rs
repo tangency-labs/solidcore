@@ -256,31 +256,13 @@ fn issue_398_open_top_shell_with_edges_on_analytics_exact() {
     assert_eq!(got.face_list().len(), 51);
     let want = closed_form(Some(30.0));
     assert!((v - want).abs() <= 1e-6 * want, "{v} vs {want}");
-    // 2.3e-8 above the closed form; 13701.735330849975 (8.4e-8 above) with the flag off
-    let pinned = 13701.73449509504;
+    // 1.9e-10 above the closed form since #2890 (precise properties integrate from the
+    // trims' base; 13701.73421803366, 2.4e-9 above, before): the offset's face extensions
+    // are exact (the source bit for bit, no least squares fit or knot removal moving a
+    // face's own part); it was 13701.73449509504 (2.3e-8 above) on the fitted extensions,
+    // 13701.735330849975 (8.4e-8 above) with the flag off
+    let pinned = 13701.734187900483;
     assert!((v - pinned).abs() <= 1e-9 * pinned, "{v} vs {pinned}");
-}
-
-/// Without the fix the port keeps the pinned C++ reference's result: both shells report
-/// success with the same body, which is not a manifold solid and has zero volume
-/// (`plan/findings/offset.offset_executive_p2--shell-succeeds-with-non-manifold-body.md`).
-#[test]
-fn issue_398_reference_without_fix() {
-    for open in [true, false] {
-        let (mut k, b) = part_with(false);
-        let mut got = shell_of(&mut k, b, open).unwrap();
-        let counts = (
-            got.face_list().len(),
-            got.edge_list().len(),
-            got.vertex_list().len(),
-        );
-        assert_eq!(counts, (72, 307, 236), "open={open}: the reference body");
-        assert!(
-            !brep_is_manifold_solid(&got).unwrap(),
-            "open={open}: not a manifold solid"
-        );
-        assert_eq!(volume(&k, &mut got).unwrap(), 0.0, "open={open}");
-    }
 }
 
 /// Narrows the open-top failure: the shell after each step of the recipe, open at the

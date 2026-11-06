@@ -37,6 +37,8 @@
 //! | [`CurveBasedFs::is_kind_of`], [`CurveBasedFs::type_code`], [`CurveBasedFs::type_string`] | `IsKindOf`, `GetType`, `GetTypeString` |
 //! | [`VariableRadiusFs`]                                     | `SmVariableRadiusFS` (members; `Drop` is the destructor) |
 //! | [`VariableRadiusFs::fillet_law`], [`VariableRadiusFs::fillet_law_orientation`], [`VariableRadiusFs::fillet_law_interval`], [`VariableRadiusFs::set_fillet_law_interval`] | `GetFilletLaw`, `GetFilletLawOrientation`, `GetFilletLawInterval`, `SetFilletLawInterval` |
+//! | [`FilletLaw::corner_parameters`] | `SmFilletLaw::GetCornerParameters`, `SmBSplineFilletLaw::GetCornerParameters` (the fork's 6eecf04) |
+//! | [`VariableRadiusFs::radius_corner_parameters`], [`VariableRadiusFs::is_at_radius_corner`], [`VariableRadiusFs::radius_parameter`] | `SmVariableRadiusFS::GetRadiusCornerParameters`, `IsAtRadiusCorner`, `GetRadiusParameter` (the fork's 6eecf04) |
 //! | [`VariableRadiusFs::offset_radii_can_change`]            | `SmVariableRadiusFS::OffsetRadiiCanChange`            |
 //! | [`VariableRadiusFs::set_extension_flags`]                | `SmVariableRadiusFS::SetExtensionFlags`               |
 //! | [`VariableRadiusFs::setup_offset_values`]                | `SmVariableRadiusFS::SetupOffsetValues`               |
@@ -1955,7 +1957,87 @@ impl FilletLaw {
     pub fn set_extended_edge_curve(&mut self, curve: Option<BSplineCurve>) {
         self.extended = curve;
     }
+
+    /// `GetCornerParameters` (the fork's 6eecf04, not upstream): the parameters inside the
+    /// fillet edge's interval `curve_interval` where the radius has a corner, ascending.
+    /// For a B-spline law (`SmBSplineFilletLaw`), an interior knot of the law curve inside
+    /// the edge map where its slope from the left and from the right differ, taken to the
+    /// edge by the inverse of the map `Evaluate` applies (running from the interval's end
+    /// when `reverse`); none for the other laws (the base's default). The fillet's centre
+    /// curve and rails turn at such a parameter.
+    ///
+    /// The slope is the law curve's `x'` alone, as the fork's: the radius is the law
+    /// curve's x at the curve parameter the edge map gives (`Evaluate`), its `y` not read,
+    /// so a jump in `x'` is a corner of the radius the fillet is built with, and nothing
+    /// else is.
+    ///
+    /// Deviation from the fork: an edge interval or edge map that is not finite or has no
+    /// length is refused, where the fork returns no corners.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] for an edge interval or edge map that is not finite or
+    /// has no length; those of the law curve's `GetKnots` and `Evaluate`.
+    pub fn corner_parameters(&self, curve_interval: &Extent1d, reverse: bool) -> Result<Vec<f64>> {
+        for (ivl, what) in [
+            (
+                curve_interval,
+                "a law's corners need a finite edge interval with length",
+            ),
+            (
+                &self.edge_map,
+                "a law's corners need a finite edge map with length",
+            ),
+        ] {
+            if !(ivl.min().is_finite() && ivl.max().is_finite() && ivl.length() > 0.0) {
+                return Err(SolidError::invalid_input(OP_CORNERS, what));
+            }
+        }
+        let FilletLawKind::BSpline { law_curve, .. } = &self.kind else {
+            return Ok(Vec::new());
+        };
+        let map_length = self.edge_map.length();
+        let (knots, _) = law_curve.knots(None)?;
+        let ivl = law_curve.natural_interval();
+        let mut corners = Vec::new();
+        let mut previous: Option<f64> = None;
+        for &law_t in &knots {
+            let repeated = previous == Some(law_t);
+            previous = Some(law_t);
+            if repeated
+                || law_t <= ivl.min()
+                || law_t >= ivl.max()
+                || law_t <= self.edge_map.min()
+                || law_t >= self.edge_map.max()
+            {
+                continue;
+            }
+            // slopes in the lower and the upper interval at the knot
+            let left = law_curve.evaluate(law_t, 1, false, false)?;
+            let right = law_curve.evaluate(law_t, 1, true, false)?;
+            let (Some(left), Some(right)) = (left.get(1), right.get(1)) else {
+                return Err(SolidError::sm_err(OP_CORNERS));
+            };
+            let (d_left, d_right) = (left.x, right.x);
+            if (d_left - d_right).abs() <= EFF_ZERO * (1.0 + d_left.abs() + d_right.abs()) {
+                continue;
+            }
+            // the edge parameter of the knot (the inverse of the map in Evaluate)
+            let t = (law_t - self.edge_map.min()) / map_length;
+            corners.push(if reverse {
+                curve_interval.max() - t * curve_interval.length()
+            } else {
+                curve_interval.min() + t * curve_interval.length()
+            });
+        }
+        if reverse {
+            corners.reverse();
+        }
+        Ok(corners)
+    }
 }
+
+const OP_CORNERS: &str = "blend::fillet_standard_solver::p1::FilletLaw::corner_parameters";
 
 // ---- SmVariableRadiusFS -------------------------------------------------------------------
 
@@ -1998,6 +2080,50 @@ impl VariableRadiusFs {
     /// `SetFilletLawInterval`.
     pub fn set_fillet_law_interval(&mut self, interval: Extent1d) {
         self.law_interval = interval;
+    }
+
+    /// `GetRadiusCornerParameters` (the fork's 6eecf04, not upstream): the edge parameters
+    /// where the radius law has a corner, ascending ([`FilletLaw::corner_parameters`] over
+    /// the law's interval and orientation). Under `fixes.fillet_gn_section_generator` (the
+    /// law corners of WR-685); none without it, so that the trace, its flush and the
+    /// executive see no corner and are as before.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`FilletLaw::corner_parameters`].
+    pub fn radius_corner_parameters(&self, k: &Kernel) -> Result<Vec<f64>> {
+        if !k.fixes.fillet_gn_section_generator {
+            return Ok(Vec::new());
+        }
+        self.law
+            .corner_parameters(&self.law_interval, self.law_orientation)
+    }
+
+    /// `IsAtRadiusCorner` (the fork's 6eecf04): whether the point's law parameter
+    /// (`m_adUserDoubles[0]`, see `SetupOffsetValues`) is at one of
+    /// [`Self::radius_corner_parameters`], within `1e-9` of the law interval's size;
+    /// `false` where those fail.
+    #[must_use]
+    pub fn is_at_radius_corner(&self, k: &Kernel, point: &TsectPnt) -> bool {
+        let Ok(corners) = self.radius_corner_parameters(k) else {
+            return false;
+        };
+        let tol = 1.0e-9 * (1.0 + self.law_interval.min().abs() + self.law_interval.max().abs());
+        let t = point.user_doubles.first().copied().unwrap_or(f64::NAN);
+        corners.iter().any(|&corner| (t - corner).abs() <= tol)
+    }
+
+    /// `GetRadiusParameter` (the fork's 6eecf04): the point's edge parameter (its law
+    /// parameter, `m_adUserDoubles[0]`) where the law has corners; `None` where it has none
+    /// or they fail.
+    #[must_use]
+    pub fn radius_parameter(&self, k: &Kernel, point: &TsectPnt) -> Option<f64> {
+        match self.radius_corner_parameters(k) {
+            Ok(corners) if !corners.is_empty() => {
+                Some(point.user_doubles.first().copied().unwrap_or(f64::NAN))
+            }
+            _ => None,
+        }
     }
 
     /// `SmVariableRadiusFS::GetJacobianSize`: 5.

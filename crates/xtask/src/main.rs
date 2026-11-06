@@ -169,7 +169,12 @@ impl Roots {
             .file_name()
             .ok_or_else(|| refuse(path, "has no file name"))?;
         let resolved = canonical(parent)?.join(name);
-        if resolved.components().any(|c| c.as_os_str() == ".git") {
+        // Conservatively refuse case variants even where .GIT is distinct from .git.
+        if resolved.components().any(|c| {
+            c.as_os_str()
+                .to_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(".git"))
+        }) {
             return Err(refuse(path, "is inside a .git directory"));
         }
         if self.forbidden.iter().any(|f| f == &resolved) {
@@ -200,10 +205,15 @@ fn refuse(path: &Path, why: &str) -> io::Error {
     )
 }
 
+/// The home directory: `HOME`, else `USERPROFILE` (Windows, where PowerShell and cmd
+/// usually have no `HOME`).
 fn home() -> io::Result<PathBuf> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| io::Error::other("HOME is not set"))
+    home_from(env::var_os("HOME"), env::var_os("USERPROFILE"))
+        .ok_or_else(|| io::Error::other("neither HOME nor USERPROFILE is set"))
+}
+
+fn home_from(home: Option<OsString>, user_profile: Option<OsString>) -> Option<PathBuf> {
+    home.or(user_profile).map(PathBuf::from)
 }
 
 fn canonical(p: &Path) -> io::Result<PathBuf> {
@@ -266,6 +276,54 @@ mod tests {
         assert!(r.check(&tmp.join("wt/../main")).is_err());
         assert!(r.check(&tmp.join("wt/a/.git")).is_err());
         assert!(r.check(&tmp.join("elsewhere")).is_err());
+    }
+
+    #[test]
+    fn refuses_git_components_case_insensitively() {
+        let tmp = tempdir("git-case");
+        fs::create_dir_all(tmp.join("wt/a/.git")).unwrap();
+        fs::write(tmp.join("wt/a/.git/keep"), b"keep").unwrap();
+        let r = roots(&tmp);
+        let alias = tmp.join("wt/a/.GIT/keep");
+        let actual_alias = fs::canonicalize(&alias).ok()
+            == Some(fs::canonicalize(tmp.join("wt/a/.git/keep")).unwrap());
+        eprintln!("host .GIT/keep aliases .git/keep: {actual_alias}");
+        for path in [".git", ".GIT", ".GiT", ".git/keep"] {
+            assert!(r.check(&tmp.join("wt/a").join(path)).is_err(), "{path}");
+        }
+        if actual_alias {
+            assert!(r.check(&alias).is_err());
+        }
+        assert!(tmp.join("wt/a/.git/keep").exists());
+    }
+
+    #[test]
+    fn allows_non_git_siblings() {
+        let tmp = tempdir("git-siblings");
+        fs::create_dir_all(tmp.join("wt/a")).unwrap();
+        let r = roots(&tmp);
+        assert!(r.check(&tmp.join("wt/a/.github")).is_ok());
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let name = OsString::from_vec(b".git\xff".to_vec());
+            assert!(r.check(&tmp.join("wt/a").join(name)).is_ok());
+        }
+    }
+
+    #[test]
+    fn home_falls_back_to_user_profile_only_without_home() {
+        let s = |x: &str| Some(OsString::from(x));
+        assert_eq!(
+            home_from(s("/home/a"), s(r"C:\Users\a")),
+            Some("/home/a".into())
+        );
+        assert_eq!(home_from(s(""), s(r"C:\Users\a")), Some("".into()));
+        assert_eq!(
+            home_from(None, s(r"C:\Users\a")),
+            Some(r"C:\Users\a".into())
+        );
+        assert_eq!(home_from(None, None), None);
     }
 
     #[cfg(unix)]

@@ -22,7 +22,7 @@ mod offset_fixture;
 
 use offset_fixture::{offset_full, planar_faces_at, report, shell, Notifications};
 use solidcore::blend::fillet_executive::api::fillet_edges;
-use solidcore::error::{SolidError, SM_ERR};
+use solidcore::error::SM_ERR;
 use solidcore::offset::offset_executive::p2::{api_offset_brep_full, OffsetOptions};
 use solidcore::primitive::api_primitives::{create_box, create_sphere};
 use solidcore::topology::brep::p1 as bp1;
@@ -101,7 +101,7 @@ fn chamfer_9(k: &Kernel, b: &Brep) -> FaceId {
 
 /// No loop of `b` has a gap between consecutive edges (`check_brep`).
 fn no_loop_gaps(k: &mut Kernel, b: &Brep) -> bool {
-    let mut b = b.clone();
+    let mut b = b.clone_standing_for_self().unwrap();
     let check = check_brep(k, &mut b, CheckLevel::Level2).unwrap();
     !check.lines().iter().any(|l| l.contains("Gap"))
 }
@@ -304,7 +304,7 @@ fn wr_657_fully_chamfered_box_inset_open_at_a_chamfer_is_refused() {
     let b = chamfered(&mut k, None);
     let open = face_at(&k, &b, [29.0, 10.0, 9.0]);
     match shell(&mut k, b, -1.0, &[open]) {
-        Err(SolidError::Upstream { code, .. }) => assert_eq!(code, SM_ERR),
+        Err(e) => assert_eq!(e.sm_status(), Some(SM_ERR)),
         other => panic!("SM_ERR expected: {other:?}"),
     }
 }

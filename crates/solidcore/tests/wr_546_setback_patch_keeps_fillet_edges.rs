@@ -6,8 +6,7 @@
 //! patch's edge, the one nearer the other's faces: two near-equal distances, so a
 //! section half could come out as the approximation, 1.4e-5 off the round. With
 //! `fillet_patch_keeps_fillet_edges` every edge between the patch and a round is the
-//! round's own edge and lies on it. The setback itself needs
-//! `fillet_setback_from_start_vertex` (WR-445).
+//! round's own edge and lies on it.
 
 #![allow(
     clippy::unwrap_used,
@@ -43,7 +42,6 @@ fn face_middle_from_origin(k: &Kernel, b: &Brep, f: FaceId) -> f64 {
 #[test]
 fn wr_546_setback_patch_meets_the_rounds_on_their_own_edges() {
     let mut k = Kernel::default();
-    k.fixes.fillet_setback_from_start_vertex = true;
     k.fixes.fillet_patch_keeps_fillet_edges = true;
     let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 40.0, 40.0).unwrap();
     let edges: Vec<_> = b.edges().ids().collect();
@@ -53,6 +51,16 @@ fn wr_546_setback_patch_meets_the_rounds_on_their_own_edges() {
         session
             .prepare_constant_radius_edges(&mut k, &edges, 4.0, 1, 1, 1.0)
             .unwrap();
+        // the corner set back (`AddSetBackVertex`): no Ball is built there
+        let set_back: Vec<_> = session
+            .target()
+            .vertices()
+            .ids()
+            .filter(|&v| at_origin(session.target(), v))
+            .collect();
+        for v in set_back {
+            session.add_set_back_vertex(v);
+        }
         session.create_corners(&k, None).unwrap();
         for id in session.fillet_corners().unwrap() {
             if let Some(v) = session.corner(id).unwrap().vertex {

@@ -120,6 +120,15 @@ impl RailClassificationContext for SurfaceSurfaceSession<'_> {
         }
         .corner_type(corner)
     }
+    fn corner_blend_tests(
+        &self,
+        corner: crate::blend::fillet_geom::p1::FilletCornerId,
+    ) -> Result<(bool, bool)> {
+        classification::Context {
+            corners: self.corners,
+        }
+        .corner_blend_tests(corner)
+    }
     fn corners(&self) -> crate::blend::fillet_geom::p1::CornerLookup<'_> {
         crate::blend::fillet_geom::p1::CornerLookup::table(self.corners)
     }
@@ -170,7 +179,7 @@ impl SurfaceSurfaceContext for SurfaceSurfaceSession<'_> {
     ) -> Result<()> {
         // The classifications only read the rails' curves and the base topology,
         // which the split leaves as they are: resolve them in a copy of the pseudo body.
-        let snapshot = pseudo.brep().clone();
+        let snapshot = pseudo.brep().clone_standing_for_self()?;
         let objects = classification::Objects {
             target: bases.target,
             pseudo: &snapshot,

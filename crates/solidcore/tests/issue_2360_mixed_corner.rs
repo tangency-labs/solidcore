@@ -1,5 +1,5 @@
 //! tangency-labs/solidcore#2360 (from smlib#82): the Mixed corner, a convex and a concave
-//! blend meeting G1 across a tangent seam (`Kernel::fixes.fillet_blend_corner`, WR-697).
+//! blend meeting G1 across a tangent seam (WR-697).
 //!
 //! The body is #2256's tangent peg (`data/issue_2256_peg_step_reimported.smb`: a bar
 //! 40 x 16 x 10 whose far end is a half disc R8 about (40, 8), joined with a disc R8 about
@@ -21,9 +21,8 @@
 //!   the cylinder's axis, where every cut of the concave blend is exact), against its
 //!   closed form, to 1e-11 relative.
 //!
-//! Without `fillet_blend_corner` the pinned corner is built (6.544e-3 out of y = 0, see
-//! `issue_2256_peg_mixed_corner.rs`); with it and no Mixed corner the WR-710 refusal
-//! stands.
+//! Pinned SMLib's corner here stands 6.544e-3 out of y = 0; a 3x2 mixed-convexity corner
+//! that is not the Mixed one is refused by WR-710.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -76,13 +75,10 @@ fn key_of(e: EntityRef) -> ObjectRef {
     }
 }
 
-/// Every opt-in fix on (SolidCraft's set, WR-710's refusal among them), or with the blend
-/// corner and the refusal both off.
-fn kernel(blend: bool) -> Kernel {
+/// Every opt-in fix on (SolidCraft's set, WR-710's refusal among them).
+fn kernel() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     k.fixes = UpstreamFixes::all();
-    k.fixes.fillet_blend_corner = blend;
-    k.fixes.fillet_refuse_mixed_corner_crossing_rails = blend;
     k
 }
 
@@ -129,8 +125,14 @@ fn pick(k: &Kernel, b: &Brep, p: [f64; 3]) -> EdgeId {
 }
 
 /// The front top edge and the concave arc rounded (`xsect` 1) or chamfered (0) at `r`.
-fn blended(blend: bool, r: f64, xsect: u32) -> (Kernel, Brep, solidcore::Result<()>) {
-    let mut k = kernel(blend);
+fn blended(r: f64, xsect: u32) -> (Kernel, Brep, solidcore::Result<()>) {
+    blended_kept(true, r, xsect)
+}
+
+/// [`blended`], with `definition` (`fillet_round_as_definition`, #2488) set.
+fn blended_kept(definition: bool, r: f64, xsect: u32) -> (Kernel, Brep, solidcore::Result<()>) {
+    let mut k = kernel();
+    k.fixes.fillet_round_as_definition = definition;
     let mut b = read(&mut k);
     let es: Vec<EdgeId> = [[20.0, 0.0, 10.0], [32.0, 8.0, 10.0]]
         .iter()
@@ -322,7 +324,7 @@ fn outside_volume(k: &mut Kernel, b: &Brep, s: f64, chamfer: bool) -> (f64, f64)
 
 /// The grades of the blended peg (`order` G1 for rounds, G0 for chamfers).
 fn graded(r: f64, chamfer: bool) {
-    let (mut k, mut b, res) = blended(true, r, u32::from(!chamfer));
+    let (mut k, mut b, res) = blended(r, u32::from(!chamfer));
     res.unwrap();
     let bb = brep_bounding_box(&k, &b, true).unwrap();
     let (lo, hi) = ([0.0, 0.0, 0.0], [48.0, 16.0, 20.0]);
@@ -398,13 +400,183 @@ fn chamfers_together_d2() {
     graded(2.0, true);
 }
 
-/// Without `fillet_blend_corner` (the upstream path, WR-710's refusal off) the pinned 3x2
-/// mixed-convexity corner is built across the crossed rails, standing 6.544e-3 out of the
-/// front face y = 0: what the Mixed corner replaces.
+// ---- #2488: a Mixed corner's faces keep their rule ----
+
+use solidcore::surface::procedural_blend::convert::{corner_rebuild, corner_to_record};
+use solidcore::surface::procedural_blend::corner::CornerKind;
+use solidcore::surface::procedural_blend::record::{CornerRecord, SupportRecord};
+use solidcore::surface::procedural_blend::BlendNet;
+
+/// The faces' surfaces whose definition is a corner's of `kind`.
+fn corner_faces(b: &Brep, kind: CornerKind) -> Vec<Surface> {
+    b.faces()
+        .ids()
+        .filter_map(|f| b.face(f).unwrap().surface.clone())
+        .filter(|s| {
+            s.procedural_blend()
+                .and_then(|d| d.corner())
+                .is_some_and(|c| c.kind() == kind)
+        })
+        .collect()
+}
+
+/// Every face's surface over a 9 x 9 grid of its natural domain, as bits; a round that is
+/// a procedural blend by its net (its own definition is #2480's, and evaluates by solving
+/// it).
+fn face_bits(k: &Kernel, b: &Brep) -> Vec<Vec<[u64; 3]>> {
+    b.faces()
+        .ids()
+        .filter_map(|f| b.face(f).unwrap().surface.clone())
+        .map(|s| {
+            let s = match s.kind() {
+                SurfaceKind::ProceduralBlend(pb) => Surface::from(pb.net().copy()),
+                _ => s.clone(),
+            };
+            let d = s.natural_uv_domain_with_nurb(k).unwrap();
+            let mut pts = Vec::new();
+            for i in 0..=8 {
+                for j in 0..=8 {
+                    let u = d.min().x + (d.max().x - d.min().x) * f64::from(i) / 8.0;
+                    let v = d.min().y + (d.max().y - d.min().y) * f64::from(j) / 8.0;
+                    let p = s.evaluate_point(k, Point2::new(u, v)).unwrap();
+                    pts.push([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]);
+                }
+            }
+            pts
+        })
+        .collect()
+}
+
+/// Stored points `points` (weighted by `weights` when rational) moved by `by` along x, y
+/// and z.
+fn shift(points: &mut [[f64; 3]], weights: Option<&Vec<f64>>, by: f64) {
+    for (i, p) in points.iter_mut().enumerate() {
+        let w = weights.map_or(1.0, |w| w[i]);
+        for x in p.iter_mut() {
+            *x += by * w;
+        }
+    }
+}
+
+/// `rec` moved by `by` along x, y and z: a NURBS form, or a blend whole (its supports, its
+/// curves and its net).
+fn moved(rec: &SupportRecord, by: f64) -> SupportRecord {
+    let mut rec = rec.clone();
+    match &mut rec {
+        SupportRecord::Nurbs { form, .. } => {
+            let w = form.weights.clone();
+            shift(&mut form.points, w.as_ref(), by);
+        }
+        SupportRecord::Blend(b) => {
+            let w = b.net.weights.clone();
+            shift(&mut b.net.points, w.as_ref(), by);
+            let d = &mut b.definition;
+            for c in std::iter::once(&mut d.leader).chain(d.seeds.iter_mut()) {
+                let w = c.weights.clone();
+                shift(&mut c.points, w.as_ref(), by);
+            }
+            for support in &mut d.supports {
+                *support = moved(support, by);
+            }
+        }
+    }
+    rec
+}
+
 #[test]
-fn rounds_together_r2_without_blend_corner_stands_out() {
-    let (k, b, res) = blended(false, 2.0, 1);
+fn the_mixed_faces_are_their_rules() {
+    for (xsect, order) in [(1, 1), (0, 0)] {
+        let (k, mut b, res) = blended_kept(true, 2.0, xsect);
+        res.unwrap();
+        let faces = corner_faces(&b, CornerKind::Mixed);
+        assert_eq!(faces.len(), 2);
+        for s in &faces {
+            let d = s.procedural_blend().unwrap();
+            assert!(matches!(d.net(), BlendNet::Approx(_)));
+            assert!(d.bound() > 0.0 && d.bound() < 1e-3, "{}", d.bound());
+            assert_eq!(d.order(), order);
+            assert!((0..3).all(|i| d.support(i).is_some()));
+            // where built, the net is its rule's patch
+            assert_eq!(d.recertify(&k).unwrap(), 0.0);
+        }
+        let (k0, mut b0, res0) = blended_kept(false, 2.0, xsect);
+        res0.unwrap();
+        assert!(corner_faces(&b0, CornerKind::Mixed).is_empty());
+        let (v, v0) = (volume(&k, &mut b, 1e-9), volume(&k0, &mut b0, 1e-9));
+        if xsect == 1 {
+            // the rounds are the same either way: the body bit for bit
+            assert_eq!(v.to_bits(), v0.to_bits());
+            assert_eq!(face_bits(&k, &b), face_bits(&k0, &b0));
+        } else {
+            // a chamfer is its definition with the flag on (#2486), its net certified
+            // within its bound of the chord, so the corner is built on other nets: the body
+            // moves within that bound (3.2e-8 of it here)
+            assert!((v - v0).abs() <= 1e-7 * v0, "{v} vs {v0}");
+        }
+    }
+}
+
+#[test]
+fn a_mixed_face_round_trips_through_its_record() {
+    let (k, b, res) = blended_kept(true, 2.0, 1);
     res.unwrap();
-    let bb = brep_bounding_box(&k, &b, true).unwrap();
-    assert!(bb.min_at(1) < -6e-3, "box min y {}", bb.min_at(1));
+    for s in corner_faces(&b, CornerKind::Mixed) {
+        let rec = corner_to_record(&k, &s).unwrap();
+        let json = serde_json::to_string(&rec).unwrap();
+        let back = corner_rebuild(&k, &serde_json::from_str(&json).unwrap()).unwrap();
+        assert_eq!(corner_to_record(&k, &back).unwrap(), rec);
+        assert_eq!(back.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
+    }
+}
+
+#[test]
+fn a_moved_mixed_face_is_certified_again() {
+    let (k, b, res) = blended_kept(true, 2.0, 1);
+    res.unwrap();
+    for s in corner_faces(&b, CornerKind::Mixed) {
+        let mut s = s.copy(&k).unwrap();
+        let mut place = solidcore::geom::axis2_placement::Axis2Placement::default();
+        place.rotate_about_axis(0.3, Vec3::new(1.0, 2.0, 3.0).unitize().unwrap());
+        place.translate(Vec3::new(1e2, -2e2, 5e1));
+        s.transform(&k, &place, None).unwrap();
+        let d = s.procedural_blend().unwrap();
+        let proved = d.recertify(&k).unwrap();
+        eprintln!("moved: {proved:e}");
+        assert!(proved <= d.bound());
+    }
+}
+
+#[test]
+fn a_mixed_face_off_its_blend_or_t_is_refused() {
+    let (k, b, res) = blended_kept(true, 2.0, 1);
+    res.unwrap();
+    for s in corner_faces(&b, CornerKind::Mixed) {
+        let CornerRecord::Mixed(rec) = corner_to_record(&k, &s).unwrap() else {
+            panic!("not a mixed record");
+        };
+        // its trimline's blend moved
+        let mut off = rec.clone();
+        let i = rec.blend as usize;
+        off.blends[i] = moved(&rec.blends[i], 1e-3);
+        let why = corner_rebuild(&k, &CornerRecord::Mixed(off))
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("off its blend"), "{why}");
+        // T moved
+        let mut off = rec.clone();
+        off.common = moved(&rec.common, 1e-3);
+        let why = corner_rebuild(&k, &CornerRecord::Mixed(off))
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("off T"), "{why}");
+        // the net moved off its rule
+        let mut off = rec;
+        for p in &mut off.net.points {
+            p[2] += 1e-3;
+        }
+        let why = corner_rebuild(&k, &CornerRecord::Mixed(off))
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("rule's patch"), "{why}");
+    }
 }
