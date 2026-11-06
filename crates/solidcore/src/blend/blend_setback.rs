@@ -2954,6 +2954,61 @@ mod tests {
             .sum()
     }
 
+    /// A quarter of the unit circle about the z axis from (1, 0) to (0, 1), as the rational
+    /// quadratic arc, carried up z from 0 to 1: a one-span patch of degree (2, 1).
+    fn quarter_cylinder() -> BSplineSurface {
+        let h = 0.5f64.sqrt();
+        let mut pts = Vec::new();
+        let mut ws = Vec::new();
+        for (x, y, w) in [(1.0, 0.0, 1.0), (1.0, 1.0, h), (0.0, 1.0, 1.0)] {
+            for z in [0.0, 1.0] {
+                pts.push(Point3::new(x, y, z));
+                ws.push(w);
+            }
+        }
+        BSplineSurface::create_canonical(&CanonicalSurfaceData {
+            u_degree: 2,
+            v_degree: 1,
+            control_points: &pts,
+            form: BSplineSurfaceForm::Unspecified,
+            u_multiplicities: &[3, 3],
+            v_multiplicities: &[2, 2],
+            u_knots: &[0.0, 1.0],
+            v_knots: &[0.0, 1.0],
+            knot_type: KnotType::Unspecified,
+            weights: Some(ws.as_slice()),
+            uv_domain: None,
+        })
+        .unwrap()
+    }
+
+    /// The quarter cylinder stands at most 1 past the plane through the axis square to
+    /// (1, 1, 0) / sqrt 2 (at 45 degrees), its control net sqrt 2 (the arc's middle point). The
+    /// bound is the net's where that is within the tolerance; past it, it is taken on the patch:
+    /// never below the patch's own 1, within a tolerance a thousandth above 1 (the halved nets
+    /// close in on the arc quadratically), and still past one below.
+    #[test]
+    fn a_patch_past_a_plane_is_bounded_on_itself_where_its_net_passes_the_tolerance() {
+        let fill = Fill {
+            patches: vec![quarter_cylinder()],
+            round: Vec::new(),
+            face: Vec::new(),
+            reversed: Vec::new(),
+            degree: 2,
+        };
+        let n = Vec3::new(1.0, 1.0, 0.0) * 0.5f64.sqrt();
+        let plane = [Face::plane(Point3::new(0.0, 0.0, 0.0), n)];
+        let net = containment(&fill, &plane, true, 2.0).unwrap();
+        assert!((net - 2f64.sqrt()).abs() < 1e-15, "{net}");
+        let within = containment(&fill, &plane, true, 1.001).unwrap();
+        assert!((1.0..=1.001).contains(&within), "{within}");
+        let past = containment(&fill, &plane, true, 0.9).unwrap();
+        assert!(past >= 1.0 && past < 2f64.sqrt(), "{past}");
+        // on a concave corner's side the net is within any tolerance: its ends, -1 / sqrt 2
+        let concave = containment(&fill, &plane, false, 1e-6).unwrap();
+        assert!((concave + 0.5f64.sqrt()).abs() < 1e-15, "{concave}");
+    }
+
     #[test]
     fn the_law_restricted_to_a_span_is_the_smoothstep_there() {
         let ramps = [EaseRamp { from: 2.0, to: 6.0 }];
