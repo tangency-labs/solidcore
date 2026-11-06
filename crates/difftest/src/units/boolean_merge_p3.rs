@@ -1,19 +1,19 @@
-//! Differential tests for merge orchestration. Leaf-only trees move stable
-//! handles into an input pool imported before running the port. Results compare
-//! identity/order/null slots, face/edge/vertex counts and ordered vertex positions
-//! read from the actual Rust B-rep. Native result graphs are freshly imported and
-//! projected to the same digest. Curve/surface values and adjacency are not compared.
+//! Merge orchestration (`SmMerge`'s tree, list and piecewise entry points), ported from
+//! upstream and checked against the unit's golden. Leaf-only trees move stable handles
+//! into an input pool imported before running the port. Results record
+//! identity/order/null slots, face/edge/vertex counts and ordered vertex positions read
+//! from the actual Rust B-rep. Curve/surface values and adjacency are not recorded.
 //! Geometric merges remain deferred at the exact missing dependency call.
 //! Family 2's lists may hold surface operands (`Operand::surface`, planes and spheres):
 //! upstream copies them with the base copy constructor, so a surface list fails with
 //! `SM_ERR` (WR-196) and a list with B-reps ignores its surfaces; the fixture
 //! `surface-operands.json` compares both.
-//! Family 6 runs `NonManifoldBoolean` through `DependencyMerge::with_engine` against a
-//! context-only native `SmMerge` with the same explicit members and at most one
-//! operand: it compares the NER status, the restored manifold flag, the lamina mode
+//! Family 6 runs `NonManifoldBoolean` through `DependencyMerge::with_engine` on a
+//! context-only engine with explicit members and at most one operand: it records the NER
+//! status, the restored manifold flag, the lamina mode
 //! the engine's intersector received and the null result (error-path coverage only).
 //! Family 4 constructs the merge (`MergeAccess(context, a, b, 0.0, 0.0, options)`, as
-//! the shim) and runs `PiecewiseMerge` with that engine's intersector as `m_vTI`:
+//! the reference fixture) and runs `PiecewiseMerge` with that engine's intersector as `m_vTI`:
 //! `IntersectInsertRelate`, the mate clearing, subset, controls, SSI registration and
 //! wire processing all act on the one engine that `ManifoldBoolean` then uses.
 use std::collections::BTreeSet;
@@ -42,7 +42,6 @@ use solidcore::topology::brep_cache::{arena_identity, CacheObject};
 use solidcore::topology::topology_traverser::Marks;
 use solidcore::topology::{brep::p1 as bp, Brep, FaceId, NamingScheme};
 use solidcore::SolidError;
-use solidcore_ffi::units::boolean_merge_p3 as ffi;
 
 /// The five merge functions of `boolean.merge_p3`.
 pub struct Runner;
@@ -85,52 +84,137 @@ fn harness(error: &(impl ToString + ?Sized)) -> HarnessError {
     HarnessError::new(error.to_string())
 }
 fn refusal(i: &Inputs, expected: &str) -> Result<Output, HarnessError> {
-    match ffi::validate(&encode(i)) {
-        Err(solidcore_ffi::FfiError::InvalidArgument(reason))
-            if expected == "UB-190" && reason.starts_with("UB-190:") =>
-        {
-            // Guard-only check: no native operation or Rust kernel result is
-            // compared. Counted as both-errored/no_values, never as a deferral.
+    match contract(i) {
+        Err(reason) if expected == "UB-190" && reason.starts_with("UB-190:") => {
+            // Guard-only check: no operation runs. Recorded as an error with no values,
+            // never as a deferral.
             Ok(Output::err("ffi refusal: UB-190"))
         }
-        _ => Err(harness("expected the specific UB-190 FFI refusal")),
+        _ => Err(harness("expected the specific UB-190 refusal")),
     }
 }
-fn encode(i: &Inputs) -> Vec<f64> {
-    let mut data = vec![
-        f64::from(i.family),
-        f64::from(i.operation),
-        f64::from(i.options.unwrap_or(0)),
-        f64::from(u8::from(i.options.is_some())),
-        i.a.len() as f64,
-        i.b.len() as f64,
-    ];
+
+/// The largest list, and the largest operation or tree token magnitude.
+const MAX_OPERANDS: usize = 16;
+const MAX_TOKEN: i64 = 64;
+const MAX_TREE: usize = 128;
+
+/// The input contract of the reference wrapper (`SmMerge`'s entry points dereference what
+/// it rules out): a family up to 6 and an operation within `±64` (0 to 10 for families 3,
+/// 4 and 6); an option mask up to 31; at most 16 operands, in the list shape the family
+/// takes (family 0 no `b`, 3 and 4 one of each, 5 one `a`, 6 at most one in all); surface
+/// operands only in family 2; finite points, box sizes, plane normals and sphere radii,
+/// box sides and sphere radii positive, plane normals non-zero; no imprinting piecewise
+/// merge of a box other operand without keep-other (UB-190: the imprint early return
+/// deletes the other operand before its next surface reuses it); a tree only in family
+/// 0, of at most 128 tokens within `±64`, whose executed binary operations never take a
+/// leaf out of range or a null (already used) operand. The reason names the rule broken.
+fn contract(i: &Inputs) -> Result<(), String> {
+    let bad = |m: &str| Err(m.to_owned());
+    let (family, op) = (i.family, i64::from(i.operation));
+    let (na, nb) = (i.a.len(), i.b.len());
+    if family > 6 || !(-MAX_TOKEN..=MAX_TOKEN).contains(&op) {
+        return bad("family or operation out of range");
+    }
+    if i.options.is_some_and(|o| o > 31) {
+        return bad("option mask out of range");
+    }
+    if na > MAX_OPERANDS
+        || nb > MAX_OPERANDS
+        || na + nb > MAX_OPERANDS
+        || ((family == 3 || family == 4) && (na != 1 || nb != 1))
+        || (family == 0 && nb != 0)
+        || ((family == 3 || family == 4 || family == 6) && !(0..=10).contains(&op))
+        || (family == 5 && (na != 1 || nb != 0))
+        || (family == 6 && na + nb > 1)
+    {
+        return bad("operand list shape or enum");
+    }
     for operand in i.a.iter().chain(&i.b) {
+        if operand.surface.is_some() && family != 2 {
+            return bad("surface operands belong to BooleanLists (family 2)");
+        }
+        if !operand.point.iter().all(|c| c.is_finite()) {
+            return bad("non-finite input");
+        }
         match (&operand.surface, operand.size) {
             (Some(SurfaceOperand::Plane { normal }), _) => {
-                data.push(2.0);
-                data.extend(operand.point);
-                data.extend(*normal);
+                if !normal.iter().all(|c| c.is_finite()) {
+                    return bad("non-finite input");
+                }
+                if normal.iter().all(|&c| c == 0.0) {
+                    return bad("zero plane normal");
+                }
             }
             (Some(SurfaceOperand::Sphere { radius }), _) => {
-                data.push(3.0);
-                data.extend(operand.point);
-                data.extend([*radius, 0.0, 0.0]);
+                if !radius.is_finite() {
+                    return bad("non-finite input");
+                }
+                if *radius <= 0.0 {
+                    return bad("sphere radius must be positive");
+                }
             }
             (None, Some(size)) => {
-                data.push(1.0);
-                data.extend(operand.point);
-                data.extend(size);
+                if !size.iter().all(|c| c.is_finite()) {
+                    return bad("non-finite input");
+                }
+                if size.iter().any(|&d| d <= 0.0) {
+                    return bad("nonpositive box dimension");
+                }
             }
-            (None, None) => {
-                data.push(0.0);
-                data.extend(operand.point);
-            }
+            (None, None) => {}
         }
     }
-    data.push(i.tree.len() as f64);
-    data.extend(i.tree.iter().map(|&v| v as f64));
-    data
+    let other_is_box = i
+        .b
+        .first()
+        .is_some_and(|o| o.surface.is_none() && o.size.is_some());
+    if family == 4 && other_is_box && i.options.is_some_and(|o| o & 2 != 0 && o & 16 == 0) {
+        return bad("UB-190: piecewise imprinting requires keep-other");
+    }
+    if family != 0 && !i.tree.is_empty() {
+        return bad("unexpected tree");
+    }
+    tree_contract(na, &i.tree)
+}
+
+/// The tree part of [`contract`]: a postfix walk of `nodes` over `count` leaves, stopping
+/// at the first operation with fewer than two operands or past `-6`, in which no executed
+/// binary operation takes an operand that is null (a leaf already used once).
+fn tree_contract(count: usize, nodes: &[i64]) -> Result<(), String> {
+    let bad = |m: &str| Err(m.to_owned());
+    if count > MAX_OPERANDS || nodes.len() > MAX_TREE {
+        return bad("tree resource limit");
+    }
+    let mut used = vec![false; count];
+    let mut stack = Vec::new();
+    for &node in nodes {
+        if !(-MAX_TOKEN..=MAX_TOKEN).contains(&node) {
+            return bad("invalid tree token");
+        }
+    }
+    for &node in nodes {
+        if node >= 0 {
+            let Some(flag) = usize::try_from(node).ok().and_then(|n| used.get_mut(n)) else {
+                return bad("tree leaf out of range");
+            };
+            stack.push(!*flag);
+            *flag = true;
+        } else if stack.len() < 2 {
+            break;
+        } else {
+            let other = stack.pop().unwrap_or(false);
+            let primary = stack.pop().unwrap_or(false);
+            if !primary || !other {
+                return bad("binary operation dereferences a null operand");
+            }
+            if node < -6 {
+                break;
+            }
+            stack.push(true);
+        }
+    }
+    Ok(())
 }
 /// The deferral tag of merge calls with no constructed Rust-side engine.
 const HARNESS_ENGINE_STATE: &str = "harness:merge-engine-state";
@@ -205,27 +289,6 @@ fn engine_probe(k: &mut Kernel, i: &Inputs, pool: &mut Pool) -> Result<Output, H
         manifold,
         engine.intersector.intersect_lamina_edges(),
         matches!(result, Ok(Some(_))),
-    ))
-}
-
-fn native_engine_output(raw: &[f64]) -> Result<Output, HarnessError> {
-    let [status, manifold, lamina, result] = raw else {
-        return Err(harness("invalid engine probe output"));
-    };
-    let flag = |value: f64| {
-        if value == 0.0 || value == 1.0 {
-            Ok(value == 1.0)
-        } else {
-            Err(harness("invalid engine probe flag"))
-        }
-    };
-    let mut input: &[f64] = std::slice::from_ref(lamina);
-    let lamina = take_count(&mut input)? as u64;
-    Ok(engine_output(
-        *status as i64,
-        flag(*manifold)?,
-        lamina,
-        flag(*result)?,
     ))
 }
 
@@ -340,56 +403,6 @@ fn take_count(input: &mut &[f64]) -> Result<usize, HarnessError> {
         return Err(harness("invalid native record count"));
     }
     Ok(value as usize)
-}
-
-fn native_brep(input: &mut &[f64], values: &mut Vec<f64>) -> Result<(), HarnessError> {
-    let identity = take_number(input)?;
-    let count = take_count(input)?;
-    let graph = input
-        .get(..count)
-        .ok_or_else(|| harness("truncated native graph"))?;
-    *input = input
-        .get(count..)
-        .ok_or_else(|| harness("truncated native graph"))?;
-    if count == 0 {
-        if identity != -1.0 {
-            return Err(harness("null native result has an identity"));
-        }
-        values.extend([-1.0, 0.0]);
-        return Ok(());
-    }
-    let mut tagged = vec![0.0];
-    tagged.extend(graph);
-    let (brep, _) = super::topology_vertexuse::import(&tagged)?;
-    record_brep(&brep, identity as i64, values).map_err(|error| harness(&error))
-}
-
-fn native_output(raw: &[f64], family: u8) -> Result<Output, HarnessError> {
-    let mut input = raw;
-    let status = take_number(&mut input)?;
-    if status != 0.0 {
-        return Ok(Output::err(format!("status={status}")));
-    }
-    let mut values = vec![status];
-    if family == 3 || family == 4 {
-        values.push(take_number(&mut input)?); // native manifold flag
-        values.push(take_number(&mut input)?); // native lamina mode
-    }
-    let count = take_count(&mut input)?;
-    if (family == 1 || family >= 3) && count > 1 {
-        return Err(harness("invalid single-result flag"));
-    }
-    values.push(count as f64);
-    for _ in 0..count {
-        native_brep(&mut input, &mut values)?;
-    }
-    if family == 2 {
-        values.push(take_count(&mut input)? as f64);
-    }
-    if !input.is_empty() {
-        return Err(harness("trailing native output"));
-    }
-    output(&values, family)
 }
 
 fn single_result(
@@ -993,7 +1006,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     if i.family > 4 && i.family != ENGINE_PROBE {
         return Err(harness("fixture-only family is not a unit operation"));
     }
-    ffi::validate(&encode(i)).map_err(|error| harness(&error))?;
+    contract(i).map_err(|reason| harness(&reason))?;
     let mut k = Kernel::default();
     let mut pool = Pool::load(&mut k, i)?;
     if i.family == ENGINE_PROBE {
@@ -1109,23 +1122,6 @@ impl UnitDiff for Runner {
         }
         rust(&i)
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs =
-            serde_json::from_value(case.inputs.clone()).map_err(|error| harness(&error))?;
-        if i.family > 4 && i.family != ENGINE_PROBE {
-            return Err(harness("fixture-only family is not a unit operation"));
-        }
-        if let Some(expected) = &i.expected_refusal {
-            return refusal(&i, expected);
-        }
-        if i.family == ENGINE_PROBE {
-            return native_engine_output(&ffi::eval(&encode(&i)).map_err(|error| harness(&error))?);
-        }
-        native_output(
-            &ffi::eval(&encode(&i)).map_err(|error| harness(&error))?,
-            i.family,
-        )
-    }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         let family = match rng.below(10) {
             0..=5 => 0,
@@ -1211,17 +1207,9 @@ mod tests {
         }
     }
 
-    fn fixture_graph() -> Vec<f64> {
-        let mut input = inputs();
-        input.family = 5;
-        input.b.clear();
-        ffi::eval(&encode(&input)).unwrap()
-    }
-
-    /// Both engines must complete each nested fixture with its expected vertex count.
-    #[cfg(feature = "cpp")]
+    /// Each nested fixture completes with its expected vertex count.
     #[test]
-    fn nested_postfix_fixtures_compare_successful_geometry() {
+    fn nested_postfix_fixtures_complete() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/boolean.merge_p3/nested_postfix.json"
@@ -1231,29 +1219,26 @@ mod tests {
         for fixture in fixtures["cases"].as_array().unwrap() {
             let input: Inputs = serde_json::from_value(fixture["inputs"].clone()).unwrap();
             let expected_vertices = fixture["expected_vertices"].as_i64().unwrap();
-            let native = native_output(&ffi::eval(&encode(&input)).unwrap(), input.family).unwrap();
-            for result in [rust(&input).unwrap(), native] {
-                assert!(result.error.is_none(), "{}: {:?}", fixture["name"], result.error);
-                assert!(result.deferred.is_none(), "{}: {:?}", fixture["name"], result.deferred);
-                assert!(result.rejected.is_none(), "{}: {:?}", fixture["name"], result.rejected);
-                assert_eq!(result.ints["status"], [0], "{}", fixture["name"]);
-                let vertices: i64 = result.ints["topology_counts"]
-                    .as_chunks::<3>()
-                    .0
-                    .iter()
-                    .map(|counts| counts[2].max(0))
-                    .sum();
-                assert_eq!(vertices, expected_vertices, "{}", fixture["name"]);
-                assert!(!result.values["record"].is_empty(), "{}", fixture["name"]);
-            }
+            let result = rust(&input).unwrap();
+            assert!(result.error.is_none(), "{}: {:?}", fixture["name"], result.error);
+            assert!(result.deferred.is_none(), "{}: {:?}", fixture["name"], result.deferred);
+            assert!(result.rejected.is_none(), "{}: {:?}", fixture["name"], result.rejected);
+            assert_eq!(result.ints["status"], [0], "{}", fixture["name"]);
+            let vertices: i64 = result.ints["topology_counts"]
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|counts| counts[2].max(0))
+                .sum();
+            assert_eq!(vertices, expected_vertices, "{}", fixture["name"]);
+            assert!(!result.values["record"].is_empty(), "{}", fixture["name"]);
         }
     }
 
-    /// Surface operands: both engines refuse a surface list the same way (the base-sliced
-    /// copy, WR-196) and ignore surfaces next to B-reps the same way (a real result).
-    #[cfg(feature = "cpp")]
+    /// Surface operands: a surface list is refused (the base-sliced copy, WR-196) and
+    /// surfaces next to B-reps are ignored (a real result).
     #[test]
-    fn surface_operand_fixtures_agree_with_the_native_engine() {
+    fn surface_operand_fixtures_end_as_expected() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/boolean.merge_p3/surface-operands.json"
@@ -1264,78 +1249,56 @@ mod tests {
             let name = &fixture["name"];
             let input: Inputs = serde_json::from_value(fixture["inputs"].clone()).unwrap();
             let expected = fixture["expected_status"].as_i64().unwrap();
-            let native = native_output(&ffi::eval(&encode(&input)).unwrap(), input.family).unwrap();
             let rust = rust(&input).unwrap();
-            for result in [&rust, &native] {
-                assert!(result.deferred.is_none(), "{name}: {:?}", result.deferred);
-                assert!(result.rejected.is_none(), "{name}: {:?}", result.rejected);
-            }
+            assert!(rust.deferred.is_none(), "{name}: {:?}", rust.deferred);
+            assert!(rust.rejected.is_none(), "{name}: {:?}", rust.rejected);
             if expected == 0 {
                 assert_eq!(rust.ints["status"], [0], "{name}: {:?}", rust.error);
-                assert_eq!(native.ints["status"], [0], "{name}: {:?}", native.error);
-                assert_eq!(rust.ints["topology_counts"], native.ints["topology_counts"], "{name}");
                 assert!(!rust.values["record"].is_empty(), "{name}");
             } else {
                 let status = format!("status={expected}");
                 assert_eq!(rust.error.as_deref(), Some(status.as_str()), "{name}");
-                assert_eq!(native.error, rust.error, "{name}");
             }
         }
     }
 
     #[test]
-    fn single_success_records_compare_rust_geometry_controls_and_nulls() {
+    fn single_success_records_show_geometry_controls_and_nulls() {
         let mut pool = Pool::load(&mut Kernel::default(), &inputs()).unwrap();
-        let graph = fixture_graph();
-        let mut native = vec![0.0, 1.0, 1.0, 1.0, 0.0, graph.len() as f64];
-        native.extend(&graph);
         let mut rust = vec![0.0];
         single_result(&pool, Some(0), true, 1, &mut rust).unwrap();
         for family in [3, 4] {
-            assert_eq!(
-                output(&rust, family).unwrap(),
-                native_output(&native, family).unwrap()
-            );
+            let base = output(&rust, family).unwrap();
+            assert_eq!(base.ints["controls"], [1, 1]);
             let mut changed = vec![0.0];
             single_result(&pool, Some(0), false, 3, &mut changed).unwrap();
-            assert_ne!(
-                output(&changed, family).unwrap(),
-                native_output(&native, family).unwrap()
-            );
+            assert_ne!(output(&changed, family).unwrap(), base);
             let mut null = vec![0.0];
             single_result(&pool, None, true, 1, &mut null).unwrap();
             assert_eq!(
-                output(&null, family).unwrap(),
-                native_output(&[0.0, 1.0, 1.0, 0.0], family).unwrap()
+                output(&null, family).unwrap().ints["topology_counts"],
+                [-1, -1, -1]
             );
         }
+        let base = output(&rust, 3).unwrap();
         let vertex = pool.breps[0].vertices().ids().next().unwrap();
         pool.breps[0].vertex_mut(vertex).unwrap().point.x += 0.125;
         let mut changed = vec![0.0];
         single_result(&pool, Some(0), true, 1, &mut changed).unwrap();
-        assert_ne!(
-            output(&changed, 3).unwrap(),
-            native_output(&native, 3).unwrap()
-        );
+        assert_ne!(output(&changed, 3).unwrap(), base);
     }
 
     #[test]
-    fn list_success_records_compare_actual_outputs_and_surface_count() {
+    fn list_success_records_show_outputs_and_surface_count() {
         let pool = Pool::load(&mut Kernel::default(), &inputs()).unwrap();
-        let graph = fixture_graph();
-        let mut native = vec![0.0, 1.0, -1.0, graph.len() as f64];
-        native.extend(&graph);
-        native.push(0.0);
         let mut result = port::BooleanListsResult {
             breps: vec![pool.breps[0].clone_standing_for_self().unwrap()],
             surfaces: Vec::new(),
         };
         let mut rust = vec![0.0];
         list_result(&result, &mut rust).unwrap();
-        assert_eq!(
-            output(&rust, 2).unwrap(),
-            native_output(&native, 2).unwrap()
-        );
+        let base = output(&rust, 2).unwrap();
+        assert_eq!(base.ints["surface_count"], [0]);
         result.surfaces.push(
             Plane::from_normal(
                 Vec3::ZERO,
@@ -1345,14 +1308,9 @@ mod tests {
         );
         let mut changed = vec![0.0];
         list_result(&result, &mut changed).unwrap();
-        assert_ne!(
-            output(&changed, 2).unwrap(),
-            native_output(&native, 2).unwrap()
-        );
-        assert_eq!(
-            native_output(&[0.0, 0.0, 0.0], 2).unwrap(),
-            output(&[0.0, 0.0, 0.0], 2).unwrap()
-        );
+        let changed = output(&changed, 2).unwrap();
+        assert_eq!(changed.ints["surface_count"], [1]);
+        assert_ne!(changed, base);
     }
 
     #[test]
