@@ -9,8 +9,8 @@
 //! with set intersection points) is its geometry for the surfaces: the tangent-rollover
 //! guess, its skipped vertex uses and the fallback without a guess or geometry.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_standard_solver_p2` (upstream
-//! `source/SMLib/src/SmFilletStandardSolver.cpp`). Rust:
+//! Ported from upstream `source/SMLib/src/SmFilletStandardSolver.cpp`; checked against
+//! its golden. Rust:
 //! `solidcore::blend::fillet_standard_solver::p2`.
 //!
 //! A case is one op with its inputs. Both sides produce the same flat record (layout in
@@ -62,11 +62,10 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::{Brep, EdgeuseId};
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_standard_solver_p2::{self as ffi, Op};
 
 use super::blend_fillet_standard_solver_p1::put_default_geom;
 use super::blend_fillet_geom_p1::{
-    curve_of, gen_curve, gen_surface as gp1_gen_surface, push_crv, push_model, push_srf as gp1_push_srf,
+    curve_of, gen_curve, gen_surface as gp1_gen_surface,
     scale_of as gp1_scale_of, surface_of as gp1_surface_of, Crv, EdgeIn, EuIn, GeomIn, Model,
     RustModel, Srf, VertexIn,
 };
@@ -78,6 +77,21 @@ use super::topology_edgeuse_p2::{inexact_geometry, put_eu_state, Setup};
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The upstream routine run by the shim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    /// `SmConstantRadiusFS::LoadInitialValues`.
+    CrInit,
+    /// `SmConstantRadiusAssistedFS::GuessPointOnPlaneSolve`.
+    Guess,
+    /// `SmConstantRadiusAssistedFS::PointOnPlaneSolve`.
+    Plane,
+    /// The `SmSurfaceSurfaceFS` constructor and `CalcFilletGeom`.
+    Ss,
+    /// `IsKindOf` of the assisted, surface/surface and variable-radius solvers.
+    Types,
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 400;
@@ -337,158 +351,6 @@ fn flag(b: bool) -> f64 {
 
 // ---- C++ side -----------------------------------------------------------------------
 
-fn shape(net: &[Vec<[f64; 4]>]) -> Result<(usize, usize), HarnessError> {
-    let n = net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn push_srf(o: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
-    match s {
-        SrfIn::Bspline { net, p, q, u, v } => {
-            let (n, m) = shape(net)?;
-            o.push(0.0);
-            o.extend(
-                [
-                    n,
-                    m,
-                    *p,
-                    *q,
-                    u.len().saturating_sub(1),
-                    v.len().saturating_sub(1),
-                ]
-                .map(|x| x as f64),
-            );
-            for row in net {
-                for pt in row {
-                    o.extend_from_slice(pt);
-                }
-            }
-            o.extend_from_slice(u);
-            o.extend_from_slice(v);
-        }
-        SrfIn::Plane {
-            o: org,
-            x,
-            y,
-            scale,
-            domain,
-        } => {
-            o.push(1.0);
-            o.extend_from_slice(org);
-            o.extend_from_slice(x);
-            o.extend_from_slice(y);
-            o.extend_from_slice(scale);
-            o.extend_from_slice(domain);
-        }
-    }
-    Ok(())
-}
-
-fn push_solver(o: &mut Vec<f64>, s: &SolverIn) -> Result<(), HarnessError> {
-    o.push(s.cls as f64);
-    o.push(flag(s.b.is_none()));
-    push_srf(o, &s.a)?;
-    if let Some(b) = &s.b {
-        push_srf(o, b)?;
-    }
-    o.extend([s.r[0], s.r[1], flag(s.o[0]), flag(s.o[1]), s.ext]);
-    Ok(())
-}
-
-fn push_plane(o: &mut Vec<f64>, p: &PlaneIn) {
-    o.extend_from_slice(&p.orig);
-    o.extend_from_slice(&p.normal);
-    o.extend_from_slice(&p.d1);
-    o.extend_from_slice(&p.d2);
-    o.extend_from_slice(&p.uv1);
-    o.extend_from_slice(&p.uv2);
-}
-
-fn push_kinds(o: &mut Vec<f64>, kinds: &[i64]) {
-    o.push(kinds.len() as f64);
-    o.extend(kinds.iter().map(|&k| k as f64));
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match i {
-        Inputs::CrInit {
-            solver,
-            do2,
-            rail,
-            sel1,
-            s1_index,
-            intervals,
-            per,
-            guess,
-        } => {
-            push_solver(&mut o, solver)?;
-            o.extend([flag(*do2), *rail as f64, *sel1 as f64, *s1_index as f64]);
-            o.push(intervals.len() as f64);
-            for iv in intervals {
-                o.extend_from_slice(iv);
-            }
-            o.push(per.len() as f64);
-            o.extend(per.iter().map(|&b| flag(b)));
-            o.push(guess.len() as f64);
-            o.extend_from_slice(guess);
-        }
-        Inputs::Guess { solver, plane } | Inputs::Plane { solver, plane } => {
-            push_solver(&mut o, solver)?;
-            push_plane(&mut o, plane);
-        }
-        Inputs::Ss {
-            a,
-            b,
-            r,
-            o: orient,
-            g,
-            calc,
-            kinds,
-        } => {
-            push_srf(&mut o, a)?;
-            push_srf(&mut o, b)?;
-            o.extend([r[0], r[1], flag(orient[0]), flag(orient[1])]);
-            o.extend(g.iter().flatten());
-            o.push(flag(*calc));
-            push_kinds(&mut o, kinds);
-        }
-        Inputs::Types { kinds } => push_kinds(&mut o, kinds),
-        Inputs::CdEu { .. } | Inputs::CrEu { .. } | Inputs::Recalc(_) | Inputs::Rollover(_) => {
-            return Err(harness("the edge-use op has its own input"))
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if matches!(i, Inputs::CrEu { .. }) {
-        return cpp_cr_eu(i);
-    }
-    if let Inputs::Recalc(ri) = i {
-        return cpp_recalc(ri);
-    }
-    if let Inputs::Rollover(ri) = i {
-        return cpp_rollover(ri);
-    }
-    let Some(op) = i.ffi() else {
-        return cpp_edgeuse(i);
-    };
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
-}
-
 // ---- the edge-use constructor ------------------------------------------------------
 
 /// The case's B-rep (the C++ side's imported from the shim's export, the Rust side's
@@ -528,41 +390,6 @@ fn eu_output(body: &[f64]) -> Output {
     Output::new()
         .int("status", first as i64)
         .values("out", body.get(1..).unwrap_or(&[]).to_vec())
-}
-
-fn cpp_edgeuse(i: &Inputs) -> Result<Output, HarnessError> {
-    let Inputs::CdEu {
-        brep,
-        eu,
-        tol,
-        ang,
-        tan,
-        dist,
-        fu,
-        fv,
-    } = i
-    else {
-        return Err(harness("not the edge-use op"));
-    };
-    let s = match eu_setup(brep, *eu, false)? {
-        Ok(s) => s,
-        Err(o) => return Ok(o),
-    };
-    let mut input = s.block.clone();
-    // mode 0: the SmConstantDistanceFS constructor
-    input.extend([
-        0.0,
-        f64::from(s.eu.index()),
-        *tol,
-        *ang,
-        *tan,
-        *dist,
-        *fu,
-        *fv,
-    ]);
-    let out = ffi::eval_edgeuse(&s.path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(eu_output(body))
 }
 
 /// Whether the edge use has the edge's primary edge use (`GetMate` / `GetRadial`).
@@ -743,45 +570,6 @@ fn rust_edgeuse(i: &Inputs) -> Result<Output, HarnessError> {
 }
 
 // ---- LoadInitialValues with edge uses ---------------------------------------------------
-
-fn cpp_cr_eu(i: &Inputs) -> Result<Output, HarnessError> {
-    let Inputs::CrEu {
-        brep,
-        eu,
-        tol,
-        ang,
-        tan,
-        r,
-        rail,
-        fu,
-        fv,
-        ext,
-    } = i
-    else {
-        return Err(harness("not the edge-use initial-values op"));
-    };
-    let s = match eu_setup(brep, *eu, false)? {
-        Ok(s) => s,
-        Err(o) => return Ok(o),
-    };
-    let mut input = s.block.clone();
-    // mode 1: SmConstantRadiusFS::LoadInitialValues with edge uses
-    input.extend([
-        1.0,
-        f64::from(s.eu.index()),
-        *tol,
-        *ang,
-        *tan,
-        *r,
-        *rail as f64,
-        *fu,
-        *fv,
-        *ext,
-    ]);
-    let out = ffi::eval_edgeuse(&s.path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(eu_output(body))
-}
 
 /// The Rust record body of the edge-use `LoadInitialValues` op (the shim's mode 1).
 #[allow(clippy::too_many_arguments)]
@@ -1474,45 +1262,6 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
 // ---- ReCalcFilletGeom ----------------------------------------------------------------
 
 
-fn recalc_input(ri: &RecalcIn) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    push_model(&mut o, &ri.model)?;
-    o.push(ri.g as f64);
-    o.push(ri.tsects.len() as f64);
-    for t in &ri.tsects {
-        o.extend([t.e as f64, t.which as f64]);
-        o.extend(t.pos);
-        o.extend(t.deriv);
-        o.push(t.t);
-        o.extend(t.uv0);
-        o.extend(t.uv1);
-    }
-    gp1_push_srf(&mut o, &ri.a)?;
-    gp1_push_srf(&mut o, &ri.b)?;
-    push_crv(&mut o, &ri.center);
-    o.extend(ri.d);
-    o.extend(ri.o);
-    o.extend([ri.tol, ri.ang, ri.tan]);
-    o.extend(ri.r);
-    o.push(flag(ri.law_orient));
-    o.push(flag(ri.reference.is_some()));
-    if let Some(c) = &ri.reference {
-        push_crv(&mut o, c);
-    }
-    Ok(o)
-}
-
-/// `status extend_before extend_after` and the vertex uses' points.
-fn recalc_output(flat: &[f64]) -> Output {
-    to_output(flat)
-}
-
-fn cpp_recalc(ri: &RecalcIn) -> Result<Output, HarnessError> {
-    let input = recalc_input(ri)?;
-    let flat = ffi::recalc(&input).map_err(|e| harness(e.to_string()))?;
-    Ok(recalc_output(&flat))
-}
-
 /// The shim's `p2r_put_tsect`: `t crv_pos[3] uv0[2] uv1[2]` (`-1` x 8 without vertex use).
 fn put_vu_tsect(o: &mut Vec<f64>, rm: &RustModel, eu: EdgeuseId) -> Result<(), HarnessError> {
     let vu = rm.fb.brep().edgeuse(eu).map_err(|e| he(&e))?.vertexuse;
@@ -1619,41 +1368,6 @@ fn rust_recalc(ri: &RecalcIn) -> Result<Output, HarnessError> {
 }
 
 // ---- LoadInitialValues with a geometry for the surfaces ------------------------------
-
-fn rollover_input(ri: &RolloverIn) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    push_model(&mut o, &ri.model)?;
-    o.push(ri.g as f64);
-    o.push(ri.tsects.len() as f64);
-    for rt in &ri.tsects {
-        let t = &rt.t;
-        o.extend([t.e as f64, t.which as f64]);
-        o.extend(t.pos);
-        o.extend(t.deriv);
-        o.push(t.t);
-        o.extend(t.uv0);
-        o.extend(t.uv1);
-        o.push(rt.ptype as f64);
-    }
-    gp1_push_srf(&mut o, &ri.a)?;
-    gp1_push_srf(&mut o, &ri.b)?;
-    o.extend(ri.r);
-    o.extend([flag(ri.o[0]), flag(ri.o[1])]);
-    o.extend(ri.uvg.iter().flatten());
-    o.extend([ri.rail as f64, ri.s1_index as f64, ri.intervals.len() as f64]);
-    o.extend(ri.intervals.iter().flatten());
-    o.push(ri.per.len() as f64);
-    o.extend(ri.per.iter().map(|&b| flag(b)));
-    o.push(ri.guess.len() as f64);
-    o.extend_from_slice(&ri.guess);
-    Ok(o)
-}
-
-fn cpp_rollover(ri: &RolloverIn) -> Result<Output, HarnessError> {
-    let input = rollover_input(ri)?;
-    let flat = ffi::rollover(&input).map_err(|e| harness(e.to_string()))?;
-    Ok(to_output(&flat))
-}
 
 fn rust_rollover(ri: &RolloverIn) -> Result<Output, HarnessError> {
     let mut rm = RustModel::build(&ri.model)?;
@@ -2497,10 +2211,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
