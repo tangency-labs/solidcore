@@ -24,7 +24,13 @@
 ## The moved cases, against a tight reference
 
 References are Rust's own values at a tighter accuracy (the runner's accuracy replaced, the
-kernel otherwise default). The figures are the largest error over the compared components
+kernel otherwise default): solidcore checked against itself, not an independent reference.
+Independent checks (closed forms, review finding 3): `blend.fillet_executive_p3`
+`attributed-box-edge0-r2` round 10 pi Rust 5.3e-8, C++ 1.6e-7, end faces 96 + pi Rust -6.9e-8,
+C++ -5.6e-8; `attributed-step-edge0-r1` round 5 pi Rust 5.3e-8, C++ 1.6e-7, end faces
+149 + pi/4 Rust -1.5e-8, C++ -1.9e-8; `real-box-single-edge-radius-half` volume 5995 + 5 pi/4
+Rust 6.3e-9, C++ 8.1e-9, centroid x Rust 1.3e-8, C++ 1.4e-8. The other entries say "checked
+only against a tighter solidcore run". The figures are the largest error over the compared components
 (centroid by the centroid's largest magnitude, products of inertia by the inertia's).
 
 - `mass.integrator`, `issue1435_multispan.json` (reference 1e-10, with the piece ends evaluated

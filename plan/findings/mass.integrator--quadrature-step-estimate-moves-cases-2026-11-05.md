@@ -31,9 +31,36 @@ Every moved value is the same integral by other steps. Against a reference integ
 (mass.integrator's face and edge ops, the largest component error over the largest
 magnitude): Rust holds the requested accuracy in every case audited; C++ misses it in some,
 e.g. `issue1435_multispan_sub_eps0.001_*_flags1` (C++ 1.06e-3, Rust 5.0e-5) and
-`issue1435_multispan_full_eps1e-06_*_flags1` (C++ 9.1e-7, Rust 7.5e-8). Two edge cases,
-`gen0014` and `review_edge_exact_quarter_circle_1e-09`, are at 1.2x the accuracy on both
-sides alike (the 1e-11 reference's own error at that level).
+`issue1435_multispan_full_eps1e-06_*_flags1` (C++ 9.1e-7, Rust 7.5e-8). That reference is
+solidcore's own run, not an independent one; the cases checked independently are listed in the
+correction below.
+
+Correction (2026-11-05, review finding 3). Two edge cases were said to be "at 1.2x the
+accuracy on both sides alike (the 1e-11 reference's own error)". Against independent
+references that is wrong. Only an edge's length is under error control: its area, volume and
+moment components each get the error scale `BIG_DOUBLE` (as upstream), so no accuracy holds
+for them by construction.
+- `review_edge_exact_quarter_circle_1e-09_[0, 1]_0`, against the closed form
+  pi r^2 int_0^(pi/2) (cos t - 0.37)^2 dt (r 0.1) = 8.181969578704593e-3 for `out[18]`: C++
+  -1.88e-8, Rust -2.34e-8 at a requested 1e-9; over the eight moved moments C++ 3.7e-9 to
+  1.9e-8, Rust 4.7e-9 to 2.3e-8.
+- `gen0014`, against the quadratic Bezier in 40-digit arithmetic (tanh-sinh, cross-checked by a
+  composite 64 x 20-point Gauss-Legendre rule): the length holds 1e-6 (C++ 3.71e-8, Rust
+  3.85e-8); the moments miss it alike, up to C++ 6.77e-6, Rust 6.95e-6 (`out[10]`).
+- `topology.face_p2` `extra*` (one `OdeArea` evaluation), against the surface and curve in
+  30-digit arithmetic with the iso-u integral by tanh-sinh quadrature, the largest error relative
+  to max(|value|, its error scale): `extra00299` (1e-3) Rust 1.0e-9, C++ 2.6e-3; `extra00440`
+  (1e-3) Rust 9.2e-5, C++ 2.8e-3; `extra00518` (1e-6) Rust 1.9e-7, C++ 2.2e-5; `extra00622`
+  (1e-6) Rust 6.0e-9, C++ 4.7e-8; `extra01031` (1e-6) Rust 1.7e-8, C++ 6.2e-8; `extra01389`
+  (1e-3) Rust 2.5e-4, C++ 4.7e-5. `extra00304` (a thick face) and `extra00567` (out-of-bounds
+  evaluation) are not checked independently.
+- `boolean.api_brep`, face areas against their closed forms (requested 1e-4):
+  `attributed_box_cylinder_hole_difference` hole wall 40 pi Rust 5.3e-8, C++ -2.4e-5, holed
+  squares Rust -2.4e-7, C++ -2.6e-6; `attributed_sphere_box_intersection` zone 70 pi Rust
+  1.2e-7, C++ 1.6e-4 (misses), cap disk 21 pi Rust 1.2e-6, C++ 1.2e-6; `b2d_disk_minus_hole`
+  21 pi Rust 1.2e-6, C++ -2.0e-6.
+- Every other moved entry says in its reason that it is not checked against an independent
+  reference.
 
 ## What is left
 
@@ -48,8 +75,8 @@ sides alike (the 1e-11 reference's own error at that level).
 - `review_edge_constant_*`: a zero-length edge, values of order 1e-17 (noise) on both sides.
 - `topology.face_p2` `ode_area_*_vertical`, `gen0000` and some `extra*` cases: the trim's
   `du/dt` is zero at the point asked; upstream returns the caller's array unchanged, Rust the
-  integrand's value (zeros, one plus the components long). The other `extra*` cases move within
-  the accuracy times the case's error scale.
+  integrand's value (zeros, one plus the components long). The other `extra*` cases: see the
+  correction above.
 - Not changed: `integrate_opt_in` (curve length, `SmIntegrator::IntegrateIt`) keeps the
   embedded estimate alone; the same blind spot applies there. Follow-on.
 - NURBS-converted cylinder and cone areas converge to -1.95e-7 and -3.69e-7 of the closed form
