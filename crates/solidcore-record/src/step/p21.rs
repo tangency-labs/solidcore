@@ -465,9 +465,19 @@ fn decode_string(raw: &[u8]) -> String {
 
 /// [`decode_string`] with the search for a run's `\X0\` given, so a test can count its steps.
 /// `find_end(rest)` is the offset of the first `\X0\` in `rest`.
+///
+/// A `\X2\` or `\X4\` with no `\X0\` after it is kept as written. The search for the
+/// terminator is remembered: the first `\X0\` at or after one position is also the first at or
+/// after every later position up to it, and when none follows one position none follows any
+/// later one. So a search starts only past the terminator the last one found, the searches
+/// cover disjoint stretches of `raw`, and decoding is linear however many unterminated runs the
+/// string holds (searching again from each one made it quadratic).
 fn decode_string_with(raw: &[u8], mut find_end: impl FnMut(&[u8]) -> Option<usize>) -> String {
     let mut out = String::new();
     let mut i = 0;
+    // The last search's answer: the position in `raw` of the first `\X0\` it found (`None`:
+    // none to the end). `None` outside: no search yet.
+    let mut next_end: Option<Option<usize>> = None;
     let hex = |b: &[u8]| {
         std::str::from_utf8(b)
             .ok()
@@ -490,9 +500,19 @@ fn decode_string_with(raw: &[u8], mut find_end: impl FnMut(&[u8]) -> Option<usiz
             }
             let mut run = false;
             for (tag, width) in [(&b"\\X2\\"[..], 4usize), (&b"\\X4\\"[..], 8)] {
-                if rest.starts_with(tag)
-                    && let Some(end) = find_end(rest)
-                {
+                if !rest.starts_with(tag) {
+                    continue;
+                }
+                let found = match next_end {
+                    Some(Some(end)) if end >= i => Some(end),
+                    Some(None) => None,
+                    _ => {
+                        let found = find_end(rest).map(|end| i + end);
+                        next_end = Some(found);
+                        found
+                    }
+                };
+                if let Some(end) = found.and_then(|end| end.checked_sub(i)) {
                     let body = rest.get(4..end).unwrap_or(&[]);
                     let units: Vec<u32> = body.chunks(width).filter_map(hex).collect();
                     if width == 4 {
