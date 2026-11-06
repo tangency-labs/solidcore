@@ -1,9 +1,9 @@
-//! Runner for unit `topology.brep_constructor`. C++:
-//! `solidcore_ffi::units::topology_brep_constructor` (upstream `SmBrepConstructor`). Rust:
-//! `solidcore::topology::brep_constructor` through [`crate::constructor`].
+//! Runner for unit `topology.brep_constructor`. Ported from upstream `SmBrepConstructor`;
+//! checked against its golden. Rust: `solidcore::topology::brep_constructor` through
+//! [`crate::constructor`].
 //!
 //! A case is a constructor script ([`step_import::script`]): the calls an importer makes,
-//! over a table of curves and surfaces. Both sides run it and report every call's status,
+//! over a table of curves and surfaces. The runner runs it and reports every call's status,
 //! where upstream crashes on a null dereference (the port's constructor
 //! [`solidcore::SolidError::InvalidInput`]), and the B-rep built: its whole graph in
 //! traversal order (regions, shells, face uses, loop uses, the CCW edge use rings with
@@ -26,7 +26,6 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use solidcore_ffi::units::topology_brep_constructor as ffi;
 use step_import::model::{
     BSplineCurve, Body, BodyKind, Bound, Curve, Edge, Face, Frame, Loop, OrientedEdge, Shell,
     Surface, Vertex, P3,
@@ -87,14 +86,6 @@ fn output(out: &[f64]) -> Result<Output, HarnessError> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         UNIT
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match ffi::run(&i.script, 0, 1e-6) {
-            Ok(out) => output(&out),
-            Err(e) => Err(harness(e.to_string())),
-        }
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
