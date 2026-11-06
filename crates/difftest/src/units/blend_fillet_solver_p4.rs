@@ -60,18 +60,13 @@ use solidcore::SolidError;
 
 use super::surface_surf_of_revolution_p1 as rev;
 use crate::case::CaseContext;
+use crate::cases::blend::solver::POINT_LEN;
 use crate::runner::default_cases;
 use crate::util::{p2, v3};
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
 
-/// Largest input magnitude.
-const MAX_COORD: f64 = 1e9;
-
 /// An offset the solver does not have.
 const UNSET: f64 = -777.0;
-
-/// Values per point.
-const POINT_LEN: usize = 80;
 
 /// Most G1 knots of a `calc_geom` program.
 const MAX_G1: usize = 8;
@@ -1177,7 +1172,7 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
 
 /// Whether a case keeps the reference wrapper's input contract
 /// (`crates/solidcore-ffi/src/units/blend_fillet_solver_p4.rs`, its `encode_point` /
-/// `encode_calc`): every value finite and at most [`MAX_COORD`] in magnitude (the trace
+/// `encode_calc`): every value finite and at most `1e9` in magnitude (the trace
 /// direction finite), clamped B-spline surfaces of degree 1..=8 with 2..=17 control points
 /// a side and one rationality, surfaces of revolution as unit
 /// `surface.surf_of_revolution_p1`'s wrapper builds them, points of [`POINT_LEN`] values
@@ -1193,58 +1188,10 @@ fn encodable(i: &Inputs) -> bool {
 
 mod contract {
     use super::rev::{BuildIn, GenIn, InlineCrv, SurfIn};
-    use super::{cpt4, point_values, CalcCase, PointCase, SurfaceIn, MAX_COORD, MAX_G1, POINT_LEN};
+    use super::{cpt4, point_values, CalcCase, PointCase, SurfaceIn, MAX_G1};
     use crate::cases::blend::knots_ok;
+    use crate::cases::blend::solver::{self, num, nums, point};
     use solidcore::nurbs::math::NOW;
-
-    fn num(x: f64) -> bool {
-        x.is_finite() && x.abs() <= MAX_COORD
-    }
-
-    fn nums(xs: &[f64]) -> bool {
-        xs.iter().all(|&x| num(x))
-    }
-
-    /// `ncp + p + 1` clamped, non-decreasing knots with interior multiplicity at most `p`.
-    fn knots(knots: &[f64], ncp: usize, p: usize) -> bool {
-        if knots.len() != ncp + p + 1 || knots.windows(2).any(|w| w.first() > w.last()) {
-            return false;
-        }
-        let (Some(&k0), Some(&km)) = (knots.first(), knots.last()) else {
-            return false;
-        };
-        if km <= k0
-            || knots.iter().take(p + 1).any(|&k| k != k0)
-            || knots.iter().rev().take(p + 1).any(|&k| k != km)
-        {
-            return false;
-        }
-        let mut run = 0usize;
-        let mut last = f64::NAN;
-        for &k in knots.iter().filter(|&&k| k != k0 && k != km) {
-            run = if k == last { run + 1 } else { 1 };
-            last = k;
-            if run > p {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// All [`NOW`] or all in `(0, MAX_COORD]`.
-    fn weights(net: &[[f64; 4]]) -> bool {
-        let Some(first) = net.first() else {
-            return false;
-        };
-        let rational = first[3] != NOW;
-        net.iter().all(|c| {
-            if rational {
-                c[3] > 0.0 && c[3] <= MAX_COORD
-            } else {
-                c[3] == NOW
-            }
-        })
-    }
 
     fn finite(v: &[f64]) -> bool {
         v.iter().all(|x| x.is_finite())
@@ -1415,39 +1362,13 @@ mod contract {
             SurfaceIn::BSpline { p, q, net, u, v } => {
                 let net: Vec<Vec<[f64; 4]>> =
                     net.iter().map(|r| r.iter().map(cpt4).collect()).collect();
-                let (nu, nv) = (net.len(), net.first().map_or(0, Vec::len));
-                let flat: Vec<[f64; 4]> = net.iter().flatten().copied().collect();
-                (1..=8).contains(p)
-                    && (1..=8).contains(q)
-                    && (2..=17).contains(&nu)
-                    && (2..=17).contains(&nv)
-                    && *p < nu
-                    && *q < nv
-                    && net.iter().all(|r| r.len() == nv)
-                    && knots(u, nu, *p)
-                    && knots(v, nv, *q)
-                    && weights(&flat)
-                    && flat.iter().all(|c| nums(&c[..3]))
-                    && nums(u)
-                    && nums(v)
+                solver::bspline(*p, *q, &net, u, v)
             }
             // the revolution guard bounds coordinates only by finiteness, then the
-            // block's values by MAX_COORD
+            // block's values by 1e9
             SurfaceIn::Revolution { surf } => revolution(surf)
                 .is_some_and(|b| b.iter().all(|&x| x == NOW || num(x))),
         }
-    }
-
-    /// A point of [`POINT_LEN`] bounded values, its type code in `0..=7` and its four
-    /// extent point types in `0..=5`.
-    fn point(p: &[f64]) -> bool {
-        let code = |x: f64, hi: f64| (0.0..=hi).contains(&x) && x.fract() == 0.0;
-        p.len() == POINT_LEN
-            && p.iter()
-                .take(5)
-                .enumerate()
-                .all(|(k, &t)| code(t, if k == 0 { 7.0 } else { 5.0 }))
-            && nums(p)
     }
 
     pub(super) fn point_case(i: &PointCase) -> bool {
