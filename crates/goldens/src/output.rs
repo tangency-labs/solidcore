@@ -45,6 +45,17 @@ pub struct Output {
     pub diagnostics: Option<Box<BTreeMap<String, i64>>>,
 }
 
+/// The exact bits of a computed `x` for an `ints` record: a NaN is recorded as the one quiet
+/// NaN `f64::NAN`, because IEEE 754 leaves the sign and payload of a NaN an operation
+/// produces to the hardware (x86-64 gives a negative NaN where aarch64 gives a positive one).
+/// Every other value, signed zeros and infinities included, keeps its bits. Values that are
+/// only copied (read, written, byte-swapped) keep their raw bits, payloads included.
+#[must_use]
+pub fn float_bits(x: f64) -> i64 {
+    let x = if x.is_nan() { f64::NAN } else { x };
+    x.to_bits() as i64
+}
+
 /// Why a case is deferred: the unported upstream callee and the unit that will port it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Deferred {
@@ -212,5 +223,24 @@ impl Topology {
     pub fn adjacency(mut self, key: &str, adj: Vec<Vec<i64>>) -> Self {
         self.adjacency.insert(key.to_string(), adj);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::float_bits;
+
+    #[test]
+    fn float_bits_records_one_nan_and_keeps_every_other_value() {
+        let negative_nan = f64::from_bits(0xfff8_0000_0000_0000);
+        let payload_nan = f64::from_bits(0x7ff0_0000_0000_0001);
+        assert_eq!(float_bits(negative_nan), float_bits(f64::NAN));
+        assert_eq!(float_bits(payload_nan), float_bits(f64::NAN));
+        assert_ne!(float_bits(0.0), float_bits(-0.0));
+        assert_eq!(
+            float_bits(f64::NEG_INFINITY),
+            f64::NEG_INFINITY.to_bits() as i64
+        );
+        assert_eq!(float_bits(1.5), 1.5_f64.to_bits() as i64);
     }
 }

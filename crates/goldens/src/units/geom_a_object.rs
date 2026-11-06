@@ -268,14 +268,14 @@ fn nli_output(r: [f64; 7]) -> Output {
             "euclid_bits",
             r.iter()
                 .take(3)
-                .map(|x| x.to_bits() as i64)
+                .map(|x| crate::output::float_bits(*x))
                 .collect::<Vec<_>>(),
         )
         .ints(
             "blend_bits",
             r.iter()
                 .skip(3)
-                .map(|x| x.to_bits() as i64)
+                .map(|x| crate::output::float_bits(*x))
                 .collect::<Vec<_>>(),
         )
 }
