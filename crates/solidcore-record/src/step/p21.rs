@@ -22,6 +22,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::num::IntErrorKind;
 
 /// Largest STEP text we parse.
 pub const MAX_BYTES: usize = 512 << 20;
@@ -332,10 +333,27 @@ impl Lexer<'_> {
             }
         }
         let t = std::str::from_utf8(self.s.get(st..self.i).unwrap_or(&[])).unwrap_or("");
-        if !t.contains(['.', 'E', 'e'])
-            && let Ok(i) = t.parse::<i64>()
-        {
-            return Ok(Param::Int(i));
+        // Part 21 numbers start with a digit after the sign; a lone `.` or `+.` (or `-.E3`)
+        // would otherwise become 0.0 through the `1.` fix-up below.
+        let mantissa = t.split(['E', 'e']).next().unwrap_or("");
+        if !mantissa.bytes().any(|c| c.is_ascii_digit()) {
+            return self.fail(&format!("bad number `{t}`"));
+        }
+        if !t.contains(['.', 'E', 'e']) {
+            return match t.parse::<i64>() {
+                Ok(i) => Ok(Param::Int(i)),
+                // An integer is a count or an index: one beyond i64 is refused, not rounded
+                // into a real.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        IntErrorKind::PosOverflow | IntErrorKind::NegOverflow
+                    ) =>
+                {
+                    self.fail(&format!("integer `{t}` out of range"))
+                }
+                Err(_) => self.fail(&format!("bad number `{t}`")),
+            };
         }
         // STEP allows `1.` and `1.E-3`.
         let fixed = t.replace(".E", ".0E").replace(".e", ".0e");
