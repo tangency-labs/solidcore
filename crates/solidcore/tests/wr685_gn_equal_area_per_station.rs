@@ -130,7 +130,11 @@ fn one_span_along(what: &str, nets: &[Net], length: f64) {
     for n in nets {
         assert_eq!(n.nu, 4, "{what}: one span along the edge: {n:?}");
         let want = n.nv as f64 * 2.0 * length;
-        assert!(close(n.sum[0], want), "{what}: x sum {} want {want}", n.sum[0]);
+        assert!(
+            close(n.sum[0], want),
+            "{what}: x sum {} want {want}",
+            n.sum[0]
+        );
     }
 }
 
