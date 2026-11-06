@@ -42,6 +42,8 @@ const MAX_DEPTH: usize = 64;
 /// A complex instance is refused when more than this many of its parts have been read and
 /// another follows.
 const MAX_COMPLEX_PARTS: usize = 64;
+/// Most records in one file's DATA sections, each part of a complex instance counted.
+pub const MAX_RECORDS: usize = 20_000_000;
 /// Most parameters in one file, nested ones and the header's included.
 ///
 /// [`MAX_BYTES`] alone does not bound memory: `$,` is two bytes and its [`Param`] 48 (on a
@@ -56,11 +58,13 @@ pub const MAX_PARAMS: usize = 20_000_000;
 #[derive(Clone, Copy)]
 struct Limits {
     entities: usize,
+    records: usize,
     params: usize,
 }
 
 const LIMITS: Limits = Limits {
     entities: MAX_ENTITIES,
+    records: MAX_RECORDS,
     params: MAX_PARAMS,
 };
 
@@ -240,6 +244,12 @@ pub enum Error {
     #[error("STEP file has more than {limit} entities")]
     TooManyEntities {
         /// The limit, [`MAX_ENTITIES`].
+        limit: usize,
+    },
+    /// More records than the limit.
+    #[error("STEP file has more than {limit} records")]
+    TooManyRecords {
+        /// The limit, [`MAX_RECORDS`].
         limit: usize,
     },
     /// More parameters than the limit.
@@ -917,6 +927,29 @@ mod tests {
             )
             .unwrap_err(),
             Error::TooManyParams { limit: 3 }
+        );
+    }
+
+    #[test]
+    fn records_are_counted_against_the_limit() {
+        // Empty parts of complex instances hold no parameter but each is a record.
+        let t = data("#1=(A()B()C());");
+        let at = |records| parse_limited(&t, None, Limits { records, ..LIMITS });
+        assert!(at(3).is_ok());
+        assert_eq!(at(2).unwrap_err(), Error::TooManyRecords { limit: 2 });
+        // The count runs over the whole file, simple instances included.
+        let two = data("#1=(A()B());#2=C();");
+        assert_eq!(
+            parse_limited(
+                &two,
+                None,
+                Limits {
+                    records: 2,
+                    ..LIMITS
+                }
+            )
+            .unwrap_err(),
+            Error::TooManyRecords { limit: 2 }
         );
     }
 
