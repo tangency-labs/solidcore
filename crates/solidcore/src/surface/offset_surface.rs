@@ -78,11 +78,12 @@
 //!   `SM_NO_COPY` and `SM_NO_SPLIT` notifications are the object layer's.
 //! - **Evaluation output.** `Evaluate` / `EvaluateSimple` return `D[i][j]` (`i` times in
 //!   `u`, `j` in `v`) built from upstream's flat array, whose untouched entries hold
-//!   [`Vec3::UNDEF`] (the default `SmVector3d`). With `bOnlyUpperHalf` and different `u`
-//!   and `v` orders upstream writes some derivatives into other entries' slots (kept)
-//!   or past the end of the caller's array (undefined; [`SolidError::InvalidInput`]
-//!   here). Never-assigned locals that upstream reads in those cases (`Cv`, `Nv`, ...)
-//!   are [`Vec3::UNDEF`], as the default `SmVector3d`.
+//!   [`Vec3::UNDEF`] (the default `SmVector3d`). Mixed derivatives are computed and
+//!   written only inside the requested rectangle and upper-half total-order budget.
+//!   This corrects WR-162 and its third-order aliases (#2717): upstream writes
+//!   unrequested mixed derivatives over other named slots or past the caller's array,
+//!   using lower-order locals (`Cv`, `Nv`, ...) that were never initialized. The
+//!   requested-coordinate conditions also ensure those dependencies are initialized.
 //! - **Upstream bugs kept** (`plan/upstream-issues.md`): the third derivatives `Cuuv` and
 //!   `Cuvv` of the normal's numerator use the coefficient `3.0` for `Buuv x Buv` and
 //!   `Buvv x Buv` (the derivative of `Cuu` / `Cvv` gives `1` and `-1`); the outputs
@@ -1489,10 +1490,12 @@ impl OffsetSurface {
         let bu_len = bu.length();
         let bv_len = bv.length();
 
-        // the conditions of the mixed derivative outputs
-        let cond_uv = (only_upper_half && hod >= 2) || (!only_upper_half && hu >= 1 && hv >= 1);
-        let cond_uuv = (only_upper_half && hod >= 3) || (!only_upper_half && hu >= 2 && hv >= 1);
-        let cond_uvv = (only_upper_half && hod >= 3) || (!only_upper_half && hu >= 1 && hv >= 2);
+        // Each mixed output must fit both the requested rectangle and total-order
+        // budget. These conditions also initialize its lower-order dependencies;
+        // an unrequested mixed write must not alias another named derivative.
+        let cond_uv = hu >= 1 && hv >= 1 && (!only_upper_half || hod >= 2);
+        let cond_uuv = hu >= 2 && hv >= 1 && (!only_upper_half || hod >= 3);
+        let cond_uvv = hu >= 1 && hv >= 2 && (!only_upper_half || hod >= 3);
 
         // only use approx values at poles when not doing a Simple evaluation
         if !do_eval_simple && (bu_len < tol || bv_len < tol) {
@@ -3423,11 +3426,20 @@ mod tests {
     }
 
     #[test]
-    fn upper_half_with_unequal_orders_writes_past_the_array() {
+    fn upper_half_with_unequal_orders_stays_in_the_requested_grid() {
         let k = &Kernel::default();
         let off = offset(1.0);
-        let r = off.evaluate(k, Point2::new(0.5, 0.5), 0, 2, flags(true, true));
-        assert!(matches!(r, Err(SolidError::InvalidInput { .. })));
+        let r = off
+            .evaluate(k, Point2::new(0.5, 0.5), 0, 2, flags(true, true))
+            .unwrap();
+        assert_eq!(
+            r,
+            vec![vec![
+                Vec3::new(0.5, 0.5, 1.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::ZERO,
+            ]]
+        );
     }
 
     #[test]
