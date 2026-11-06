@@ -550,6 +550,47 @@ fn block_cylinder_both_pieces_round_the_half_circle() {
     assert_rel(v, 19_091.962_003_483_477, 1e-9, "both pieces");
 }
 
+/// Both pieces rounded r 2 through the session's `do_fillet` (its tolerance scope, the split
+/// at radius corners and the closed-manifold check) with every fix but
+/// `geometric_g2_continuity`, as the blend's other End tests: the same torus, valid at level
+/// 2, its volume at 1e-12.
+#[test]
+fn block_cylinder_both_pieces_round_through_do_fillet() {
+    let mut k = Kernel::default();
+    for &name in UpstreamFixes::NAMES {
+        if name != "geometric_g2_continuity" {
+            *k.fixes.flag_mut(name).unwrap() = true;
+        }
+    }
+    let mut b = block_cylinder(&mut k);
+    let pieces: Vec<EdgeId> = ARC_PIECES.iter().map(|&(p, _)| pick(&k, &b, p)).collect();
+    {
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_per_edge_constant_radius(
+            &mut k,
+            &pieces,
+            &[2.0; 2],
+            &[FilletSurfaceGeneratorType::Circular; 2],
+            1,
+            1.0,
+        )
+        .unwrap();
+        s.do_fillet(&mut k).unwrap();
+    }
+    stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+    let lines = check_brep(&mut k, &mut b, CheckLevel::Level2)
+        .unwrap()
+        .lines();
+    assert!(lines.is_empty(), "{lines:?}");
+    let store = AttributeStore::default();
+    let attrs = PropertyAttributes {
+        store: &store,
+        key_of: &|_| ObjectKey(0),
+    };
+    let v = brep_volume(&k, &mut b, 1e-12, &attrs).unwrap();
+    assert_rel(v, 19_091.962_003_483_477, 1e-9, "do_fillet");
+}
+
 /// tangency-labs/solidcore#2679 (the blend corner): fillets/1207 with the r3 round's end
 /// arc on the end face (the edge the r1 round runs on into at y = 17) carrying a tangent
 /// field (`SmTangentField`) as its curve. The field passes the smooth vertex's tests (its
