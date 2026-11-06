@@ -1,20 +1,21 @@
 //! Runner for unit `blend.fillet_intersector`: `SmFilletIntersector`.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_intersector` (a real `SmFilletIntersector` over a
-//! real `SmConstantRadiusAssistedFS` (offsets of `SmPlane` / `SmBSplineSurface` objects, built
-//! on a box edge use whose offsets are replaced), plus the file-static helpers). Rust:
-//! `solidcore::blend::fillet_intersector` over the co-ported `ConstantRadiusAssistedFs`, so the
-//! intersector's `PointOnPlaneSolve` virtual is the assisted solver's override on both sides.
+//! Ported from upstream `source/SMLib/src/SmFilletIntersector.cpp`; checked against its
+//! golden (the reference ran a real `SmFilletIntersector` over a real
+//! `SmConstantRadiusAssistedFS` on offsets of `SmPlane` / `SmBSplineSurface` objects, plus
+//! the file-static helpers). Rust: `solidcore::blend::fillet_intersector` over the co-ported
+//! `ConstantRadiusAssistedFs`, so the intersector's `PointOnPlaneSolve` virtual is the
+//! assisted solver's override. The generator redraws until the reference wrapper's input
+//! contract holds ([`contract`]).
 //!
 //! A case is two surfaces (B may be A itself), their domains, the solver's radii, orientations
-//! and tolerances, the intersector's tolerances and flags, a point arena and one op; both sides
-//! produce the record documented in the ffi module (statuses `0` = `SM_SUCCESS`, else the
+//! and tolerances, the intersector's tolerances and flags, a point arena and one op; the Rust side
+//! produces the record of the reference wrapper's layout (statuses `0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot produce;
 //! op values only on success), reported as the values `rec`. A case whose Rust side reaches an
-//! unported unit is deferred as a whole. Every case's C++ side runs in a fresh child
-//! process, where `ComputePointValues`' function-static `sdStaticStep` (ND-3) starts
-//! unlatched as on a first call, and every Rust case on a fresh [`Kernel`]; the step each
-//! side leaves latched is compared as `fillet_point_step` (the C++ one read in the child).
+//! unported unit is deferred as a whole. Every case runs on a fresh [`Kernel`], where
+//! `ComputePointValues`' function-static `sdStaticStep` (ND-3) starts unlatched as on a
+//! first call; the step the case leaves latched is compared as `fillet_point_step`.
 //!
 //! The constant-radius `SetupOffsetValues` dispatch runs the ported standard solver,
 //! so `ComputePointValuesDelta` can compare both mutated surface records.
@@ -52,12 +53,18 @@ use solidcore::surface::offset_surface::SS_UNKNOWN;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_intersector::{self as ffi};
 
 use crate::case::CaseContext;
+use crate::cases::blend::solver::{self, MAX_COORD, POINT_LEN};
 use crate::runner::default_cases;
 use crate::util::{flag, p2, v3};
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
+
+/// Most points per program.
+const MAX_POINTS: usize = 16;
+
+/// A deviation, angle or offset upstream leaves unset.
+const UNSET: f64 = -777.0;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1200;
@@ -200,7 +207,7 @@ fn cpt4(c: &[Option<f64>; 4]) -> [f64; 4] {
 }
 
 fn point_values(p: &PointIn) -> Vec<f64> {
-    let mut v = Vec::with_capacity(ffi::POINT_LEN);
+    let mut v = Vec::with_capacity(POINT_LEN);
     v.push(f64::from(p.t));
     v.extend([1.0; 4]);
     for (uv, duv) in p.uv.iter().zip(&p.duv) {
@@ -218,126 +225,11 @@ fn point_values(p: &PointIn) -> Vec<f64> {
     v
 }
 
-fn ffi_surface(s: &SurfaceIn) -> ffi::SurfaceIn {
-    match s {
-        SurfaceIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfaceIn::BSpline { p, q, net, u, v } => ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.iter().map(|r| r.iter().map(cpt4).collect()).collect(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-    }
-}
-
-fn ffi_op(o: &OpIn) -> ffi::Op {
-    match o {
-        OpIn::State => ffi::Op::State,
-        OpIn::Span { a, b, mid } => ffi::Op::Span {
-            a: *a,
-            b: *b,
-            mid: *mid,
-        },
-        OpIn::Next { a, step, b } => ffi::Op::Next {
-            a: *a,
-            step: *step,
-            b: *b,
-        },
-        OpIn::Flush { ids } => ffi::Op::Flush(ids.clone()),
-        OpIn::Mid { a, b, f } => ffi::Op::Mid {
-            a: *a,
-            b: *b,
-            f: *f,
-        },
-        OpIn::FlushCrv { dim, knots, poly } => ffi::Op::FlushCrv {
-            dim: *dim,
-            knots: knots.clone(),
-            poly: poly.clone(),
-        },
-        OpIn::Delta { uv, uv_delta, a, b } => ffi::Op::Delta {
-            uv: *uv,
-            uv_delta: *uv_delta,
-            a: *a,
-            b: *b,
-        },
-        OpIn::Values { uv, a, prev } => ffi::Op::Values {
-            uv: *uv,
-            a: *a,
-            prev: *prev,
-        },
-        OpIn::Law {
-            param,
-            uv0,
-            uv1,
-            origin,
-            normal,
-        } => ffi::Op::Law {
-            param: *param,
-            uv0: *uv0,
-            uv1: *uv1,
-            origin: *origin,
-            normal: *normal,
-        },
-        OpIn::SetSelf { flag } => ffi::Op::SetSelf(*flag),
-    }
-}
-
-fn ffi_program(i: &Inputs) -> ffi::Program {
-    ffi::Program {
-        a: ffi_surface(&i.a),
-        b: i.b.as_ref().map(ffi_surface),
-        dom1: i.dom1,
-        dom2: i.dom2,
-        solver: ffi::SolverIn {
-            radii: i.solver.radii,
-            orient: i.solver.orient,
-            tol: i.solver.tol,
-            ang_tol: i.solver.ang_tol,
-            tangency_tol: i.solver.tangency_tol,
-        },
-        ang_tol: i.ang_tol,
-        approx_tol: i.approx_tol,
-        clipped: i.clipped,
-        trace_dir: i.trace_dir,
-        points: i.points.iter().map(point_values).collect(),
-        op: ffi_op(&i.op),
-    }
-}
-
 // ---- C++ side -----------------------------------------------------------------------------
 
 /// Compared key: the `sdStaticStep` latch (ND-3: `SmFilletSolver::ComputePointValues`'
 /// function static, fixed by the first call in a process) after the case.
 const POINT_STEP: &str = "fillet_point_step";
-
-/// Every case's C++ side runs in a fresh child process
-/// ([`with_fresh_static_step`](solidcore_ffi::units::blend_fillet_solver_p4::with_fresh_static_step)),
-/// where `sdStaticStep` starts unlatched as on a first call whatever ran before; the step
-/// the case leaves latched is compared, never seeded into the Rust side.
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let program = ffi_program(i);
-    match solidcore_ffi::units::blend_fillet_solver_p4::with_fresh_static_step(|| {
-        ffi::run(&program)
-    }) {
-        Ok((rec, step)) => Ok(Output::new()
-            .values("rec", rec)
-            .values(POINT_STEP, vec![step])),
-        Err(e) => Err(harness(format!("C++: {e}"))),
-    }
-}
 
 // ---- Rust side ----------------------------------------------------------------------------
 
@@ -431,7 +323,7 @@ fn ept(code: f64) -> Result<ExtentPointType, HarnessError> {
 }
 
 fn rust_point(v: &[f64]) -> Result<TsectPnt, HarnessError> {
-    if v.len() != ffi::POINT_LEN {
+    if v.len() != POINT_LEN {
         return Err(harness("point length"));
     }
     let mut it = v.iter().copied();
@@ -547,7 +439,7 @@ fn run_op(
             let r = fi.test_span_accuracy(solver, k, id(*a), id(*b), mid.map(id));
             if let Some(s) = st(o, r)? {
                 o.push(flag(s.found_good_point));
-                o.push(s.deviation_found.unwrap_or(ffi::UNSET));
+                o.push(s.deviation_found.unwrap_or(UNSET));
                 o.push(s.angle_found_rad);
             }
         }
@@ -555,8 +447,8 @@ fn run_op(
             let r = fi.compute_next_point(solver, k, id(*a), *step, id(*b));
             if let Some(s) = st(o, r)? {
                 o.push(flag(s.found_good_point));
-                o.push(s.deviation_found.unwrap_or(ffi::UNSET));
-                o.push(s.angle_found_rad.unwrap_or(ffi::UNSET));
+                o.push(s.deviation_found.unwrap_or(UNSET));
+                o.push(s.angle_found_rad.unwrap_or(UNSET));
                 o.push(flag(s.clipped));
                 o.push(flag(s.boundary_hit));
             }
@@ -786,7 +678,7 @@ fn rust_record(k: &Kernel, i: &Inputs) -> Result<Vec<f64>, Fail> {
     for slot in &solver.solver.surfaces {
         o.push(
             slot.as_ref()
-                .map_or(ffi::UNSET, |s| s.surface.offset_distance()),
+                .map_or(UNSET, |s| s.surface.offset_distance()),
         );
     }
     o.push(si.curve_points().len() as f64);
@@ -1220,7 +1112,7 @@ fn gen_case(k: &Kernel, rng: &mut Rng) -> Option<Inputs> {
     if points.iter().any(|p| {
         point_values(p)
             .iter()
-            .any(|x| !x.is_finite() || x.abs() > ffi::MAX_COORD)
+            .any(|x| !x.is_finite() || x.abs() > MAX_COORD)
     }) {
         return None;
     }
@@ -1375,6 +1267,83 @@ fn edge_cases() -> Vec<(String, Value)> {
     ]
 }
 
+/// The reference wrapper's input contract (`crates/solidcore-ffi/src/units/
+/// blend_fillet_intersector.rs`, its `encode`) on a case: at most [`MAX_POINTS`] points,
+/// the solver checks of [`solver`] on the surfaces, domains, tolerances, trace direction
+/// and points, and the op's arguments (point indices among the case's points; `Next`,
+/// `Delta` and `Values` never on the same point twice; `Flush` of at most one point;
+/// `FlushCrv` of dimension 1..=3 with at most 64 increasing knots and 200 polygon points,
+/// three per span).
+fn contract(i: &Inputs) -> bool {
+    let n = i.points.len();
+    let pt = |p: usize| p < n;
+    let surface = |s: &SurfaceIn| match s {
+        SurfaceIn::Plane {
+            o,
+            x,
+            y,
+            scale,
+            domain,
+        } => solver::nums(o) && solver::nums(x) && solver::nums(y) && solver::nums(scale) && solver::nums(domain),
+        SurfaceIn::BSpline { p, q, net, u, v } => {
+            let net: Vec<Vec<[f64; 4]>> = net.iter().map(|r| r.iter().map(cpt4).collect()).collect();
+            solver::bspline(*p, *q, &net, u, v)
+        }
+    };
+    let op = match &i.op {
+        OpIn::State | OpIn::SetSelf { .. } => true,
+        OpIn::Span { a, b, mid } => pt(*a) && pt(*b) && mid.is_none_or(pt),
+        OpIn::Next { a, step, b } => a != b && pt(*a) && solver::num(*step) && pt(*b),
+        OpIn::Flush { ids } => ids.len() <= 1 && ids.iter().all(|&p| pt(p)),
+        OpIn::Mid { a, b, f } => pt(*a) && pt(*b) && solver::num(*f),
+        OpIn::FlushCrv { dim, knots, poly } => {
+            let consistent =
+                knots.is_empty() || (knots.len() >= 2 && poly.len() == 3 * (knots.len() - 1) + 1);
+            (1..=3).contains(dim)
+                && knots.len() <= 64
+                && poly.len() <= 200
+                && consistent
+                && knots.windows(2).all(|w| w.first() < w.last())
+                && solver::nums(knots)
+                && poly.iter().all(|p| solver::nums(p))
+        }
+        OpIn::Delta { uv, uv_delta, a, b } => {
+            a != b
+                && uv.iter().chain(uv_delta).all(|p| solver::nums(p))
+                && pt(*a)
+                && pt(*b)
+        }
+        OpIn::Values { uv, a, prev } => {
+            *prev != Some(*a) && uv.iter().all(|p| solver::nums(p)) && pt(*a) && prev.is_none_or(pt)
+        }
+        OpIn::Law {
+            param,
+            uv0,
+            uv1,
+            origin,
+            normal,
+        } => {
+            solver::num(*param)
+                && solver::nums(uv0)
+                && solver::nums(uv1)
+                && solver::nums(origin)
+                && solver::nums(normal)
+        }
+    };
+    let s = &i.solver;
+    n <= MAX_POINTS
+        && surface(&i.a)
+        && i.b.as_ref().is_none_or(surface)
+        && solver::nums(&i.dom1)
+        && solver::nums(&i.dom2)
+        && solver::nums(&s.radii)
+        && solver::nums(&[s.tol, s.ang_tol, s.tangency_tol])
+        && solver::nums(&[i.ang_tol, i.approx_tol])
+        && solver::num(i.trace_dir)
+        && i.points.iter().all(|p| solver::point(&point_values(p)))
+        && op
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.fillet_intersector"
@@ -1384,7 +1353,7 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let Some(i) = gen_case(k, rng) else { continue };
-            if ffi::encode(&ffi_program(&i)).is_ok() {
+            if contract(&i) {
                 return serde_json::to_value(i).ok();
             }
         }
@@ -1410,27 +1379,9 @@ impl UnitDiff for Runner {
 
     // ND-3: every C++ case runs in a fresh child, which inherits this process's
     // `sdStaticStep`; it must still be unlatched before the unit's cases and after them.
-    fn before_cases(&self) -> Result<(), HarnessError> {
-        solidcore_ffi::units::blend_fillet_solver_p4::check_parent_static_step("before the cases")
-            .map_err(|e| HarnessError::new(format!("C++: {e}")))
-    }
-
-    fn after_cases(&self) -> Result<(), HarnessError> {
-        solidcore_ffi::units::blend_fillet_solver_p4::check_parent_static_step("after the cases")
-            .map_err(|e| HarnessError::new(format!("C++: {e}")))
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
 }
 
-// Separate from the corpus and its 189-value Next record. Runs only in the
-// existing native-feature runner tests; no tracing in ordinary comparisons.
-#[cfg(test)]
-#[path = "blend_fillet_intersector/span_probe.rs"]
-mod span_probe;
