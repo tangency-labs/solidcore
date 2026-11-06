@@ -1668,11 +1668,15 @@ fn bezier_pieces(curve: &[H], knots: &[f64], q: usize) -> Result<Vec<H>> {
 /// degree `q` ([`bezier_pieces`]), in Bezier pieces of degree `2 q`; `pm` is the Bernstein
 /// [`product_matrix`] of `q` and `q`.
 fn times(a: &[H], w: &[f64], pm: &RealMatrix, q: usize) -> Result<Vec<H>> {
-    if q == 0 || a.is_empty() || a.len() != w.len() || (a.len() - 1) % q != 0 {
+    let span = a.len().saturating_sub(1);
+    let (Some(0), Some(pieces)) = (span.checked_rem(q), span.checked_div(q)) else {
+        return Err(op_err());
+    };
+    if a.is_empty() || a.len() != w.len() {
         return Err(op_err());
     }
     let mut out = Vec::new();
-    for piece in 0..(a.len() - 1) / q {
+    for piece in 0..pieces {
         let base = piece * q;
         // a joint is the previous piece's last point
         for k in usize::from(piece > 0)..=2 * q {
