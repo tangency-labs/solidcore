@@ -24,7 +24,7 @@ use solidcore::topology::brep::p3::notify_serial;
 use solidcore::topology::Brep;
 use solidcore::{Result as SolidResult, SolidError};
 
-use super::boolean_merge_p1::{graph_owned, OwnerSource};
+use super::boolean_merge_p1::graph_owned;
 use super::topology_vertexuse::{path_of, BrepIn};
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
@@ -231,7 +231,7 @@ impl UnitDiff for Runner {
                 normalize_face_shells(&mut b).map_err(herr)?;
                 // (the serial whose topology keys name the edit's new geometry)
                 let serial = notify_serial(&mut k.context, &mut b).map_err(herr)?;
-                graph_owned(&b, record, OwnerSource::Rust { serial: Some(serial) })
+                Ok(graph_owned(&b, record, Some(serial)))
             }
             Err(e) => Output::unported(&e).ok_or_else(|| herr(e)),
         }

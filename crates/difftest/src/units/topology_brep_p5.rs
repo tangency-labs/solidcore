@@ -25,7 +25,7 @@ use solidcore::topology::brep::p5;
 use solidcore::topology::{Brep, EdgeId, FaceId, LoopId, RegionId, VertexId};
 use solidcore::{Result as SolidResult, SolidError};
 
-use super::boolean_merge_p1::{graph_owned, OwnerSource};
+use super::boolean_merge_p1::graph_owned;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// Part 5's runner.
@@ -587,7 +587,7 @@ impl UnitDiff for Runner {
                 let serial =
                     solidcore::topology::brep::p3::notify_serial(&mut kernel.context, &mut b)
                         .map_err(|e| HarnessError::new(e.to_string()))?;
-                graph_owned(&b, record, OwnerSource::Rust { serial: Some(serial) })
+                Ok(graph_owned(&b, record, Some(serial)))
             }
             Err(e) => Output::unported(&e).ok_or_else(|| HarnessError::new(e.to_string())),
         }

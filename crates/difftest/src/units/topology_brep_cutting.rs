@@ -17,7 +17,7 @@ use solidcore::topology::brep::cutting::cut;
 use solidcore::topology::Brep;
 use solidcore::Result as SolidResult;
 
-use super::boolean_merge_p1::{graph_owned, Canon, OwnerSource};
+use super::boolean_merge_p1::{graph_owned, Canon};
 use super::topology_brep_mirror::{geometry, herr, normalize_face_shells, status};
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
@@ -132,7 +132,7 @@ impl UnitDiff for Runner {
                 drop_unreached_shell_faces(&mut b).map_err(herr)?;
                 let serial = solidcore::topology::brep::p3::notify_serial(&mut k.context, &mut b)
                     .map_err(herr)?;
-                graph_owned(&b, record, OwnerSource::Rust { serial: Some(serial) })
+                Ok(graph_owned(&b, record, Some(serial)))
             }
             Err(e) => Output::unported(&e).ok_or_else(|| herr(e)),
         }
