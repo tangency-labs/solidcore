@@ -131,3 +131,15 @@ representatives. Sphere and torus point maxima move to their closed-form
 values. This comparison does not certify the global optimality of every local
 curve/face or face/face record. No golden was blessed. Final metric-head
 goldens, full tests, lint and wasm checks remain to be recorded.
+
+The reconstruction audit in
+`diagnostics/silhouette_measurement_audit_2967.py` rebuilds the fixture surfaces
+and evaluates each changed record at its returned UV coordinates (and the line
+parameter for curve/face records). For the lift-only comparison, 16 of 45 parent
+records differ from that reconstructed projected distance by more than `1e-5`;
+the largest discrepancy is `3.866563226329056e-5`. All 45 lifted records agree
+with the reconstructed magnitude exactly in the executed floating-point
+evaluations. Signed results are checked by magnitude here: this audit does not
+certify direction, global optimality, completeness or trim membership.
+
+Workspace/all-target strict Clippy on production head `14404b56f` passed.
