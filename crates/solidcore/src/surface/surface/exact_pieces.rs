@@ -17,13 +17,21 @@
 //!
 //! What is checked, and how: each piece's control points are on both analytic surfaces to
 //! the rounding of evaluating their implicit equations ([`curve_lies_on`]; not covering the
-//! rounding of the knot insertion or the trim that made the piece). Each UV curve's drop
-//! distance is the drop trace's *sampled* largest distance (`DropAndTrimCurve`'s
-//! `rdMaxDropToSurf`), within the tolerance: it is not certified between the samples.
-//! Anything else is refused with its typed error.
+//! rounding of the knot insertion or the trim that made the piece). Each UV curve, as
+//! stored after the trims, is lifted onto its surface's net (every analytic surface is its
+//! net, and the drop gives UV curves in the net's parameters) and the distance of the lift
+//! from the piece at the same parameter is enclosed in rounded intervals over the whole
+//! piece ([`certified_lift`]): accepted when the enclosure is within the tolerance, which
+//! is then the piece's deviation. Anything else is refused with its typed error.
 //!
 //! Deviations: none (no upstream counterpart). No recursion.
 
+use crate::blend::fillet_section::certificate::{
+    curve_derivs_over, nurbs_partials_over_piece, partials_hull, NurbsCurve,
+};
+use crate::blend::fillet_section::interval::Ivl;
+use crate::blend::fillet_section::series::V3;
+use crate::blend::fillet_section::station::{as_b_spline, knot, span, Nurbs, Partials};
 use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::ellipse::{Ellipse, EllipseOptions};
 use crate::error::{Result, SolidError};
@@ -46,22 +54,23 @@ impl SurfaceIntersection {
     /// Each curve of this intersection of `surface` over `uv_domain` with `other` over
     /// `other_uv_domain` that came without its UV curves (an analytic special case's exact
     /// curve) replaced, in place, by its pieces inside both domains, each with its UV
-    /// curves on both surfaces (module docs); its type and its largest drop distance are
-    /// each piece's. Each piece is given once, and ends only where the curve crosses a
-    /// seam or a domain boundary of either surface: a closed curve crossing one is first
-    /// turned to start at such a crossing ([`turned_to`]), so its own parameter origin
-    /// splits nothing; a closed curve crossing none is one closed piece. A curve inside
+    /// curves on both surfaces (module docs); its type is each piece's, and each piece's
+    /// deviation is the certified bound on its UV curves' lifts ([`certified_lift`]).
+    /// Each piece is given once, and ends only where the curve crosses a seam or a domain
+    /// boundary of either surface: a closed curve crossing one is first turned to start at
+    /// such a crossing ([`turned_to`]), so its own parameter origin splits nothing; a
+    /// closed curve crossing none is one closed piece. A curve inside
     /// neither domain gives no piece. Curves with both UV curves and degenerate curves (a
     /// touching point) are kept as they are.
     ///
     /// # Errors
     ///
     /// [`SolidError::Unsupported`] for a curve without UV curves whose surfaces are not
-    /// both analytic, a piece not on both ([`curve_lies_on`]), a UV curve whose sampled
-    /// drop distance is more than `approx_tol_3d`, or a closed curve to be turned that is
-    /// not an ellipse; [`SolidError::PortInvariant`] for a drop whose pieces overlap or a
-    /// turned ellipse that does not start at the crossing; those of the drops, the trims
-    /// and the check.
+    /// both analytic, a piece not on both ([`curve_lies_on`]), a UV curve whose lift is
+    /// not certified within `approx_tol_3d` of its piece ([`certified_lift`]), or a closed
+    /// curve to be turned that is not an ellipse; [`SolidError::PortInvariant`] for a drop
+    /// whose pieces overlap or a turned ellipse that does not start at the crossing; those
+    /// of the drops, the trims, the check and the certificate.
     pub fn clip_exact_curves(
         &mut self,
         k: &Kernel,
@@ -168,11 +177,13 @@ impl SurfaceIntersection {
                         });
                     }
                 }
+                let lift1 = certified_lift(k, surface, &piece1, &piece, ivl, approx_tol_3d)?;
+                let lift2 = certified_lift(k, other, &piece2, &piece, ivl, approx_tol_3d)?;
                 self.curves_3d.push(piece);
                 self.surface1_uv_curves.push(Some(piece1));
                 self.surface2_uv_curves.push(Some(piece2));
                 self.curve_types.push(curve_type);
-                self.deviations.push(drops.drop);
+                self.deviations.push(lift1.max(lift2));
             }
         }
         Ok(())
@@ -217,11 +228,10 @@ struct Pair<'a> {
 }
 
 /// A curve's UV pieces on each surface of a [`Pair`], each list in parameter order and
-/// without overlaps, and their largest (sampled) drop distance.
+/// without overlaps.
 struct Drops {
     on1: Vec<Curve>,
     on2: Vec<Curve>,
-    drop: f64,
 }
 
 impl Pair<'_> {
@@ -234,7 +244,7 @@ impl Pair<'_> {
         mut context: Option<&mut SurfaceIntersectContext<'_, O>>,
     ) -> Result<Drops> {
         let [h1, h2] = context.as_ref().map_or([None, None], |c| c.handles);
-        let (on1, d1) = self.drop_onto(
+        let on1 = self.drop_onto(
             k,
             self.surface,
             self.uv_domain,
@@ -244,7 +254,7 @@ impl Pair<'_> {
                 handle: h1,
             }),
         )?;
-        let (on2, d2) = self.drop_onto(
+        let on2 = self.drop_onto(
             k,
             self.other,
             self.other_uv_domain,
@@ -254,17 +264,13 @@ impl Pair<'_> {
                 handle: h2,
             }),
         )?;
-        Ok(Drops {
-            on1,
-            on2,
-            drop: d1.max(d2),
-        })
+        Ok(Drops { on1, on2 })
     }
 
-    /// `curve`'s UV pieces on `surface` over `domain`, in parameter order, and their
-    /// largest sampled drop distance. With a `context` (the face-aware service and the
-    /// surface's handle in it), a face's surface traces on its face's cache, built by
-    /// the context, and the trace's drops run under it.
+    /// `curve`'s UV pieces on `surface` over `domain`, in parameter order (each is
+    /// certified on its surface after the trims, [`certified_lift`]). With a `context`
+    /// (the face-aware service and the surface's handle in it), a face's surface traces
+    /// on its face's cache, built by the context, and the trace's drops run under it.
     fn drop_onto<O: SolutionObject>(
         &self,
         k: &Kernel,
@@ -272,7 +278,7 @@ impl Pair<'_> {
         domain: &Extent2d,
         curve: &Curve,
         context: Option<DropSolveContext<'_, O>>,
-    ) -> Result<(Vec<Curve>, f64)> {
+    ) -> Result<Vec<Curve>> {
         let mut from_context;
         let (cache, context) = match context {
             Some(DropSolveContext { solver, handle }) => {
@@ -298,13 +304,6 @@ impl Pair<'_> {
             None,
             context,
         )?;
-        if on.max_drop_to_surf > self.approx_tol_3d {
-            return Err(SolidError::Unsupported {
-                operation: OP,
-                reason: "a UV curve of an exact intersection curve is farther than the \
-                         tolerance from it",
-            });
-        }
         let mut pieces = on.uv_curves;
         pieces.sort_by(|a, b| {
             a.natural_interval()
@@ -324,7 +323,7 @@ impl Pair<'_> {
                 before = ivl;
             }
         }
-        Ok((pieces, on.max_drop_to_surf))
+        Ok(pieces)
     }
 }
 
@@ -457,15 +456,345 @@ fn on_implicit(curve: &Curve, implicit: &Implicit) -> Result<bool> {
     }
 }
 
+/// The deepest a part of [`certified_lift`] is halved before the lift is refused.
+const LIFT_MAX_DEPTH: usize = 52;
+
+/// The most parts [`certified_lift`] encloses before the lift is refused.
+const LIFT_MAX_PARTS: usize = 1 << 16;
+
+/// The refusal of a lift [`certified_lift`] cannot bound within the tolerance.
+const fn lift_not_certified() -> SolidError {
+    SolidError::Unsupported {
+        operation: OP,
+        reason: "a UV curve's lift is not certified within the tolerance of its exact \
+                 intersection curve",
+    }
+}
+
+/// An upper bound, enclosed, on `|S(uv(t)) - C(t)|` over `ivl`: `S` is `surface`'s net
+/// ([`as_b_spline`], [`Nurbs::of`]; past its knots, the analytic continuation of its end
+/// spans, as [`Nurbs`] evaluates), `uv` a UV curve on it and `C` the 3D `curve`, both in
+/// the same parameter. `ivl` is cut at the inner knots of `uv` and `C`, so each part lies
+/// on one polynomial piece of both, and each part is enclosed ([`lift_over`]) and halved
+/// until its bound is at most `tol`. The bound returned is the largest part's.
+///
+/// # Errors
+///
+/// [`SolidError::Unsupported`] for a surface without a net, a curve not of a B-spline
+/// kind, a lift proved farther than `tol` at a part's middle, or a part still above `tol`
+/// after [`LIFT_MAX_DEPTH`] halvings or past [`LIFT_MAX_PARTS`] parts;
+/// [`SolidError::PortInvariant`] for an empty `ivl`; those of the enclosures.
+fn certified_lift(
+    k: &Kernel,
+    surface: &Surface,
+    uv: &Curve,
+    curve: &Curve,
+    ivl: Extent1d,
+    tol: f64,
+) -> Result<f64> {
+    let (lo, hi) = (ivl.min(), ivl.max());
+    let has_length = lo < hi;
+    if !has_length {
+        return Err(SolidError::port_invariant(
+            OP,
+            "an exact intersection piece over an empty interval",
+        ));
+    }
+    let bs = as_b_spline(k, surface)?.ok_or(SolidError::Unsupported {
+        operation: OP,
+        reason: "a UV curve on a surface without a NURBS net",
+    })?;
+    let net = Nurbs::of(&bs)?;
+    let (uvn, cn) = (nurbs_curve_of(uv)?, nurbs_curve_of(curve)?);
+    let mut cuts = vec![lo, hi];
+    cuts.extend(uvn.u.iter().chain(&cn.u).filter(|&&t| t > lo && t < hi));
+    cuts.sort_by(f64::total_cmp);
+    cuts.dedup();
+    let mut todo: Vec<(f64, f64, usize)> = cuts
+        .windows(2)
+        .rev()
+        .filter_map(|w| match *w {
+            [a, b] => Some((a, b, 0)),
+            _ => None,
+        })
+        .collect();
+    let (mut parts, mut worst) = (0_usize, 0.0_f64);
+    while let Some((a, b, depth)) = todo.pop() {
+        parts += 1;
+        if parts > LIFT_MAX_PARTS {
+            return Err(lift_not_certified());
+        }
+        let part = lift_over(&net, &uvn, &cn, a, b)?;
+        if part.bound <= tol {
+            worst = worst.max(part.bound);
+            continue;
+        }
+        if part.at_middle > tol {
+            return Err(SolidError::Unsupported {
+                operation: OP,
+                reason: "a UV curve's lift is farther than the tolerance from its exact \
+                         intersection curve",
+            });
+        }
+        let m = 0.5 * (a + b);
+        let halves = m > a && m < b;
+        if depth >= LIFT_MAX_DEPTH || !halves {
+            return Err(lift_not_certified());
+        }
+        todo.push((m, b, depth + 1));
+        todo.push((a, m, depth + 1));
+    }
+    Ok(worst)
+}
+
+/// A part's enclosure ([`lift_over`]): the bound on the lift's distance over the part,
+/// and a proved lower bound on it at the part's middle.
+struct LiftPart {
+    bound: f64,
+    at_middle: f64,
+}
+
+/// `g(t) = S(uv(t)) - C(t)` over `[a, b]` (inside one polynomial piece of `uv` and of `C`,
+/// [`certified_lift`]), enclosed in rounded intervals with `m` the middle and `r` the
+/// half-width. Where the box `uv([a, b])` crosses no inner knot line of the net, `g` is
+/// `C^2` there and its second-order Taylor form holds: `g(t)` is in
+/// `g(m) + g'(m) [-r, r] + g''([a, b]) [0, r^2] / 2`, with
+/// `g'' = S_uu u'^2 + 2 S_uv u'v' + S_vv v'^2 + S_u u'' + S_v v'' - C''`. Where it crosses
+/// one (a circle's net has `C^0` double knots), `g` is continuous and `C^1` on each side,
+/// and its mean-value form holds: `g(t)` is in `g(m) + g'([a, b]) [-r, r]`, with each
+/// partial enclosed piece by piece and hulled ([`net_partials`]). The bound is the norm of
+/// the enclosure's magnitudes, rounded up.
+///
+/// # Errors
+///
+/// [`SolidError::PortInvariant`] for a missing derivative; those of
+/// [`curve_derivs_over`], [`net_partials`] and [`net_parts`].
+fn lift_over(
+    net: &Nurbs,
+    uvn: &NurbsCurve,
+    cn: &NurbsCurve,
+    a: f64,
+    b: f64,
+) -> Result<LiftPart> {
+    let m = 0.5 * (a + b);
+    let t = Ivl::new(a, b);
+    let dt = t - Ivl::from(m);
+    let r = Ivl::from(dt.mag());
+    let missing = || SolidError::port_invariant(OP, "a curve's derivative over a part is missing");
+    let uv_t = curve_derivs_over(uvn, t, 2, None)?;
+    let c_t = curve_derivs_over(cn, t, 2, None)?;
+    let uv_m = curve_derivs_over(uvn, Ivl::from(m), 1, None)?;
+    let c_m = curve_derivs_over(cn, Ivl::from(m), 1, None)?;
+    let at = |v: &[V3<Ivl>], i: usize| v.get(i).copied().ok_or_else(missing);
+    let (w0, w1, w2) = (at(&uv_t, 0)?, at(&uv_t, 1)?, at(&uv_t, 2)?);
+    let (c1, c2) = (at(&c_t, 1)?, at(&c_t, 2)?);
+    let (wm0, wm1) = (at(&uv_m, 0)?, at(&uv_m, 1)?);
+    let (cm0, cm1) = (at(&c_m, 0)?, at(&c_m, 1)?);
+    let pu = net_parts(&net.u, net.p, net.nu, w0.x)?;
+    let pv = net_parts(&net.v, net.q, net.nv, w0.y)?;
+    let (g, g_m) = if one_piece(&pu) && one_piece(&pv) {
+        let s_t = net_partials(net, &pu, &pv, 2)?;
+        // uv(m) lies in uv([a, b]), so on the same pieces: each one's polynomial is the
+        // net there
+        let pm = |parts: &[(f64, f64, usize)], x: Ivl| -> Vec<(f64, f64, usize)> {
+            parts.iter().map(|&(_, _, s)| (x.lo, x.hi, s)).collect()
+        };
+        let s_m = net_partials(net, &pm(&pu, wm0.x), &pm(&pv, wm0.y), 1)?;
+        let g_m = v_sub(s_m.at(0, 0), cm0);
+        let dg_m = v_sub(
+            v_add(v_scale(s_m.at(1, 0), wm1.x), v_scale(s_m.at(0, 1), wm1.y)),
+            cm1,
+        );
+        let (u1, v1) = (w1.x, w1.y);
+        let two = Ivl::from(2.0);
+        let ddg = v_sub(
+            v_add(
+                v_add(
+                    v_add(
+                        v_scale(s_t.at(2, 0), u1 * u1),
+                        v_scale(s_t.at(1, 1), two * u1 * v1),
+                    ),
+                    v_scale(s_t.at(0, 2), v1 * v1),
+                ),
+                v_add(v_scale(s_t.at(1, 0), w2.x), v_scale(s_t.at(0, 1), w2.y)),
+            ),
+            c2,
+        );
+        let half_r2 = Ivl::new(0.0, (r * r * Ivl::from(0.5)).hi);
+        let g = v_add(v_add(g_m, v_scale(dg_m, dt)), v_scale(ddg, half_r2));
+        (g, g_m)
+    } else {
+        let s_t = net_partials(net, &pu, &pv, 1)?;
+        let s_m = net_partials(
+            net,
+            &net_parts(&net.u, net.p, net.nu, wm0.x)?,
+            &net_parts(&net.v, net.q, net.nv, wm0.y)?,
+            0,
+        )?;
+        let g_m = v_sub(s_m.at(0, 0), cm0);
+        let dg = v_sub(
+            v_add(v_scale(s_t.at(1, 0), w1.x), v_scale(s_t.at(0, 1), w1.y)),
+            c1,
+        );
+        (v_add(g_m, v_scale(dg, dt)), g_m)
+    };
+    Ok(LiftPart {
+        bound: norm_above(g),
+        at_middle: norm_below(g_m),
+    })
+}
+
+/// Whether the parts of one direction of a box ([`net_parts`]) are on one piece of the
+/// net: one part, or a point on a knot line given with the spans on both sides (the net
+/// restricted to the line is the same function from either side).
+fn one_piece(parts: &[(f64, f64, usize)]) -> bool {
+    parts.len() == 1 || parts.iter().all(|&(a, b, _)| a == b)
+}
+
+/// The parts of `x` (one direction of a box) between the inner knots of `knots` (degree
+/// `p`, `n` control points) strictly inside it, each with the span whose polynomial is the
+/// net on it ([`span`]: past the knots' range, the end span continued). A point on an
+/// inner knot is given twice, with the span on each side.
+///
+/// # Errors
+///
+/// [`SolidError::Unsupported`] for an `x` that is not an interval (a NaN end), or one
+/// across an inner knot where the net is not continuous (a multiplicity above `p`).
+fn net_parts(knots: &[f64], p: usize, n: usize, x: Ivl) -> Result<Vec<(f64, f64, usize)>> {
+    // a NaN end fails it too
+    let is_interval = x.lo <= x.hi;
+    if !is_interval {
+        return Err(lift_not_certified());
+    }
+    let (first, last) = (knot(knots, p as isize), knot(knots, n as isize));
+    let inner = |y: f64| y > first && y < last;
+    if x.lo == x.hi && inner(x.lo) && knots.contains(&x.lo) {
+        let after = span(knots, p, n, x.lo);
+        let mut before = after.checked_sub(1).ok_or_else(lift_not_certified)?;
+        while before > p && knot(knots, before as isize) >= knot(knots, before as isize + 1) {
+            before -= 1;
+        }
+        return Ok(vec![(x.lo, x.hi, before), (x.lo, x.hi, after)]);
+    }
+    let mut at = vec![x.lo];
+    for &y in knots {
+        if inner(y) && y > x.lo && y < x.hi && at.last().is_none_or(|&l| l < y) {
+            if knots.iter().filter(|&&z| z == y).count() > p {
+                return Err(SolidError::Unsupported {
+                    operation: OP,
+                    reason: "a UV curve across a knot line where its surface's net is not \
+                             continuous",
+                });
+            }
+            at.push(y);
+        }
+    }
+    at.push(x.hi);
+    Ok(at
+        .windows(2)
+        .filter_map(|w| match *w {
+            [a, b] => Some((a, b, span(knots, p, n, 0.5 * (a + b)))),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The net's partials to total order `lk` over every part of the box `pu` x `pv`
+/// ([`net_parts`]), each on its own piece ([`nurbs_partials_over_piece`]), hulled
+/// ([`partials_hull`]).
+///
+/// # Errors
+///
+/// Those of [`nurbs_partials_over_piece`]; a port invariant for a box without parts.
+fn net_partials(
+    net: &Nurbs,
+    pu: &[(f64, f64, usize)],
+    pv: &[(f64, f64, usize)],
+    lk: usize,
+) -> Result<Partials<Ivl>> {
+    let mut out: Option<Partials<Ivl>> = None;
+    for &(ua, ub, ku) in pu {
+        for &(va, vb, kv) in pv {
+            let p = nurbs_partials_over_piece(net, ku, kv, ua, ub, va, vb, lk)?;
+            out = Some(match out {
+                None => p,
+                Some(h) => partials_hull(h, &p, lk),
+            });
+        }
+    }
+    out.ok_or_else(|| SolidError::port_invariant(OP, "a box of a UV curve without parts"))
+}
+
+/// The NURBS data of `curve`, a B-spline kind (as [`on_implicit`] takes it).
+fn nurbs_curve_of(curve: &Curve) -> Result<NurbsCurve> {
+    match curve.kind() {
+        CurveKind::BSpline(b) => NurbsCurve::of(b),
+        CurveKind::Line(l) => NurbsCurve::of(&*l.base_with_nurb()?),
+        CurveKind::Ellipse(e) => NurbsCurve::of(e.base()),
+        CurveKind::Hyperbola(h) => NurbsCurve::of(h.base()),
+        CurveKind::Parabola(p) => NurbsCurve::of(p.base()),
+        _ => Err(SolidError::Unsupported {
+            operation: OP,
+            reason: "a curve of an exact intersection piece that is not of a B-spline kind",
+        }),
+    }
+}
+
+/// `a + b`, componentwise.
+fn v_add(a: V3<Ivl>, b: V3<Ivl>) -> V3<Ivl> {
+    V3 {
+        x: a.x + b.x,
+        y: a.y + b.y,
+        z: a.z + b.z,
+    }
+}
+
+/// `a - b`, componentwise.
+fn v_sub(a: V3<Ivl>, b: V3<Ivl>) -> V3<Ivl> {
+    V3 {
+        x: a.x - b.x,
+        y: a.y - b.y,
+        z: a.z - b.z,
+    }
+}
+
+/// `a s`, componentwise.
+fn v_scale(a: V3<Ivl>, s: Ivl) -> V3<Ivl> {
+    V3 {
+        x: a.x * s,
+        y: a.y * s,
+        z: a.z * s,
+    }
+}
+
+/// An upper bound on the length of every vector in `v`, rounded up (infinite or NaN for an
+/// undefined enclosure, which no tolerance passes).
+fn norm_above(v: V3<Ivl>) -> f64 {
+    let m = |x: Ivl| Ivl::from(x.mag());
+    let (x, y, z) = (m(v.x), m(v.y), m(v.z));
+    (x * x + y * y + z * z).sqrt().hi
+}
+
+/// A lower bound on the length of every vector in `v`, rounded down (0 where it holds 0).
+fn norm_below(v: V3<Ivl>) -> f64 {
+    let m = |x: Ivl| Ivl::from(x.mig());
+    let (x, y, z) = (m(v.x), m(v.y), m(v.z));
+    let s = x * x + y * y + z * z;
+    if s.lo.is_nan() {
+        return 0.0;
+    }
+    s.sqrt().lo
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Review finding 12: of a piece and its UV curves, only the last trimmed has a knot a
-    /// rounding past the interval's end, which its trim snaps the end onto. The three
-    /// are trimmed to the one interval none of them snaps, the snapped one, so they end
-    /// at the same parameter (trimmed in turn with one interval passed on, the first two
-    /// ended at the unsnapped end).
+    /// Of a piece and its UV curves, only the last trimmed has a knot a rounding past the
+    /// interval's end, which its trim snaps the end onto. The three are trimmed to the one
+    /// interval none of them snaps, the snapped one, so they end at the same parameter
+    /// (trimmed in turn with one interval passed on, the first two ended at the unsnapped
+    /// end).
     #[test]
     fn a_later_trims_knot_snap_is_given_to_the_curves_trimmed_before() {
         use crate::nurbs::b_spline_curve::BSplineCurve;
@@ -599,6 +928,20 @@ mod tests {
                 .as_ref()
                 .expect("uv on the sphere");
             let uv2 = ssi.surface2_uv_curves[i].as_ref().expect("uv on the other");
+            // the deviation is the certified bound: within the tolerance, and at least
+            // every sampled distance of the lifts from the piece
+            let deviation = ssi.deviations[i];
+            assert!(deviation <= 1e-6, "deviation {deviation}");
+            for j in 0..=200 {
+                let t = ivl.evaluate(f64::from(j) / 200.0);
+                let p = piece.evaluate_point(k, t).expect("point");
+                for (uv, s) in [(uv1, sphere), (uv2, other)] {
+                    let q = uv.evaluate_point(k, t).expect("uv");
+                    let on = s.evaluate_point(k, Vec2::new(q.x, q.y)).expect("on");
+                    let d = (on - p).length();
+                    assert!(d <= deviation + 1e-12, "{d} above the bound {deviation}");
+                }
+            }
             for j in 0..=8 {
                 let t = ivl.evaluate(f64::from(j) / 8.0);
                 let p = piece.evaluate_point(k, t).expect("point");
@@ -789,6 +1132,80 @@ mod tests {
             radius: radius + 1e-9,
         };
         assert!(!on_implicit(circle, &moved).unwrap());
+    }
+
+    /// The flat net `S(u, v) = (u, v, 0)` over the unit square, the line `C(t) = (t, 1/2,
+    /// 0)` over `[0, 1]`, and a cubic UV curve `(t, 1/2 + 3 c t (1 - t))`: its lift is
+    /// `3 c t (1 - t)` from the line, largest (`3 c / 4`) at `t = 1/2`.
+    fn bumped_lift(k: &Kernel, c: f64) -> Result<f64> {
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+        use crate::nurbs::crv_basic::Curve as NlCurve;
+        use crate::nurbs::math::{CPoint, NOW};
+        use crate::nurbs::srf_basic::Surface as NlSurface;
+        let net = (0..2)
+            .map(|i| {
+                (0..2)
+                    .map(|j| CPoint::new(f64::from(i), f64::from(j), 0.0, NOW))
+                    .collect()
+            })
+            .collect();
+        let unit = vec![0.0, 0.0, 1.0, 1.0];
+        let flat = Surface::from(BSplineSurface::from_nurb(
+            NlSurface::new(net, 1, 1, unit.clone(), unit.clone()).unwrap(),
+            false,
+        ));
+        let line = Curve::from(BSplineCurve::from_nurb(
+            NlCurve::new(
+                vec![
+                    CPoint::new(0.0, 0.5, 0.0, NOW),
+                    CPoint::new(1.0, 0.5, 0.0, NOW),
+                ],
+                1,
+                unit,
+            )
+            .unwrap(),
+            3,
+            false,
+        ));
+        let vs = [0.5, 0.5 + c, 0.5 + c, 0.5];
+        let uv = Curve::from(BSplineCurve::from_nurb(
+            NlCurve::new(
+                [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
+                    .into_iter()
+                    .zip(vs)
+                    .map(|(u, v)| CPoint::new(u, v, 0.0, NOW))
+                    .collect(),
+                3,
+                vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            )
+            .unwrap(),
+            2,
+            false,
+        ));
+        certified_lift(k, &flat, &uv, &line, Extent1d::from_min_max(0.0, 1.0), 1e-6)
+    }
+
+    #[test]
+    fn a_lift_off_its_curve_between_the_ends_is_refused() {
+        let k = Kernel::default();
+        // on the line at both ends, 1e-5 off it in the middle
+        let err = bumped_lift(&k, 4.0 / 3.0 * 1e-5).unwrap_err();
+        assert!(matches!(err, SolidError::Unsupported { operation: OP, .. }));
+    }
+
+    #[test]
+    fn a_lift_within_the_tolerance_is_bounded_above_its_largest_distance() {
+        let k = Kernel::default();
+        let bound = bumped_lift(&k, 4.0 / 3.0 * 0.25e-6).unwrap();
+        assert!((0.25e-6..=1e-6).contains(&bound), "{bound}");
+    }
+
+    #[test]
+    fn an_exact_lift_is_bounded_by_rounding() {
+        let k = Kernel::default();
+        let bound = bumped_lift(&k, 0.0).unwrap();
+        assert!(bound <= 1e-13, "{bound}");
     }
 
     #[test]
