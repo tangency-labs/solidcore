@@ -43,10 +43,12 @@ use solidcore::surface::surface_cache::p1::{
 use solidcore::SolidError;
 
 use super::surface_surface_cache_p1::{
-    bss_of, domain_of_srf, flag, gen_bss, gen_srf, gen_sub_dom, gvec, harness, push3, push_box,
-    push_dom, srf, status, surface_of, v3, BssIn, InlineSrf, SrfIn,
+    bss_block, bss_of, domain_of_srf, fin, flag, gen_bss, gen_srf, gen_sub_dom, gvec, harness, push3, push_box,
+    push_dom, srf, status, surface_of, v3, vec3, BssIn, InlineSrf, SrfIn,
 };
+use super::surface_surface_cache_p1::LIMITS;
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -519,6 +521,153 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The most splits of a `find` case.
+const MAX_SPLITS: usize = 24;
+
+/// The largest stored coordinate magnitude of a net (at least `1e-12`).
+fn net_size(net: &[Vec<[f64; 4]>]) -> f64 {
+    net.iter()
+        .flatten()
+        .flat_map(|p| p.iter().take(3))
+        .fold(1e-12, |a: f64, c| a.max(c.abs()))
+}
+
+/// The surface block of a case's surface, whether it is curve bounded, and its size (the
+/// net's largest coordinate, or a plane's reach): a [`contract::plane`] or a [`bss_block`].
+fn sized_surface(s: &SurfIn) -> Option<([f64; 4], bool, f64)> {
+    match s {
+        SurfIn::Plane(p) => {
+            let max = LIMITS.max_coord;
+            if !contract::plane(&p.o, &p.x, &p.y, p.scale, p.dom, max) {
+                return None;
+            }
+            let o = p.o.iter().fold(0.0_f64, |a, c| a.max(c.abs()));
+            let reach = p.dom.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
+            let ax = contract::len_sq(p.x).sqrt() * p.scale[0].abs();
+            let ay = contract::len_sq(p.y).sqrt() * p.scale[1].abs();
+            Some((p.dom, false, (o + reach * (ax + ay)).max(1e-12)))
+        }
+        SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => {
+            let block = bss_block(b)?;
+            let size = net_size(&srf(&b.srf).ok()?.net);
+            Some((block.dom, matches!(s, SurfIn::CurveBounded(_)), size))
+        }
+    }
+}
+
+/// Whether cache options keep the subdivision of a surface of `size` bounded: finite values,
+/// a chord tolerance unset or at least `1e-3 size`, an angle tolerance unset or at least
+/// `0.05`, an aspect ratio unset or at least `1.5`, a max side unset or at least
+/// `1e-2 size`, a non-negative min side and a min side ratio in `[1e-2, 0.5]`.
+fn options_ok(o: &OptsIn, size: f64) -> bool {
+    let set_at_least = |v: f64, min: f64| v == 0.0 || (v > 0.0 && v >= min);
+    [o.chord, o.ang, o.aspect, o.max_side, o.min_side, o.ratio, o.start]
+        .iter()
+        .all(|&v| fin(v))
+        && set_at_least(o.chord, 1e-3 * size)
+        && set_at_least(o.ang, 0.05)
+        && set_at_least(o.aspect, 1.5)
+        && set_at_least(o.max_side, 1e-2 * size)
+        && o.min_side >= 0.0
+        && (1e-2..=0.5).contains(&o.ratio)
+}
+
+/// The patch size of a start node that keeps the contract (0 for an aux data node): aux type
+/// 3 or 6, a domain inside the surface's, an ordered finite box, a class up to 3, an aux data
+/// node holding the surface only over a B-spline or plane; a Bezier node's patch a single
+/// span (bicubic over a curve bounded surface) of the node's domain with a unit, independent
+/// pseudo box basis, ordered intervals and continuity codes up to 13.
+fn start_ok(t: &StartIn, dom: &[f64; 4], bounded: bool) -> Option<f64> {
+    let max = LIMITS.max_coord;
+    let [l0, l1, l2, h0, h1, h2] = t.bbox;
+    let ok = matches!(t.aux, 3 | 6)
+        && contract::domain_in(&t.dom, dom, false, max)
+        && vec3(&[l0, l1, l2])
+        && vec3(&[h0, h1, h2])
+        && l0 <= h0
+        && l1 <= h1
+        && l2 <= h2
+        && t.class <= 3
+        && !(t.aux == 6 && t.surf && bounded);
+    if !ok {
+        return None;
+    }
+    if t.aux == 6 {
+        return Some(0.0);
+    }
+    let bez = srf(t.bez.as_ref()?).ok()?;
+    let block = contract::surface_block(&bez.net, bez.p, bez.q, &bez.u, &bez.v, &LIMITS)?;
+    let [b0, b1, b2] = t.basis;
+    let c = [
+        b0[1] * b1[2] - b0[2] * b1[1],
+        b0[2] * b1[0] - b0[0] * b1[2],
+        b0[0] * b1[1] - b0[1] * b1[0],
+    ];
+    let vol = c[0] * b2[0] + c[1] * b2[1] + c[2] * b2[2];
+    let ok = bez.net.len() == bez.p + 1
+        && bez.net.first()?.len() == bez.q + 1
+        && (!bounded || (bez.p == 3 && bez.q == 3))
+        && block.dom == t.dom
+        && t.basis
+            .iter()
+            .all(|v| vec3(v) && (contract::len_sq(*v) - 1.0).abs() <= 1e-9)
+        && vol.abs() >= 1e-3
+        && t.ivl.iter().all(|&[lo, hi]| fin(lo) && fin(hi) && lo <= hi)
+        && t.uc.iter().chain(&t.vc).all(|&c| c <= 13);
+    ok.then(|| net_size(&bez.net))
+}
+
+/// Whether `find` splits only split leaves of the tree so far (each split adds two nodes).
+fn splits_ok(splits: &[SplitIn]) -> bool {
+    let mut leaf = vec![true];
+    splits.len() <= MAX_SPLITS
+        && splits.iter().all(|s| {
+            let ok = leaf.get(s.node).copied().unwrap_or(false);
+            if let Some(l) = leaf.get_mut(s.node) {
+                *l = false;
+            }
+            leaf.extend([true, true]);
+            ok
+        })
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_cache_p3.rs`, `validate`): a
+/// [`sized_surface`], [`options_ok`] for its size (for `subdiv_tol` the larger of it and the
+/// start patch's), a [`start_ok`] start node (for `subdiv_tol` an aux data node holding the
+/// B-spline or plane), and for `find` up to 24 [`splits_ok`] splits and a finite ordered
+/// domain.
+fn keeps_contract(i: &Inputs) -> bool {
+    let Some((dom, bounded, size)) = sized_surface(&i.surf) else {
+        return false;
+    };
+    match &i.op {
+        OpIn::SubdivNode { start, .. } => {
+            options_ok(&i.opts, size) && start_ok(start, &dom, bounded).is_some()
+        }
+        OpIn::SubdivTol { start } => {
+            start_ok(start, &dom, bounded).is_some_and(|node| {
+                !(start.aux == 6 && (!start.surf || bounded))
+                    && options_ok(&i.opts, size.max(node))
+            })
+        }
+        OpIn::Find {
+            start,
+            splits,
+            dom: d,
+            ..
+        } => {
+            options_ok(&i.opts, size)
+                && start_ok(start, &dom, bounded).is_some()
+                && splits_ok(splits)
+                && contract::domain(d, LIMITS.max_coord)
+        }
+        OpIn::Build | OpIn::Get => options_ok(&i.opts, size),
+    }
+}
+
 // ---- generated cases ----------------------------------------------------------------
 
 /// Scales the net coordinates of `s` by `f` (huge / tiny surfaces).
@@ -831,7 +980,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         (0..64)
-            .find_map(|_| gen_case(rng).ok())
+            .find_map(|_| gen_case(rng).ok().filter(keeps_contract))
             .and_then(|i| serde_json::to_value(i).ok())
     }
 
