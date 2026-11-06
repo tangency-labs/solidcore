@@ -197,7 +197,12 @@ mod tests {
         let s = &found[0];
         assert!(s.sound(), "{}", s.line());
         assert_eq!(s.manifold, Some(true));
-        assert!(s.volume.is_some_and(|v| (v - 1000.0).abs() <= 1e-6 * 1000.0), "{}", s.line());
+        assert!(
+            s.volume
+                .is_some_and(|v| (v - 1000.0).abs() <= 1e-6 * 1000.0),
+            "{}",
+            s.line()
+        );
         assert_eq!(s.counts, [6, 12, 8]);
     }
 }
