@@ -100,20 +100,20 @@ fn wr_530_moved_boss_wall_beside_its_round_is_refused() {
     }
 }
 
-/// Without the opt-in upstream returns the body with the edge as loose as the gap; the
-/// local operation's final gate refuses it as not sound (its check: the edge's tolerance
-/// against the B-rep's), the part as it came in.
+/// Without the opt-in upstream returns the body with the edge as loose as the gap. The
+/// wall r 11 is tangent to the round (a torus) at its base and 1 off it: where two such
+/// surfaces meet is set by their relative curvature, which is not bounded for a torus, so
+/// the local operation's reach refuses it before anything is built (review finding 6;
+/// before, its final gate refused the loose body as not sound).
 #[test]
-fn wr_530_without_the_opt_in_the_loose_body_is_refused_as_not_sound() {
-    use solidcore::error::offset::{OffsetFailure, Unsoundness};
+fn wr_530_without_the_opt_in_the_reach_to_the_torus_round_is_uncertified() {
+    use solidcore::error::offset::OffsetFailure;
     use solidcore::error::Reason;
     let e = move_wall(false).unwrap_err();
     assert!(
         matches!(
             e.failure().map(|f| &f.reason),
-            Some(Reason::Offset(OffsetFailure::Unsound {
-                what: Unsoundness::Check { .. }
-            }))
+            Some(Reason::Offset(OffsetFailure::ReachUncertified { .. }))
         ),
         "{e}"
     );
