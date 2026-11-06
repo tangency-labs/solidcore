@@ -3,20 +3,22 @@
 //! proto topology of `SmProtoTopology.cpp` (definitions, proto vertices, edges, faces, the
 //! manager and the static helpers) and the API transformations of `SmApiGeneral.cpp`.
 //!
-//! C++: `solidcore_ffi::units::topology_proto_topology_p1` (shim
-//! `harness/cpp/shim/topology_proto_topology_p1.cpp`). Rust:
-//! `solidcore::topology::proto_topology::p1`.
+//! Ported from upstream `SmOwningTopology.cpp`, `SmAssembly.cpp`, `SmAssemblyInstance.cpp`,
+//! `SmCopyBrepMap.cpp`, `SmProtoTopology.cpp` and `SmApiGeneral.cpp` (the shim
+//! `harness/cpp/shim/topology_proto_topology_p1.cpp` was the reference); checked against
+//! its golden. Rust: `solidcore::topology::proto_topology::p1`.
 //!
-//! A case is one of three scripts (documented in the ffi module): a **list** script (a pool
-//! of owning objects, assemblies and instance slots, one copy map, and list ops), a
-//! **proto** script (a pool of curves, planes, B-spline surfaces and bare topology objects,
-//! a manager, and proto ops given as `[code, args...]` arrays exactly as the shim reads
-//! them) or a **transform** script (one object and one API call). Both sides produce the
-//! same flat record, reported as `out`. The Rust side interprets the script against the
-//! port, applying the shim's run-time refusals (an op that is undefined upstream ends the
-//! record with `-2`) to its own state, so a state divergence shows up as a mismatch.
+//! A case is one of the scripts documented in [`script`]: a **list** script (a pool of
+//! owning objects, assemblies and instance slots, one copy map, and list ops), a **proto**
+//! script (a pool of curves, planes, B-spline surfaces and bare topology objects, a
+//! manager, and proto ops given as `[code, args...]` arrays exactly as the shim read them)
+//! or a **transform** script (one object and one API call). The runner interprets the
+//! script against the port and records one flat record, `out`, applying the reference
+//! shim's run-time refusals (an op that is undefined upstream ends the record with `-2`)
+//! to its own state. Generated scripts keep the reference wrapper's input contract
+//! ([`script::keeps_contract`]); a script outside it is drawn again.
 //!
-//! The proto-script engine (shim ops, interpreter, pool) is shared with unit
+//! The proto-script engine (ops, interpreter, pool) is shared with unit
 //! `topology.proto_topology_p2`, whose ops (codes 91 to 108) its own runner
 //! (`super::topology_proto_topology_p2`) generates and interprets; this runner never
 //! generates them.
@@ -28,9 +30,9 @@
 //! records of one B-rep ([`TopoRecords`]), so point classifications on them reach the
 //! ported topology members (`SmVertex::GetPoint`, `SmEdge::GetCurve`,
 //! `SmFace::GetSurface`, the zone tolerances) through the [`ClassGeometry`] hooks.
-//! The manager retains the same two default B-reps as the shim, including their
+//! The manager retains the same two default B-reps as the reference shim, including their
 //! infinite regions. Point classifications query those bodies; objects outside the
-//! script pool serialize as `-2`, matching the native pool's unknown-object marker.
+//! script pool serialize as `-2`, the reference pool's unknown-object marker.
 //! Deferred: `SmBrep::Transform`, the manager's fallback tolerance, `SmBrep::GetVertices`
 //! and UV domains from trim curves.
 //! `ProtoBrep::brep_squeeze_edge` (`SmBrep::SqueezeEdge`) defers under
@@ -91,9 +93,11 @@ use solidcore::topology::topology::{Topology, TopologyRecords};
 use solidcore::topology::vertex as topo_vertex;
 use solidcore::topology::{Brep, Edge, Face, FaceId, Vertex, VertexId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_proto_topology_p1::{
-    self as ffi, kind, list_op as lop, pool as pk, proto_op as p, proto_op_p2 as q, slot, tobj,
-    PROBE_TYPES,
+
+#[path = "topology_proto_topology_p1/script.rs"]
+pub(super) mod script;
+use script::{
+    kind, list_op as lop, pool as pk, proto_op as p, proto_op_p2 as q, slot, tobj, PROBE_TYPES,
 };
 
 use crate::case::{CaseContext, CaseSource};
@@ -114,12 +118,10 @@ pub(super) const NOZ: f64 = f64::MAX;
 pub(super) const NOW: f64 = -f64::MAX;
 /// `SM_USE_DEFAULT`.
 pub(super) const USE_DEFAULT: f64 = 9876543.21;
-/// `SC_ERR_ARG`.
-pub(super) const SC_ERR_ARG: i32 = -1002;
 /// `SM_SUCCESS`.
 pub(super) const SM_SUCCESS: f64 = 1000.0;
 /// The status an op refused by the shim writes.
-pub(super) const SKIP: f64 = ffi::SKIPPED;
+pub(super) const SKIP: f64 = script::SKIPPED;
 
 // ---- inputs -----------------------------------------------------------------------------
 
@@ -395,7 +397,7 @@ fn surface_block(v: &mut Vec<f64>, s: &SurfIn) {
     v.extend_from_slice(&s.v);
 }
 
-pub(super) fn cpp_input(s: &Script) -> Vec<f64> {
+pub(super) fn script_input(s: &Script) -> Vec<f64> {
     let mut v = Vec::new();
     match s {
         Script::List { slots, ops } => {
@@ -581,11 +583,6 @@ fn transform_op_block(v: &mut Vec<f64>, op: &TOpIn) {
             v.push(*deg);
         }
     }
-}
-
-pub(super) fn cpp(s: &Script) -> Result<Output, HarnessError> {
-    let out = ffi::run(&cpp_input(s)).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- geometry -----------------------------------------------------------------------------
@@ -6605,15 +6602,6 @@ fn gen_script(rng: &mut Rng) -> Script {
     }
 }
 
-/// Whether the shim accepts the script (it rejects what is malformed).
-pub(super) fn shim_accepts(s: &Script) -> bool {
-    match ffi::run(&cpp_input(s)) {
-        Ok(_) => true,
-        Err(solidcore_ffi::FfiError::Status(c)) if c == SC_ERR_ARG => false,
-        Err(_) => false,
-    }
-}
-
 // ---- fixtures built in code -----------------------------------------------------------------
 
 pub(super) fn line(p0: [f64; 3], v: [f64; 3], d: [f64; 2]) -> CurveIn {
@@ -7367,17 +7355,12 @@ pub fn edge_cases_p3() -> Vec<(String, Value)> {
 pub fn generate_p3(rng: &mut Rng) -> Option<Value> {
     for _ in 0..64 {
         let s = gen_proto(rng, true);
-        if ffi::validate(&cpp_input(&s)).is_err() || !shim_accepts(&s) {
+        if !script::keeps_contract(&script_input(&s)) {
             continue;
         }
         return serde_json::to_value(s).ok();
     }
     None
-}
-
-/// Runs a case on the C++ side.
-pub fn run_cpp_case(case: &Case) -> Result<Output, HarnessError> {
-    cpp(&case.parse()?)
 }
 
 /// Runs a case on the Rust side.
@@ -7393,7 +7376,7 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
             let s = gen_script(rng);
-            if ffi::validate(&cpp_input(&s)).is_err() || !shim_accepts(&s) {
+            if !script::keeps_contract(&script_input(&s)) {
                 continue;
             }
             return serde_json::to_value(s).ok();
@@ -7420,10 +7403,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -7476,8 +7455,8 @@ mod tests {
         ));
     }
 
-    /// Generated scripts are accepted by the ffi checks, and most of them are comparable
-    /// (not deferred) and get past their first few ops.
+    /// Generated scripts keep the input contract, and most of them are comparable (not
+    /// deferred).
     #[test]
     fn generated_scripts_are_mostly_comparable() {
         let mut rng = Rng::new(17);
@@ -7497,130 +7476,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod dump {
-    use super::*;
-
-    /// Prints generated case `PT_CASE` as JSON with both outputs (a debugging aid:
-    /// `PT_CASE=6 cargo test -p difftest --features cpp --lib proto_dump_case -- --ignored --nocapture`).
-    #[test]
-    #[ignore = "debugging aid; needs PT_CASE"]
-    fn proto_dump_case() {
-        let i: usize = std::env::var("PT_CASE").unwrap().parse().unwrap();
-        let mut rng = Rng::new(CaseContext::seed_for("topology.proto_topology_p1", i));
-        let v = Runner.generate(&mut rng).unwrap();
-        println!("{}", serde_json::to_string(&v).unwrap());
-        let s: Script = serde_json::from_value(v).unwrap();
-        println!("cpp  {:?}", ffi::run(&cpp_input(&s)));
-        match rust_run(&s) {
-            Ok(o) => println!("rust {o:?}"),
-            Err(Fail::Deferred(_)) => println!("rust deferred"),
-            Err(Fail::Harness(e)) => println!("rust harness {e}"),
-        }
-    }
-
-    /// Runs every generated case on both sides, printing each index first (a debugging
-    /// aid for hangs: `cargo test -p difftest --features cpp --lib proto_progress --
-    /// --ignored --nocapture`).
-    #[test]
-    #[ignore = "debugging aid"]
-    fn proto_progress() {
-        for i in 0..MIN_GENERATED {
-            eprint!("{i} gen ");
-            let mut rng = Rng::new(CaseContext::seed_for("topology.proto_topology_p1", i));
-            let v = Runner.generate(&mut rng).unwrap();
-            let s: Script = serde_json::from_value(v).unwrap();
-            eprint!("cpp ");
-            let _ = ffi::run(&cpp_input(&s));
-            eprint!("rust ");
-            let _ = rust_run(&s);
-            eprintln!("ok");
-        }
-    }
-
-    /// Prints each candidate script of generated case `PT_CASE` before the shim runs it
-    /// (a debugging aid for shim hangs).
-    #[test]
-    #[ignore = "debugging aid; needs PT_CASE"]
-    fn proto_candidates() {
-        let i: usize = std::env::var("PT_CASE").unwrap().parse().unwrap();
-        let mut rng = Rng::new(CaseContext::seed_for("topology.proto_topology_p1", i));
-        for _ in 0..64 {
-            let s = gen_script(&mut rng);
-            if ffi::validate(&cpp_input(&s)).is_err() {
-                continue;
-            }
-            eprintln!("{}", serde_json::to_string(&s).unwrap());
-            if shim_accepts(&s) {
-                break;
-            }
-        }
-    }
-
-    /// Runs the script in file `PT_FILE` (JSON), truncated to `PT_NOPS` proto ops, on both
-    /// sides and prints the records (a debugging aid).
-    #[test]
-    #[ignore = "debugging aid; needs PT_FILE"]
-    fn proto_run_file() {
-        let f = std::env::var("PT_FILE").unwrap();
-        let mut s: Script = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
-        if let (Script::Proto { ops, .. }, Ok(n)) = (&mut s, std::env::var("PT_NOPS")) {
-            ops.truncate(n.parse().unwrap());
-        }
-        if std::env::var("PT_RUST_ONLY").is_err() {
-            eprintln!("cpp  {:?}", ffi::run(&cpp_input(&s)));
-        }
-        match rust_run(&s) {
-            Ok(o) => eprintln!("rust {o:?}"),
-            Err(Fail::Deferred(d)) => eprintln!("rust deferred {d:?}"),
-            Err(Fail::Harness(e)) => eprintln!("rust harness {e}"),
-        }
-    }
-
-    /// Prints what fraction of generated proto ops are refused and which op codes end
-    /// scripts (`cargo test -p difftest --features cpp --lib proto_coverage -- --ignored --nocapture`).
-    #[test]
-    #[ignore = "debugging aid"]
-    fn proto_coverage() {
-        let mut ran: BTreeMap<i64, usize> = BTreeMap::new();
-        let mut skipped: BTreeMap<i64, usize> = BTreeMap::new();
-        let mut deferred = 0;
-        for i in 0..MIN_GENERATED {
-            let mut rng = Rng::new(CaseContext::seed_for("topology.proto_topology_p1", i));
-            let s: Script = serde_json::from_value(Runner.generate(&mut rng).unwrap()).unwrap();
-            let Script::Proto { ops, .. } = &s else {
-                continue;
-            };
-            let Ok(out) = ffi::run(&cpp_input(&s)) else {
-                continue;
-            };
-            if matches!(rust_run(&s), Err(Fail::Deferred(_))) {
-                deferred += 1;
-            }
-            // walk the record: op status n outputs
-            let mut at = 0;
-            for o in ops {
-                let code = o[0] as i64;
-                if at + 1 >= out.len() {
-                    break;
-                }
-                let stt = out[at + 1];
-                if stt == SKIP {
-                    *skipped.entry(code).or_default() += 1;
-                    break;
-                }
-                *ran.entry(code).or_default() += 1;
-                let n = out[at + 2] as usize;
-                at += 3 + n;
-            }
-        }
-        println!("deferred proto scripts: {deferred}");
-        for c in 0..=p::LAST {
-            println!(
-                "{c:3} ran {:5} skipped {:5}",
-                ran.get(&c).unwrap_or(&0),
-                skipped.get(&c).unwrap_or(&0)
-            );
-        }
-    }
-}

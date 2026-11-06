@@ -3,20 +3,18 @@
 //! creating, finding, combining and removing proto topology, and the updates after an
 //! edge or face split).
 //!
-//! C++: the proto scripts of `solidcore_ffi::units::topology_proto_topology_p1` (shim
-//! `harness/cpp/shim/topology_proto_topology_p1.cpp`, ops 91 to 108,
-//! [`proto_op_p2`](solidcore_ffi::units::topology_proto_topology_p1::proto_op_p2)). Rust:
-//! `solidcore::topology::proto_topology::p2`.
+//! Ported from the second part of upstream `SmProtoTopology.cpp` (the proto scripts of
+//! the shim `harness/cpp/shim/topology_proto_topology_p1.cpp`, ops 91 to 108, were the
+//! reference); checked against its golden. Rust: `solidcore::topology::proto_topology::p2`.
 //!
 //! The proto-script engine is unit `topology.proto_topology_p1`'s
 //! ([`super::topology_proto_topology_p1`]): a script builds proto topology with its ops
-//! and then runs the ops of this unit, which [`run_op`] interprets against the port. Both
-//! sides produce the same flat record: per op its status and outputs, then the whole state
-//! (every definition, proto object and pool curve, including the curves the calls copy).
-//! An op the shim refuses because it is undefined upstream ends the record with `-2`; the
-//! port reports those as [`SolidError::InvalidInput`], which the interpreter turns into the
-//! same `-2`, so a refusal on one side only is a mismatch. The two conservative guards of
-//! the shim (a duplicated entry in the list a resolve deletes from, zero-length intervals
+//! and then runs the ops of this unit, which [`run_op`] interprets against the port. The
+//! record is per op its status and outputs, then the whole state (every definition, proto
+//! object and pool curve, including the curves the calls copy). An op that is undefined
+//! upstream ends the record with `-2`: the port reports those as
+//! [`SolidError::InvalidInput`], which the interpreter turns into the `-2`. The two
+//! conservative guards of the reference shim (a duplicated entry in the list a resolve deletes from, zero-length intervals
 //! where a reparameterisation can follow, plan/upstream-issues.md HANG-12) are mirrored
 //! here explicitly, as is its `Imprint` guard for a merge into a bare region, face or
 //! edge stand-in, whose `GetBrep` is `NULL` ([`imprint_reaches_missing_brep`]).
@@ -26,8 +24,8 @@
 //! [`ProtoBrep`](solidcore::topology::proto_topology::ProtoBrep) queries with them.
 //!
 //! `UpdateFaces` runs on real faces: the fixtures and [`real_face_update_cases`] build the
-//! old and new face of a split in an owning B-rep on both sides; the shim refuses it on
-//! the random scripts' bare-face stand-ins, and so does the port (the same input guard).
+//! old and new face of a split in an owning B-rep; on the random scripts' bare-face
+//! stand-ins the port refuses it (the reference shim's input guard).
 //!
 //! Deferred: everything past `SmBrep::MakeEdgeInFace` (unit `topology.brep_p5`), the
 //! B-rep walks of `sm_AreConnected` and point classifications on bare topology (units
@@ -41,13 +39,13 @@ use solidcore::geom::tol::zone_tol3d;
 use solidcore::intersect::curve_class::{CurveClassification, CurveInterval};
 use solidcore::topology::proto_topology::p1::{ProtoEdgeId, VertexDefId};
 use solidcore::SolidError;
-use solidcore_ffi::units::topology_proto_topology_p1::{
-    self as ffi, pool as pk, proto_op as p, proto_op_p2 as q,
-};
 
+use super::topology_proto_topology_p1::script::{
+    keeps_contract, pool as pk, proto_op as p, proto_op_p2 as q,
+};
 use super::topology_proto_topology_p1::{
-    b, build_curve, cat, cpp, cpp_input, dir, gen_curve, gen_scale, gen_tol, line, opv, pcv, rp,
-    rust, shim_accepts, status, CurveIn, Fail, ObjIn, ProtoRun, Rd, Script, H,
+    b, build_curve, cat, dir, gen_curve, gen_scale, gen_tol, line, opv, pcv, rp, rust,
+    script_input, status, CurveIn, Fail, ObjIn, ProtoRun, Rd, Script, H,
 };
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -1564,7 +1562,7 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
             let s = gen_script(rng);
-            if ffi::validate(&cpp_input(&s)).is_err() || !shim_accepts(&s) {
+            if !keeps_contract(&script_input(&s)) {
                 continue;
             }
             return serde_json::to_value(s).ok();
@@ -1589,10 +1587,6 @@ impl UnitDiff for Runner {
         Ok(cases)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1605,8 +1599,8 @@ mod tests {
     use super::super::topology_proto_topology_p1::{rust_run, SKIP};
     use super::*;
 
-    /// Generated scripts are accepted by the ffi checks, and most of them are comparable
-    /// (not deferred).
+    /// Generated scripts keep the input contract, and most of them are comparable (not
+    /// deferred).
     #[test]
     fn generated_scripts_are_mostly_comparable() {
         let mut rng = Rng::new(23);
@@ -1660,10 +1654,14 @@ mod tests {
             let s: Script = serde_json::from_value(v).unwrap();
             total += 1;
             let Script::Proto { ops, .. } = &s else { continue };
-            let Ok(out) = ffi::run(&cpp_input(&s)) else { continue };
-            if matches!(rust_run(&s), Err(Fail::Deferred(_))) {
-                deferred += 1;
-            }
+            let out = match rust_run(&s) {
+                Ok(out) => out,
+                Err(Fail::Deferred(_)) => {
+                    deferred += 1;
+                    continue;
+                }
+                Err(Fail::Harness(_)) => continue,
+            };
             let mut at = 0;
             for o in ops {
                 let code = o[0] as i64;
@@ -1692,34 +1690,7 @@ mod tests {
         }
     }
 
-    /// Writes each candidate script to `PT_FILE` before the shim runs it, for every
-    /// generated case (a debugging aid for shim crashes).
-    #[test]
-    #[ignore = "debugging aid; needs PT_FILE"]
-    fn p2_candidates() {
-        let f = std::env::var("PT_FILE").unwrap();
-        for i in 0..MIN_GENERATED {
-            let mut rng = Rng::new(CaseContext::seed_for("topology.proto_topology_p2", i));
-            for _ in 0..64 {
-                let s = gen_script(&mut rng);
-                if ffi::validate(&cpp_input(&s)).is_err() {
-                    continue;
-                }
-                std::fs::write(&f, serde_json::to_string(&s).unwrap()).unwrap();
-                eprintln!("case {i}");
-                if shim_accepts(&s) {
-                    break;
-                }
-            }
-            let mut rng = Rng::new(CaseContext::seed_for("topology.proto_topology_p2", i));
-            if let Some(v) = Runner.generate(&mut rng) {
-                let s: Script = serde_json::from_value(v).unwrap();
-                let _ = rust_run(&s);
-            }
-        }
-    }
-
-    /// Prints edge case `PT_NAME` with both records (`PT_NAME=edge_update_edges_unit cargo
+    /// Prints edge case `PT_NAME` with its record (`PT_NAME=edge_update_edges_unit cargo
     /// test -p difftest --features cpp --lib p2_dump_edge -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs PT_NAME"]
@@ -1728,7 +1699,6 @@ mod tests {
         let (_, v) = edge_cases().into_iter().find(|(n, _)| *n == name).unwrap();
         println!("{}", serde_json::to_string(&v).unwrap());
         let s: Script = serde_json::from_value(v).unwrap();
-        println!("cpp  {:?}", ffi::run(&cpp_input(&s)));
         match rust_run(&s) {
             Ok(o) => println!("rust {o:?}"),
             Err(Fail::Deferred(_)) => println!("rust deferred"),
@@ -1736,7 +1706,7 @@ mod tests {
         }
     }
 
-    /// Prints generated case `PT_CASE` with both records (`PT_CASE=6 cargo test -p
+    /// Prints generated case `PT_CASE` with its record (`PT_CASE=6 cargo test -p
     /// difftest --features cpp --lib p2_dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs PT_CASE"]
@@ -1746,7 +1716,6 @@ mod tests {
         let v = Runner.generate(&mut rng).unwrap();
         println!("{}", serde_json::to_string(&v).unwrap());
         let s: Script = serde_json::from_value(v).unwrap();
-        println!("cpp  {:?}", ffi::run(&cpp_input(&s)));
         match rust_run(&s) {
             Ok(o) => println!("rust {o:?}"),
             Err(Fail::Deferred(_)) => println!("rust deferred"),

@@ -3,10 +3,11 @@
 //! `SplitIntersectingProtoEdges`, `GlueCoincidentBrepVertices` and
 //! `ResolveOverlappingProtoEdges` of `SmProtoTopology.cpp`.
 //!
-//! It shares the proto-script engine of `topology.proto_topology_p1` (the shim, the FFI
-//! validation and the Rust interpreter): the ops 120 to 126 of
-//! `solidcore_ffi::units::topology_proto_topology_p1::proto_op`. Generated cases are
-//! proto scripts rich in those ops.
+//! Ported from upstream `SmProtoTopology.cpp`; checked against its golden. It shares the
+//! proto-script engine of `topology.proto_topology_p1` (the script layout, its input
+//! contract and the interpreter): the ops 120 to 126 of
+//! [`super::topology_proto_topology_p1::script::proto_op`]. Generated cases are proto
+//! scripts rich in those ops.
 
 use serde_json::Value;
 
@@ -45,10 +46,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        engine::run_cpp_case(case)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
