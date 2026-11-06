@@ -1,20 +1,19 @@
 //! Runner for unit `topology.database_io`: SMLib database stream reading.
 //!
-//! C++: `solidcore_ffi::units::topology_database_io` (upstream
-//! `source/SMLib/src/SmDatabaseIO.cpp` plus libstdc++ `std::istream` extraction).
-//! Rust: `solidcore::topology::database_io`.
+//! Ported from upstream `source/SMLib/src/SmDatabaseIO.cpp` (plus libstdc++
+//! `std::istream` extraction); checked against its golden. Rust:
+//! `solidcore::topology::database_io`.
 //!
 //! Each case is a *script*: a reader is built from `source` (in-memory bytes, an
 //! upstream test file via `OpenFileForRead`, or no stream) and a list of
-//! `[op, arg]` steps runs against it. Per step both sides report the status, the
+//! `[op, arg]` steps runs against it. Per step the runner records the status, the
 //! stream state (`rdstate`), the read position, and the integers/doubles produced;
-//! doubles are also compared bit for bit (`dbl_bits`; subnormals only there).
+//! doubles are also recorded bit for bit (`dbl_bits`; subnormals only there).
 //!
 //! Normalisation: a binary read that leaves the stream failed reports status `-2`
-//! on both sides (upstream returns `SM_SUCCESS` with an uninitialised value; Rust
-//! returns `SolidError::InvalidInput`). An extraction whose sentry fails stores
-//! nothing: C++ reports the variable's initial sentinel, Rust its `None` mapped to
-//! the same sentinel. Every run has at least [`MIN_GENERATED`] generated cases.
+//! (upstream returns `SM_SUCCESS` with an uninitialised value; Rust returns
+//! `SolidError::InvalidInput`). An extraction whose sentry fails stores nothing:
+//! its `None` is recorded as the variable's initial sentinel, as upstream reports it. Every run has at least [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,12 +23,66 @@ use solidcore::topology::database_io::{
     FileType, InputStream,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::topology_database_io::{self as ffi, op, Source};
-use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Script op codes (upstream's `SmDatabaseIO` calls).
+mod op {
+    /// `[file_type, byte_swap, version, is_big_endian]`.
+    pub(super) const INFO: i64 = 0;
+    /// `SetVersionNum(arg)`.
+    pub(super) const SET_VERSION: i64 = 1;
+    /// `SetByteSwap(arg != 0)`.
+    pub(super) const SET_BYTE_SWAP: i64 = 2;
+    /// `BeginReading()`.
+    pub(super) const BEGIN_READING: i64 = 3;
+    /// `EndReading()`.
+    pub(super) const END_READING: i64 = 4;
+    /// `ReadLong(long&)`.
+    pub(super) const READ_LONG: i64 = 5;
+    /// `ReadLong(ULONG&)`.
+    pub(super) const READ_ULONG: i64 = 6;
+    /// `ReadLongs(p, arg)`.
+    pub(super) const READ_LONGS: i64 = 7;
+    /// `ReadDouble`.
+    pub(super) const READ_DOUBLE: i64 = 8;
+    /// `ReadDoubles(p, arg)`.
+    pub(super) const READ_DOUBLES: i64 = 9;
+    /// `ReadBoolean`.
+    pub(super) const READ_BOOLEAN: i64 = 10;
+    /// `ReadBooleans(p, arg)`.
+    pub(super) const READ_BOOLEANS: i64 = 11;
+    /// `ReadShort`.
+    pub(super) const READ_SHORT: i64 = 12;
+    /// `ReadChar`.
+    pub(super) const READ_CHAR: i64 = 13;
+    /// `ReadType(t, arg != 0 ? &dim : NULL)`.
+    pub(super) const READ_TYPE: i64 = 14;
+    /// `GoToNextLine()`.
+    pub(super) const GO_TO_NEXT_LINE: i64 = 15;
+    /// `is >> char_buffer`.
+    pub(super) const EXTRACT_WORD: i64 = 16;
+    /// `is >> long`.
+    pub(super) const EXTRACT_LONG: i64 = 17;
+    /// `is >> unsigned long`.
+    pub(super) const EXTRACT_ULONG: i64 = 18;
+    /// `is >> int`.
+    pub(super) const EXTRACT_INT: i64 = 19;
+    /// `is >> short`.
+    pub(super) const EXTRACT_SHORT: i64 = 20;
+    /// `is >> double`.
+    pub(super) const EXTRACT_DOUBLE: i64 = 21;
+    /// `is.get()`.
+    pub(super) const GET: i64 = 22;
+    /// `is.unget()`.
+    pub(super) const UNGET: i64 = 23;
+    /// The `ByteSwap*` overloads on `arg` (as integer and as double bits).
+    pub(super) const SWAP: i64 = 24;
+    /// `is.clear()`.
+    pub(super) const CLEAR: i64 = 25;
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 2000;
@@ -355,42 +408,6 @@ fn run_rust_script(i: &Inputs) -> Result<Output, HarnessError> {
     Ok(output(open_status, &recs))
 }
 
-// ---- C++ side -------------------------------------------------------------------
-
-fn run_cpp_script(i: &Inputs) -> Result<Output, HarnessError> {
-    let data = bytes_of(i);
-    let source = match i.source {
-        SourceKind::Bytes => Source::Bytes(&data),
-        SourceKind::File => Source::File(
-            i.path
-                .as_deref()
-                .ok_or_else(|| HarnessError::new("no path"))?,
-        ),
-        SourceKind::Default => Source::Default,
-        SourceKind::FileTypeOnly => Source::FileTypeOnly,
-    };
-    match ffi::run(&source, i.file_type, &script(i)?) {
-        Ok(s) => {
-            let recs: Vec<Rec> = s
-                .records
-                .into_iter()
-                .map(|r| Rec {
-                    status: r.status,
-                    state: r.state,
-                    position: r.position,
-                    ints: r.ints,
-                    dbls: r.dbls,
-                })
-                .collect();
-            Ok(output(s.open_status, &recs))
-        }
-        Err(e @ FfiError::InvalidArgument(_)) => {
-            Err(HarnessError::new(format!("ffi rejected: {e}")))
-        }
-        Err(e) => Ok(Output::err(e.to_string())),
-    }
-}
-
 // ---- generator ------------------------------------------------------------------
 
 const ASCII_TOKENS: &[&str] = &[
@@ -612,10 +629,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp_script(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
