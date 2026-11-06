@@ -902,9 +902,9 @@ fn curve_dim(pool: &Pool, cc: &CurveClassification<H>) -> Option<u64> {
     cc.curve().and_then(|h| pool.curve(h)).map(Curve::dim)
 }
 
-/// Why op `x` on the current classifications is undefined upstream: the run-time checks
-/// of `harness/cpp/shim/intersect_curve_class_p3.cpp`, evaluated on the state the ops
-/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks of
+/// the reference's shim, evaluated on the state the ops before it left (a precondition of
+/// `x`, never its result). `None` when it is defined.
 #[allow(clippy::too_many_lines)]
 fn undefined_upstream(
     k: &Kernel,

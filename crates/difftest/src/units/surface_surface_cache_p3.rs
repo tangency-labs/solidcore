@@ -633,12 +633,11 @@ fn splits_ok(splits: &[SplitIn]) -> bool {
         })
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_cache_p3.rs`, `validate`): a
-/// [`sized_surface`], [`options_ok`] for its size (for `subdiv_tol` the larger of it and the
-/// start patch's), a [`start_ok`] start node (for `subdiv_tol` an aux data node holding the
-/// B-spline or plane), and for `find` up to 24 [`splits_ok`] splits and a finite ordered
-/// domain.
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
+/// [`sized_surface`], [`options_ok`] for its size (for `subdiv_tol` the larger of it and
+/// the start patch's), a [`start_ok`] start node (for `subdiv_tol` an aux data node holding
+/// the B-spline or plane), and for `find` up to 24 [`splits_ok`] splits and a finite
+/// ordered domain.
 fn keeps_contract(i: &Inputs) -> bool {
     let Some((dom, bounded, size)) = sized_surface(&i.surf) else {
         return false;

@@ -88,7 +88,7 @@ use super::topology_edgeuse_p1::{
 };
 use crate::{HarnessError, Output, Rng, UnitDiff};
 
-/// The routines of the static shim (`harness/cpp/shim/blend_fillet_solver_p1_static.cpp`).
+/// The static routines of `SmFilletSolver` the unit's ops call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StaticOp {
     /// `sm_FindNextGoodInterval`.

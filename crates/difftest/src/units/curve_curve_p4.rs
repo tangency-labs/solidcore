@@ -379,10 +379,9 @@ fn property_vectors(prop: i32) -> usize {
     }
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p4.rs`, `validate`): curves as [`domain`]
-/// takes them (arcs within the arc constructor's `[-360, 360]` degrees, ellipses as
-/// [`ellipse`]), parameters within [`MAX_REL_DIST`] domain lengths (`DistExtrema`'s of
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves as
+/// [`domain`] takes them (arcs within the arc constructor's `[-360, 360]` degrees, ellipses
+/// as [`ellipse`]), parameters within [`MAX_REL_DIST`] domain lengths (`DistExtrema`'s of
 /// both curves), finite values within range, a non-negative `FixChain` tolerance, the
 /// option vectors and value a property needs, analytic operands with their fractions, and
 /// the sample, list, kind and plane bounds.

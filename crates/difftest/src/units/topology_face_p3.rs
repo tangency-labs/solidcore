@@ -1,6 +1,5 @@
-//! Runner for unit `topology.face_p3`. Ported from upstream `SmFace.cpp` (the shim
-//! `harness/cpp/shim/topology_face_p3.cpp` was the reference); checked against its golden.
-//! Rust: `solidcore::topology::face::p3`.
+//! Runner for unit `topology.face_p3`. Ported from upstream `SmFace.cpp`; checked against
+//! its golden. Rust: `solidcore::topology::face::p3`.
 //!
 //! The case's B-rep is one of the B-rep blocks of the `topology.vertexuse` runner (an
 //! upstream `.smb` test file, optionally with rebuilt UV trim curves; a wire edge; a face

@@ -1330,14 +1330,13 @@ pub(crate) struct TrackedRun {
     pub(crate) destroyed: [u64; 4],
 }
 
-/// Runs `edit` of `b` as the shims' `TrackedEdit` (`harness/cpp/shim/sc_tracked.h`):
-/// under a topology change tracker on a context of its own, which issues the
-/// identities of each edge's curve and each face's surface before the edit (their
-/// owners the edge and the face, for the tracker's owner walk) and holds a recorder of
-/// the geometry the notifications name. The edit notifies through that context, its
-/// entities named by [`tracked_key_of`]; the tracker's lists and events
-/// ([`put_tracker`]) follow the edit's outputs. `b` must be an import whose arena ids
-/// are the shim's walk indices.
+/// Runs `edit` of `b` as the reference shims' `TrackedEdit` did: under a topology change
+/// tracker on a context of its own, which issues the identities of each edge's curve and
+/// each face's surface before the edit (their owners the edge and the face, for the
+/// tracker's owner walk) and holds a recorder of the geometry the notifications name. The
+/// edit notifies through that context, its entities named by [`tracked_key_of`]; the
+/// tracker's lists and events ([`put_tracker`]) follow the edit's outputs. `b` must be an
+/// import whose arena ids are the shim's walk indices.
 pub(crate) fn run_tracked(
     b: &mut Brep,
     edit: impl FnOnce(&mut Brep, &mut Context) -> Result<Vec<f64>, Fail>,

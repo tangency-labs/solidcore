@@ -392,9 +392,9 @@ fn is_ve(pc: &PointClassification<H>) -> bool {
     matches!(pc.point_class(), PointClassType::Vertex | PointClassType::Edge)
 }
 
-/// Why op `x` on the current classifications is undefined upstream: the run-time checks
-/// of `harness/cpp/shim/intersect_curve_class_p7.cpp`, evaluated on the state the ops
-/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks of
+/// the reference's shim, evaluated on the state the ops before it left (a precondition of
+/// `x`, never its result). `None` when it is defined.
 #[allow(clippy::too_many_lines)]
 fn undefined_upstream(
     k: &Kernel,
@@ -1356,7 +1356,7 @@ mod dump {
     use super::*;
 
     /// Prints how often the comparable generated scripts reach each op outcome (a debugging
-    /// aid: `cargo test -p difftest --features cpp --lib p7_coverage -- --ignored --nocapture`).
+    /// aid: `cargo test -p difftest --lib p7_coverage -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid"]
     fn p7_coverage() {

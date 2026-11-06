@@ -458,12 +458,11 @@ fn points_ok(pts: &[Vec<f64>], bounds: &[(f64, f64)]) -> bool {
         })
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_p3.rs`, `validate`): surfaces as
-/// [`surface_ok`] (raw knots for the further surfaces only in `local_sss`), parameters
-/// and guesses within one domain length of their surface's domain, ordered domains inside
-/// it, positive tolerances, a B-spline surface to cover, signed directed solves with a
-/// vector, and 1 to [`MAX_POINTS`] points per equation-set call.
+/// Whether a case keeps the input contract ported from the reference's wrapper: surfaces as
+/// [`surface_ok`] (raw knots for the further surfaces only in `local_sss`), parameters and
+/// guesses within one domain length of their surface's domain, ordered domains inside it,
+/// positive tolerances, a B-spline surface to cover, signed directed solves with a vector,
+/// and 1 to [`MAX_POINTS`] points per equation-set call.
 fn keeps_contract(i: &Inputs) -> bool {
     let [r1, r2, r3] = i.raw_knots;
     let Some((dom, is_bspline)) = surface_ok(&i.surface, r1) else {

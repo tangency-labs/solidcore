@@ -270,10 +270,9 @@ fn independent(x: [f64; 3], y: [f64; 3]) -> bool {
     (dot / (contract::len_sq(x).sqrt() * contract::len_sq(y).sqrt())).abs() < 1.0 - 1e-6
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p9.rs`, `validate`): curves as [`domain`]
-/// takes them (arcs within the arc constructor's `[-360, 360]` degrees, ellipses as
-/// [`ellipse`]), non-decreasing intervals within [`MAX_REL_DIST`] domain lengths,
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves as
+/// [`domain`] takes them (arcs within the arc constructor's `[-360, 360]` degrees, ellipses
+/// as [`ellipse`]), non-decreasing intervals within [`MAX_REL_DIST`] domain lengths,
 /// non-negative tolerances, a supported solver operation with its three option vectors
 /// (unit where a projection needs them) or none, a target for `AT_DISTANCE`, transform axes
 /// that are not parallel, and the plane bound.
@@ -1496,12 +1495,12 @@ mod tests {
 
     #[test]
     fn unculled_solves_stop_at_the_branch_bound() {
-        // fuzz01043: boxes of `-1.8e308` weights cull nothing, so the global solve
-        // visited branches for minutes (issue #504). It now stops past
-        // `MAX_SOLVE_BRANCHES` (`2^23`); `GlobalCurveSolve` ignores the solve's status
-        // (as upstream) and keeps the 139 solutions found by then (20 under the old
-        // `2^20`). It takes about 14 s in the difftest profile, the optimised build CI
-        // runs the unit runners in (`--profile difftest --features cpp`).
+        // fuzz01043: boxes of `-1.8e308` weights cull nothing, so the global solve visited
+        // branches for minutes (issue #504). It now stops past `MAX_SOLVE_BRANCHES`
+        // (`2^23`); `GlobalCurveSolve` ignores the solve's status (as upstream) and keeps
+        // the 139 solutions found by then (20 under the old `2^20`). It takes about 14 s in
+        // the difftest profile, the optimised build CI runs the unit runners in (`--profile
+        // difftest`).
         let out = corpus_rust("fuzz01043_rust_hang");
         assert_eq!(out.ints["status"], vec![0], "{out:?}");
         assert_eq!(out.values["out"].first(), Some(&139.0), "{out:?}");

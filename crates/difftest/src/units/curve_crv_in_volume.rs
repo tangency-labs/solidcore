@@ -488,13 +488,12 @@ fn has_volume_type(bytes: &[u8]) -> bool {
     false
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_crv_in_volume.rs`, `validate`): a curve in volume
-/// for every object op as [`object`] takes it with the op's arguments ([`object_op`]: params
-/// within [`MAX_REL_DIST`] domain lengths, the cached break and continuity counts, no copy
-/// of an owned Hermite curve), a record that names no volume type, exact curves and volumes
-/// as [`exact_curve`] and [`volume`] take them, no twist head map for an exact Hermite curve
-/// (its copy fails), and no `AssertValid` test level 3.
+/// Whether a case keeps the input contract ported from the reference's wrapper: a curve in
+/// volume for every object op as [`object`] takes it with the op's arguments
+/// ([`object_op`]: params within [`MAX_REL_DIST`] domain lengths, the cached break and
+/// continuity counts, no copy of an owned Hermite curve), a record that names no volume
+/// type, exact curves and volumes as [`exact_curve`] and [`volume`] take them, no twist
+/// head map for an exact Hermite curve (its copy fails), and no `AssertValid` test level 3.
 fn keeps_contract(i: &Inputs) -> bool {
     match &i.op {
         OpIn::ReadDb { version, text } => {

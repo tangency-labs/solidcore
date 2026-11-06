@@ -1281,8 +1281,8 @@ fn rust_record(k: &mut Kernel, i: &Inputs, built: Option<Brep>) -> Record {
             points,
         } => {
             // (a curve on surface without UV curves past the input checks crashes upstream:
-            // run_cpp rejects it (ub_165); the port returns InvalidInput there)
-            // (the shim passes the new B-rep's GetInfiniteRegion() unless null)
+            // the reference refused it (ub_165); the port returns InvalidInput there) (the
+            // shim passes the new B-rep's GetInfiniteRegion() unless null)
             let (mut b, infinite) = native_brep()?;
             let region = (!*region_null).then_some(infinite);
             let mut c3 = Vec::new();

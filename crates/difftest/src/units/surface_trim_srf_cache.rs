@@ -622,15 +622,13 @@ fn tree_ok(t: &[NodeIn], srf: &[f64; 4], coord: f64) -> bool {
     seen.iter().all(|&s| s)
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_trim_srf_cache.rs`, `validate`): a
-/// [`surface_block`] and the op's parameters: finite values, up to 16 type codes in
-/// `[0, 1e6]`, `point_test` without a face only where it does not classify (testing off
-/// or the face modified; upstream dereferences the null face otherwise); for
-/// `implant_eu` coordinates within `1e11`, a cache domain inside the surface's of
-/// non-degenerate sides, a factor of at least 1, a [`tree_ok`] and up to 8 [`curve_2d`]
-/// calls on nodes in range with non-negative owner tolerances; up to 16 face points
-/// with positive tolerances.
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
+/// [`surface_block`] and the op's parameters: finite values, up to 16 type codes in `[0,
+/// 1e6]`, `point_test` without a face only where it does not classify (testing off or the
+/// face modified; upstream dereferences the null face otherwise); for `implant_eu`
+/// coordinates within `1e11`, a cache domain inside the surface's of non-degenerate sides,
+/// a factor of at least 1, a [`tree_ok`] and up to 8 [`curve_2d`] calls on nodes in range
+/// with non-negative owner tolerances; up to 16 face points with positive tolerances.
 fn keeps_contract(i: &Inputs) -> bool {
     let coord = if matches!(i.op, OpIn::ImplantEu { .. }) {
         MAX_IMPLANT_UV_COORD

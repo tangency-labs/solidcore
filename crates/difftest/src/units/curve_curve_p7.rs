@@ -370,12 +370,12 @@ fn cci(c: &CciIn) -> bool {
         && projection
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p7.rs`, `validate`): curves as [`domain`]
-/// takes them (arcs within the arc constructor's `[-360, 360]` degrees), parameters within
-/// [`MAX_REL_DIST`] domain lengths, increasing intervals, caches as [`cache`] takes them,
-/// positive tolerances, the intersection operations with the projection vectors each
-/// needs, three option vectors for a property, the transform bounds and the leaf bounds.
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves as
+/// [`domain`] takes them (arcs within the arc constructor's `[-360, 360]` degrees),
+/// parameters within [`MAX_REL_DIST`] domain lengths, increasing intervals, caches as
+/// [`cache`] takes them, positive tolerances, the intersection operations with the
+/// projection vectors each needs, three option vectors for a property, the transform bounds
+/// and the leaf bounds.
 fn keeps_contract(op: &OpIn) -> bool {
     match op {
         OpIn::CciSolve { cci: c } => cci(c),

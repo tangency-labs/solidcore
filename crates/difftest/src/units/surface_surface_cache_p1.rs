@@ -1158,16 +1158,15 @@ fn tree_ok(t: &[NodeIn], srf: &contract::SurfaceBlock) -> Option<usize> {
     seen.iter().all(|&s| s).then_some(n)
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_cache_p1.rs`, `validate`): finite values,
-/// non-negative tolerances and at most 64 culled values; otherwise a surface
+/// Whether a case keeps the input contract ported from the reference's wrapper: finite
+/// values, non-negative tolerances and at most 64 culled values; otherwise a surface
 /// ([`bss_block`]) and the op's parameters: domains inside the surface's (of non-degenerate
-/// sides where upstream divides by them), a boundary index up to 3, a [`inline_block`] Bezier
-/// patch, up to 5 alternate caches and 16 queries of types up to 1 with finite tolerances,
-/// [`key_ok`] keys and up to 8 [`contract::curve_block`] curves per array, a 1 to 16 by 1 to
-/// 16 grid of finite boxes and domains, [`tree_ok`] trees with up to 64 program steps (or 16
-/// polar nodes) on nodes in range, continuity lists no longer than the distinct knots with
-/// codes up to 13, and up to 6 iso calls.
+/// sides where upstream divides by them), a boundary index up to 3, a [`inline_block`]
+/// Bezier patch, up to 5 alternate caches and 16 queries of types up to 1 with finite
+/// tolerances, [`key_ok`] keys and up to 8 [`contract::curve_block`] curves per array, a 1
+/// to 16 by 1 to 16 grid of finite boxes and domains, [`tree_ok`] trees with up to 64
+/// program steps (or 16 polar nodes) on nodes in range, continuity lists no longer than the
+/// distinct knots with codes up to 13, and up to 6 iso calls.
 fn keeps_contract(i: &Inputs) -> bool {
     let max = LIMITS.max_coord;
     match &i.op {

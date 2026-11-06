@@ -1,10 +1,9 @@
 //! Runner for unit `topology.topology_traverser`: the owned topology traversals. Ported
-//! from upstream `SmTopologyTraverser.cpp` (the shim
-//! `harness/cpp/shim/topology_topology_traverser.cpp` was the reference); checked against
-//! its golden. Fixture construction reuses topology.vertexuse: the runner builds a wire
-//! edge, face or network source itself ([`crate::own_builder`]) and reads an `.smb` file
-//! with the Rust reader ([`crate::own_reader::file_in_order`]), both renumbered into the
-//! shim's traversal order. The generator picks an op the built B-rep has seeds for.
+//! from upstream `SmTopologyTraverser.cpp`; checked against its golden. Fixture
+//! construction reuses topology.vertexuse: the runner builds a wire edge, face or network
+//! source itself ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal order.
+//! The generator picks an op the built B-rep has seeds for.
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};

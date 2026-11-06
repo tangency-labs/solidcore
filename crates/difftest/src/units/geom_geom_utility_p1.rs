@@ -571,8 +571,7 @@ fn rust_values(op: Op, args: &[f64]) -> Result<solidcore::Result<Vec<f64>>, Harn
     Ok(Ok(o))
 }
 
-/// `[status, values...]` as the integer `status` plus the float list `r` (so that
-/// `--perturb` changes a value rather than the status).
+/// `[status, values...]` as the integer `status` plus the float list `r`.
 fn finish(v: &[f64]) -> Output {
     let (status, r) = match v.split_first() {
         Some((s, r)) => (*s as i64, r.to_vec()),

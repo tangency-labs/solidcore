@@ -1,9 +1,8 @@
-//! The difftest output of an [`AssertArray`] (keep in sync with
-//! `harness/cpp/shim/sc_assert_reports.h`): `ok`, the count, then per report the
-//! reporting type, list index, test index, assert type, ok flag, reporter / owner /
-//! other identities, owner and other types, tolerance, value, 3D distance and the
-//! label texts, then `last_add`. Identities are `0` for none, `1` for the checked root
-//! object and `2, 3, ..` for other objects in order of first appearance.
+//! The difftest output of an [`AssertArray`] (the reference shims' layout): `ok`, the
+//! count, then per report the reporting type, list index, test index, assert type, ok flag,
+//! reporter / owner / other identities, owner and other types, tolerance, value, 3D
+//! distance and the label texts, then `last_add`. Identities are `0` for none, `1` for the
+//! checked root object and `2, 3, ..` for other objects in order of first appearance.
 
 use solidcore::geom::assert_array::{AssertArray, ObjectKey};
 

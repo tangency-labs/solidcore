@@ -1,6 +1,5 @@
-//! Runner for unit `topology.edge`. Ported from upstream `SmEdge.cpp` (the shim
-//! `harness/cpp/shim/topology_edge.cpp` was the reference); checked against its golden.
-//! Rust: `solidcore::topology::edge`.
+//! Runner for unit `topology.edge`. Ported from upstream `SmEdge.cpp`; checked against its
+//! golden. Rust: `solidcore::topology::edge`.
 //!
 //! The case's B-rep is one of the reference shim's sources: read from an upstream `.smb`
 //! test file (optionally rebuilding its UV trim curves), a wire edge from a B-spline curve

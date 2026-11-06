@@ -3,9 +3,9 @@
 //! creating, finding, combining and removing proto topology, and the updates after an
 //! edge or face split).
 //!
-//! Ported from the second part of upstream `SmProtoTopology.cpp` (the proto scripts of
-//! the shim `harness/cpp/shim/topology_proto_topology_p1.cpp`, ops 91 to 108, were the
-//! reference); checked against its golden. Rust: `solidcore::topology::proto_topology::p2`.
+//! Ported from the second part of upstream `SmProtoTopology.cpp` (ops 91 to 108 of
+//! `topology.proto_topology_p1`'s scripts); checked against its golden. Rust:
+//! `solidcore::topology::proto_topology::p2`.
 //!
 //! The proto-script engine is unit `topology.proto_topology_p1`'s
 //! ([`super::topology_proto_topology_p1`]): a script builds proto topology with its ops
@@ -1639,7 +1639,7 @@ mod tests {
     }
 
     /// Prints how often each op of this unit runs, is refused or ends in a deferral, and how
-    /// many generated scripts are deferred (`cargo test -p difftest --features cpp --lib
+    /// many generated scripts are deferred (`cargo test -p difftest --lib
     /// p2_coverage -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid"]
@@ -1691,7 +1691,7 @@ mod tests {
     }
 
     /// Prints edge case `PT_NAME` with its record (`PT_NAME=edge_update_edges_unit cargo
-    /// test -p difftest --features cpp --lib p2_dump_edge -- --ignored --nocapture`).
+    /// test -p difftest --lib p2_dump_edge -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs PT_NAME"]
     fn p2_dump_edge() {
@@ -1707,7 +1707,7 @@ mod tests {
     }
 
     /// Prints generated case `PT_CASE` with its record (`PT_CASE=6 cargo test -p
-    /// difftest --features cpp --lib p2_dump_case -- --ignored --nocapture`).
+    /// difftest --lib p2_dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs PT_CASE"]
     fn p2_dump_case() {

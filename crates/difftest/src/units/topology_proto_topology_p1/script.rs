@@ -1,8 +1,7 @@
 //! The proto-topology scripts' codes and their input contract, ported from the reference
-//! wrapper (`crates/solidcore-ffi/src/units/topology_proto_topology_p1.rs`, which documents
-//! the layouts; shim `harness/cpp/shim/topology_proto_topology_p1.cpp`). The generators of
-//! units `topology.proto_topology_p1` to `_p3` redraw a script until its encoding
-//! ([`super::cpp_input`]) keeps the contract ([`keeps_contract`]).
+//! wrapper and its shim. The generators of units `topology.proto_topology_p1` to `_p3`
+//! redraw a script until its encoding ([`super::cpp_input`]) keeps the contract
+//! ([`keeps_contract`]).
 
 use solidcore::nurbs::math::NOW;
 

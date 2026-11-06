@@ -382,13 +382,13 @@ fn tree_ok(tree: &[NodeIn], dom: [f64; 4]) -> bool {
     seen.iter().all(|&s| s)
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/query_tess.rs`, `validate`): the attribute op's id and
-/// behavior bounds; otherwise a setup with a plane ([`contract::plane`]) or a B-spline
-/// surface ([`bspline_surface`]), finite options, a driver kind up to 2, a poly B-rep as
-/// [`poly_edges`] takes it, a tree as [`tree_ok`] takes it, the state's containment and
-/// domain, and each op's needs (a driver where upstream reads it unchecked, a tree, or none
-/// for a subdivision build, a poly B-rep, node and edge indices in range).
+/// Whether a case keeps the input contract ported from the reference's wrapper: the
+/// attribute op's id and behavior bounds; otherwise a setup with a plane
+/// ([`contract::plane`]) or a B-spline surface ([`bspline_surface`]), finite options, a
+/// driver kind up to 2, a poly B-rep as [`poly_edges`] takes it, a tree as [`tree_ok`]
+/// takes it, the state's containment and domain, and each op's needs (a driver where
+/// upstream reads it unchecked, a tree, or none for a subdivision build, a poly B-rep, node
+/// and edge indices in range).
 fn keeps_contract(i: &Inputs) -> bool {
     if let OpIn::Attr {
         id,

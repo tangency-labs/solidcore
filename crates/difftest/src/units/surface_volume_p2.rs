@@ -737,14 +737,13 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
 
 // ---- input contract -----------------------------------------------------------------
 //
-// A port of the input contract of the C++ reference wrapper
-// (`crates/solidcore-ffi/src/units/surface_volume_p2.rs`, `check`): finite values of at
-// most `MAX_COORD`, B-spline records within `MAX_CP` / `MAX_DEGREE` with non-decreasing
-// knots, no call path that hands a transform's `EvaluateBoundingBoxSimple` a null
-// parameter pseudo box or a twist's an unbounded box without a box output, no call path
-// that may hand an unbend's `EvaluateBoundingBoxSimple` a bounded box with a side shorter
-// than `MIN_SIDE`, and `read_db` text in a strict token grammar without the reader's null
-// or uninitialised cases. The generator redraws until it holds.
+// A port of the input contract of the C++ reference wrapper: finite values of at most
+// `MAX_COORD`, B-spline records within `MAX_CP` / `MAX_DEGREE` with non-decreasing knots,
+// no call path that hands a transform's `EvaluateBoundingBoxSimple` a null parameter pseudo
+// box or a twist's an unbounded box without a box output, no call path that may hand an
+// unbend's `EvaluateBoundingBoxSimple` a bounded box with a side shorter than `MIN_SIDE`,
+// and `read_db` text in a strict token grammar without the reader's null or uninitialised
+// cases. The generator redraws until it holds.
 
 /// Most maps in a volume chain.
 const MAX_MAPS: usize = 6;

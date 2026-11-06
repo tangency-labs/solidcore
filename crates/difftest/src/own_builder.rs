@@ -963,9 +963,8 @@ const HERMITE_SHEET_EDGES: [[[f64; 2]; 2]; 4] = [
     [[0.2, 0.4], [0.2, 0.2]],
 ];
 
-/// The kind-15 face's Hermite data for `scale`: the start point and tangent, the end
-/// point and tangent, and the extrusion vector (`Shape` in
-/// `harness/cpp/shim/support/hermite_sheet_fixture.h`).
+/// The kind-15 face's Hermite data for `scale`: the start point and tangent, the end point
+/// and tangent, and the extrusion vector (the reference fixture's `Shape`).
 fn hermite_shape(scale: f64) -> (Vec3, Vec3, Vec3, Vec3, Vec3) {
     (
         Vec3::new(0.0, 0.0, 0.0),

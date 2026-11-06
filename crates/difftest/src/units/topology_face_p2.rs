@@ -1,6 +1,5 @@
-//! Runner for unit `topology.face_p2`. Ported from upstream `SmFace.cpp` (the shim
-//! `harness/cpp/shim/topology_face_p2.cpp` was the reference); checked against its golden.
-//! Rust: `solidcore::topology::face::p2`.
+//! Runner for unit `topology.face_p2`. Ported from upstream `SmFace.cpp`; checked against
+//! its golden. Rust: `solidcore::topology::face::p2`.
 //!
 //! **B-rep ops.** The case's B-rep is one of the `topology.vertexuse` runner's sources:
 //! read from an upstream `.smb` test file (optionally rebuilding its UV trim curves), a
@@ -1592,8 +1591,8 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Vec<f64>, Fail> {
             }
         }
         OpIn::Internal { f } => {
-            // the shim's `DeleteObjectsCache(SM_OC_TRIMSRF, srf)` before
-            // `CalculateAnInternalPoint` (`harness/cpp/shim/topology_face_p2.cpp`, OP_INTERNAL)
+            // the reference shim's `DeleteObjectsCache(SM_OC_TRIMSRF, srf)` before
+            // `CalculateAnInternalPoint` (its OP_INTERNAL)
             super::query_face_p1::drop_trim_cache(b, fid(*f))?;
             match fp2::calculate_an_internal_point(&k, b, fid(*f)) {
             Ok(p) => o.extend([0.0, p.x, p.y, p.z]),

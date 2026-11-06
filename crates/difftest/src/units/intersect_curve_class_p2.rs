@@ -1000,9 +1000,9 @@ fn is_point(pc: &PointClassification<H>) -> bool {
     pc.object().is_some_and(|h| h.1 == ClassObjectKind::Point)
 }
 
-/// Why op `x` on the current classifications is undefined upstream: the run-time checks
-/// of `harness/cpp/shim/intersect_curve_class_p2.cpp`, evaluated on the state the ops
-/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks of
+/// the reference's shim, evaluated on the state the ops before it left (a precondition of
+/// `x`, never its result). `None` when it is defined.
 fn undefined_upstream(
     pool: &ContractPool,
     has_face: bool,
@@ -1342,7 +1342,7 @@ mod dump {
     use super::*;
 
     /// Prints how often the comparable generated scripts reach each op and status (a
-    /// debugging aid: `cargo test -p difftest --features cpp --lib p2_coverage -- --ignored
+    /// debugging aid: `cargo test -p difftest --lib p2_coverage -- --ignored
     /// --nocapture`).
     #[test]
     #[ignore = "debugging aid"]

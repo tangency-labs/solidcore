@@ -1,6 +1,5 @@
-//! Runner for unit `topology.trimming_tools`. Ported from upstream `SmTrimmingTools.cpp`
-//! (the shim `harness/cpp/shim/topology_trimming_tools.cpp` was the reference); checked
-//! against its golden. Rust: `solidcore::topology::trimming_tools`.
+//! Runner for unit `topology.trimming_tools`. Ported from upstream `SmTrimmingTools.cpp`;
+//! checked against its golden. Rust: `solidcore::topology::trimming_tools`.
 //!
 //! **Geometry ops** run on curves (`{"bspline": {dim, oob, cpts, p, u}}` with control
 //! points as stored `[x, y, z, w]`, `{"line": {p, v, domain, scale, inside_out}}`,

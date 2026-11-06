@@ -2,9 +2,9 @@
 //! `N_FitCalcKnotsEndDerivs`), `SmBSplineCurve::CreateApproximatingCurve` and
 //! `SmApiCreateCurveApproxPoints`.
 //!
-//! Ported from the upstream routines above (the block layouts are those of the former
-//! shim `harness/cpp/shim/nlib_crv_fit_p4.cpp`); checked against its golden.
-//! Rust: [`solidcore::nurbs::crv_fit::p4::approx_end_derivs`],
+//! Ported from the upstream routines above (the block layouts are those of the reference's
+//! shim); checked against its golden. Rust:
+//! [`solidcore::nurbs::crv_fit::p4::approx_end_derivs`],
 //! [`solidcore::nurbs::b_spline_curve::BSplineCurve::create_approximating_curve`],
 //! [`solidcore::primitive::api_curves::create_curve_approx_points`].
 //!

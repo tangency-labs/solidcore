@@ -4,9 +4,8 @@
 //! manager and the static helpers) and the API transformations of `SmApiGeneral.cpp`.
 //!
 //! Ported from upstream `SmOwningTopology.cpp`, `SmAssembly.cpp`, `SmAssemblyInstance.cpp`,
-//! `SmCopyBrepMap.cpp`, `SmProtoTopology.cpp` and `SmApiGeneral.cpp` (the shim
-//! `harness/cpp/shim/topology_proto_topology_p1.cpp` was the reference); checked against
-//! its golden. Rust: `solidcore::topology::proto_topology::p1`.
+//! `SmCopyBrepMap.cpp`, `SmProtoTopology.cpp` and `SmApiGeneral.cpp`; checked against its
+//! golden. Rust: `solidcore::topology::proto_topology::p1`.
 //!
 //! A case is one of the scripts documented in [`script`]: a **list** script (a pool of
 //! owning objects, assemblies and instance slots, one copy map, and list ops), a **proto**

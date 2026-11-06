@@ -549,12 +549,11 @@ fn ends(s: &SolIn, d1: (f64, f64), d2: (f64, f64)) -> bool {
         && param(d2, s.e[1])
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p1.rs`, `validate`): curves as [`domain`]
-/// takes them (arcs within the arc constructor's `[-360, 360]` degrees), parameters near
-/// the curve's domain, increasing intervals, non-negative tolerances, tessellation
-/// tolerances of zero or above their minimum, `GlobalPointSolve` operations it accepts with
-/// their option vectors, and the transform, break and solution bounds.
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves as
+/// [`domain`] takes them (arcs within the arc constructor's `[-360, 360]` degrees),
+/// parameters near the curve's domain, increasing intervals, non-negative tolerances,
+/// tessellation tolerances of zero or above their minimum, `GlobalPointSolve` operations it
+/// accepts with their option vectors, and the transform, break and solution bounds.
 fn keeps_contract(op: &OpIn) -> bool {
     let max = LIMITS.max_coord;
     match op {

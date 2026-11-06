@@ -1511,11 +1511,11 @@ fn kind_of_class(class: i32) -> Result<Option<usize>, ()> {
     }))
 }
 
-/// Whether a script keeps the static input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/intersect_point_class.rs`, `validate`): edges on curves
-/// and faces on planes, class objects of their class's kind, `SetFace` of a face,
-/// `GetGap3d` of a plane, `LoadFromIntersection` of an object (not a point) whose parameters
-/// stay inside the 10 of an `SmSolutionEnd`, and connection targets that are topology.
+/// Whether a script keeps the static input contract ported from the reference's wrapper:
+/// edges on curves and faces on planes, class objects of their class's kind, `SetFace` of a
+/// face, `GetGap3d` of a plane, `LoadFromIntersection` of an object (not a point) whose
+/// parameters stay inside the 10 of an `SmSolutionEnd`, and connection targets that are
+/// topology.
 fn keeps_contract(s: &Script) -> bool {
     let kinds: Vec<usize> = s.objects.iter().map(obj_kind).collect();
     let kind = |j: usize| kinds.get(j).copied();
@@ -1633,7 +1633,7 @@ mod dump {
     use super::*;
 
     /// Prints generated case `PC_CASE` as JSON (a debugging aid:
-    /// `PC_CASE=6 cargo test -p difftest --features cpp --lib dump_case -- --ignored --nocapture`).
+    /// `PC_CASE=6 cargo test -p difftest --lib dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs PC_CASE"]
     fn dump_case() {

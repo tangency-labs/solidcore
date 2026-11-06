@@ -554,10 +554,9 @@ fn op_ok(op: &OpJ) -> bool {
     }
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_ellipse_p1.rs`, `encode`): a curve A upstream
-/// builds or reads ([`build_ok`]), at most [`MAX_OPS`] ops, the circle-only ops only on a
-/// circle, and each op's arguments ([`op_ok`]).
+/// Whether a case keeps the input contract ported from the reference's wrapper: a curve A
+/// upstream builds or reads ([`build_ok`]), at most [`MAX_OPS`] ops, the circle-only ops
+/// only on a circle, and each op's arguments ([`op_ok`]).
 fn keeps_contract(i: &Inputs) -> bool {
     let circle = match &i.build {
         BuildJ::Ellipse(_) | BuildJ::EllipseCanonical { .. } => false,

@@ -2681,10 +2681,9 @@ pub(crate) fn computable(pool: &ContractPool, pc: &ContractPc) -> bool {
 }
 
 /// Whether a script keeps the input contract of the C++ reference wrapper: the run-time
-/// checks of `harness/cpp/shim/intersect_curve_class_p1.cpp`, evaluated on the script's
-/// inputs alone (an op whose effect depends on what the kernel computes leaves the state it
-/// may change undecided, and an undecided check passes). Inputs outside the contract are
-/// undefined upstream.
+/// checks of its shim, evaluated on the script's inputs alone (an op whose effect depends
+/// on what the kernel computes leaves the state it may change undecided, and an undecided
+/// check passes). Inputs outside the contract are undefined upstream.
 fn keeps_contract(s: &Script) -> bool {
     s.face.as_ref().is_none_or(face_keeps_contract) && contract_breach(s).is_none()
 }
@@ -3148,7 +3147,7 @@ mod dump {
     use super::*;
 
     /// Prints how often the generated scripts reach the interesting branches of the static
-    /// helpers (a debugging aid: `cargo test -p difftest --features cpp --lib
+    /// helpers (a debugging aid: `cargo test -p difftest --lib
     /// coverage_stats -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid"]
@@ -3199,7 +3198,7 @@ mod dump {
     }
 
     /// Prints generated case `CC_CASE` as JSON (a debugging aid:
-    /// `CC_CASE=6 cargo test -p difftest --features cpp --lib dump_case -- --ignored --nocapture`).
+    /// `CC_CASE=6 cargo test -p difftest --lib dump_case -- --ignored --nocapture`).
     #[test]
     #[ignore = "debugging aid; needs CC_CASE"]
     fn dump_case() {

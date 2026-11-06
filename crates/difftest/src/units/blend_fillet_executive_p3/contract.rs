@@ -1,7 +1,6 @@
 //! The reference wrapper's input contract for unit `blend.fillet_executive_p3`'s records,
-//! ported from `crates/solidcore-ffi/src/units/blend_fillet_executive_p3.rs` (its
-//! `validate*` checks, pure Rust): every record the Rust side runs keeps it, so an input
-//! the reference fixtures could not encode is a harness error, as it was.
+//! ported from that wrapper's `validate*` checks: every record the Rust side runs keeps it,
+//! so an input the reference fixtures could not encode is a harness error, as it was.
 
 use std::fmt;
 

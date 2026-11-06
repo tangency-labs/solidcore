@@ -464,9 +464,8 @@ fn twist_ok(t: &TwistIn) -> bool {
         && t.next.as_ref().is_none_or(|n| vecs(n))
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_twist_volume.rs`, `validate`): finite values
-/// within [`MAX_COORD`], up to 64 type codes in `[0, 2^30]`, derivative orders up to
+/// Whether a case keeps the input contract ported from the reference's wrapper: finite
+/// values within [`MAX_COORD`], up to 64 type codes in `[0, 2^30]`, derivative orders up to
 /// [`MAX_N`], no `b_box` asking for the pseudo box alone of an unbounded box (upstream
 /// writes the missing box through a null pointer) and streams up to [`MAX_BYTES`].
 fn keeps_contract(i: &Inputs) -> bool {

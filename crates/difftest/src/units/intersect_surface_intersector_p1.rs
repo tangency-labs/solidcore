@@ -1655,11 +1655,10 @@ fn curve_ok(c: &CurveIn) -> bool {
     }
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/intersect_surface_intersector_p1.rs`, `encode`): values
-/// at most [`MAX_COORD`] in magnitude, B-spline surfaces and curves of bounded degree and
-/// size with clamped knots and consistent weights, non-degenerate segments, at most 64 ops,
-/// 8 curves and 64 points, and points of [`POINT_LEN`] values with valid type codes.
+/// Whether a case keeps the input contract ported from the reference's wrapper: values at
+/// most [`MAX_COORD`] in magnitude, B-spline surfaces and curves of bounded degree and size
+/// with clamped knots and consistent weights, non-degenerate segments, at most 64 ops, 8
+/// curves and 64 points, and points of [`POINT_LEN`] values with valid type codes.
 fn keeps_contract(i: &Inputs) -> bool {
     let point_ok = |p: &Vec<f64>| {
         p.len() == POINT_LEN

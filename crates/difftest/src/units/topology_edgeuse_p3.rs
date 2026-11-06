@@ -1,6 +1,5 @@
-//! Runner for unit `topology.edgeuse_p3`. Ported from upstream `SmEdgeuse.cpp` (the shim
-//! `harness/cpp/shim/topology_edgeuse_p3.cpp` was the reference); checked against its
-//! golden. Rust: `solidcore::topology::edgeuse::p3`.
+//! Runner for unit `topology.edgeuse_p3`. Ported from upstream `SmEdgeuse.cpp`; checked
+//! against its golden. Rust: `solidcore::topology::edgeuse::p3`.
 //!
 //! The B-reps are those of unit `topology.edgeuse_p1` (upstream `.smb` files, wire edges,
 //! faces from B-spline surfaces and planes, the wire network of `prog_test`

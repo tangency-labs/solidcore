@@ -1,6 +1,7 @@
 //! Runs one SSI corpus case through the Rust port and returns its [`RawOutput`]: the
 //! case's surfaces built with solidcore's own types and intersected by
-//! [`Surface::global_surface_intersect`], every curve sampled at [`N_SAMPLES`] parameters.
+//! [`Surface::global_surface_intersect`], every curve sampled at
+//! [`N_SAMPLES`](super::raw::N_SAMPLES) parameters.
 //! Every [`SolidError::Unported`] on the way makes the case deferred.
 
 use std::time::Instant;
@@ -164,7 +165,7 @@ fn rust_status(e: &SolidError) -> (i64, Option<String>) {
 }
 
 /// The ported `Surface::global_surface_intersect` on the case, every curve sampled at
-/// [`N_SAMPLES`] parameters.
+/// [`N_SAMPLES`](super::raw::N_SAMPLES) parameters.
 pub fn run_rust(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFailure> {
     let k = Kernel::default();
     let [(a, da), (b, db)] = &case.surfaces;

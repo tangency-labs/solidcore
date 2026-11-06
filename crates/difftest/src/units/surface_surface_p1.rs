@@ -755,9 +755,8 @@ fn opt_tol(t: Option<f64>) -> bool {
     t.is_none_or(|t| fin(t) && t > 0.0)
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_p1.rs`, `validate`): a surface as
-/// `surface_cache_p3` takes it (`sized_surface`) and the op's parameters: finite values,
+/// Whether a case keeps the input contract ported from the reference's wrapper: a surface
+/// as `surface_cache_p3` takes it (`sized_surface`) and the op's parameters: finite values,
 /// points and domains inside the surface domain where upstream evaluates (within one side
 /// of it for the boundary queries of planes and clamping B-splines and for a `dom_cont`
 /// after a cache history), positive optional tolerances, directional derivative orders up

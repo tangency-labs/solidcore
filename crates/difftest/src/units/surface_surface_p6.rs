@@ -910,14 +910,13 @@ fn solution(s: &SolIn, max_vars: usize) -> bool {
         && s.start.iter().chain(&s.end).all(|&x| fin(x))
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_p6.rs`, `validate`): a
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
 /// [`surface_kind`] and the op's parameters (enumerators in range, domains inside the
 /// surface's, parameters near it, a [`curve_and_interval`], positive tolerances, up to
 /// [`MAX_SAMPLES`] samples with angles and lengths within `1e4`, a reference curve for
 /// `SM_TT_DIR_TO_REFERENCE_CURVE` (upstream dereferences it unchecked), solution counts
-/// within the objects' parameters, and for `scls` a B-spline surface and a solver
-/// operation `sm_SCLocalSolve` supports, the signed one with a vector).
+/// within the objects' parameters, and for `scls` a B-spline surface and a solver operation
+/// `sm_SCLocalSolve` supports, the signed one with a vector).
 fn keeps_contract(i: &Inputs) -> bool {
     let Some((dom, plain)) = resolve(&i.surface)
         .ok()

@@ -891,10 +891,9 @@ fn bspline_surface(b: &BssIn) -> bool {
         && contract::clamped(&s.v, s.q).is_some()
 }
 
-/// Whether an evaluation keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/query_brep.rs`, `validate_evaluate`): no surface, or a
-/// B-spline, curve-bounded or plane surface as [`bspline_surface`] and [`contract::plane`]
-/// take them.
+/// Whether an evaluation keeps the input contract ported from the reference's wrapper: no
+/// surface, or a B-spline, curve-bounded or plane surface as [`bspline_surface`] and
+/// [`contract::plane`] take them.
 fn keeps_contract(i: &EvalIn) -> bool {
     i.surf.as_ref().is_none_or(|s| match s {
         SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => bspline_surface(b),

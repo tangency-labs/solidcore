@@ -402,15 +402,14 @@ fn block(pc: &PcIn) -> Option<Block> {
     })
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_projected_curve.rs`, `validate`, and the
+/// Whether a case keeps the input contract ported from the reference's wrapper (and the
 /// runner's encoder): a record of a projection type in `SmProjectionType` (a larger one is
-/// undefined upstream), a version up to 1000 and at most [`MAX_DB_BYTES`] bytes; a projected
-/// curve for every other op as [`block`] takes it, parameters within [`MAX_REL_DIST`] domain
-/// lengths, derivative orders up to [`MAX_DERIVS`], a positive continuity angle, the copy
-/// constructor only on constructor 0 and never on an owned or unsure Hermite base, no
-/// `AssertValid` test level 3, and no report list for a Hermite base above `1e16` outside
-/// projection type 3.
+/// undefined upstream), a version up to 1000 and at most [`MAX_DB_BYTES`] bytes; a
+/// projected curve for every other op as [`block`] takes it, parameters within
+/// [`MAX_REL_DIST`] domain lengths, derivative orders up to [`MAX_DERIVS`], a positive
+/// continuity angle, the copy constructor only on constructor 0 and never on an owned or
+/// unsure Hermite base, no `AssertValid` test level 3, and no report list for a Hermite
+/// base above `1e16` outside projection type 3.
 fn keeps_contract(i: &Inputs) -> bool {
     if let OpIn::ReadDb(d) = &i.op {
         return d.ptype <= 3 && d.version <= 1000 && db_bytes(d).len() <= MAX_DB_BYTES;

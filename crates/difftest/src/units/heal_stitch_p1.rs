@@ -728,12 +728,11 @@ pub(crate) fn put_tags(o: &mut Vec<f64>, b: &Brep) -> solidcore::Result<()> {
     Ok(())
 }
 
-/// The topology after a stitch, in list order (the shim's `put_topology`,
-/// `harness/cpp/shim/sc_stitch_digest.h`): the shell count; per edge its start and end
-/// vertex (index in the vertex list, `-1` none), tolerance, interval and edge use count;
-/// per face its loops, each as its edge uses' edges (index in the edge list) and
-/// orientations. Positions in the lists, not arena ids, so record numbering never
-/// enters the comparison.
+/// The topology after a stitch, in list order (as the reference shim's `put_topology` wrote
+/// it): the shell count; per edge its start and end vertex (index in the vertex list, `-1`
+/// none), tolerance, interval and edge use count; per face its loops, each as its edge
+/// uses' edges (index in the edge list) and orientations. Positions in the lists, not arena
+/// ids, so record numbering never enters the comparison.
 pub(crate) fn topology_digest(k: &mut Kernel, b: &Brep, o: &mut Vec<f64>) -> solidcore::Result<()> {
     let shells = bp1::shells(k, b, None)?;
     let fs = bp1::faces(b, None)?;

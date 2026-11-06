@@ -720,14 +720,13 @@ fn corner_output(rec: &[f64]) -> Result<Output, HarnessError> {
         .values("model", model))
 }
 
-/// The reference wrapper's input contract for a corner operation `op` (any but
-/// `BigRad`) on the corner input `input` ([`corner_input_with`] and the op's tail;
-/// `crates/solidcore-ffi/src/units/blend_fillet_corner_p3.rs`): `blend.fillet_geom_p1`'s
-/// block within [`blend::MAX_MAGNITUDE`], then the corner's kind and vertex, edge uses of
-/// target wire edges, fillet vertices and edges, flags, intersection points (their
-/// surfaces a target face, `-1` or a plane `1000` / `1001`), original faces, line edges,
-/// arc edges (radius above `1e-12`, a degree domain in `[-360, 360]` of length in
-/// `(1e-12, 360 + 1e-12]`) and solvers, every index inside the block.
+/// The reference wrapper's input contract for a corner operation `op` (any but `BigRad`) on
+/// the corner input `input` ([`corner_input_with`] and the op's tail):
+/// `blend.fillet_geom_p1`'s block within [`blend::MAX_MAGNITUDE`], then the corner's kind
+/// and vertex, edge uses of target wire edges, fillet vertices and edges, flags,
+/// intersection points (their surfaces a target face, `-1` or a plane `1000` / `1001`),
+/// original faces, line edges, arc edges (radius above `1e-12`, a degree domain in `[-360,
+/// 360]` of length in `(1e-12, 360 + 1e-12]`) and solvers, every index inside the block.
 pub(super) fn corner_contract(op: Op, input: &[f64]) -> bool {
     let mut rd = blend::Reader::new(input, blend::MAX_MAGNITUDE);
     let args = |rd: &mut blend::Reader<'_>| -> Option<()> {

@@ -289,7 +289,8 @@ fn status(e: &SolidError) -> f64 {
     }
 }
 
-/// `SC_ERR_ARG` (`harness/cpp/shim/sc_shim.h`): the shim rejected the arguments.
+/// `SC_ERR_ARG`, the reference shim's argument error: the input contract rejected the
+/// arguments.
 const SC_ERR_ARG: f64 = -1002.0;
 
 /// Builds a sphere; `Ok(Err(e))` when the construction fails.
@@ -1490,7 +1491,7 @@ mod tests {
     }
 
     /// Prints the generated case of `SPHERE_SEED` and its Rust record:
-    /// `SPHERE_SEED=<seed> cargo test --profile difftest -p difftest --features cpp --lib
+    /// `SPHERE_SEED=<seed> cargo test --profile difftest -p difftest --lib
     /// sphere_dump_case -- --ignored --nocapture`.
     #[test]
     #[ignore = "debugging aid"]

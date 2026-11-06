@@ -1,12 +1,11 @@
 //! The Rust side of constructor scripts ([`step_import::script`]): runs a script on
-//! [`BrepConstructor`] and reports the same blocks as the C++ shim
-//! (`harness/cpp/shim/topology_brep_constructor.cpp`, layout in its header): the
-//! geometry statuses, each call's status, a crash marker where upstream dereferences
-//! null (the port's [`SolidError::InvalidInput`] of the constructor), the B-rep dump
-//! (mode 0) or the `--step-corpus` stages after construction (mode 1).
+//! [`BrepConstructor`] and reports the blocks the reference's constructor shim reported:
+//! the geometry statuses, each call's status, a crash marker where upstream dereferences
+//! null (the port's [`SolidError::InvalidInput`] of the constructor), the B-rep dump (mode
+//! 0) or the `--step-corpus` stages after construction (mode 1).
 //!
 //! Shared by the `topology.brep_constructor` runner and `difftest --step-corpus
-//! --constructor` (which also builds without the `cpp` feature).
+//! --constructor`.
 
 use std::collections::BTreeMap;
 

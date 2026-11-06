@@ -1,6 +1,5 @@
-//! Runner for unit `topology.edgeuse_p1`. Ported from upstream `SmEdgeuse.cpp` (the shim
-//! `harness/cpp/shim/topology_edgeuse_p1.cpp` was the reference); checked against its
-//! golden. Rust: `solidcore::topology::edgeuse::p1`.
+//! Runner for unit `topology.edgeuse_p1`. Ported from upstream `SmEdgeuse.cpp`; checked
+//! against its golden. Rust: `solidcore::topology::edgeuse::p1`.
 //!
 //! **B-rep ops.** The case's B-rep is one of the reference shim's sources: read from an
 //! upstream `.smb` test file (optionally rebuilding its UV trim curves), a wire edge from a
@@ -10,13 +9,9 @@
 //! ([`crate::own_builder`], renumbered into the shim's traversal order), and reads an
 //! `.smb` file with the Rust reader, renumbered the same way
 //! ([`crate::own_reader::brep_in_order`]). Results are recorded as traversal indices, and
-//! the gaps the gap ops compute by value. The import of a native graph export
-//! ([`import_with_types`]: raw members, an `SmPlane` face surface as the exact [`Plane`],
-//! an `SmSurfOfRevolution` face surface exactly through
-//! [`crate::util::read_exact_surface`], an `SmLine` edge curve as the exact [`Line`], other
-//! analytic kinds as their B-spline part) remains for the runners that share it; a case
-//! evaluating geometry such an import holds only as its B-spline part is deferred
-//! ([`inexact_geometry`]), which no Rust-built or Rust-read source triggers.
+//! the gaps the gap ops compute by value. A case evaluating geometry a B-rep holds only as
+//! its B-spline part is deferred ([`inexact_geometry`]), which no Rust-built or Rust-read
+//! source triggers.
 //!
 //! Index arguments are selectors taken modulo the entity count (so generated cases
 //! need no counts); `-1` selects null.
@@ -591,12 +586,9 @@ fn orient_code(o: OrientType) -> i64 {
     }
 }
 
-/// What the import cannot hold exactly: the upstream type codes of the face surfaces
-/// and edge curves (`-1` none), by export index. A surface other than an
-/// `SmBSplineSurface`, an `SmPlane` or an exactly exported analytic kind (an
-/// `SmSurfOfRevolution`, see [`crate::util::read_exact_surface`]) is imported as its
-/// B-spline part. Edge curves are exact for B-splines, lines, supported curve-on-surface
-/// records and losslessly exported native ellipses/circles.
+/// The upstream type codes of the face surfaces and edge curves (`-1` none), by index, with
+/// whether each is held exactly. Empty for a B-rep the Rust kernel built or read, whose
+/// geometry is exact.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ImportTypes {
     /// `GetSurface()->GetType()` of each face.

@@ -465,14 +465,13 @@ fn bounds(range: Option<(f64, f64)>, doms: &[Domain]) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_p4.rs`, `validate`): surfaces as
+/// Whether a case keeps the input contract ported from the reference's wrapper: surfaces as
 /// `surface_p7`'s contract takes them, parameters within one domain length of their
-/// surface's domain, ordered domains inside it, positive tolerances, a B-spline surface
-/// for the seam op and a plane for the inversion, the solver operations each function
-/// supports (signed directed with a vector, `AT_DISTANCE` with a target), non-zero plane
-/// and section normals, curve intervals and parameters within one range length of the
-/// curve's range, and 1 to [`MAX_POINTS`] points per equation-set call of the set's size.
+/// surface's domain, ordered domains inside it, positive tolerances, a B-spline surface for
+/// the seam op and a plane for the inversion, the solver operations each function supports
+/// (signed directed with a vector, `AT_DISTANCE` with a target), non-zero plane and section
+/// normals, curve intervals and parameters within one range length of the curve's range,
+/// and 1 to [`MAX_POINTS`] points per equation-set call of the set's size.
 fn keeps_contract(i: &Inputs) -> bool {
     let Some((dom, is_bspline)) = surface_kind(&i.surface, false, false) else {
         return false;

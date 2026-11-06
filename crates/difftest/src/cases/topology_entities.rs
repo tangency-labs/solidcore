@@ -3,9 +3,9 @@
 //! Several topology runners encode a case into the flat `f64` record the reference shims
 //! read (curve, surface and B-rep blocks, scripts of ops), and their generators keep only
 //! cases whose record keeps the contract the reference wrappers enforced on it before any
-//! shim call (`crates/solidcore-ffi/src/units/topology_*.rs`). [`Reader`] walks such a
-//! record the way those wrappers' readers did; each runner keeps its own block checks.
-//! A check returns `None` where the wrapper refused the record.
+//! shim call. [`Reader`] walks such a record the way those wrappers' readers did; each
+//! runner keeps its own block checks. A check returns `None` where the wrapper refused the
+//! record.
 
 /// Sequential reader over a flat input record.
 pub struct Reader<'a> {

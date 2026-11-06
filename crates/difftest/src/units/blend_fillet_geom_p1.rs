@@ -771,8 +771,7 @@ fn push_query(o: &mut Vec<f64>, q: &Query) -> Result<(), HarnessError> {
     Ok(())
 }
 
-/// The flat program of a case (layout of the reference wrapper,
-/// `crates/solidcore-ffi/src/units/blend_fillet_geom_p1.rs`), on which [`contract`] is
+/// The flat program of a case (the reference wrapper's layout), on which [`contract`] is
 /// checked.
 fn program(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     let mut o = Vec::new();
@@ -1145,7 +1144,7 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
 // ---- Rust side: building geometry -------------------------------------------------------
 
 pub(crate) fn curve_of(c: &Crv) -> Result<BSplineCurve, HarnessError> {
-    // the FFI's count rule (`solidcore_ffi` `curve`), as for surfaces in `surface_of`
+    // the reference wrapper's count rule for curves, as for surfaces in `surface_of`
     let n = c.cpts.len().wrapping_sub(1);
     if c.cpts.is_empty()
         || !(1..=n).contains(&c.p)
@@ -1164,9 +1163,9 @@ pub(crate) fn curve_of(c: &Crv) -> Result<BSplineCurve, HarnessError> {
 }
 
 pub(crate) fn surface_of(s: &Srf) -> Result<Surface, HarnessError> {
-    // the FFI's count rule (`solidcore_ffi` `surface`): the C++ refuses anything else,
-    // and `srf_basic::Surface::new` checks only the shapes, so an inconsistent degree
-    // must not reach the library (a fuzzed `q = i64::MAX` overflowed its index loops)
+    // the reference wrapper's count rule for surfaces: the C++ refuses anything else, and
+    // `srf_basic::Surface::new` checks only the shapes, so an inconsistent degree must not
+    // reach the library (a fuzzed `q = i64::MAX` overflowed its index loops)
     let n = s.net.len().wrapping_sub(1);
     let m = s.net.first().map_or(0, Vec::len).wrapping_sub(1);
     let counts_ok = !s.net.is_empty()
@@ -3290,11 +3289,10 @@ fn gen_query(rng: &mut Rng, m: &Model) -> Query {
     }
 }
 
-/// The reference wrapper's input contract for `op`'s program `input`
-/// (`crates/solidcore-ffi/src/units/blend_fillet_geom_p1.rs`): clamped B-splines within
-/// the size bounds, enum codes in their upstream ranges, indices inside the block and the
-/// op's preconditions (a curve on an edge whose fillet B-rep edge is looked for, both
-/// rails on a trimmed or rail-queried geometry, a vertex-classified vertex for
+/// The reference wrapper's input contract for `op`'s program `input`: clamped B-splines
+/// within the size bounds, enum codes in their upstream ranges, indices inside the block
+/// and the op's preconditions (a curve on an edge whose fillet B-rep edge is looked for,
+/// both rails on a trimmed or rail-queried geometry, a vertex-classified vertex for
 /// `FbVertOnVert`, an edge-use-classified one for `FbCliff`, a deleted vertex without
 /// edges), every value finite and, for the ops reaching the hang regimes, within their
 /// magnitude bound (HANG-29: [`blend::MAX_MAGNITUDE`]; HANG-20:

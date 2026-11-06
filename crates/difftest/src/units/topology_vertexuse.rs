@@ -1,6 +1,5 @@
-//! Runner for unit `topology.vertexuse`. Ported from upstream `SmVertexuse.cpp` (the shim
-//! `harness/cpp/shim/topology_vertexuse.cpp` was the reference); checked against its
-//! golden. Rust: `solidcore::topology::vertexuse`.
+//! Runner for unit `topology.vertexuse`. Ported from upstream `SmVertexuse.cpp`; checked
+//! against its golden. Rust: `solidcore::topology::vertexuse`.
 //!
 //! The case's B-rep is one of the reference shim's sources: read from an upstream `.smb`
 //! test file (optionally rebuilding its UV trim curves), a wire edge from a B-spline curve

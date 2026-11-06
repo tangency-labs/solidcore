@@ -289,12 +289,11 @@ fn tol(v: f64) -> bool {
     fin(v) && v > 0.0
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p6.rs`, `validate`): curves as [`domain`]
-/// takes them (arcs within the arc constructor's `[-360, 360]` degrees), parameters within
-/// [`MAX_REL_DIST`] domain lengths, increasing intervals, positive tolerances, the
-/// operations the point solves accept, a sample count other than one (a division by zero
-/// upstream), and the sample and tangent-type bounds.
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves as
+/// [`domain`] takes them (arcs within the arc constructor's `[-360, 360]` degrees),
+/// parameters within [`MAX_REL_DIST`] domain lengths, increasing intervals, positive
+/// tolerances, the operations the point solves accept, a sample count other than one (a
+/// division by zero upstream), and the sample and tangent-type bounds.
 fn keeps_contract(op: &OpIn) -> bool {
     match op {
         OpIn::BBox { curve, ivl, .. } => domain(curve).is_some_and(|d| interval(d, *ivl)),

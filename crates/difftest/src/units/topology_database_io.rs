@@ -205,8 +205,8 @@ struct Rec {
 fn output(open_status: i64, recs: &[Rec]) -> Output {
     let all: Vec<f64> = recs.iter().flat_map(|r| r.dbls.iter().copied()).collect();
     let bits: Vec<i64> = all.iter().map(|d| d.to_bits() as i64).collect();
-    // Subnormals are compared through `dbl_bits` only: `--perturb` scales the first
-    // nonzero value by 1+1e-8, which leaves a subnormal unchanged.
+    // Subnormals are recorded through `dbl_bits` only: a relative change of a subnormal can
+    // round back to the same value.
     let dbls: Vec<f64> = all.into_iter().filter(|d| !d.is_subnormal()).collect();
     Output::new()
         .int("open_status", open_status)

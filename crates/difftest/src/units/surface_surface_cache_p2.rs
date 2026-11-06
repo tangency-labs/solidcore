@@ -586,15 +586,14 @@ fn bounded_split(v: f64, min: f64) -> bool {
     v == 0.0 || v >= min
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_cache_p2.rs`, `validate`): a
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
 /// [`surf_block`] surface (a B-spline for `bez_block`) and the op's parameters: domains
-/// inside the surface's (of non-degenerate sides for `test`), up to 8 bounding plane indices
-/// up to 3, up to 8 adds and 8 queries of types up to 1 with finite tolerances, bounded keys
-/// and well-formed curves, finite options; a `test` node of aux type 3 (with a well-formed
-/// Bezier patch and ordered pseudo box intervals), 4 or 6 (over a B-spline only); a
-/// `subdiv_block` over a B-spline or plane unless the node has no surface, with chord, angle
-/// and side tolerances unset or at least `1e-3`, `0.05` and `0.05`.
+/// inside the surface's (of non-degenerate sides for `test`), up to 8 bounding plane
+/// indices up to 3, up to 8 adds and 8 queries of types up to 1 with finite tolerances,
+/// bounded keys and well-formed curves, finite options; a `test` node of aux type 3 (with a
+/// well-formed Bezier patch and ordered pseudo box intervals), 4 or 6 (over a B-spline
+/// only); a `subdiv_block` over a B-spline or plane unless the node has no surface, with
+/// chord, angle and side tolerances unset or at least `1e-3`, `0.05` and `0.05`.
 fn keeps_contract(i: &Inputs) -> bool {
     let max = LIMITS.max_coord;
     if let OpIn::BezBlock = i.op {

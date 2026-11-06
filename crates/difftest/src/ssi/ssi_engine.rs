@@ -1,13 +1,12 @@
 //! The `ssi` engine: the `ssi` crate (`crates/ssi`, a surface/surface intersection of its
 //! own, not a port of upstream) on one corpus case, as the crate's corpus runner
-//! (`crates/ssi/src/bin/ssi_corpus_runner`) runs it. Each surface becomes the crate's
-//! exact patch (`ssi::shapes` for the analytic kinds, the net as given for a NURBS), the
-//! pair is intersected with `ssi::intersect_bodies`, and after the timer stops the curves
-//! are filled in to [`DENSIFY_TURN`] by `ssi::densify`. The curves are written as marched
-//! (the crate has no curve type to sample at 4001 parameters), each point with both
-//! patches' parameters and each patch evaluated there; the points are the touch points
-//! and then the curves' vertices (crossings and meetings). No C++ is involved, so this
-//! engine runs without the `cpp` feature.
+//! (`crates/ssi/src/bin/ssi_corpus_runner`) runs it. Each surface becomes the crate's exact
+//! patch (`ssi::shapes` for the analytic kinds, the net as given for a NURBS), the pair is
+//! intersected with `ssi::intersect_bodies`, and after the timer stops the curves are
+//! filled in to [`DENSIFY_TURN`] by `ssi::densify`. The curves are written as marched (the
+//! crate has no curve type to sample at 4001 parameters), each point with both patches'
+//! parameters and each patch evaluated there; the points are the touch points and then the
+//! curves' vertices (crossings and meetings).
 
 use std::time::Instant;
 

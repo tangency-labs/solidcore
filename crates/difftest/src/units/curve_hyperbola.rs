@@ -153,10 +153,9 @@ const MAX_COORD: f64 = 1e6;
 /// The largest control point index of a database record.
 const MAX_DB_INDEX: i64 = 64;
 
-/// Whether a database record keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_hyperbola.rs`, `check_record`): finite values
-/// within range, `1 ≤ p ≤ n ≤ MAX_DB_INDEX`, flags in range, the exact number of values and
-/// positive weights.
+/// Whether a database record keeps the input contract ported from the reference's wrapper:
+/// finite values within range, `1 ≤ p ≤ n ≤ MAX_DB_INDEX`, flags in range, the exact number
+/// of values and positive weights.
 fn record_ok(r: &RecordIn) -> bool {
     let fin = |x: f64| x.is_finite() && x.abs() <= MAX_COORD;
     let head = r.head.iter().all(|&x| fin(x))

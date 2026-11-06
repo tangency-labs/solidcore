@@ -2118,9 +2118,9 @@ fn prepare(i: &Inputs) -> Result<Prepared, Early> {
 
 // ---- the script, Rust side --------------------------------------------------------------
 
-/// A failure of the Rust side: an error to report or an unported callee, or an op
-/// the script stops at because upstream does not return in time there (the label of
-/// the hang guard [`run_cpp`] rejects the case for).
+/// A failure of the Rust side: an error to report or an unported callee, or an op the
+/// script stops at because upstream does not return in time there (the label of the hang
+/// guard that stops it).
 enum Fail {
     Solid(SolidError),
     Harness(HarnessError),

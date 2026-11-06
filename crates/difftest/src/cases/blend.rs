@@ -1,10 +1,9 @@
 //! Input checks shared by the `blend.fillet_geom_p*` generators: ports of the reference
-//! wrapper's input contract (`crates/solidcore-ffi/src/units/blend_fillet_geom_p1.rs`) for
-//! the flat pseudo-B-rep programs those runners encode (layout in that module's docs):
-//! clamped B-spline curves and surfaces within the size bounds, enum codes in their
-//! upstream ranges, indices inside the block and the magnitude bounds of an op. The
-//! generators redraw until their contract holds, so their cases stay on the working
-//! path; hostile data is covered by the fixture and fuzz files.
+//! wrapper's input contract for the flat pseudo-B-rep programs those runners encode (layout
+//! in that module's docs): clamped B-spline curves and surfaces within the size bounds,
+//! enum codes in their upstream ranges, indices inside the block and the magnitude bounds
+//! of an op. The generators redraw until their contract holds, so their cases stay on the
+//! working path; hostile data is covered by the fixture and fuzz files.
 
 use solidcore::nurbs::math::{NOW, NOZ};
 

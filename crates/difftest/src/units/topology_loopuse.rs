@@ -1,6 +1,5 @@
-//! Runner for unit `topology.loopuse`. Ported from upstream `SmLoopuse.cpp` (the shim
-//! `harness/cpp/shim/topology_loopuse.cpp` was the reference); checked against its golden.
-//! Rust: `solidcore::topology::loopuse`.
+//! Runner for unit `topology.loopuse`. Ported from upstream `SmLoopuse.cpp`; checked
+//! against its golden. Rust: `solidcore::topology::loopuse`.
 //!
 //! The B-reps are those of unit `topology.edgeuse_p1` (upstream `.smb` files, wire edges,
 //! faces from B-spline surfaces and planes, the wire network of `prog_test`

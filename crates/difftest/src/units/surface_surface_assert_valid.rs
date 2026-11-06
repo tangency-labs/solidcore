@@ -3,8 +3,8 @@
 //! revolution, surfaces of extrusion and curve-bounded surfaces.
 //!
 //! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden. The
-//! input block is the one `harness/cpp/shim/surface_surface_assert_valid.cpp` documents.
-//! Rust: [`solidcore::surface::surface::Surface::assert_valid`].
+//! input block is the reference shim's. Rust:
+//! [`solidcore::surface::surface::Surface::assert_valid`].
 //!
 //! A case is the input block (`kind level make` and the kind's construction data); the
 //! Rust side builds its surface from it. The output is the check's result

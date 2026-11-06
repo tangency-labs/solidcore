@@ -1170,15 +1170,14 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
     gen_point_case(rng).map(|p| Inputs::PointValues(Box::new(p)))
 }
 
-/// Whether a case keeps the reference wrapper's input contract
-/// (`crates/solidcore-ffi/src/units/blend_fillet_solver_p4.rs`, its `encode_point` /
-/// `encode_calc`): every value finite and at most `1e9` in magnitude (the trace
-/// direction finite), clamped B-spline surfaces of degree 1..=8 with 2..=17 control points
-/// a side and one rationality, surfaces of revolution as unit
-/// `surface.surf_of_revolution_p1`'s wrapper builds them, points of [`POINT_LEN`] values
-/// with their type codes in range; a `calc_geom` rectangle of sides in `[1e-6, 1e6]` with a
-/// tolerance up to a hundredth of the shorter side, an edge index below 4, a Hermite edge
-/// curve or a fillet geometry, and at most [`MAX_G1`] G1 knot fractions inside `(0, 1)`.
+/// Whether a case keeps the reference wrapper's input contract (for a point and for a
+/// calculation): every value finite and at most `1e9` in magnitude (the trace direction
+/// finite), clamped B-spline surfaces of degree 1..=8 with 2..=17 control points a side and
+/// one rationality, surfaces of revolution as unit `surface.surf_of_revolution_p1`'s
+/// wrapper builds them, points of [`POINT_LEN`] values with their type codes in range; a
+/// `calc_geom` rectangle of sides in `[1e-6, 1e6]` with a tolerance up to a hundredth of
+/// the shorter side, an edge index below 4, a Hermite edge curve or a fillet geometry, and
+/// at most [`MAX_G1`] G1 knot fractions inside `(0, 1)`.
 fn encodable(i: &Inputs) -> bool {
     match i {
         Inputs::PointValues(p) => contract::point_case(p),

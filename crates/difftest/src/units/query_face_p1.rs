@@ -374,11 +374,11 @@ impl solidcore::intersect::point_class::ClassGeometry<EntityRef> for NoGeometry 
     }
 }
 
-/// The shim's `drop_trim_cache(f)` (`harness/cpp/shim/query_face_p1.cpp`, before
-/// `Point3DClassify`): `SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, srf)`. The cache's
-/// tree state lives in the deleted object upstream, so the slot goes back to
-/// [`CacheTreeState::NoCache`]: the next lookup makes a cache whose tree is built, as
-/// upstream's does. (A Rust `.smb` read can leave a kept cache whose state is `Unbuilt`.)
+/// The reference shim's `drop_trim_cache(f)` (before `Point3DClassify`):
+/// `SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, srf)`. The cache's tree state lives in
+/// the deleted object upstream, so the slot goes back to [`CacheTreeState::NoCache`]: the
+/// next lookup makes a cache whose tree is built, as upstream's does. (A Rust `.smb` read
+/// can leave a kept cache whose state is `Unbuilt`.)
 pub(crate) fn drop_trim_cache(b: &Brep, f: FaceId) -> Result<(), HarnessError> {
     use solidcore::surface::surface::CacheTreeState;
     if let Some(surface) = b

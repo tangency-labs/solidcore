@@ -1,13 +1,11 @@
 //! Native shell/region operations on shared native B-rep fixtures: queries, wire edges,
 //! `TransferChildrenTo` (incl. face-use and wire shells in one B-rep), shell type members,
-//! `RayFire` (through the B-rep's own `query::brep::BrepQuery` world), degeneracy,
-//! region ordering and filtering.
-//! Ported from upstream `SmShell.cpp` and `SmRegion.cpp` (the shims
-//! `harness/cpp/shim/topology_shell*.cpp` were the reference); checked against its golden.
-//! Fixtures reuse the edge-use fixture sources: the runner builds a shim-built source
-//! itself ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader, both in
-//! the shim's traversal order ([`crate::own_reader::brep_in_order`]). Setup failures fail
-//! the harness.
+//! `RayFire` (through the B-rep's own `query::brep::BrepQuery` world), degeneracy, region
+//! ordering and filtering. Ported from upstream `SmShell.cpp` and `SmRegion.cpp`; checked
+//! against its golden. Fixtures reuse the edge-use fixture sources: the runner builds a
+//! shim-built source itself ([`crate::own_builder`]) and reads an `.smb` file with the Rust
+//! reader, both in the shim's traversal order ([`crate::own_reader::brep_in_order`]). Setup
+//! failures fail the harness.
 
 use super::topology_edgeuse_p1::{source_sizes_ok, BrepIn};
 

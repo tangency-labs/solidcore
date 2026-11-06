@@ -52,7 +52,7 @@ const SUCCESS: f64 = 1000.0;
 const SM_ERR: f64 = 1001.0;
 /// `SM_ERR_INVALID_INPUT` (what [`SolidError::InvalidInput`] stands for).
 const SM_ERR_INVALID_INPUT: f64 = 1007.0;
-/// `SC_ERR_ARG` (`harness/cpp/shim/sc_shim.h`): the shim refused the input.
+/// `SC_ERR_ARG`, the reference shim's argument error: the input contract refused the input.
 const SC_ERR_ARG: f64 = -1002.0;
 
 /// `surface.cone_p2` runner.

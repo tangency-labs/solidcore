@@ -252,12 +252,11 @@ pub(super) fn cases() -> Result<Vec<Case>, HarnessError> {
     Ok(cases)
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper's
-/// `ImplantPoly` (`crates/solidcore-ffi/src/units/surface_trim_srf_cache.rs`): surface
-/// blocks as [`super::surface_block`] takes them, a cache domain inside the surface's of
-/// non-degenerate sides, a factor in `[1, 32]`, a [`super::tree_ok`], up to 8 polygon
-/// edges of finite points and tolerances on nodes in range, and up to 8 ownerless
-/// [`super::curve_2d`] calls on nodes in range.
+/// Whether a case keeps the input contract of the reference wrapper's `ImplantPoly`
+/// (ported): surface blocks as [`super::surface_block`] takes them, a cache domain inside
+/// the surface's of non-degenerate sides, a factor in `[1, 32]`, a [`super::tree_ok`], up
+/// to 8 polygon edges of finite points and tolerances on nodes in range, and up to 8
+/// ownerless [`super::curve_2d`] calls on nodes in range.
 fn keeps_contract(i: &Input) -> bool {
     let n = i.tree.len();
     let Some(sd) = super::surface_block(&i.srf, super::MAX_COORD) else {

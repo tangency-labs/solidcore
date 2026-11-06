@@ -2061,19 +2061,18 @@ fn surface_op_ok(op: &OpIn, dom: Option<[f64; 4]>) -> Option<bool> {
     })
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_p2.rs`, `validate`): a static op
+/// Whether a case keeps the input contract ported from the reference's wrapper: a static op
 /// without a surface, or a member op on the base class, a B-spline surface
 /// ([`bspline_block`]: n, m up to 128, degree up to 9) or a [`revolution_record`] (only
-/// `step_inv`, `eval_pt` and `convert_uv`); finite values, enumerators, counts and
-/// orders in range, ordered intervals and domains (of sides at least `1e-6` where
-/// upstream reparameterises, trims or adjusts), non-zero and non-parallel axes, scales
-/// of at least `1e-3`, split parameters inside the domain, positive tolerances, B-spline
-/// curves ([`contract::curve_block`]) with intervals inside their range, and the
-/// combinations upstream does not dereference null pointers in (`point_type` asks for
-/// the `v` side only with the `u` side; `cs_perpen` with a Bezier surface node only when
-/// the cone between the boxes is wider than 90 degrees; `breaks` needs a break; `s_eval`
-/// and `gssi` need a B-spline; `cc_local` minimises or maximises).
+/// `step_inv`, `eval_pt` and `convert_uv`); finite values, enumerators, counts and orders
+/// in range, ordered intervals and domains (of sides at least `1e-6` where upstream
+/// reparameterises, trims or adjusts), non-zero and non-parallel axes, scales of at least
+/// `1e-3`, split parameters inside the domain, positive tolerances, B-spline curves
+/// ([`contract::curve_block`]) with intervals inside their range, and the combinations
+/// upstream does not dereference null pointers in (`point_type` asks for the `v` side only
+/// with the `u` side; `cs_perpen` with a Bezier surface node only when the cone between the
+/// boxes is wider than 90 degrees; `breaks` needs a break; `s_eval` and `gssi` need a
+/// B-spline; `cc_local` minimises or maximises).
 fn keeps_contract(i: &Inputs) -> bool {
     let Some(t) = &i.this else {
         return static_ok(&i.op).unwrap_or(false);

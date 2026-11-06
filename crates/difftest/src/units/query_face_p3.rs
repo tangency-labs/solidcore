@@ -591,8 +591,8 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     Ok(match resolved {
         Resolved::Face(f) => match &i.op {
             OpIn::Internal => {
-                // the shim's `drop_trim_cache(f)` before `CalculateAnInternalPoint`
-                // (`harness/cpp/shim/query_face_p3.cpp`)
+                // the reference shim's `drop_trim_cache(f)` before
+                // `CalculateAnInternalPoint`
                 super::query_face_p1::drop_trim_cache(&b, f)?;
                 match solidcore::topology::face::p2::calculate_an_internal_point(&k, &mut b, f) {
                     Ok(p) => Output::new().values("point", p.to_array()),

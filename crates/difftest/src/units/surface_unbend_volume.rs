@@ -527,9 +527,8 @@ fn unbend_ok(u: &UnbendIn) -> bool {
         && u.next.as_ref().is_none_or(|n| vecs(n))
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_unbend_volume.rs`, `validate`): finite values
-/// within [`MAX_COORD`], up to 64 type codes in `[0, 2^30]`, derivative orders up to
+/// Whether a case keeps the input contract ported from the reference's wrapper: finite
+/// values within [`MAX_COORD`], up to 64 type codes in `[0, 2^30]`, derivative orders up to
 /// [`MAX_N`], and no `b_box` with outputs of a bounded box with a side shorter than
 /// [`MIN_SIDE`] (upstream then uses a null or deleted edge line). `read_db` cases are
 /// fixtures only.

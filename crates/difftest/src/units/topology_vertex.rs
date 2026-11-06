@@ -1,6 +1,5 @@
-//! Runner for unit `topology.vertex`. Ported from upstream `SmVertex.cpp` (the shim
-//! `harness/cpp/shim/topology_vertex.cpp` was the reference); checked against its golden.
-//! Rust: `solidcore::topology::vertex`.
+//! Runner for unit `topology.vertex`. Ported from upstream `SmVertex.cpp`; checked against
+//! its golden. Rust: `solidcore::topology::vertex`.
 //!
 //! The case's B-rep is one of the reference shim's sources, as for `topology.vertexuse`:
 //! read from an upstream `.smb` test file (optionally rebuilding its UV trim curves), a

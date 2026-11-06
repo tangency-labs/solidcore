@@ -978,12 +978,11 @@ fn shim_corners(m: &RustModel) -> Result<Vec<FilletCorner>, HarnessError> {
 
 // ---- the input contract ----------------------------------------------------------------------
 
-/// A port of the reference wrapper's input contract
-/// (`crates/solidcore-ffi/src/units/blend_fillet_geom_p3.rs`) for the model and op part of a
-/// case's program (after the target's B-rep block, which the Rust reader checks by
-/// building it): offset surfaces and curves as unit `topology.edgeuse_p1`'s blocks take
-/// them, enum codes in their upstream ranges, every index inside the target's counts and
-/// the model's lists, corner tags below [`MAX_LIST`], ordered intervals.
+/// A port of the reference wrapper's input contract for the model and op part of a case's
+/// program (after the target's B-rep block, which the Rust reader checks by building it):
+/// offset surfaces and curves as unit `topology.edgeuse_p1`'s blocks take them, enum codes
+/// in their upstream ranges, every index inside the target's counts and the model's lists,
+/// corner tags below [`MAX_LIST`], ordered intervals.
 mod contract {
     use super::{Op, MAX_LIST};
     use crate::cases::contract::clamped;

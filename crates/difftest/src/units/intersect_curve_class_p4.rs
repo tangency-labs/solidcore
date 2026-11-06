@@ -995,9 +995,9 @@ fn stage2_derefs_null_face(seeds: &[[f64; 3]]) -> bool {
     (1.0..=2.0).contains(&stage) && !face
 }
 
-/// Why op `x` on the current classifications is undefined upstream: the run-time checks
-/// of `harness/cpp/shim/intersect_curve_class_p4.cpp`, evaluated on the state the ops
-/// before it left (a precondition of `x`, never its result). `None` when it is defined.
+/// Why op `x` on the current classifications is undefined upstream: the run-time checks of
+/// the reference's shim, evaluated on the state the ops before it left (a precondition of
+/// `x`, never its result). `None` when it is defined.
 fn undefined_upstream(
     kinds: &[usize],
     owners: &Owners,

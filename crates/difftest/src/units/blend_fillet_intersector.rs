@@ -1267,13 +1267,12 @@ fn edge_cases() -> Vec<(String, Value)> {
     ]
 }
 
-/// The reference wrapper's input contract (`crates/solidcore-ffi/src/units/
-/// blend_fillet_intersector.rs`, its `encode`) on a case: at most [`MAX_POINTS`] points,
-/// the solver checks of [`solver`] on the surfaces, domains, tolerances, trace direction
-/// and points, and the op's arguments (point indices among the case's points; `Next`,
-/// `Delta` and `Values` never on the same point twice; `Flush` of at most one point;
-/// `FlushCrv` of dimension 1..=3 with at most 64 increasing knots and 200 polygon points,
-/// three per span).
+/// The reference wrapper's input contract on a case: at most [`MAX_POINTS`] points, the
+/// solver checks of [`solver`] on the surfaces, domains, tolerances, trace direction and
+/// points, and the op's arguments (point indices among the case's points; `Next`, `Delta`
+/// and `Values` never on the same point twice; `Flush` of at most one point; `FlushCrv` of
+/// dimension 1..=3 with at most 64 increasing knots and 200 polygon points, three per
+/// span).
 fn contract(i: &Inputs) -> bool {
     let n = i.points.len();
     let pt = |p: usize| p < n;

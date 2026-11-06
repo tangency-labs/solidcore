@@ -527,14 +527,12 @@ fn small(v: i32, max: i64) -> bool {
     i64::from(v).abs() <= max
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_point_solve_p2.rs`, `validate` and
-/// `validate_rev`): a [`problem`] (or [`rev_problem`]) and the op's parameters: finite
-/// values, points inside the surface domain wherever a surface evaluator reads them (the
-/// `adjust` target within a domain size of it), a grid sub-domain inside the surface domain
-/// with grid sizes up to 24 in magnitude and a best value that is not NaN, control-net
-/// indices inside the net, boundary-hit counts up to 3 in magnitude, an error norm type up
-/// to 8.
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
+/// [`problem`] (or [`rev_problem`]) and the op's parameters: finite values, points inside
+/// the surface domain wherever a surface evaluator reads them (the `adjust` target within a
+/// domain size of it), a grid sub-domain inside the surface domain with grid sizes up to 24
+/// in magnitude and a best value that is not NaN, control-net indices inside the net,
+/// boundary-hit counts up to 3 in magnitude, an error norm type up to 8.
 fn keeps_contract(i: &Inputs) -> bool {
     let p = match &i.surf {
         AnySurf::Base(s) => problem(s, &i.dom, i.solver, &i.test, i.tol),

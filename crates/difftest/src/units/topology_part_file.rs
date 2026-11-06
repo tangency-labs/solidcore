@@ -1,6 +1,6 @@
 //! Difftest runner for the part reader (`topology::part_file`, outside the plan:
-//! `SmBrepData::ReadPartFromFile` is not a plan unit, see `plan/findings.md`). Run it
-//! with `--unit topology.part_file`; `--green` does not include it.
+//! `SmBrepData::ReadPartFromFile` is not a plan unit, see `plan/findings.md`). Run it with
+//! `--unit topology.part_file`.
 //!
 //! One case per upstream part file under `upstream/TestFiles/pt_TestFiles` (the `.smp`
 //! files and the `.smb` files that start with `//[Output Summary]`). The runner reads the

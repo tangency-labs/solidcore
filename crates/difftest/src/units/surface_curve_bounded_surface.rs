@@ -941,13 +941,12 @@ fn orders(hu: usize, hv: usize, upper: bool) -> bool {
     hu <= 4 && hv <= 4 && (!upper || hu == hv)
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_curve_bounded_surface.rs`, `validate` and
-/// `validate_read_db`): a [`surface_block`] and the op's parameters (points inside the
-/// basis domain, bounded orders and type lists, a positive tolerance, a non-zero
-/// direction, `eq_other` only for at least as many UV as 3D boundaries), or a `read_db`
-/// record of a B-spline basis (or a type that is not a surface), [`boundaries`], a UV
-/// header type in `[1, 2^20]` and a version up to 32.
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
+/// [`surface_block`] and the op's parameters (points inside the basis domain, bounded
+/// orders and type lists, a positive tolerance, a non-zero direction, `eq_other` only for
+/// at least as many UV as 3D boundaries), or a `read_db` record of a B-spline basis (or a
+/// type that is not a surface), [`boundaries`], a UV header type in `[1, 2^20]` and a
+/// version up to 32.
 fn keeps_contract(i: &Inputs) -> bool {
     if let OpIn::ReadDb {
         version,

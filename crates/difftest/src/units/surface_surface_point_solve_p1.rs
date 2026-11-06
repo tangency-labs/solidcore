@@ -457,8 +457,7 @@ pub(crate) fn net_index(i: usize, j: usize, p: &Problem, d: usize) -> bool {
     i <= 1 << 20 && j <= 1 << 20 && i + d < p.num_u && j + d < p.num_v
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_point_solve_p1.rs`, `validate`): a
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
 /// [`problem`] and the op's parameters: finite values, points inside the surface domain
 /// wherever a surface evaluator is read (within a domain size of it for `func`),
 /// control-net indices inside the net, up to [`MAX_HIT_STEPS`] hit steps of integer

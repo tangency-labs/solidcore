@@ -2070,9 +2070,8 @@ fn temp_radius(variable: bool, start: f64, end: f64, bx: &BoxIn) -> Result<Outpu
     }
 }
 
-/// A reader over a record of the reference wrapper's layout
-/// (`crates/solidcore-ffi/src/units/blend_fillet_executive_p2.rs`); every read is `None`
-/// once the record breaks the contract.
+/// A reader over a record of the reference wrapper's layout; every read is `None` once the
+/// record breaks the contract.
 struct Reader<'a> {
     input: &'a [f64],
     at: usize,

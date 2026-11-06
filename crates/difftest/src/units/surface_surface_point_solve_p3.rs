@@ -379,11 +379,10 @@ fn geometry_domain(i: &Inputs) -> Option<[f64; 4]> {
     }
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_point_solve_p3.rs`, `validate` and
-/// `validate_rev`): a [`geometry_domain`], a solver domain of non-degenerate sides inside
-/// it, a supported solver operation, finite values, a global request up to 3, and stepper
-/// iterations up to 35 with integer boundary counters up to 64 in magnitude.
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
+/// [`geometry_domain`], a solver domain of non-degenerate sides inside it, a supported
+/// solver operation, finite values, a global request up to 3, and stepper iterations up to
+/// 35 with integer boundary counters up to 64 in magnitude.
 fn keeps_contract(i: &Inputs) -> bool {
     let Some(d) = geometry_domain(i) else {
         return false;

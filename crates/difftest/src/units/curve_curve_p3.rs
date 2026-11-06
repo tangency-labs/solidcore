@@ -368,13 +368,12 @@ fn curve_solve_vectors(sop: i32) -> Option<usize> {
     }
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p3.rs`, `validate`): curves as [`domain`]
-/// takes them (arcs within the arc constructor's `[-360, 360]` degrees), parameters near
-/// the curve's domain, increasing intervals, non-negative tolerances, the operations
-/// `LocalPointSolve` and `LocalCurveSolve` accept with their option vectors and target,
-/// B-splines only for `FixGaps`, no line for the cache, no backwards arc length from
-/// below the first parameter, and the list, parameter, segment and ratio bounds.
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves as
+/// [`domain`] takes them (arcs within the arc constructor's `[-360, 360]` degrees),
+/// parameters near the curve's domain, increasing intervals, non-negative tolerances, the
+/// operations `LocalPointSolve` and `LocalCurveSolve` accept with their option vectors and
+/// target, B-splines only for `FixGaps`, no line for the cache, no backwards arc length
+/// from below the first parameter, and the list, parameter, segment and ratio bounds.
 fn keeps_contract(op: &OpIn) -> bool {
     let max = LIMITS.max_coord;
     match op {

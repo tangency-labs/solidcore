@@ -201,8 +201,7 @@ fn geom_solver(i: &Inputs, g: usize) -> i64 {
     i.geom_solvers.get(g).copied().unwrap_or(-1)
 }
 
-/// The flat program of a case (layout of the reference wrapper,
-/// `crates/solidcore-ffi/src/units/blend_fillet_geom_p5.rs`), on which [`contract`] is
+/// The flat program of a case (the reference wrapper's layout), on which [`contract`] is
 /// checked.
 fn program(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     let mut o = Vec::new();

@@ -138,14 +138,13 @@ impl Input {
     }
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/intersect_curve_class_p5.rs`, `validate`, and the
-/// shim's entry checks): finite bounded values, codes and counts in range, increasing
-/// interval bounds, classes of the target kind, no topology merge on a stand-in
-/// (ops 4 and 5), no solutions without intervals (ops 0 and 1), paired and non-empty
-/// classifications where both are read (ops 3 and 4), no vertex use on the stand-in vertex
-/// and no `IntersectVertices` into an empty classification (UB-109, op 6), solutions of a
-/// valid type with non-negative gaps, and no short range that stays a range
+/// Whether a case keeps the input contract ported from the reference's wrapper and its
+/// shim's entry checks: finite bounded values, codes and counts in range, increasing
+/// interval bounds, classes of the target kind, no topology merge on a stand-in (ops 4 and
+/// 5), no solutions without intervals (ops 0 and 1), paired and non-empty classifications
+/// where both are read (ops 3 and 4), no vertex use on the stand-in vertex and no
+/// `IntersectVertices` into an empty classification (UB-109, op 6), solutions of a valid
+/// type with non-negative gaps, and no short range that stays a range
 /// ([`short_ranges_ok`]).
 fn keeps_contract(i: &Input) -> bool {
     let k = Kernel::default();

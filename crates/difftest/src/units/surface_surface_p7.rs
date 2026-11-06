@@ -880,8 +880,7 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
 
 // ---- input contract -----------------------------------------------------------------
 //
-// A Rust port of the C++ reference wrapper's input contract
-// (`crates/solidcore-ffi/src/units/surface_surface_p7.rs`, shared by `surface_p3` and
+// A Rust port of the C++ reference wrapper's input contract (shared by `surface_p3` and
 // `surface_p4`): the generators redraw until it holds, so their cases stay on the working
 // path; hostile data is covered by the fixture files.
 

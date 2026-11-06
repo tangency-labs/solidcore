@@ -499,7 +499,8 @@ pub(crate) fn put_state(k: &Kernel, o: &mut Vec<f64>, s: &SurfOfRevolution) -> s
     Ok(())
 }
 
-/// `SC_ERR_ARG` (`harness/cpp/shim/sc_shim.h`): the shim rejected the arguments.
+/// `SC_ERR_ARG`, the reference shim's argument error: the input contract rejected the
+/// arguments.
 pub(crate) const SC_ERR_ARG: f64 = -1002.0;
 
 pub(crate) fn param_of(p: u8) -> SurfParamType {

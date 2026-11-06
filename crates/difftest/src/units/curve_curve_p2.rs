@@ -655,12 +655,12 @@ fn static_op(op: &OpIn) -> Option<bool> {
     })
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p2.rs`, `validate`): a curve for every curve
-/// op as [`domain`] takes it (arcs within the arc constructor's `[-360, 360]` degrees),
-/// parameters within [`MAX_REL_DIST`] domain lengths, derivative orders up to 3, angles in
-/// `[0, 90]`, the tolerance signs, a non-degenerate `EditParam`, `LengthIfeo` of a B-spline,
-/// finite values within range, and the static ops' array, record and solver bounds.
+/// Whether a case keeps the input contract ported from the reference's wrapper: a curve for
+/// every curve op as [`domain`] takes it (arcs within the arc constructor's `[-360, 360]`
+/// degrees), parameters within [`MAX_REL_DIST`] domain lengths, derivative orders up to 3,
+/// angles in `[0, 90]`, the tolerance signs, a non-degenerate `EditParam`, `LengthIfeo` of
+/// a B-spline, finite values within range, and the static ops' array, record and solver
+/// bounds.
 fn keeps_contract(i: &Inputs) -> bool {
     if let Some(ok) = static_op(&i.op) {
         return ok;

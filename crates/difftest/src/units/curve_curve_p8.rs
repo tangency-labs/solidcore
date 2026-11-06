@@ -224,10 +224,10 @@ fn transforms(xf: &[XformIn], bspline: bool) -> bool {
         })
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_curve_p8.rs`, `validate`): curves as [`domain`]
-/// takes them (arcs within the arc constructor's `[-360, 360]` degrees) with their
-/// transforms, increasing intervals near each curve's domain, and a positive tolerance.
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves as
+/// [`domain`] takes them (arcs within the arc constructor's `[-360, 360]` degrees) with
+/// their transforms, increasing intervals near each curve's domain, and a positive
+/// tolerance.
 fn keeps_contract(op: &OpIn) -> bool {
     let OpIn::Gci {
         c1,

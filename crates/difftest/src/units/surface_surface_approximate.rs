@@ -4,8 +4,8 @@
 //! surfaces, so every `GetRootSurface` override is reached.
 //!
 //! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden. The
-//! input block is the one `harness/cpp/shim/surface_surface_approximate.cpp` documents.
-//! Rust: [`solidcore::surface::surface::Surface::approximate_surface_ignoring_status`].
+//! input block is the reference shim's. Rust:
+//! [`solidcore::surface::surface::Surface::approximate_surface_ignoring_status`].
 //!
 //! A case is the input block (`tol level just_copy n_wraps wraps.. kind` and the kind's
 //! construction data, as `surface.surface_assert_valid`'s); the Rust side builds its

@@ -1016,13 +1016,12 @@ fn interval_in([x, y]: [f64; 2], (a, b): (f64, f64)) -> bool {
     fin(x) && fin(y) && x >= a && y <= b && x < y
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/surface_surface_p5.rs`, `validate`): a
+/// Whether a case keeps the input contract ported from the reference's wrapper: a
 /// [`surface_kind`] (for `cover`, two [`cover_surface`]s) and the op's parameters:
 /// parameters near the surface's domain, domains inside it, positive tolerances,
-/// enumerators in range, the solver operations each function supports, B-spline
-/// surfaces for `lssi`, intervals and curve parameters inside the curve's range,
-/// non-negative values and up to 32 samples.
+/// enumerators in range, the solver operations each function supports, B-spline surfaces
+/// for `lssi`, intervals and curve parameters inside the curve's range, non-negative values
+/// and up to 32 samples.
 fn keeps_contract(i: &Inputs) -> bool {
     let Ok(this) = resolve(&i.surface) else {
         return false;

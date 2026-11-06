@@ -635,11 +635,10 @@ fn object_op(op: &OpIn, c: &mut Object) -> bool {
     }
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_crv_on_surf.rs`, `validate`): an object as
-/// [`object`] takes it with at most [`MAX_OPS`] ops, each as [`object_op`] takes it on the
-/// state the ops before it left; a record of at most [`MAX_DB_BYTES`] bytes, complete (ending
-/// in a newline) when it is ASCII.
+/// Whether a case keeps the input contract ported from the reference's wrapper: an object
+/// as [`object`] takes it with at most [`MAX_OPS`] ops, each as [`object_op`] takes it on
+/// the state the ops before it left; a record of at most [`MAX_DB_BYTES`] bytes, complete
+/// (ending in a newline) when it is ASCII.
 fn keeps_contract(i: &Inputs) -> bool {
     match i {
         Inputs::Object { cos, ops } => {

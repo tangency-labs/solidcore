@@ -66,7 +66,7 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 /// Number of box registers.
 const REGISTERS: usize = 4;
 
-/// Shim op codes (the table in `harness/cpp/shim/geom_pseudo_box.cpp`).
+/// Op codes of a case's script (the reference shim's table).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum Op {

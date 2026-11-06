@@ -1,7 +1,6 @@
-//! The full record of a UV trim curve, as the shims' `sc_trim_curve::put_trim_curve`
-//! (`harness/cpp/shim/sc_trim_curve_record.h`, which documents the layout): the curve's
-//! type, its NURB (degree, homogeneous control points, knots), its natural interval and
-//! three samples whose evaluation failures are reported as their status.
+//! The full record of a UV trim curve, as the reference shims' `put_trim_curve` wrote it:
+//! the curve's type, its NURB (degree, homogeneous control points, knots), its natural
+//! interval and three samples whose evaluation failures are reported as their status.
 
 use solidcore::curve::curve::p2::{Curve, CurveKind};
 use solidcore::kernel::Kernel;

@@ -1,6 +1,5 @@
-//! Runner for unit `topology.face_p4`. Ported from upstream `SmFace.cpp` (the shim
-//! `harness/cpp/shim/topology_face_p4.cpp` was the reference); checked against its golden.
-//! Rust: `solidcore::topology::face::p4`.
+//! Runner for unit `topology.face_p4`. Ported from upstream `SmFace.cpp`; checked against
+//! its golden. Rust: `solidcore::topology::face::p4`.
 //!
 //! Every op runs on a B-rep of unit `topology.vertexuse` (upstream `.smb` files, faces of
 //! B-spline surfaces, planes or analytic surfaces), built by

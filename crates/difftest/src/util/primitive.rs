@@ -23,9 +23,9 @@ fn sample(out: &mut Vec<f64>, value: Result<Vec3>) -> Result<()> {
     Ok(())
 }
 
-/// Appends reachable vertex positions/tolerances, edge samples and trim counts,
-/// then face domains/tolerances and surface samples, in native owning-list order.
-/// Mirrors `harness/cpp/shim/support/primitive_record.h`.
+/// Appends reachable vertex positions/tolerances, edge samples and trim counts, then face
+/// domains/tolerances and surface samples, in native owning-list order. The reference
+/// shims' primitive record layout.
 pub fn append(k: &Kernel, brep: &Brep, out: &mut Vec<f64>) -> Result<()> {
     for id in p1::vertices(brep, None)? {
         let vertex = brep.vertex(id)?;

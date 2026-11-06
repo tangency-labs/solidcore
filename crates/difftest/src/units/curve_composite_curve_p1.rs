@@ -442,12 +442,11 @@ fn joins(curves: &[Block]) -> bool {
     true
 }
 
-/// Whether a case keeps the input contract of the C++ reference wrapper
-/// (`crates/solidcore-ffi/src/units/curve_composite_curve_p1.rs`, `validate`): curves and
-/// composites as [`contract_block`] and [`contract_composite`] take them (arcs within the arc constructor's
-/// `[-360, 360]` degrees), finite values within range, positive tolerances, increasing
-/// intervals, two non-parallel transform axes and scales in `[0.1, 10]`, and the per-op
-/// argument checks.
+/// Whether a case keeps the input contract ported from the reference's wrapper: curves and
+/// composites as [`contract_block`] and [`contract_composite`] take them (arcs within the
+/// arc constructor's `[-360, 360]` degrees), finite values within range, positive
+/// tolerances, increasing intervals, two non-parallel transform axes and scales in `[0.1,
+/// 10]`, and the per-op argument checks.
 fn keeps_contract(op: &OpIn) -> bool {
     let max = LIMITS.max_coord;
     let fin = |v: f64| contract::finite(v, max);
