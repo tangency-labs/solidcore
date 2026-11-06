@@ -39,6 +39,12 @@
 //! - The depth bound is also checked on a cache hit, against the height stored with the cached
 //!   curve (SolidCraft returned a cached curve unchecked, so a chain read link by link in
 //!   ascending id order had no bound).
+//! - A malformed value is refused, never a default (was: a placement direction that is not a
+//!   reference read as omitted, an unknown enumeration as `UNSPECIFIED`, a bad logical as
+//!   `UNKNOWN`). B-splines hold to ISO 10303-42 `constraints_param_b_spline`: at least
+//!   `degree + 1` control points and 2, an interior knot at most `degree` times (was: any count
+//!   the multiplicities fit, interior knots up to `degree + 1`); a complex B-spline names a knot
+//!   subtype (was: quasi-uniform when it named none).
 //! - [`Reader::pcurve`] reads a `PCURVE` on its own (new; it is what `associated_geometry` and a
 //!   pcurve used as an edge's geometry hold).
 //! - The caches are `BTreeMap`s (were `HashMap`s); nothing iterates them. Collections grow as
@@ -299,6 +305,13 @@ fn knots(
     if k.len() < 2 || m.iter().any(|v| *v > degree + 1) {
         return Err("bad knot vector".into());
     }
+    // ISO 10303-42 `constraints_param_b_spline`: an interior knot at most `degree` times, the
+    // end knots at most `degree + 1`.
+    if m.get(1..m.len().saturating_sub(1))
+        .is_some_and(|i| i.iter().any(|v| *v > degree))
+    {
+        return Err("interior knot multiplicity above the degree".into());
+    }
     if m.iter().try_fold(0usize, |a, v| a.checked_add(*v)) != Some(n_ctrl + degree + 1) {
         return Err("knot multiplicities do not match the control points".into());
     }
@@ -378,15 +391,19 @@ fn degree(p: Option<&Param>) -> R<usize> {
         .ok_or_else(|| "bad B-spline degree".into())
 }
 
-/// The knot type a B-spline entity's (sub)type implies when it lists no knots.
-fn spec_of_type(e: &Entity) -> KnotSpec {
+/// The knot type a B-spline entity's (sub)type implies when it lists no knots. A complex
+/// instance without `*_WITH_KNOTS` names one of the other three subtypes, or it has no knots
+/// to read and is refused (was: taken as quasi-uniform).
+fn spec_of_type(e: &Entity) -> R<KnotSpec> {
     let has = |n: &str| e.name() == n || e.has(n);
     if has("BEZIER_CURVE") || has("BEZIER_SURFACE") {
-        KnotSpec::PiecewiseBezierKnots
+        Ok(KnotSpec::PiecewiseBezierKnots)
     } else if has("UNIFORM_CURVE") || has("UNIFORM_SURFACE") {
-        KnotSpec::UniformKnots
+        Ok(KnotSpec::UniformKnots)
+    } else if has("QUASI_UNIFORM_CURVE") || has("QUASI_UNIFORM_SURFACE") {
+        Ok(KnotSpec::QuasiUniformKnots)
     } else {
-        KnotSpec::QuasiUniformKnots
+        Err("complex B-spline without a knot subtype".into())
     }
 }
 
@@ -958,7 +975,7 @@ impl<'a> Reader<'a> {
             let (kv, m) = knots(k.first(), k.get(1), points.len(), degree)?;
             (kv, m, knot_spec(k.get(2))?)
         } else {
-            let spec = spec_of_type(e);
+            let spec = spec_of_type(e)?;
             let (kv, m) = implied_knots(spec, points.len(), degree)?;
             (kv, m, spec)
         };
@@ -1142,7 +1159,7 @@ impl<'a> Reader<'a> {
                     knot_spec(k.get(4))?,
                 )
             } else {
-                let spec = spec_of_type(e);
+                let spec = spec_of_type(e)?;
                 (
                     implied_knots(spec, nu, u_degree)?,
                     implied_knots(spec, nv, v_degree)?,
