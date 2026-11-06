@@ -29,3 +29,10 @@ The case-by-case comparison across all 280 units found the same outcomes and
 mismatch lists except `geom.hash_table`'s `growth_after_all_removed`: it fails
 on main and passes here, but the retry is not on its path and the probe never
 reached it. No `cpp_defect` marker is needed for this retirement.
+
+Rebased onto main `3ed619475` (goldens replace the difftest), at `c9ab79f98`:
+`cargo run --profile goldens -p goldens -- --unit blend.fillet_solver_p4 --unit
+blend.fillet_executive_p3 --goldens` passes both units with `changed=0` (651 and 788
+cases), and `--all --goldens` passes 283 of 283 units. No golden is blessed: the
+retirement moves no golden. The suite (`cargo test --profile goldens -p solidcore
+--no-fail-fast`) reports 5084 passed, 0 failed, 44 ignored.
