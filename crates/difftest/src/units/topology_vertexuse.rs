@@ -1,17 +1,16 @@
-//! Runner for unit `topology.vertexuse`. C++: `solidcore_ffi::units::topology_vertexuse`.
-//! Rust: `solidcore::topology::vertexuse`.
+//! Runner for unit `topology.vertexuse`. Ported from upstream `SmVertexuse.cpp` (the shim
+//! `harness/cpp/shim/topology_vertexuse.cpp` was the reference); checked against its
+//! golden. Rust: `solidcore::topology::vertexuse`.
 //!
-//! The C++ side builds a real `SmBrep` per call, as the `topology.edgeuse_p1` runner
-//! does: read from an upstream `.smb` test file (optionally rebuilding its UV trim
-//! curves), a wire edge from a B-spline curve (`CreateWireEdgeFromCurve`), a face from a
-//! B-spline surface or a plane (`CreateFaceFromSurface`), or the wire network of
-//! `prog_test` `my_test_topology`. The Rust side builds a wire edge, face or network
-//! source itself ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
-//! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal
-//! order: no C++ export reaches the Rust side. It runs the ported functions on that
-//! B-rep; their results are compared as traversal
-//! indices, flags, statuses and values. `init_gaps` has the C++ side compute the cached
-//! gaps before the op, so that resets are observable.
+//! The case's B-rep is one of the reference shim's sources: read from an upstream `.smb`
+//! test file (optionally rebuilding its UV trim curves), a wire edge from a B-spline curve
+//! (`CreateWireEdgeFromCurve`), a face from a B-spline surface or a plane
+//! (`CreateFaceFromSurface`), or the wire network of `prog_test` `my_test_topology`. The
+//! runner builds a wire edge, face or network source itself ([`crate::own_builder`]) and
+//! reads an `.smb` file with the Rust reader ([`crate::own_reader::file_in_order`]), both
+//! renumbered into the shim's traversal order. It runs the ported functions on that
+//! B-rep; their results are recorded as traversal indices, flags, statuses and values.
+//! `init_gaps` computes the cached gaps before the op, so that resets are observable.
 //!
 //! The vertex use selector is taken modulo the vertex use count (so generated cases need
 //! no counts); target selectors of `IsConnectedTo` likewise, `-1` selecting null.
@@ -48,7 +47,6 @@ use solidcore::topology::{
     Vertex, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_vertexuse::{self as ffi, Op};
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -269,31 +267,6 @@ pub(crate) fn path_of(b: &BrepIn) -> Result<String, HarnessError> {
     }
 }
 
-/// The B-rep block.
-fn brep_block(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    match &i.brep {
-        BrepIn::File { rebuild, .. } => {
-            v.push(0.0);
-            v.push(flag(*rebuild));
-        }
-        BrepIn::Wire { curve, t0, t1 } => {
-            v.push(1.0);
-            push_curve(&mut v, curve)?;
-            v.extend([*t0, *t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            v.push(2.0);
-            push_surface(&mut v, surface)?;
-            v.extend(dom);
-        }
-        BrepIn::Network => v.push(3.0),
-    }
-    v.push(flag(i.validate_only));
-    v.push(flag(i.init_gaps));
-    Ok(v)
-}
-
 /// Resolves a selector modulo `n` (`-1` and an empty kind select null).
 pub(crate) fn sel(s: i64, n: usize) -> i64 {
     if s < 0 || n == 0 {
@@ -301,28 +274,6 @@ pub(crate) fn sel(s: i64, n: usize) -> i64 {
     } else {
         (s as u64 % n as u64) as i64
     }
-}
-
-/// The C++ export of the case's B-rep.
-fn export(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let path = path_of(&i.brep)?;
-    let block = brep_block(i)?;
-    crate::export_memo::export("topology_vertexuse", &[&path], &block, || {
-        ffi::eval(Op::Export, &path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))
-}
-
-/// A build failure as an operation error.
-fn build_failure(export: &[f64]) -> Output {
-    Output::err(format!(
-        "brep_build_status_{}",
-        export.get(1).copied().unwrap_or(0.0)
-    ))
-}
-
-fn ints(v: &[f64]) -> Vec<i64> {
-    v.iter().map(|&x| x as i64).collect()
 }
 
 // ---- import -----------------------------------------------------------------------------
@@ -638,9 +589,23 @@ pub(crate) fn import_raw_with_owners(ex: &[f64]) -> Result<(Brep, ImportOwners),
     import_raw_owned(ex).map(|((b, _, _), owners)| (b, owners))
 }
 
+/// The entity counts of a native export, in the shim's order: regions, shells, face uses,
+/// faces, loop uses, loops, edge uses, edges, vertex uses, vertices. `None` when the export
+/// is a build failure.
+fn export_counts(export: &[f64]) -> Option<[usize; 10]> {
+    if export.first() != Some(&0.0) {
+        return None;
+    }
+    let mut c = [0usize; 10];
+    for (slot, v) in c.iter_mut().zip(export.get(2..12)?) {
+        *slot = *v as usize;
+    }
+    Some(c)
+}
+
 fn import_raw_owned(ex: &[f64]) -> Result<(TypedImport, ImportOwners), HarnessError> {
     let mut owners = ImportOwners::default();
-    let c = ffi::counts(ex).ok_or_else(|| harness("import of a failed build"))?;
+    let c = export_counts(ex).ok_or_else(|| harness("import of a failed build"))?;
     let [n_r, n_s, n_fu, n_f, n_lu, n_l, n_eu, n_e, n_vu, n_v] = c;
     let mut rd = Rd { v: ex, at: 1 };
     let validate_only = rd.num()? != 0.0;
@@ -1216,67 +1181,6 @@ fn resolve(op: &OpIn, c: [usize; 10]) -> Option<OpIn> {
     })
 }
 
-/// The op arguments after the B-rep block (resolved selectors).
-fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
-    match op {
-        OpIn::VuQuery { vu } => (Op::VuQuery, vec![*vu as f64]),
-        OpIn::Connected { vu, ty, index } => {
-            (Op::Connected, vec![*vu as f64, *ty as f64, *index as f64])
-        }
-        OpIn::Gaps {
-            vu,
-            which,
-            flag: f,
-            want_out,
-        } => (
-            Op::Gaps,
-            vec![*vu as f64, f64::from(*which), flag(*f), flag(*want_out)],
-        ),
-        OpIn::Notify { vu, operation } => (Op::Notify, vec![*vu as f64, f64::from(*operation)]),
-        OpIn::UvPoint { vu, ok_to_make } => (Op::UvPoint, vec![*vu as f64, flag(*ok_to_make)]),
-        OpIn::UvSector { vu, ok_to_make } => (Op::UvSector, vec![*vu as f64, flag(*ok_to_make)]),
-        OpIn::MissingSeam {
-            vu,
-            want_u,
-            want_v,
-            uv_ok,
-        } => (
-            Op::MissingSeam,
-            vec![*vu as f64, flag(*want_u), flag(*want_v), flag(*uv_ok)],
-        ),
-        OpIn::OnPole { vu } => (Op::OnPole, vec![*vu as f64]),
-    }
-}
-
-/// The output key of an op (the values are compared as built by both sides).
-fn output(op: &OpIn, body: &[f64]) -> Output {
-    match op {
-        OpIn::VuQuery { .. } | OpIn::Connected { .. } | OpIn::MissingSeam { .. } => {
-            Output::new().ints("q", ints(body))
-        }
-        _ => Output::new().values("state", body.to_vec()),
-    }
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let ex = export(i)?;
-    let Some(c) = ffi::counts(&ex) else {
-        return Ok(build_failure(&ex));
-    };
-    let Some(op) = resolve(&i.op, c) else {
-        return Ok(Output::err("no_vertexuse"));
-    };
-    let (code, args) = op_args(&op);
-    let mut input = brep_block(i)?;
-    input.extend(args);
-    let path = path_of(&i.brep)?;
-    let out = ffi::eval(code, &path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(output(&op, body))
-}
-
 // ---- Rust side --------------------------------------------------------------------------
 
 enum Fail {
@@ -1388,14 +1292,6 @@ fn rust_brep(
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
-    // the shim never builds it, so the Rust side must not either. Fuzz case fuzz00086
-    // (`--fuzz 300 --seeds 24`) mutated a control point to `1e300`: the export refuses a
-    // block value above `1e150` (HANG-29) for the C++ side, while this side built the
-    // face and spun in `GlobalCoincidenceChecker` for over 20 s. `validate_block` is the
-    // export's own block checks (pure Rust, no shim call), on the block `export` sends.
-    ffi::validate_block(&path_of(&i.brep)?, &brep_block(i)?)
-        .map_err(|e| harness(format!("export: {e}")))?;
     let (mut b, c) = match rust_brep(i)? {
         Ok(x) => x,
         Err(o) => return Ok(o),
@@ -1818,10 +1714,6 @@ fn gen_op(rng: &mut Rng) -> OpIn {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.vertexuse"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
