@@ -48,8 +48,8 @@ pub struct Context {
     /// The length and plane angle units (millimetres and radians where the context names none
     /// that can be read).
     pub units: Units,
-    /// The context's distance uncertainty in millimetres (the last `UNCERTAINTY_MEASURE_WITH_UNIT`
-    /// it lists), if any.
+    /// The context's distance uncertainty in millimetres (the last length
+    /// `UNCERTAINTY_MEASURE_WITH_UNIT` it lists), if any.
     pub uncertainty: Option<f64>,
 }
 
@@ -105,6 +105,11 @@ fn measure(e: &Entity) -> Option<&[Param]> {
     })
 }
 
+/// Whether a measure value is typed `LENGTH_MEASURE(…)`.
+fn is_length_measure(v: Option<&Param>) -> bool {
+    matches!(v, Some(Param::Typed(name, _)) if name == "LENGTH_MEASURE")
+}
+
 /// A unit's kind and size: millimetres for lengths, radians for plane angles (1 for anything
 /// else, or a unit that cannot be read). `None` when `#id` is not an entity, or is a
 /// `CONVERSION_BASED_UNIT` whose measure cannot be read or is not finite and positive.
@@ -146,10 +151,11 @@ fn factor(ex: &Exchange, id: u64, depth: usize) -> Option<(UnitKind, f64)> {
 /// not an entity or lists no readable unit).
 ///
 /// Each unit `GLOBAL_UNIT_ASSIGNED_CONTEXT` lists that reads as a finite, positive length or
-/// plane angle factor sets that unit; a later one wins. Each `UNCERTAINTY_MEASURE_WITH_UNIT` that
-/// `GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT` lists sets the uncertainty to its value times the factor
-/// of its unit (the context's length unit when that cannot be read), or clears it when the
-/// product is not finite and positive; the last one wins.
+/// plane angle factor sets that unit; a later one wins. Each length `UNCERTAINTY_MEASURE_WITH_UNIT`
+/// that `GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT` lists (its unit a length unit, or its unit unreadable
+/// and its value a `LENGTH_MEASURE`) sets the uncertainty to its value times the factor of its
+/// unit (the context's length unit when that cannot be read), or clears it when the product is
+/// not finite and positive; the last one wins. Angle and solid angle accuracies are skipped.
 pub fn context(ex: &Exchange, id: u64) -> Context {
     let mut c = Context::default();
     let Some(e) = ex.get(id) else { return c };
@@ -175,13 +181,20 @@ pub fn context(ex: &Exchange, id: u64) -> Context {
             if let Some(m) = ex.get(uid).and_then(measure)
                 && let Some(v) = m.first().and_then(Param::as_f64)
             {
-                let f = m
+                // Only a length is a distance uncertainty: an angle or solid angle accuracy is
+                // skipped. A measure whose unit cannot be read is a length when its value is a
+                // LENGTH_MEASURE.
+                let f = match m
                     .get(1)
                     .and_then(Param::as_ref_id)
                     .and_then(|x| unit_factor(ex, x))
-                    .map(|x| x.1);
-                c.uncertainty =
-                    Some(v * f.unwrap_or(c.units.len)).filter(|t| t.is_finite() && *t > 0.0);
+                {
+                    Some((UnitKind::Length, f)) => f,
+                    Some(_) => continue,
+                    None if is_length_measure(m.first()) => c.units.len,
+                    None => continue,
+                };
+                c.uncertainty = Some(v * f).filter(|t| t.is_finite() && *t > 0.0);
             }
         }
     }
