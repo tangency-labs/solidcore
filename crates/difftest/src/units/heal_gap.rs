@@ -1,7 +1,7 @@
-//! Runner for unit `heal.gap`. C++: `solidcore_ffi::units::heal_gap`. Rust:
-//! `solidcore::heal::gap`.
+//! Runner for unit `heal.gap`: upstream's gap classes ported into `solidcore::heal::gap`,
+//! checked against the unit's golden.
 //!
-//! Ops (see the FFI module for the layouts):
+//! Ops:
 //!
 //! * `gf`: a gap function (curve or surface to point, curve or surface) over real
 //!   `SmBSplineCurve`, `SmHermiteCurve`, `SmLine`, `SmEllipse`, `SmCircle` and
@@ -17,14 +17,12 @@
 //! * `gap_array`: `SmGapArray::Add` / `Append` / `ReSet` and the gap comparisons.
 //! * `topo`: a gap record (`SmVertexEdgeGap` ... `SmEdgeFaceGap`) set on a real
 //!   `SmBrep` built as the `topology.vertexuse` runner builds it (an upstream `.smb`
-//!   file, a wire edge, a face from a surface, the `my_test_topology` network). The Rust
-//!   side reads an `.smb` file itself (`crate::own_builder::read_with`: the Rust reader,
-//!   renumbered into the shim's walk order, so selectors name the same entities and no
-//!   C++ export reaches the Rust side); other sources are still imported from the shim's
-//!   export with that runner's importer. Compares the gap, its
+//!   file, a wire edge, a face from a surface, the `my_test_topology` network, an
+//!   analytic ellipse face), built by the Rust kernel ([`own_topo_brep`]) and renumbered
+//!   into the reference fixture's walk order, so selectors name the entities they named
+//!   there. Records the gap, its
 //!   accessors, `GetGapEndPoints` and `CacheGap`. Parameters are given as fractions of
-//!   the selected edge's interval or face's surface domain (or `SM_UNDEF_DOUBLE`), so
-//!   both sides read them from the same graph.
+//!   the selected edge's interval or face's surface domain (or `SM_UNDEF_DOUBLE`).
 //! * `raw_trim_gap`: vertex/face-trim and edge/face-trim gaps on a planar face
 //!   independently constructed by each engine, without a native graph import. The
 //!   caller supplies the UV NURB and parameter; comparisons are the constructor's
