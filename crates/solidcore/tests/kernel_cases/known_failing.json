@@ -1,5 +1,25 @@
 [
   {
+    "case": "booleans/3011-revolved-dome-1e-8-off-joined-flush-to-a-cylinder",
+    "issue": "tangency-labs/solidcore#3011",
+    "reason": "the join is refused: 'Face Near missing Seam' on the revolved dome's seam, where the exact arc joins (V = 6806.784)"
+  },
+  {
+    "case": "booleans/3011-revolved-dome-1e-8-off-joined-to-its-mirror",
+    "issue": "tangency-labs/solidcore#3011",
+    "reason": "the mirror join is refused: 'Face Near missing Seam' on the revolved dome's seam, where the exact arc joins (sphere V = 4188.790)"
+  },
+  {
+    "case": "booleans/3012-filleted-boxes-1e-4-apart-cut",
+    "issue": "tangency-labs/solidcore#3012",
+    "reason": "status 1001 (make_faceuse) instead of the 1e-4 sliver, V = 0.03"
+  },
+  {
+    "case": "booleans/3012-filleted-boxes-1e-4-apart-cut-reversed",
+    "issue": "tangency-labs/solidcore#3012",
+    "reason": "'not a closed solid' instead of the 1e-4 sliver, V = 0.03"
+  },
+  {
     "case": "fillets/1080-fillet-equal-slope-basin-1-mm-rim-loop-4",
     "issue": "tangency-labs/solidcore#2947",
     "reason": "continuity_order: got {'body': 'Slab', 'edges': 'blend', 'order': 'g0',  want >= g1 at every blend seam"
