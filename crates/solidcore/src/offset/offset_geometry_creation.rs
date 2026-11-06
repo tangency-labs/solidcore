@@ -416,6 +416,14 @@ pub trait OffsetExecutive<O> {
     fn is_local_operation(&self) -> bool {
         false
     }
+    /// Not upstream: whether original edge use `original`'s edge keeps its geometry in a
+    /// local operation (its faces and every face at its vertices keep their surfaces):
+    /// its offsets keep their faces' own curves, not mated again; `false` unless the
+    /// adapter says so.
+    fn keeps_edge(&self, original: O) -> bool {
+        let _ = original;
+        false
+    }
     /// Not upstream (WR-346): whether any inset face's offset collapsed (a convex round
     /// thinner than the wall); `false` unless `Kernel::fixes.offset_collapsed_rounds_mated`.
     fn has_collapsed_faces(&self) -> bool {
@@ -4361,6 +4369,12 @@ impl OffsetGeometryCreation {
 
         // If we are extending convex edges, extend both offset surfaces to hit each other.
         if executive.extend_convex_edges() && !shell_tangent_gap {
+            // Not upstream: in a local operation, an edge whose faces and vertices' faces
+            // all keep their surfaces keeps its geometry: the offset edges keep the faces'
+            // own curves (owner's decision; their surfaces are not intersected again)
+            if executive.keeps_edge(original_edgeuse) {
+                return Ok(out);
+            }
             let lamina = brep.edge_is_lamina(orig_edge)?;
 
             // No, we have to call ExtendTrimEdges() for Lamina Edges.  [cbi B01; B256 ok]
