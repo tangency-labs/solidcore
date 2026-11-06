@@ -33,7 +33,6 @@ use crate::error::offset::OffsetFailure;
 use crate::error::{EntityRef, Failure, Result, SolidError};
 use crate::geom::attribute::ObjectKey;
 use crate::geom::axis2_placement::Axis2Placement;
-use crate::geom::extent2d::Extent2d;
 use crate::kernel::Kernel;
 use crate::math::Vec3;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
@@ -81,7 +80,8 @@ fn null() -> SolidError {
 /// `Kernel::fixes.local_operation_offset_status`); `InvalidInput` where upstream dereferences
 /// null (a surface list shorter than the face list, a face without surface);
 /// [`OffsetFailure::SeamOpened`] (not upstream) when a face that meets itself across
-/// edges (seams) is given a surface closed in fewer directions than it meets itself in,
+/// edges (seams) is given a surface its seams' two UV lines do not lift to one curve on
+/// (not closed in the seam's direction, or the lines not on its seam: `keeps_seams`),
 /// before anything changes; [`OffsetFailure::Unsound`] (not upstream) when the body built
 /// fails what `b` did not (`refuse_unsound`: a check failure class `b`'s check has fewer
 /// lines of, a geometry the check could not reach, a manifold solid lost, a volume not
@@ -168,11 +168,6 @@ fn local_operation_on(
         };
         let surface = if let Some(mut new) = replacement {
             moved.push(face);
-            // (not upstream) a face that meets itself across seams cannot take a surface
-            // closed in fewer directions: refused before anything is changed
-            if closed_directions(k, &new, b.tolerance())? < seam_directions(k, b, face)? {
-                return Err(Failure::new(OP, OffsetFailure::SeamOpened { face }).into_error());
-            }
             let domain = new.natural_uv_domain_if_built();
             // (`EvaluateNormal(uv, TRUE, TRUE, ..)`: from the left)
             let new_normal =
@@ -187,6 +182,12 @@ fn local_operation_on(
             // when surface normals oppose - reverse the input surface's orientation
             if old_normal.dot(new_normal) < 0.0 {
                 new.reverse(k, SurfParamType::U)?;
+            }
+            // (not upstream) a face that meets itself across seams keeps its UV loops on
+            // the surface it takes (turned as it will be): each seam's two lines must lift
+            // to one curve there, or it has no edge: refused before anything is changed
+            if !keeps_seams(k, b, face, &new)? {
+                return Err(Failure::new(OP, OffsetFailure::SeamOpened { face }).into_error());
             }
             new
         } else {
@@ -454,42 +455,120 @@ fn meets_itself(b: &Brep, face: FaceId) -> Result<bool> {
     Ok(false)
 }
 
-/// The number of directions `surface` is closed in over `domain` (a plane none; `IsClosed`
-/// at `tolerance` for the others, as `SmEdge::IsSeam` asks it).
-fn closed_in(k: &Kernel, surface: &Surface, domain: &Extent2d, tolerance: f64) -> Result<usize> {
-    let mut n = 0_usize;
-    for direction in [SurfParamType::U, SurfParamType::V] {
-        if surface
-            .is_closed(k, domain, direction, Some(tolerance), false)?
+/// The samples along each seam [`keeps_seams`] lifts its two lines at.
+const SEAM_SAMPLES: u32 = 8;
+
+/// Whether `surface` keeps every seam `face` meets itself across (none for a face that
+/// does not, [`meets_itself`]). The face's UV loops are copied onto the surface it takes,
+/// so a seam's two edge uses keep their UV lines, which differ in the direction its own
+/// surface is closed in (`u = u0` and `u = u0 + period` for a cylinder's side). On the new
+/// surface the seam has an edge only where both lines lift to one curve: the surface is
+/// closed in that direction (`IsClosed` at the edge's tolerance, as `SmEdge::IsSeam` asks
+/// it), the two lines lift to the same points, within the edge's tolerance, at each
+/// sample along the edge, and they lie on the surface's seam, one period apart (each
+/// line's parameter off its end of the surface's domain moves it by no more than the
+/// tolerance, to first order: a radius-0.5 cylinder's arc-length u of period π takes the
+/// lines u = 0 and u = 2π to one ruling, but round twice). So the closed direction must match, not only be one of as many
+/// (a coaxial cylinder with its u and v swapped is closed once, but round its other
+/// parameter), and so must the seam's place in the parameters: the lines must be the new
+/// surface's seam (a period or a seam parameter of its own does not take them).
+///
+/// # Errors
+///
+/// Those of the topology queries, of the edge uses' UV evaluations (no UV trim curve is
+/// made: `b` is not changed) and of the surface's closure test and evaluations.
+fn keeps_seams(k: &Kernel, b: &mut Brep, face: FaceId, surface: &Surface) -> Result<bool> {
+    use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+    use crate::topology::edgeuse::{p1 as eu1, p3 as eu3};
+    let domain = surface.natural_uv_domain_with_nurb(k)?;
+    let uv_at = |k: &Kernel, b: &mut Brep, u, t: f64| -> Result<crate::geom::vector2d::Point2> {
+        // `t` along the edge, whichever way the use runs
+        let t = if eu1::orientation(b, u)? == OrientType::Opposite {
+            1.0 - t
+        } else {
+            t
+        };
+        let p = eu3::normalized_evaluate(k, b, u, t, true, false, false)?.point;
+        Ok(crate::geom::vector2d::Point2::new(p.x, p.y))
+    };
+    for e in crate::topology::face::p4::edges(b, face, None, false, None)? {
+        let mut uses = Vec::new();
+        for u in crate::topology::edge::edgeuses(b, e, None, None)? {
+            if eu1::face(b, u)? == Some(face) {
+                uses.push(u);
+            }
+        }
+        // (each side of the face has its own edge use: two for an ordinary edge)
+        if uses.len() <= 2 {
+            continue;
+        }
+        // the seam's two lines: the uses whose middles differ (`SmEdge::IsSeam`'s test)
+        let mut middles = Vec::new();
+        for &u in &uses {
+            middles.push((u, uv_at(k, b, u, 0.5)?));
+        }
+        let Some((a, c, across)) = middles.iter().find_map(|&(a, p)| {
+            middles
+                .iter()
+                .find(|(_, q)| p.distance(*q) > crate::math::EFF_ZERO_SQ)
+                .map(|&(c, q)| (a, c, q - p))
+        }) else {
+            continue;
+        };
+        let in_u = across.x.abs() >= across.y.abs();
+        let direction = if in_u {
+            SurfParamType::U
+        } else {
+            SurfParamType::V
+        };
+        let tolerance = crate::topology::edge::tolerance(b, e)?;
+        if !surface
+            .is_closed(k, &domain, direction, Some(tolerance), false)?
             .0
         {
-            n = n.saturating_add(1);
+            return Ok(false);
+        }
+        let (low, high) = if in_u {
+            (domain.min.x, domain.max.x)
+        } else {
+            (domain.min.y, domain.max.y)
+        };
+        let flags = crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags::default();
+        for i in 0..=SEAM_SAMPLES {
+            let t = f64::from(i) / f64::from(SEAM_SAMPLES);
+            let (uv_a, uv_c) = (uv_at(k, b, a, t)?, uv_at(k, b, c, t)?);
+            let p = surface.evaluate_point(k, uv_a)?;
+            let q = surface.evaluate_point(k, uv_c)?;
+            if p.distance(q) > tolerance {
+                return Ok(false);
+            }
+            // the lines on the seam itself, one period apart (not two, nor a seam inside
+            // the domain): each line's parameter off the domain's end moves its lift by
+            // that times the surface's speed across it, to first order
+            let (s_a, s_c) = if in_u {
+                (uv_a.x, uv_c.x)
+            } else {
+                (uv_a.y, uv_c.y)
+            };
+            let off = ((s_a.min(s_c) - low).abs()).max((s_a.max(s_c) - high).abs());
+            let d = surface.evaluate(k, uv_a, 1, 1, flags)?;
+            let speed = if in_u {
+                d.get(1).and_then(|row| row.first())
+            } else {
+                d.first().and_then(|row| row.get(1))
+            }
+            .ok_or_else(|| SolidError::sm_err(OP))?
+            .length();
+            // (a speed or offset that is not a number refuses too)
+            if !matches!(
+                (off * speed).partial_cmp(&tolerance),
+                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+            ) {
+                return Ok(false);
+            }
         }
     }
-    Ok(n)
-}
-
-/// The number of directions `surface` is closed in over its natural domain.
-fn closed_directions(k: &Kernel, surface: &Surface, tolerance: f64) -> Result<usize> {
-    closed_in(
-        k,
-        surface,
-        &surface.natural_uv_domain_with_nurb(k)?,
-        tolerance,
-    )
-}
-
-/// The number of directions `face` meets itself across seams in: none for a face that
-/// does not ([`meets_itself`]), else the directions its own surface is closed in over the
-/// face's UV domain (a torus face round both ways two, a cylinder's side, or a torus face
-/// cut across its tube, one), and at least the one its seam is in. The new surface must be
-/// closed in as many: a seam has no edge on a surface open across it.
-fn seam_directions(k: &Kernel, b: &Brep, face: FaceId) -> Result<usize> {
-    if !meets_itself(b, face)? {
-        return Ok(0);
-    }
-    let own = face_ops::surface(b, face)?.ok_or_else(null)?;
-    Ok(closed_in(k, own, &b.face(face)?.uv_domain, b.tolerance())?.max(1))
+    Ok(true)
 }
 
 /// Whether `given` is the surface `own` lies on, exactly: both of one analytic kind
@@ -742,6 +821,7 @@ fn move_faces(k: &mut Kernel, b: &mut Brep, new_brep: &mut Brep) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::extent2d::Extent2d;
     use crate::math::{Point3, Vec3};
     use crate::primitive::api_primitives::create_box;
     use crate::surface::plane::Plane;
@@ -1460,10 +1540,31 @@ mod tests {
         Some(*why)
     }
 
+    /// A 10 mm cube with its vertical edge at x = y = 10 rounded r 2, and the round.
+    fn box_rounded_r2(k: &mut Kernel) -> (Brep, FaceId) {
+        use crate::blend::fillet_executive::api::fillet_edges;
+        use crate::topology::{edge, vertex};
+        let mut b = create_box(k, Point3::ZERO, 10.0, 10.0, 10.0).unwrap();
+        let e = b
+            .edges()
+            .ids()
+            .find(|&e| {
+                let (s, t) = edge::start_end_vertices(&b, e).unwrap();
+                [s, t].into_iter().flatten().all(|v| {
+                    let p = vertex::point(&b, v).unwrap();
+                    p.x == 10.0 && p.y == 10.0
+                })
+            })
+            .unwrap();
+        fillet_edges(k, &mut b, &[e], 2.0, 1, 1, 1.0).unwrap();
+        let round = curved_face(&b);
+        (b, round)
+    }
+
     /// A refusal leaves everything as it came in: `b` in its `Debug` form, the caches its
     /// surfaces had built before the call included (none dropped, none added), and the
     /// caller's notification records and attributes. Refused by the gate after the offset
-    /// ran (a cylinder given a wider coaxial one) and by the reach before anything is built
+    /// ran (a cube's round given a wider coaxial cylinder) and by the reach before anything is built
     /// (a side moved off its round); `b` carries an attribute of its own, lent to the
     /// offset, and the caller's store one of the caller's.
     #[test]
@@ -1473,10 +1574,9 @@ mod tests {
         type Make = fn(&mut Kernel) -> (Brep, FaceId, Surface);
         let cases: [(&str, Make); 2] = [
             ("gate", |k| {
-                let b = ap::create_cylinder(k, Point3::ZERO, 1.0, 2.0).unwrap();
-                let face = curved_face(&b);
-                let s = ap::create_cylinder_surface(k, Point3::new(0.0, 0.0, -1.0), 1.5, 4.0);
-                (b, face, Surface::from(s.unwrap()))
+                let (b, round) = box_rounded_r2(k);
+                let s = ap::create_cylinder_surface(k, Point3::new(8.0, 8.0, -1.0), 2.3, 12.0);
+                (b, round, Surface::from(s.unwrap()))
             }),
             ("reach", |k| {
                 let b = cube_rounded_r5(k);
@@ -1612,26 +1712,56 @@ mod tests {
         );
     }
 
-    /// Review finding 5: a cylinder's side given a coaxial cylinder of another radius (its
-    /// ends' planes then meet the new side in circles the old edges are not on): the body
-    /// built is not sound: refused, the first new failure an edge's curve owner (#61) for the
-    /// wider, a vertex an edge is not on (#82) for the narrower.
+    /// Review finding 5, then the second review's 6: a cylinder's side given a coaxial
+    /// cylinder of another radius. A cylinder's u is its arc length, of period `2π r`: the
+    /// side's UV loops, copied onto the new surface, run u over `[0, 2π]` (radius 1), which
+    /// on radius 1.5 is two thirds of the way round and on 0.5 twice round, so its seam
+    /// lines (u = 0 and u = 2π) lift to two different rulings and the seam has no edge:
+    /// refused as a seam opened before anything is built (before the seams were matched,
+    /// the body was built and the gate refused it: an edge's curve owner, #61, and a vertex
+    /// an edge is not on, #82).
     #[test]
-    fn a_cylinder_given_a_coaxial_cylinder_of_another_radius_is_refused_as_not_sound() {
+    fn a_cylinder_given_a_coaxial_cylinder_of_another_radius_is_refused_as_a_seam_opened() {
         use crate::primitive::api_primitives as ap;
-        for (radius, want) in [
-            (1.5, Some(unsound_check(3, 61))),
-            (0.5, Some(unsound_check(3, 82))),
-        ] {
+        for radius in [1.5, 0.5] {
             let mut k = Kernel::default();
             let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
             let face = curved_face(&b);
             let s = Surface::from(
                 ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -1.0), radius, 4.0).unwrap(),
             );
+            assert!(!keeps_seams(&k, &mut b, face, &s).unwrap(), "{radius}");
             let why = refused_unchanged_or_returned(&mut k, &mut b, &[face], vec![s]);
-            assert_eq!(why, want, "{radius}");
+            assert!(
+                matches!(why, Some(OffsetFailure::SeamOpened { face: f }) if f == face),
+                "{radius}: {why:?}"
+            );
         }
+    }
+
+    /// Second review, finding 6: a cylinder's side given its own cylinder with u and v
+    /// swapped (the same surface, its placement rebuilt to rounding, so not its own) is
+    /// closed in one direction, as the side is, but round its v: the side's seam lines
+    /// (u = 0 and u = 2π) lift to two circles 2π apart along the axis, so the seam has no
+    /// edge there: refused as a seam opened before anything is built. Unswapped, it keeps
+    /// the seam.
+    #[test]
+    fn a_cylinder_given_its_cylinder_swapped_is_refused_as_a_seam_opened() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let face = curved_face(&b);
+        let mut s = Surface::from(
+            ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -1.0), 1.0, 4.0).unwrap(),
+        );
+        assert!(keeps_seams(&k, &mut b, face, &s).unwrap());
+        s.swap_uv(&k).unwrap();
+        assert!(!keeps_seams(&k, &mut b, face, &s).unwrap());
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[face], vec![s]);
+        assert!(
+            matches!(why, Some(OffsetFailure::SeamOpened { face: f }) if f == face),
+            "{why:?}"
+        );
     }
 
     /// Review finding 5: a 10 mm cube's vertical edge rounded r 2, the round given a
@@ -1641,25 +1771,10 @@ mod tests {
     /// them), so it is refused as apart (review finding 6) before anything is built.
     #[test]
     fn a_round_given_a_coaxial_cylinder_is_refused_as_not_sound_or_apart() {
-        use crate::blend::fillet_executive::api::fillet_edges;
         use crate::primitive::api_primitives as ap;
-        use crate::topology::{edge, vertex};
         for radius in [2.3, 2.05, 1.8] {
             let mut k = Kernel::default();
-            let mut b = create_box(&mut k, Point3::ZERO, 10.0, 10.0, 10.0).unwrap();
-            let e = b
-                .edges()
-                .ids()
-                .find(|&e| {
-                    let (s, t) = edge::start_end_vertices(&b, e).unwrap();
-                    [s, t].into_iter().flatten().all(|v| {
-                        let p = vertex::point(&b, v).unwrap();
-                        p.x == 10.0 && p.y == 10.0
-                    })
-                })
-                .unwrap();
-            fillet_edges(&mut k, &mut b, &[e], 2.0, 1, 1, 1.0).unwrap();
-            let round = curved_face(&b);
+            let (mut b, round) = box_rounded_r2(&mut k);
             let s = Surface::from(
                 ap::create_cylinder_surface(&k, Point3::new(8.0, 8.0, -1.0), radius, 12.0).unwrap(),
             );
