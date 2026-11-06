@@ -10,6 +10,7 @@
 //! no top seam: it is cut by the slab's front face, a crease.
 
 #![allow(
+    clippy::disallowed_methods, // closed-form oracles, not ops geometry
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
@@ -114,7 +115,12 @@ fn seams(name: &str, corners: usize) {
         let (e, d) = b
             .edge_list()
             .iter()
-            .map(|&e| (e, edge_closest_point(&k, &b, e, q).unwrap().closest.distance))
+            .map(|&e| {
+                (
+                    e,
+                    edge_closest_point(&k, &b, e, q).unwrap().closest.distance,
+                )
+            })
             .min_by(|x, y| x.1.total_cmp(&y.1))
             .unwrap();
         assert!(d < 1e-5, "{name}: {q:?} is {d} from the nearest edge");
@@ -138,10 +144,16 @@ fn seams(name: &str, corners: usize) {
             .evaluate_point(&k, edge::interval(&b, e).unwrap().evaluate(0.5))
             .unwrap();
         let angle = angle_at(&k, &b, e, p);
-        assert!(angle > 1e-2, "{name}: the crease at {p:?} turns {angle} rad");
+        assert!(
+            angle > 1e-2,
+            "{name}: the crease at {p:?} turns {angle} rad"
+        );
         found += 1;
     }
-    assert!(found >= corners, "{name}: {found} creases between two rounds");
+    assert!(
+        found >= corners,
+        "{name}: {found} creases between two rounds"
+    );
 }
 
 /// The three results as `.smb` under `ISSUE_2947_OUT`, for the cases' renders.
