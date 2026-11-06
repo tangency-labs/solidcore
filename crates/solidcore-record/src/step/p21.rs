@@ -4,9 +4,10 @@
 //! ISO 10303-21 specification.
 //!
 //! Input is hostile: the text size ([`MAX_BYTES`]), the entity count ([`MAX_ENTITIES`]), the
-//! parameter nesting depth (`MAX_DEPTH`, private) and the parts of a complex instance
-//! (`MAX_COMPLEX_PARTS`, private) are capped, nothing is allocated from a count read out of the
-//! file (lists grow as their items are read), and every error is a message, never a panic.
+//! parameter count ([`MAX_PARAMS`]), the parameter nesting depth (`MAX_DEPTH`, private) and
+//! the parts of a complex instance (`MAX_COMPLEX_PARTS`, private) are capped, nothing is
+//! allocated from a count read out of the file (lists grow as their items are read), and every
+//! refusal is an [`Error`], never a panic.
 //!
 //! Origin: SolidCraft's `crates/step/src/p21.rs` at `a5b71ca2` (MIT OR Apache-2.0), carried
 //! over with its behaviour unchanged. With the STEP merge (#2577) this becomes solidcore's one
@@ -24,14 +25,20 @@ use std::collections::btree_map::Entry;
 
 /// Largest STEP text we parse.
 pub const MAX_BYTES: usize = 512 << 20;
-/// Most entity instances in one file.
+/// Most entity instances in one file, a repeated id counted each time.
 pub const MAX_ENTITIES: usize = 20_000_000;
 /// Deepest parameter list nesting.
 const MAX_DEPTH: usize = 64;
 /// A complex instance is refused when more than this many of its parts have been read and
 /// another follows.
 const MAX_COMPLEX_PARTS: usize = 64;
-/// Most parameters in one file, nested ones included.
+/// Most parameters in one file, nested ones and the header's included.
+///
+/// [`MAX_BYTES`] alone does not bound memory: `$,` is two bytes and its [`Param`] 48 (on a
+/// 64-bit target), so a text at the size cap could ask for about 13 GB. This cap holds the
+/// parameters themselves to under 1 GB there, and less on wasm32, where a `Param` is smaller.
+/// The densest corpus file (NIST `nist_stc_09_asme1_ap242-e3.stp`, about 5.4 bytes a parameter
+/// counting its separators) would reach it at about 110 MB; it holds under a million.
 pub const MAX_PARAMS: usize = 20_000_000;
 
 /// The counts a parse refuses beyond: [`MAX_ENTITIES`] and [`MAX_PARAMS`] for every caller,
@@ -197,6 +204,10 @@ impl Exchange {
 struct Lexer<'a> {
     s: &'a [u8],
     i: usize,
+    /// Parameters read so far, header and data.
+    params: usize,
+    /// The most parameters to read.
+    max_params: usize,
 }
 
 /// Why a text was refused. Its message is the one `parse` returned as a string before it had
@@ -366,6 +377,12 @@ impl Lexer<'_> {
         if depth > MAX_DEPTH {
             return self.fail("parameters nested too deeply");
         }
+        if self.params >= self.max_params {
+            return Err(Error::TooManyParams {
+                limit: self.max_params,
+            });
+        }
+        self.params += 1;
         self.ws()?;
         let Some(c) = self.peek() else {
             return self.fail("unexpected end of file");
@@ -581,6 +598,8 @@ fn parse_limited(
     let mut lx = Lexer {
         s: text.as_bytes(),
         i: 0,
+        params: 0,
+        max_params: limits.params,
     };
     let magic = lx.keyword()?;
     if magic != "ISO-10303-21" {
@@ -690,7 +709,8 @@ fn parse_limited(
                         }
                         w.progress("reading", lx.i, lx.s.len());
                     }
-                    if ex.entities.len() >= limits.entities {
+                    // A duplicate's records were read too, so it counts as an instance.
+                    if ex.entities.len() + ex.duplicates.len() >= limits.entities {
                         return Err(Error::TooManyEntities {
                             limit: limits.entities,
                         });
