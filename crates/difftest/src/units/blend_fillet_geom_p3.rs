@@ -1,8 +1,9 @@
-//! Runner for unit `blend.fillet_geom_p3`. C++: `solidcore_ffi::units::blend_fillet_geom_p3`.
-//! Rust: `solidcore::blend::fillet_geom::p3`.
+//! Runner for unit `blend.fillet_geom_p3`. Ported from upstream
+//! `source/SMLib/src/SmFilletGeom.cpp`; checked against its golden. Rust:
+//! `solidcore::blend::fillet_geom::p3`.
 //!
 //! Every case builds a target B-rep from a B-rep block of unit `topology.edgeuse_p1` (an
-//! upstream `.smb` solid, a face or a wire edge; the Rust side imports the C++ export), the
+//! upstream `.smb` solid, a face or a wire edge, read or built by the Rust kernel), the
 //! fillet solvers (a base `SmFilletSolver` with edge uses of the target and offset surfaces
 //! of inline bases; the shim's may let `SetupOffsetValues` succeed, mirrored by
 //! [`ShimSolver`]) and a pseudo B-rep of fillet vertices, geometries and edges, then runs one
@@ -54,14 +55,32 @@ use solidcore::topology::{
     Brep, EdgeId, Edgeuse, EdgeuseId, FaceId, VertexId, Vertexuse, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::blend_fillet_geom_p3::{self as ffi, Op};
-use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, bspline_of, clamped_knots, gen_curve, import, path_of, push_curve, push_surface,
+    brep_block_of, bspline_of, clamped_knots, gen_curve, push_curve, push_surface,
     sel, surface_of, BrepIn, BssIn, CrvIn, SrfIn, FILES,
 };
 use crate::{HarnessError, Output, Rng, UnitDiff};
+
+/// The shim's ops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    /// The built model.
+    Export,
+    /// `SmFilletVertex::CalcCornerVertGeom`.
+    CornerVert,
+    /// `SmFilletVertex::CalcMateGeom`.
+    Mate,
+    /// `SmFilletEdge::CalcCornerEdgeGeom`.
+    CornerEdge,
+    /// `SmFilletEdge::CalcFilletIntFillet`.
+    FilletIntFillet,
+    /// `SmFilletGeom::ReCalcFilletGeom`.
+    ReCalc,
+}
+
+/// Largest number of solvers, vertices, geometries, edges or list entries.
+const MAX_LIST: usize = 64;
 
 /// The runner.
 pub struct Runner;
@@ -294,9 +313,8 @@ struct Inputs {
 
 // ---- the target B-rep and resolution -------------------------------------------------------
 
-/// The case's target B-rep: the C++ export's counts and the imported Rust B-rep.
+/// The case's target B-rep: its B-rep block, its counts and the Rust B-rep.
 struct Target {
-    path: String,
     block: Vec<f64>,
     counts: [usize; 10],
     brep: Brep,
@@ -307,7 +325,6 @@ struct Target {
 /// imported from the C++ export; `Err(output)` when the Rust build fails, as
 /// [`target`] reports the shim's failed build.
 fn own_target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
     let block = brep_block_of(Some(brep), false, false)?;
     let brep = match crate::own_reader::edgeuse_graph_brep(&mut Kernel::default(), brep)? {
         Ok(b) => b,
@@ -317,28 +334,8 @@ fn own_target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
         })),
     };
     Ok(Ok(Target {
-        path,
         block,
         counts: crate::own_builder::counts(&brep),
-        brep,
-    }))
-}
-
-/// Builds the target on both sides; `Err(output)` when it cannot be built.
-fn target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
-    let ex = ffi1::eval(ffi1::Op::Export, &path, &block)
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some(counts) = ffi1::counts(&ex) else {
-        let st = ex.get(1).copied().unwrap_or(0.0);
-        return Ok(Err(Output::new().values("flat", vec![1.0, st])));
-    };
-    let brep = import(&ex)?;
-    Ok(Ok(Target {
-        path,
-        block,
-        counts,
         brep,
     }))
 }
@@ -567,35 +564,6 @@ fn op_of(op: &OpIn) -> Op {
         OpIn::FilletIntFillet { .. } => Op::FilletIntFillet,
         OpIn::ReCalc { .. } => Op::ReCalc,
     }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let tg = match target(&i.brep)? {
-        Ok(t) => t,
-        Err(out) => return Ok(out),
-    };
-    let input = model_input(i, &tg)?;
-    // In a fresh child: CalcFilletIntFillet and ReCalcFilletGeom reach
-    // SmFilletSolver::ComputePointValues, whose function-static `sdStaticStep` (ND-3)
-    // would otherwise latch in this process and be inherited by every later fresh child
-    // (blend.fillet_intersector, blend.fillet_solver_p4, blend.fillet_executive_p3).
-    let op = op_of(&i.op);
-    let result = solidcore_ffi::isolate::fresh_process(|| ffi::eval(op, &tg.path, &input));
-    if i.expected_rejection {
-        // Only a flagged case may be recorded as rejected.
-        return match result {
-            Err(solidcore_ffi::FfiError::InvalidArgument(reason)) => Ok(Output::rejected(reason)),
-            Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => {
-                Ok(Output::rejected("shim_rejected_model"))
-            }
-            Err(e) => Err(harness(format!(
-                "expected-rejection fixture failed in another way: {e}"
-            ))),
-            Ok(_) => Err(harness("expected-rejection fixture was not refused")),
-        };
-    }
-    let flat = result.map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("flat", flat))
 }
 
 // ---- Rust --------------------------------------------------------------------------------
@@ -987,8 +955,8 @@ fn status(e: &SolidError) -> f64 {
 /// `dTangencyTolRadians` `0.01`. Their type is `SM_FCR_UNKNOWN`, which no
 /// [`FilletCornerKind`] has; the compared paths never read it (the shim refuses the
 /// vertex and edge calculators that would, and `CalcRailRailInterpolation` returns
-/// `SM_ERR` at the corner's empty edge list first). The tags are below [`ffi::MAX_LIST`]:
-/// [`rust`] applies the FFI's checks to the input first, so the table is never sized by
+/// `SM_ERR` at the corner's empty edge list first). The tags are below [`MAX_LIST`]:
+/// [`rust`] applies the contract to the input first, so the table is never sized by
 /// an arbitrary tag (nightly fuzz case fuzz00137 asked for 2^31 corners).
 fn shim_corners(m: &RustModel) -> Result<Vec<FilletCorner>, HarnessError> {
     let mut count = 0;
@@ -1008,18 +976,277 @@ fn shim_corners(m: &RustModel) -> Result<Vec<FilletCorner>, HarnessError> {
         .collect())
 }
 
+// ---- the input contract ----------------------------------------------------------------------
+
+/// A port of the reference wrapper's input contract
+/// (`crates/solidcore-ffi/src/units/blend_fillet_geom_p3.rs`) for the model and op part of a
+/// case's program (after the target's B-rep block, which the Rust reader checks by
+/// building it): offset surfaces and curves as unit `topology.edgeuse_p1`'s blocks take
+/// them, enum codes in their upstream ranges, every index inside the target's counts and
+/// the model's lists, corner tags below [`MAX_LIST`], ordered intervals.
+mod contract {
+    use super::{Op, MAX_LIST};
+    use crate::cases::contract::clamped;
+    use solidcore::nurbs::math::{NOW, NOZ};
+
+    /// `topology.edgeuse_p1`'s bounds: control point index, degree, coordinate.
+    const MAX_INDEX: usize = 32;
+    const MAX_DEGREE: usize = 5;
+    const MAX_COORD: f64 = 1.0e300;
+
+    struct Reader<'a> {
+        input: &'a [f64],
+        at: usize,
+    }
+
+    impl Reader<'_> {
+        fn num(&mut self) -> Option<f64> {
+            let v = *self.input.get(self.at)?;
+            self.at += 1;
+            Some(v)
+        }
+        fn peek(&self) -> Option<f64> {
+            self.input.get(self.at).copied()
+        }
+        fn finite(&mut self) -> Option<f64> {
+            let v = self.num()?;
+            (v.is_finite() && v.abs() <= MAX_COORD).then_some(v)
+        }
+        fn finites(&mut self, k: usize) -> Option<Vec<f64>> {
+            (0..k).map(|_| self.finite()).collect()
+        }
+        fn index(&mut self, max: usize) -> Option<usize> {
+            let v = self.num()?;
+            (v.fract() == 0.0 && v >= 0.0 && v <= max as f64).then_some(v as usize)
+        }
+        fn flag(&mut self) -> Option<bool> {
+            Some(self.index(1)? == 1)
+        }
+        /// An index below `count`.
+        fn below(&mut self, count: usize) -> Option<usize> {
+            let i = self.index(usize::MAX >> 12)?;
+            (i < count).then_some(i)
+        }
+        /// An index below `count` or `-1` (`Ok(None)`); `Err` breaks the contract.
+        fn opt_below(&mut self, count: usize) -> Result<Option<usize>, ()> {
+            if self.peek().ok_or(())? == -1.0 {
+                self.at += 1;
+                return Ok(None);
+            }
+            self.below(count).map(Some).ok_or(())
+        }
+    }
+
+    /// `k` control points of one rationality, weights in `[1e-3, 1e3]`, coordinates within
+    /// [`MAX_COORD`] (`z = NOZ` allowed when `planar`).
+    fn points(rd: &mut Reader<'_>, k: usize, planar: bool) -> Option<()> {
+        let mut w0 = None;
+        for _ in 0..k {
+            let (x, y, z, w) = (rd.num()?, rd.num()?, rd.num()?, rd.num()?);
+            if z == NOZ && !planar {
+                return None;
+            }
+            let rational = w != NOW;
+            if *w0.get_or_insert(rational) != rational || (rational && !(1e-3..=1e3).contains(&w))
+            {
+                return None;
+            }
+            let z = if z == NOZ { 0.0 } else { z };
+            if [x, y, z].iter().any(|c| !c.is_finite() || c.abs() > MAX_COORD) {
+                return None;
+            }
+        }
+        Some(())
+    }
+
+    /// A surface block: a plane (`1 origin normal`) or a B-spline (`0 rational form n m p q r
+    /// s cpts u v`).
+    fn surface(rd: &mut Reader<'_>) -> Option<()> {
+        if rd.index(1)? == 1 {
+            rd.finites(3)?;
+            let n = rd.finites(3)?;
+            return (n.iter().map(|c| c * c).sum::<f64>() >= 1e-12).then_some(());
+        }
+        rd.flag()?;
+        rd.index(11)?;
+        let n = rd.index(MAX_INDEX)?;
+        let m = rd.index(MAX_INDEX)?;
+        let p = rd.index(MAX_DEGREE)?;
+        let q = rd.index(MAX_DEGREE)?;
+        let r = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+        let s = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+        if p == 0 || p > n || q == 0 || q > m || r != n + p + 1 || s != m + q + 1 {
+            return None;
+        }
+        points(rd, (n + 1) * (m + 1), false)?;
+        let u = rd.finites(r + 1)?;
+        let v = rd.finites(s + 1)?;
+        clamped(&u, p)?;
+        clamped(&v, q).map(|_| ())
+    }
+
+    /// A B-spline curve block `dim n p m cpts knots` of dimension `dim`.
+    fn curve(rd: &mut Reader<'_>, dim: f64) -> Option<()> {
+        if rd.peek()? != dim {
+            return None;
+        }
+        let d = rd.index(3)?;
+        let n = rd.index(MAX_INDEX)?;
+        let p = rd.index(MAX_DEGREE)?;
+        let m = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+        if d < 2 || p == 0 || p > n || m != n + p + 1 {
+            return None;
+        }
+        points(rd, n + 1, d == 2)?;
+        let knots = rd.finites(m + 1)?;
+        clamped(&knots, p).map(|_| ())
+    }
+
+    /// The model after the B-rep block, with the target's export `counts`.
+    fn model(rd: &mut Reader<'_>, counts: [usize; 10]) -> Option<[usize; 4]> {
+        let [_, _, _, n_f, _, _, n_eu, _, _, n_v] = counts;
+        let ns = rd.index(MAX_LIST)?;
+        for _ in 0..ns {
+            rd.finites(3)?;
+            rd.opt_below(n_eu).ok()?;
+            rd.opt_below(n_eu).ok()?;
+            for _ in 0..2 {
+                if rd.flag()? {
+                    surface(rd)?;
+                    rd.finite()?;
+                }
+            }
+            rd.flag()?;
+            rd.flag()?;
+            rd.flag()?;
+        }
+        let nv = rd.index(MAX_LIST)?;
+        for _ in 0..nv {
+            rd.finites(3)?;
+            rd.index(13)?; // SmFilletVertexType
+            rd.index(12)?; // SmFilStatus
+            rd.opt_below(MAX_LIST).ok()?; // corner tag
+            if rd.index(110)? < 100 {
+                return None; // SmPointClassificationType: SM_PC_UNKNOWN ..= SM_PC_NOTHING
+            }
+            let pc_kind = rd.index(3)?;
+            let pc_index = rd.opt_below(MAX_LIST * MAX_LIST).ok()?;
+            let in_range = match (pc_kind, pc_index) {
+                (0, _) => true,
+                (1, Some(i)) => i < n_v,
+                (2, Some(i)) => i < n_eu,
+                (3, Some(i)) => i < n_f,
+                _ => false,
+            };
+            if !in_range {
+                return None;
+            }
+            rd.opt_below(n_f).ok()?; // pc_face
+            rd.finites(3)?; // t u v
+        }
+        let ng = rd.index(MAX_LIST)?;
+        for _ in 0..ng {
+            rd.index(6)?; // SmFilletGeomType
+            rd.index(12)?; // SmFilStatus
+            rd.opt_below(ns).ok()?;
+            if rd.flag()? {
+                surface(rd)?;
+            }
+        }
+        let ne = rd.index(MAX_LIST)?;
+        for _ in 0..ne {
+            rd.below(nv)?;
+            rd.below(nv)?;
+            rd.index(14)?; // SmFilletEdgeType
+            rd.index(12)?; // SmFilStatus
+            rd.opt_below(MAX_LIST).ok()?; // corner tag
+            if rd.flag()? {
+                curve(rd, 3.0)?;
+            }
+            if rd.flag()? {
+                let t = rd.finites(2)?;
+                if t.first() > t.get(1) {
+                    return None;
+                }
+            }
+            for _ in 0..2 {
+                if rd.flag()? {
+                    curve(rd, 2.0)?;
+                }
+                rd.opt_below(ng).ok()?;
+                rd.finites(2)?; // vertex use uv
+                rd.index(7)?; // SmIntersectionPointType
+                rd.finites(4 + 3 + 3 + 1)?;
+            }
+        }
+        for _ in 0..ng {
+            rd.opt_below(ne).ok()?;
+            rd.opt_below(ne).ok()?;
+            for _ in 0..2 {
+                let n = rd.index(MAX_LIST)?;
+                for _ in 0..n {
+                    rd.below(ne)?;
+                }
+            }
+            let n = rd.index(MAX_LIST)?;
+            for _ in 0..n {
+                rd.below(ne)?;
+                rd.index(1)?;
+            }
+        }
+        for _ in 0..nv {
+            rd.opt_below(nv).ok()?;
+            rd.opt_below(nv).ok()?;
+        }
+        Some([ns, nv, ng, ne])
+    }
+
+    /// Whether `op`'s `program` keeps the contract after its first `block` values (the
+    /// target's B-rep block) with the target's export `counts`.
+    pub(super) fn holds(op: Op, program: &[f64], block: usize, counts: [usize; 10]) -> bool {
+        let mut rd = Reader {
+            input: program,
+            at: block,
+        };
+        let args = |rd: &mut Reader<'_>| -> Option<()> {
+            let [_, nv, ng, ne] = model(rd, counts)?;
+            match op {
+                Op::Export => {}
+                Op::CornerVert | Op::Mate => {
+                    rd.below(nv)?;
+                }
+                Op::CornerEdge | Op::FilletIntFillet => {
+                    rd.below(ne)?;
+                }
+                Op::ReCalc => {
+                    rd.below(ng)?;
+                    rd.flag()?;
+                    rd.flag()?;
+                    rd.finites(3)?;
+                    if rd.flag()? {
+                        curve(rd, 3.0)?;
+                    }
+                }
+            }
+            Some(())
+        };
+        args(&mut rd).is_some() && rd.at == program.len()
+    }
+}
+
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut tg = match own_target(&i.brep)? {
         Ok(t) => t,
         Err(out) => return Ok(out),
     };
-    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
-    // the shim never sees it, so the Rust side must not build a model from it either.
-    // Nightly fuzz case fuzz00137 mutated a vertex's corner tag to 2^31: the FFI refuses a
-    // tag at or above `MAX_LIST` (the shim's corner table is indexed by tag), while
-    // `shim_corners` sized the Rust table by the tag and aborted asking for 384 GiB.
+    // an input outside the contract is a harness error: the Rust side must not build a
+    // model from it. Nightly fuzz case fuzz00137 mutated a vertex's corner tag to 2^31: the
+    // contract refuses a tag at or above `MAX_LIST`, while `shim_corners` would size the
+    // Rust table by the tag and abort asking for 384 GiB.
     let input = model_input(i, &tg)?;
-    ffi::validate(op_of(&i.op), &tg.path, &input).map_err(|e| harness(e.to_string()))?;
+    if !contract::holds(op_of(&i.op), &input, tg.block.len(), tg.counts) {
+        return Err(harness("input outside the contract"));
+    }
     let mut m = RustModel::build(i, &tg)?;
     let k = std::mem::take(&mut m.k);
     let mut bases: Vec<FilletSolver> = m.solvers.iter().map(|s| s.base.clone()).collect();
@@ -1873,10 +2100,6 @@ impl UnitDiff for Runner {
         crate::runner::default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &crate::Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &crate::Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1892,7 +2115,7 @@ mod tests {
     /// refused the same way instead of sizing `shim_corners`' table by the tag (it
     /// aborted asking for 2^31 corners, 384 GiB).
     #[test]
-    fn huge_corner_tag_is_refused_on_both_sides() {
+    fn huge_corner_tag_is_refused() {
         let v = serde_json::json!({
             "brep": {"kind": "file", "file": "box_with_large_fillet.smb", "rebuild": true},
             "model": {
@@ -1907,9 +2130,7 @@ mod tests {
             "op": "corner_vert", "v": 0
         });
         let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = cpp(&i).unwrap_err().to_string();
         let rust = rust(&i).unwrap_err().to_string();
-        assert!(cpp.contains("index 2147483648 out of range (64)"), "{cpp}");
-        assert_eq!(rust, cpp.trim_start_matches("c++: "));
+        assert!(rust.contains("input outside the contract"), "{rust}");
     }
 }
