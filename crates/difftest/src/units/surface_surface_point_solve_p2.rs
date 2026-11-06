@@ -46,14 +46,15 @@ use super::surface_surf_of_revolution_p1::{
     SurfIn as RevSurfIn,
 };
 use super::surface_surface_cache_p1::{
-    dom_of, flag, gen_sub_dom, harness, srf, status, v3, BssIn, SrfIn,
+    dom_of, fin, flag, gen_sub_dom, harness, srf, status, v3, vec3, BssIn, SrfIn, LIMITS,
 };
 use super::surface_surface_cache_p3::{surf_domain, surf_size, surface_in, SurfIn};
 use super::surface_surface_point_solve_p1::{
-    gen_surface, gen_test, gen_uv, gen_uv_any, net_counts, p2, push2, solver_op, test_on_normal,
-    wrapped_of, SOLVERS, SURFACE_SMS_POINTS,
+    gen_surface, gen_test, gen_uv, gen_uv_any, net_counts, net_index, p2, problem, push2,
+    solver_op, test_on_normal, uv_within, wrapped_of, Problem, OPS, SOLVERS, SURFACE_SMS_POINTS,
 };
 use crate::case::{CaseContext, CaseSource};
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -489,6 +490,119 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest `SmSrfPtErrorNormType`.
+const MAX_NORM: u8 = 8;
+
+/// The problem over a surface of revolution, if it keeps the contract: the surface builds,
+/// its natural domain (of the wrapped surface when wrapped) is finite and ordered, and the
+/// solver domain, operation, test vector and tolerance keep [`problem`]'s rules against it
+/// and the control-point counts of the surface of revolution.
+fn rev_problem(i: &Inputs, rev: &RevSurfIn) -> Option<Problem> {
+    use solidcore::nurbs::b_spline_surface::SurfParamType;
+    let k = Kernel::default();
+    let built = rev_rust_surf(&k, rev).ok()?.ok()?;
+    let (num_u, num_v) = (
+        built.base().number_control_points(SurfParamType::U),
+        built.base().number_control_points(SurfParamType::V),
+    );
+    let nd = any_surface(&k, i.wrap, &i.surf)
+        .ok()?
+        .natural_uv_domain_with_nurb(&k)
+        .ok()?;
+    let d = [nd.min().x, nd.min().y, nd.max().x, nd.max().y];
+    let ok = d.iter().all(|v| v.is_finite())
+        && d[0] < d[2]
+        && d[1] < d[3]
+        && contract::domain_in(&i.dom, &d, true, LIMITS.max_coord)
+        && OPS.contains(&i.solver)
+        && vec3(&i.test)
+        && fin(i.tol);
+    ok.then_some(Problem { dom: d, num_u, num_v })
+}
+
+/// Whether `v` is at most `max` in magnitude.
+fn small(v: i32, max: i64) -> bool {
+    i64::from(v).abs() <= max
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_point_solve_p2.rs`, `validate` and
+/// `validate_rev`): a [`problem`] (or [`rev_problem`]) and the op's parameters: finite
+/// values, points inside the surface domain wherever a surface evaluator reads them (the
+/// `adjust` target within a domain size of it), a grid sub-domain inside the surface domain
+/// with grid sizes up to 24 in magnitude and a best value that is not NaN, control-net
+/// indices inside the net, boundary-hit counts up to 3 in magnitude, an error norm type up
+/// to 8.
+fn keeps_contract(i: &Inputs) -> bool {
+    let p = match &i.surf {
+        AnySurf::Base(s) => problem(s, &i.dom, i.solver, &i.test, i.tol),
+        AnySurf::Rev { rev } => rev_problem(i, rev),
+    };
+    let Some(p) = p else {
+        return false;
+    };
+    let d = &p.dom;
+    let inside = |uv: &[f64; 2]| uv_within(*uv, d, 0.0);
+    match &i.op {
+        OpIn::Rough | OpIn::Solve => true,
+        OpIn::Poly { iu, iv } => net_index(*iu, *iv, &p, 0),
+        OpIn::Refine { uv } => inside(uv),
+        OpIn::Patch {
+            sub,
+            nu,
+            nv,
+            uv,
+            best,
+        } => {
+            contract::domain_in(sub, d, false, LIMITS.max_coord)
+                && small(*nu, MAX_GRID)
+                && small(*nv, MAX_GRID)
+                && uv.iter().all(|&c| fin(c))
+                && !best.is_nan()
+        }
+        OpIn::Grid { uv, iu, iv } => inside(uv) && net_index(*iu, *iv, &p, 0),
+        OpIn::Seams { uv, value } => inside(uv) && fin(*value),
+        OpIn::Adjust {
+            uv0,
+            tight,
+            uv1,
+            hu,
+            hv,
+        } => {
+            inside(uv0)
+                && fin(*tight)
+                && uv_within(*uv1, d, 1.0)
+                && small(*hu, MAX_HITS)
+                && small(*hv, MAX_HITS)
+        }
+        OpIn::Norms { uv0, tight } | OpIn::Step { uv0, tight, .. } => inside(uv0) && fin(*tight),
+        OpIn::Conv {
+            uv0,
+            tight,
+            ctol: t,
+        }
+        | OpIn::Push {
+            uv0,
+            tight,
+            ptol: t,
+        }
+        | OpIn::Snap {
+            uv0,
+            tight,
+            stol: t,
+        } => inside(uv0) && fin(*tight) && fin(*t),
+        OpIn::Line { uv0, tight, uv1 } => inside(uv0) && fin(*tight) && inside(uv1),
+        OpIn::LineB {
+            uv0,
+            tight,
+            uv1,
+            norm,
+        } => inside(uv0) && fin(*tight) && inside(uv1) && *norm <= MAX_NORM,
+    }
+}
+
 // ---- generated cases ----------------------------------------------------------------
 
 /// A point on the boundary of `d` (a side or a corner), or just inside or outside it.
@@ -866,12 +980,13 @@ fn upstream_cases(ctx: &CaseContext, id: &str) -> Result<Vec<Case>, HarnessError
 }
 
 /// The surface of revolution cases `rev_gen0000..`: case `i` from a generator seeded
-/// with [`REV_SEED`]` + i` (the first of up to 64 draws the generator completes).
+/// with [`REV_SEED`]` + i` (the first of up to 64 completed draws that keeps the input
+/// contract).
 fn rev_cases(id: &str) -> Result<Vec<Case>, HarnessError> {
     let mut out = Vec::new();
     for i in 0..REV_CASES {
         let mut rng = Rng::new(REV_SEED + i as u64);
-        if let Some(c) = (0..64).find_map(|_| gen_rev_case(&mut rng).ok()) {
+        if let Some(c) = (0..64).find_map(|_| gen_rev_case(&mut rng).ok().filter(keeps_contract)) {
             out.push(Case {
                 unit: id.to_string(),
                 name: format!("rev_gen{i:04}"),
@@ -891,7 +1006,7 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         let k = &Kernel::default();
         (0..64)
-            .find_map(|_| gen_case(k, rng).ok())
+            .find_map(|_| gen_case(k, rng).ok().filter(keeps_contract))
             .and_then(|i| serde_json::to_value(i).ok())
     }
 
