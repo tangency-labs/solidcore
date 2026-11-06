@@ -53,9 +53,10 @@ use solidcore_ops::blend::{
     blend, chamfer_sides_ordered, edge_faces_along_ordered, Blend, ChamferSecond, Corners,
 };
 use solidcore_ops::boolean::{boolean, BooleanOp};
+use solidcore_ops::split::{split_faces, Tool};
 use solidcore_ops::sweep::{extrude, loft, revolve, Curve, DraftCorner};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
-use solidcore_record::brep::Brep as Record;
+use solidcore_record::brep::{Brep as Record, Frame, Surface as RecordSurface};
 
 fn corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../solidcore/tests/kernel_cases")
@@ -70,6 +71,7 @@ const PORTED: &[&str] = &[
     "make_sphere",
     "shell",
     "offset_faces",
+    "split_faces",
     "thicken",
     "boolean",
     "extrude",
@@ -279,11 +281,46 @@ fn made(b: solidcore_ops::Result<Body>) -> Result<Slot, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Converts the trace's planar or cylindrical tool to record parameters; angles alone
+/// change units from the trace's degrees to the record's radians.
+fn split_tool(t: &Value) -> Result<Tool, Stop> {
+    let bad = |field: &str| Stop::Fail(format!("split_faces: tool parameter {field}"));
+    let v3 = |p: &Value, key: &str| f64s::<3>(&p[key]).ok_or_else(|| bad(key));
+    let v2 = |p: &Value, key: &str| f64s::<2>(&p[key]).ok_or_else(|| bad(key));
+    if let Some(p) = t.get("plane") {
+        return Ok(Tool {
+            surface: RecordSurface::Plane {
+                origin: v3(p, "origin")?,
+                u_axis: v3(p, "xaxis")?,
+                v_axis: v3(p, "yaxis")?,
+            },
+            domain: [v2(p, "u")?, v2(p, "v")?],
+        });
+    }
+    if let Some(c) = t.get("cylinder") {
+        return Ok(Tool {
+            surface: RecordSurface::Cylinder {
+                frame: Frame {
+                    origin: v3(c, "origin")?,
+                    x_axis: v3(c, "xaxis")?,
+                    y_axis: v3(c, "yaxis")?,
+                },
+                radius: c["radius"].as_f64().ok_or_else(|| bad("radius"))?,
+            },
+            domain: [v2(c, "angle_deg")?.map(f64::to_radians), v2(c, "height")?],
+        });
+    }
+    Err(Stop::Unsupported(
+        "split_faces: tool kind not ported".to_owned(),
+    ))
+}
+
 /// Runs one traced call: its output, or the operation's error as text.
 fn call(c: &Value, ins: &mut [Slot]) -> Result<Result<Slot, String>, Stop> {
     call_with_copy(c, ins, Slot::copied)
 }
 
+/// Dispatches a single-output call while keeping preparation failures separate from refusals.
 fn call_with_copy(
     c: &Value,
     ins: &mut [Slot],
@@ -328,6 +365,44 @@ fn call_with_copy(
             let t = p["thickness"].as_f64().ok_or_else(|| bad("thickness"))?;
             let r = offset::shell(&s.body, &order, &open, t);
             in_place(Slot { order: None, ..s }, r)
+        }
+        "split_faces" => {
+            if ins.len() != 1 {
+                return Err(bad("one input"));
+            }
+            let mut s = first()?;
+            let picked = p["faces"]
+                .as_array()
+                .ok_or_else(|| bad("faces"))?
+                .iter()
+                .map(|i| {
+                    i.as_u64()
+                        .and_then(|i| usize::try_from(i).ok())
+                        .ok_or_else(|| bad("face index"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let tools = p["tools"]
+                .as_array()
+                .ok_or_else(|| bad("tools"))?
+                .iter()
+                .map(split_tool)
+                .collect::<Result<Vec<_>, _>>()?;
+            if s.order.is_none() {
+                let (_, order) = s
+                    .body
+                    .to_record()
+                    .map_err(|e| Stop::Fail(format!("order before split_faces: {e}")))?;
+                s.order = Some(order);
+            }
+            let order = s.order.as_ref().unwrap();
+            if picked.iter().any(|&i| order.faces.get(i).is_none()) {
+                return Err(bad("face outside record order"));
+            }
+            match split_faces(&s.body, order, &picked, &tools) {
+                Ok(Some((body, _))) => made(Ok(body)),
+                Ok(None) => Err("tools do not split any selected face".to_owned()),
+                Err(e) => Err(e.to_string()),
+            }
         }
         "offset_faces" => {
             let mut s = copy_for_edit(&first()?)?;
@@ -1369,6 +1444,105 @@ fn grade(entry: &Path, listed: &BTreeMap<String, Listed>, timeout: Duration) -> 
         }
     }
     g
+}
+
+/// Changing the plane position moves the new edge, and a reordered face pick still cuts
+/// the top; the original body record and its volume/area are unchanged.
+#[test]
+fn split_faces_forwards_the_tool_and_record_face_order() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap());
+    let (before, original_order) = body.to_record().unwrap();
+    let top = before
+        .faces
+        .iter()
+        .position(|f| {
+            matches!(f.surface,
+        RecordSurface::Plane { origin, .. } if origin[2] == 30.0)
+        })
+        .unwrap();
+    let selected = original_order.faces[top];
+    for mode in 0..3 {
+        let mut order = original_order.clone();
+        if mode == 1 {
+            order.faces.rotate_left(2);
+        }
+        let pick = order.faces.iter().position(|&f| f == selected).unwrap();
+        for at in [3.0, 7.0] {
+            let mut ins = [Slot {
+                body: Arc::clone(&body),
+                order: (mode != 2).then_some(order.clone()),
+            }];
+            let step = serde_json::json!({"op": "split_faces", "params": {
+                "faces": [pick], "tools": [{"plane": {"origin": [at, 0, 0],
+                    "xaxis": [0, 1, 0], "yaxis": [0, 0, 1], "u": [-1, 21], "v": [-1, 31]}}]
+            }});
+            let output = call(&step, &mut ins).unwrap().unwrap();
+            assert!(output.order.is_none());
+            assert_eq!(output.body.counts().unwrap(), [7, 15, 10]);
+            assert!((output.body.volume(1e-9).unwrap() - 6000.0).abs() < 1e-6);
+            assert!((output.body.area(1e-9).unwrap() - 2200.0).abs() < 1e-6);
+            let result = output.body.to_record().unwrap().0;
+            let added: Vec<_> = result
+                .vertices
+                .iter()
+                .filter(|v| v.point[0] > 1e-7 && v.point[0] < 10.0 - 1e-7)
+                .collect();
+            assert_eq!(added.len(), 2);
+            for v in added {
+                assert!((v.point[0] - at).abs() < 1e-7);
+                assert!((v.point[2] - 30.0).abs() < 1e-7);
+            }
+            assert_eq!(body.to_record().unwrap().0, before);
+        }
+    }
+}
+
+/// Non-default cylindrical frame, radius, angular subdomain and height survive trace parsing.
+#[test]
+fn split_faces_cylinder_parameters_keep_their_record_units() {
+    let tool = split_tool(&serde_json::json!({"cylinder": {
+        "origin": [1, 2, 3], "xaxis": [0, 1, 0], "yaxis": [-1, 0, 0],
+        "radius": 7, "angle_deg": [-180, 90], "height": [-2, 8]
+    }}))
+    .unwrap();
+    assert_eq!(
+        tool,
+        Tool {
+            surface: RecordSurface::Cylinder {
+                frame: Frame {
+                    origin: [1.0, 2.0, 3.0],
+                    x_axis: [0.0, 1.0, 0.0],
+                    y_axis: [-1.0, 0.0, 0.0],
+                },
+                radius: 7.0
+            },
+            domain: [
+                [-std::f64::consts::PI, std::f64::consts::FRAC_PI_2],
+                [-2.0, 8.0]
+            ],
+        }
+    );
+}
+
+/// Replays one captured face split through the same loading and grading path as the corpus.
+fn replay_face_split_case(name: &str) {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join(format!("booleans/{name}.json"));
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    assert!(run_case(&entry, &e).unwrap().is_some());
+}
+
+/// The circular sketch splits the top face and preserves the block's volume and area.
+#[test]
+fn split_faces_replays_the_sketch_circle() {
+    replay_face_split_case("cov-split-face-by-a-sketch-circle");
+}
+
+/// The cylinder's surface splits the block's face while the cylinder remains a final body.
+#[test]
+fn split_faces_replays_another_bodys_face() {
+    replay_face_split_case("cov-split-face-by-another-bodys-face");
 }
 
 #[test]
