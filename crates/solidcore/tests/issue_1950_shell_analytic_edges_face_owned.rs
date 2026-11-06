@@ -39,6 +39,14 @@ use solidcore::{Brep, Kernel};
 /// SolidCraft's volume of the shelled plate (without the flag).
 const RIG_VOLUME: f64 = 10400.2131;
 
+/// The shelled plate's closed form: the plate (profile area 850 + 50 pi, height 27.5) less
+/// the blind hole (r 5, from the arc r 10 to x = 7.5) less the cavity (the profile inset 2,
+/// 680 + 32 pi, height 23.5, open at x = 42.5) with the hole's offset in it (r 7, from the
+/// arc r 8 to x = 9.5, cut by the cavity's y = 18 wall). The hole and the offset hole are
+/// one-dimensional integrals of a disk's band area, taken by tanh-sinh quadrature on their
+/// smooth pieces to 1e-12 (notes only).
+const CLOSED_FORM: f64 = 10400.212373846494;
+
 /// The plate (as `issue_1795_shell_hole_through_arc.rs` builds the #1528 operand).
 fn drilled(k: &mut Kernel) -> Brep {
     let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
@@ -105,7 +113,6 @@ fn solidcraft_fixes() -> UpstreamFixes {
     f.offset_resolve_crossing_loops = true;
     f.offset_walls_touch_refused = true;
     f.offset_analytic_mate_edges = true;
-    f.precise_properties_split_at_surface_knots = true;
     f.nurb_cylinder_inside_out_frame = true;
     f.shell_inner_shell_of_statuses = true;
     f.offset_collapsed_rounds_mated = true;
@@ -132,12 +139,10 @@ fn solidcraft_fixes() -> UpstreamFixes {
     f.torus_signed_gen_curve_interval = true;
     f.sheet_sweep_joins_profile_wires = true;
     f.point_solve_keeps_triangle_guess = true;
-    f.fillet_setback_from_start_vertex = true;
     f.imprint_trims_edge_to_proto_vertex = true;
     f.imprint_extends_edge_to_proto_vertex = true;
     f.fillet_point_step_per_point = true;
     f.analytic_copy_keeps_parameterization = true;
-    f.fillet_point_bigger_step_retry = true;
     f.precise_properties_body_length_scale = true;
     f.offset_extension_from_base = true;
     f.corner_blend_stays_inside_neighbours = true;
@@ -178,6 +183,11 @@ fn check(v: f64, want: f64, without_flag: f64) {
         "{v} vs the rig's"
     );
     assert!((v - want).abs() <= 1e-9 * want, "{v} vs {want}");
+    // within the volume's accuracy (1e-6) of the closed form
+    assert!(
+        (v - CLOSED_FORM).abs() <= 1e-6 * CLOSED_FORM,
+        "{v} vs {CLOSED_FORM}"
+    );
     // the exact edges move the volume by under 1e-7 relative
     assert!(
         (v - without_flag).abs() <= 1e-7 * without_flag,
@@ -186,21 +196,26 @@ fn check(v: f64, want: f64, without_flag: f64) {
 }
 
 /// With SolidCraft's fixes (the reported configuration; the trimmed cache stub before).
+/// Pinned since #2890 (precise properties integrate from the trims' base): against the
+/// closed form, without the flag +4.26e-4 (it was 10400.212787697543, +4.14e-4), with it
+/// -1.97e-5 (it was 10400.212342134768, -3.17e-5), each within the volume's accuracy.
 #[test]
 fn shelled_plate_with_solidcraft_fixes() {
     let mut fixes = solidcraft_fixes();
     let without_flag = shelled_volume(&fixes);
-    assert!((without_flag - 10400.212787697543).abs() <= 1e-9 * without_flag);
+    assert!((without_flag - 10400.212799740975).abs() <= 1e-9 * without_flag);
     fixes.shell_edges_on_analytics_exact = true;
-    check(shelled_volume(&fixes), 10400.212342134768, without_flag);
+    check(shelled_volume(&fixes), 10400.212354107192, without_flag);
 }
 
-/// With only the flag on.
+/// With only the flag on. Pinned since #2890: against the closed form, without the flag
+/// +4.84e-4 (it was 10400.212793536877, +4.20e-4), with it +3.99e-5 (it was
+/// 10400.21294715712, +5.73e-4), each within the volume's accuracy.
 #[test]
 fn shelled_plate_with_the_flag_alone() {
     let mut fixes = UpstreamFixes::default();
     let without_flag = shelled_volume(&fixes);
-    assert!((without_flag - 10400.212793536877).abs() <= 1e-9 * without_flag);
+    assert!((without_flag - 10400.212857439197).abs() <= 1e-9 * without_flag);
     fixes.shell_edges_on_analytics_exact = true;
-    check(shelled_volume(&fixes), 10400.21294715712, without_flag);
+    check(shelled_volume(&fixes), 10400.212413698822, without_flag);
 }
