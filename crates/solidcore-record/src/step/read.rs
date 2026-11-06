@@ -238,20 +238,27 @@ fn curve_form(p: Option<&Param>) -> R<CurveForm> {
     )
 }
 
-fn surface_form(p: Option<&Param>) -> SurfaceForm {
-    match p.and_then(Param::as_enum) {
-        Some("PLANE_SURF") => SurfaceForm::PlaneSurf,
-        Some("CYLINDRICAL_SURF") => SurfaceForm::CylindricalSurf,
-        Some("CONICAL_SURF") => SurfaceForm::ConicalSurf,
-        Some("SPHERICAL_SURF") => SurfaceForm::SphericalSurf,
-        Some("TOROIDAL_SURF") => SurfaceForm::ToroidalSurf,
-        Some("SURF_OF_REVOLUTION") => SurfaceForm::SurfOfRevolution,
-        Some("RULED_SURF") => SurfaceForm::RuledSurf,
-        Some("GENERALISED_CONE") => SurfaceForm::GeneralisedCone,
-        Some("QUADRIC_SURF") => SurfaceForm::QuadricSurf,
-        Some("SURF_OF_LINEAR_EXTRUSION") => SurfaceForm::SurfOfLinearExtrusion,
-        _ => SurfaceForm::Unspecified,
-    }
+fn surface_form(p: Option<&Param>) -> R<SurfaceForm> {
+    enumeration(
+        p,
+        "B-spline surface_form",
+        &[
+            ("PLANE_SURF", SurfaceForm::PlaneSurf),
+            ("CYLINDRICAL_SURF", SurfaceForm::CylindricalSurf),
+            ("CONICAL_SURF", SurfaceForm::ConicalSurf),
+            ("SPHERICAL_SURF", SurfaceForm::SphericalSurf),
+            ("TOROIDAL_SURF", SurfaceForm::ToroidalSurf),
+            ("SURF_OF_REVOLUTION", SurfaceForm::SurfOfRevolution),
+            ("RULED_SURF", SurfaceForm::RuledSurf),
+            ("GENERALISED_CONE", SurfaceForm::GeneralisedCone),
+            ("QUADRIC_SURF", SurfaceForm::QuadricSurf),
+            (
+                "SURF_OF_LINEAR_EXTRUSION",
+                SurfaceForm::SurfOfLinearExtrusion,
+            ),
+            ("UNSPECIFIED", SurfaceForm::Unspecified),
+        ],
+    )
 }
 
 fn knot_spec(p: Option<&Param>) -> R<KnotSpec> {
@@ -600,7 +607,7 @@ impl<'a> Reader<'a> {
         }
         let p = e.params();
         let origin = self.point(reference(p.get(1), "axis location")?)?;
-        let direction = match p.get(2).and_then(Param::as_ref_id) {
+        let direction = match optional_reference(p.get(2), "axis direction")? {
             Some(d) => Some(self.direction(d)?),
             None => None,
         };
@@ -841,11 +848,15 @@ impl<'a> Reader<'a> {
                     height = height.max(h);
                     associated.push(a);
                 }
-                let master = match p.get(3).and_then(Param::as_enum) {
-                    Some("PCURVE_S1") => PreferredRep::PcurveS1,
-                    Some("PCURVE_S2") => PreferredRep::PcurveS2,
-                    _ => PreferredRep::Curve3d,
-                };
+                let master = enumeration(
+                    p.get(3),
+                    "surface curve master_representation",
+                    &[
+                        ("CURVE_3D", PreferredRep::Curve3d),
+                        ("PCURVE_S1", PreferredRep::PcurveS1),
+                        ("PCURVE_S2", PreferredRep::PcurveS2),
+                    ],
+                )?;
                 return Ok(CurveEntry {
                     curve: Arc::new(Curve::SurfaceCurve {
                         kind,
@@ -1236,10 +1247,10 @@ impl<'a> Reader<'a> {
             u_multiplicities,
             v_knots,
             v_multiplicities,
-            form: surface_form(base.get(4)),
-            u_closed: logical(base.get(5), "u_closed").unwrap_or(Logical::Unknown),
-            v_closed: logical(base.get(6), "v_closed").unwrap_or(Logical::Unknown),
-            self_intersect: logical(base.get(7), "self_intersect").unwrap_or(Logical::Unknown),
+            form: surface_form(base.get(4))?,
+            u_closed: logical(base.get(5), "u_closed")?,
+            v_closed: logical(base.get(6), "v_closed")?,
+            self_intersect: logical(base.get(7), "self_intersect")?,
             knot_spec,
         })))
     }
