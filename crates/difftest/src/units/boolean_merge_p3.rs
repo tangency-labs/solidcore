@@ -1275,10 +1275,10 @@ mod tests {
             assert_ne!(output(&changed, family).unwrap(), base);
             let mut null = vec![0.0];
             single_result(&pool, None, true, 1, &mut null).unwrap();
-            assert_eq!(
-                output(&null, family).unwrap().ints["topology_counts"],
-                [-1, -1, -1]
-            );
+            // no result: no record
+            let null = output(&null, family).unwrap();
+            assert!(null.ints["topology_counts"].is_empty());
+            assert!(null.ints["operand_identity"].is_empty());
         }
         let base = output(&rust, 3).unwrap();
         let vertex = pool.breps[0].vertices().ids().next().unwrap();
