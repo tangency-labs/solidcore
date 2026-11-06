@@ -53,6 +53,7 @@ use solidcore_ops::blend::{
     blend, chamfer_sides_ordered, edge_faces_along_ordered, Blend, ChamferSecond, Corners,
 };
 use solidcore_ops::boolean::{boolean, BooleanOp};
+use solidcore_ops::extend::{extend_sheet, Continuation};
 use solidcore_ops::split::{split_faces, Tool};
 use solidcore_ops::stitch::{merge_faces, stitch};
 use solidcore_ops::sweep::{extrude, loft, revolve, Curve, DraftCorner};
@@ -74,6 +75,7 @@ const PORTED: &[&str] = &[
     "shell",
     "offset_faces",
     "split_faces",
+    "extend_sheet",
     "thicken",
     "untrim_face",
     "boolean",
@@ -442,6 +444,53 @@ fn call_with_copy(
             let t = p["thickness"].as_f64().ok_or_else(|| bad("thickness"))?;
             let r = offset::shell(&s.body, &order, &open, t);
             in_place(Slot { order: None, ..s }, r)
+        }
+        "extend_sheet" => {
+            if ins.len() != 1 {
+                return Err(bad("one input"));
+            }
+            let mut source = first()?;
+            if source.order.is_none() {
+                let (_, order) = source
+                    .body
+                    .to_record()
+                    .map_err(|e| Stop::Fail(format!("order before extend_sheet: {e}")))?;
+                source.order = Some(order);
+            }
+            // Map the source record's indices through the preparation copy.
+            let s = copy_for_edit(&source)?;
+            let order = s
+                .order
+                .as_ref()
+                .ok_or_else(|| Stop::Fail("extend_sheet: missing copied order".to_owned()))?;
+            if p["edge"]["kind"].as_str() != Some("edge") {
+                return Err(bad("edge pick kind"));
+            }
+            let picked = p["edge"]["picked"]
+                .as_array()
+                .ok_or_else(|| bad("edge picked"))?;
+            let [pick] = picked.as_slice() else {
+                return Err(bad("exactly one edge"));
+            };
+            let edge = pick["index"]
+                .as_u64()
+                .and_then(|i| usize::try_from(i).ok())
+                .ok_or_else(|| bad("edge index"))?;
+            if order.edges.get(edge).is_none() {
+                return Err(bad("edge outside record order"));
+            }
+            let distance = p["distance"].as_f64().ok_or_else(|| bad("distance"))?;
+            let how = match p["how"].as_str().ok_or_else(|| bad("how"))? {
+                "natural" => Continuation::Natural,
+                "tangent" => Continuation::Tangent,
+                "curvature" => Continuation::Curvature,
+                how => {
+                    return Err(Stop::Unsupported(format!(
+                        "extend_sheet: continuation {how} not ported"
+                    )))
+                }
+            };
+            made(extend_sheet(&s.body, order, edge, distance, how))
         }
         "split_faces" => {
             if ins.len() != 1 {
@@ -1515,6 +1564,7 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
         "chamfer_sides",
         "stitch",
         "merge_faces",
+        "extend_sheet",
     ] {
         let step = serde_json::json!({
             "op": op, "error": "expected edit refusal",
@@ -1568,6 +1618,10 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
             "distance": 1, "first": [0,0,1], "second": {"distance": 2}
         }}),
         serde_json::json!({"op": "stitch", "params": {"tolerance": 1e-5}}),
+        serde_json::json!({"op": "extend_sheet", "params": {
+            "edge": {"kind": "edge", "picked": [{"index": 0}]},
+            "distance": 1, "how": "natural"
+        }}),
         serde_json::json!({"op": "merge_faces", "params": {
             "keep": {"kind": "edge", "picked": []}
         }}),
@@ -2238,6 +2292,150 @@ fn split_body_replays_face_plane() {
 #[test]
 fn split_body_replays_own_extended_face() {
     replay_face_split_case("4654-split-body-by-its-own-face-extended");
+}
+
+/// The captured quarter-cylinder sheet and its original record order.
+fn extension_sheet_fixture() -> (PathBuf, Value, Slot) {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join("surfaces/cov-extend-quarter-cylinder-along-its-axis.json");
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    let record: Record = serde_json::from_value(records(&entry, &e)["b2"].clone()).unwrap();
+    let (body, order) = Body::from_record(&record, true).unwrap();
+    (
+        entry,
+        e,
+        Slot {
+            body: Arc::new(body),
+            order: Some(order),
+        },
+    )
+}
+
+fn sheet_extension_step(edge: usize, distance: f64, how: &str) -> Value {
+    serde_json::json!({"op":"extend_sheet","params":{"edge":{"kind":"edge","picked":[{"index":edge}]},"distance":distance,"how":how}})
+}
+
+/// The exact captured extension is graded with its unchanged trace and expectations.
+#[test]
+fn extend_sheet_replays_the_quarter_cylinder() {
+    let (entry, e, _) = extension_sheet_fixture();
+    assert_eq!(e["rig"]["status"], "pass");
+    assert!(e["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|c| c["error"].is_null()));
+    // A zero reference volume has no relative-deviation value; a refusal would error
+    // because none of these calls expects one.
+    assert_eq!(run_case(&entry, &e).unwrap(), None);
+}
+
+/// A picked top/bottom arc and distance determine the new height under any cached record order.
+#[test]
+fn extend_sheet_preserves_edge_order_distance_and_operand() {
+    let (_, _, input) = extension_sheet_fixture();
+    let (before, original_order) = input.body.to_record().unwrap();
+    for top in [false, true] {
+        let z = if top { 20.0 } else { 0.0 };
+        let edge = before
+            .edges
+            .iter()
+            .position(|edge| {
+                edge.vertices.len() == 2
+                    && edge
+                        .vertices
+                        .iter()
+                        .all(|&v| (before.vertices[v as usize].point[2] - z).abs() < 1e-7)
+            })
+            .unwrap();
+        let edge_id = original_order.edges[edge];
+        for mode in 0..3 {
+            let mut order = original_order.clone();
+            if mode == 1 {
+                order.edges.rotate_left(2);
+            }
+            let pick = order.edges.iter().position(|&id| id == edge_id).unwrap();
+            for distance in [5.0, 9.0] {
+                let step = sheet_extension_step(pick, distance, "natural");
+                let out = call(
+                    &step,
+                    &mut [Slot {
+                        body: Arc::clone(&input.body),
+                        order: (mode != 2).then_some(order.clone()),
+                    }],
+                )
+                .unwrap()
+                .unwrap();
+                assert!(out.order.is_none());
+                assert_eq!(out.body.counts().unwrap(), [1, 4, 4]);
+                let want_area = std::f64::consts::PI * 5.0 * (20.0 + distance);
+                let area = out.body.area(1e-9).unwrap();
+                assert!(
+                    (area - want_area).abs() <= 1e-9 * want_area,
+                    "{area} vs {want_area}"
+                );
+                let record = out.body.to_record().unwrap().0;
+                assert!(
+                    matches!(record.faces[0].surface,RecordSurface::Cylinder {radius,..} if (radius-10.0).abs()<1e-10)
+                );
+                let lo = if top { 0.0 } else { -distance };
+                let hi = if top { 20.0 + distance } else { 20.0 };
+                assert!(record
+                    .vertices
+                    .iter()
+                    .all(|v| (v.point[2] - lo).abs() < 1e-7 || (v.point[2] - hi).abs() < 1e-7));
+                assert!(record
+                    .vertices
+                    .iter()
+                    .any(|v| (v.point[2] - lo).abs() < 1e-7));
+                assert!(record
+                    .vertices
+                    .iter()
+                    .any(|v| (v.point[2] - hi).abs() < 1e-7));
+                assert_eq!(input.body.to_record().unwrap().0, before);
+            }
+        }
+    }
+}
+
+/// Trace errors stay replay failures, while a parsed nonpositive distance is an API refusal.
+#[test]
+fn extend_sheet_metadata_and_refusal_are_distinct() {
+    let (_, _, input) = extension_sheet_fixture();
+    let step = sheet_extension_step(3, 5.0, "natural");
+    for field in ["edge", "distance", "how"] {
+        let mut bad = step.clone();
+        bad["params"].as_object_mut().unwrap().remove(field);
+        assert!(matches!(
+            call(&bad, &mut [input.clone()]),
+            Err(Stop::Fail(_))
+        ));
+    }
+    for pick in [
+        serde_json::json!({"kind":"face","picked":[{"index":3}]}),
+        serde_json::json!({"kind":"edge","picked":[]}),
+        serde_json::json!({"kind":"edge","picked":[{}]}),
+        serde_json::json!({"kind":"edge","picked":[{"index":3},{"index":1}]}),
+        serde_json::json!({"kind":"edge","picked":[{"index":100000}]}),
+    ] {
+        let mut bad = step.clone();
+        bad["params"]["edge"] = pick;
+        assert!(matches!(
+            call(&bad, &mut [input.clone()]),
+            Err(Stop::Fail(_))
+        ));
+    }
+    assert!(matches!(
+        call(
+            &sheet_extension_step(3, 5.0, "unported_mode"),
+            &mut [input.clone()]
+        ),
+        Err(Stop::Unsupported(_))
+    ));
+    assert!(matches!(
+        call(&sheet_extension_step(3, 0.0, "natural"), &mut [input]),
+        Ok(Err(_))
+    ));
 }
 
 #[test]
