@@ -1,9 +1,10 @@
-//! Differential topology traversal on real SMLib graphs. Fixture construction reuses
-//! topology.vertexuse: the Rust side builds a wire edge, face or network source itself
-//! ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
-//! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal order;
-//! no C++ export (graph or vertex use lists) and no traversal result reaches the Rust
-//! side.
+//! Runner for unit `topology.topology_traverser`: the owned topology traversals. Ported
+//! from upstream `SmTopologyTraverser.cpp` (the shim
+//! `harness/cpp/shim/topology_topology_traverser.cpp` was the reference); checked against
+//! its golden. Fixture construction reuses topology.vertexuse: the runner builds a wire
+//! edge, face or network source itself ([`crate::own_builder`]) and reads an `.smb` file
+//! with the Rust reader ([`crate::own_reader::file_in_order`]), both renumbered into the
+//! shim's traversal order. The generator picks an op the built B-rep has seeds for.
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
@@ -13,11 +14,32 @@ use solidcore::kernel::Kernel;
 use solidcore::topology::topology_traverser::{self as tr, Entity, Marks};
 use solidcore::topology::{ArenaId, EdgeId, EdgeuseId, FaceId, FaceuseId, ShellId, VertexId};
 use solidcore::SolidError;
-use solidcore_ffi::units::topology_topology_traverser::{self as ffi, Request};
-use solidcore_ffi::units::topology_vertexuse as fixture;
 
-/// Differential runner for the owned topology traversals.
+/// Runner for the owned topology traversals.
 pub struct Runner;
+
+/// A traversal request. Opcodes: faces, wires, face uses, closure, shell,
+/// replace face-use shells, remove shell, inner-shell parity (0 through 7).
+/// `want` selects optional outputs; `pre` marks seed/first edge/vertex/faceuse/vertexuse.
+#[derive(Debug, Clone, Copy)]
+struct Request {
+    /// Operation code, 0 through 7.
+    op: i32,
+    /// Seed index; -1 for a null face/wire seed.
+    start: i64,
+    /// Target shell index for operations 4 through 6.
+    target: i64,
+    /// One real mark's bit (1, 2, 4, 8 or 16).
+    mask: i32,
+    /// Optional output bits, 0 through 3.
+    want: i32,
+    /// Initial mark bits, 0 through 31.
+    pre: i32,
+    /// Seed output arrays with their first existing object.
+    prefill: bool,
+    /// Repeat once or twice with persistent marks and output arrays.
+    repeat: i32,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Inputs {
@@ -30,31 +52,6 @@ struct Inputs {
     pre: i32,
     prefill: bool,
     repeat: i32,
-}
-
-fn block(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut out = Vec::new();
-    match &i.brep {
-        BrepIn::File { rebuild, .. } => out.extend([0.0, f64::from(*rebuild)]),
-        BrepIn::Wire { curve, t0, t1 } => {
-            out.push(1.0);
-            shared::push_curve(&mut out, curve)?;
-            out.extend([t0, t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            out.push(2.0);
-            shared::push_surface(&mut out, surface)?;
-            out.extend(dom);
-        }
-        BrepIn::Network => out.push(3.0),
-    }
-    out.extend([0.0, 0.0]);
-    Ok(out)
-}
-
-fn export(i: &Inputs) -> Result<ffi::Fixture, HarnessError> {
-    ffi::export(&shared::path_of(&i.brep)?, &block(i)?)
-        .map_err(|e| HarnessError::new(e.to_string()))
 }
 
 fn request(i: &Inputs, c: [usize; 10]) -> Request {
@@ -165,26 +162,6 @@ fn own_brep(
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.topology_traverser"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let ex = export(&i)?;
-        let Some(c) = fixture::counts(&ex.graph) else {
-            return Ok(Output::new().values("build", ex.graph));
-        };
-        let r = request(&i, c);
-        if !available(r) {
-            return Ok(Output::err("no seed of requested kind"));
-        }
-        ffi::eval(&shared::path_of(&i.brep)?, &block(&i)?, r)
-            .map(|v| {
-                Output::new().ints(
-                    "traversal",
-                    v.into_iter().map(|x| x as i64).collect::<Vec<_>>(),
-                )
-            })
-            .map_err(|e| HarnessError::new(e.to_string()))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -372,9 +349,9 @@ impl UnitDiff for Runner {
             prefill: rng.below(2) != 0,
             repeat: 1 + rng.below(2) as i32,
         };
-        // Failed exports and empty graphs keep their original case so errors
+        // Failed builds and empty graphs keep their original case so errors
         // remain visible. Never stop generation or discard a difficult input.
-        if let Some(counts) = export(&i).ok().and_then(|ex| fixture::counts(&ex.graph)) {
+        if let Ok(Ok((_, counts))) = own_brep(&mut Kernel::default(), &i) {
             select_generated_op(&mut i, counts, rng);
         }
         serde_json::to_value(i).ok()
