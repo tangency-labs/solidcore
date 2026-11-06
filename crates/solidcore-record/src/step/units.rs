@@ -4,7 +4,8 @@
 //! [`Exchange`]. Missing or malformed units read as millimetres and radians; nothing here fails.
 //!
 //! A unit is a factor: millimetres per file length unit, radians per file plane angle unit. An
-//! SI unit is its prefix times its base (`METRE` = 1000 mm, `RADIAN` = 1 rad); a
+//! SI unit's factor is a literal of a table by prefix (a `METRE` is 1000 mm, a `MILLI` `METRE`
+//! 1.0, a `NANO` `METRE` 1e-6; a `RADIAN` is 1 rad, a `MILLI` `RADIAN` 1e-3), never a product; a
 //! `CONVERSION_BASED_UNIT` is the value of its measure times the factor of the measure's own unit
 //! (an inch is `LENGTH_MEASURE(25.4)` of millimetres, a degree `PLANE_ANGLE_MEASURE(0.01745…)`
 //! of radians). Only multiplications: the factor of a degree is the number the file writes, not
@@ -52,27 +53,34 @@ pub struct Context {
     pub uncertainty: Option<f64>,
 }
 
-/// The factor of an SI prefix (`$` or an unknown prefix: 1).
-fn si_prefix(p: Option<&Param>) -> f64 {
-    match p.and_then(Param::as_enum) {
-        Some("EXA") => 1e18,
-        Some("PETA") => 1e15,
-        Some("TERA") => 1e12,
-        Some("GIGA") => 1e9,
-        Some("MEGA") => 1e6,
-        Some("KILO") => 1e3,
-        Some("HECTO") => 1e2,
-        Some("DECA") => 1e1,
-        Some("DECI") => 1e-1,
-        Some("CENTI") => 1e-2,
-        Some("MILLI") => 1e-3,
-        Some("MICRO") => 1e-6,
-        Some("NANO") => 1e-9,
-        Some("PICO") => 1e-12,
-        Some("FEMTO") => 1e-15,
-        Some("ATTO") => 1e-18,
-        _ => 1.0,
-    }
+/// The SI prefixes of ISO 10303-41 `si_prefix`: each prefix's name, the millimetres in its metre
+/// and its factor (the radians in its radian), as literals. A literal is the double nearest the
+/// exact value; a product such as `1e-9 * 1000.0` is not (it is 1.0000000000000002e-6).
+const SI_PREFIXES: [(&str, f64, f64); 16] = [
+    ("EXA", 1e21, 1e18),
+    ("PETA", 1e18, 1e15),
+    ("TERA", 1e15, 1e12),
+    ("GIGA", 1e12, 1e9),
+    ("MEGA", 1e9, 1e6),
+    ("KILO", 1e6, 1e3),
+    ("HECTO", 1e5, 1e2),
+    ("DECA", 1e4, 1e1),
+    ("DECI", 100.0, 1e-1),
+    ("CENTI", 10.0, 1e-2),
+    ("MILLI", 1.0, 1e-3),
+    ("MICRO", 1e-3, 1e-6),
+    ("NANO", 1e-6, 1e-9),
+    ("PICO", 1e-9, 1e-12),
+    ("FEMTO", 1e-12, 1e-15),
+    ("ATTO", 1e-15, 1e-18),
+];
+
+/// The millimetres in a metre and the radians in a radian with the SI prefix `p` (`$` or an
+/// unknown prefix: no prefix).
+fn si_prefix(p: Option<&Param>) -> (f64, f64) {
+    p.and_then(Param::as_enum)
+        .and_then(|name| SI_PREFIXES.iter().find(|x| x.0 == name))
+        .map_or((1000.0, 1.0), |x| (x.1, x.2))
 }
 
 /// What a unit measures.
@@ -106,12 +114,12 @@ fn factor(ex: &Exchange, id: u64, depth: usize) -> Option<(UnitKind, f64)> {
         UnitKind::Other
     };
     if let Some(si) = e.record("SI_UNIT") {
-        let base = match si.get(1).and_then(Param::as_enum) {
-            Some("METRE") => 1000.0,
-            Some("RADIAN") => 1.0,
-            _ => return Some((kind, 1.0)),
-        };
-        return Some((kind, si_prefix(si.first()) * base));
+        let (mm, rad) = si_prefix(si.first());
+        return Some(match si.get(1).and_then(Param::as_enum) {
+            Some("METRE") => (kind, mm),
+            Some("RADIAN") => (kind, rad),
+            _ => (kind, 1.0),
+        });
     }
     if let Some(cb) = e.record("CONVERSION_BASED_UNIT") {
         let m = ex.get(cb.get(1)?.as_ref_id()?)?;
@@ -214,35 +222,8 @@ mod tests {
             "#4",
         );
         assert_eq!(c.units, Units { len: 1.0, ang: 1.0 });
-        // 1e-7 times MILLI (1e-3) times METRE (1000 mm).
-        assert_eq!(c.uncertainty, Some(1e-7 * (1e-3 * 1000.0)));
-    }
-
-    #[test]
-    fn si_prefixes() {
-        for (prefix, mm) in [
-            (".MILLI.", 1e-3 * 1000.0),
-            ("$", 1000.0),
-            (".MICRO.", 1e-6 * 1000.0),
-            (".CENTI.", 1e-2 * 1000.0),
-            (".KILO.", 1e3 * 1000.0),
-        ] {
-            let c = ctx(
-                &format!("#1=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT({prefix},.METRE.));"),
-                "#1",
-                "",
-            );
-            assert_eq!(c.units.len, mm, "{prefix}");
-            assert_eq!(c.units.ang, 1.0, "{prefix}");
-            assert_eq!(c.uncertainty, None, "{prefix}");
-        }
-        // The products the table defines: a millimetre is exactly 1, a metre 1000.
-        assert_eq!(1e-3 * 1000.0, 1.0);
-        let ex = parse("#1=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MICRO.,.METRE.));");
-        assert_eq!(unit_factor(&ex, 1), Some((UnitKind::Length, 1e-6 * 1000.0)));
-        // A milliradian.
-        let ex = parse("#1=(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT(.MILLI.,.RADIAN.));");
-        assert_eq!(unit_factor(&ex, 1), Some((UnitKind::Angle, 1e-3)));
+        // 1e-7 millimetres.
+        assert_eq!(c.uncertainty, Some(1e-7));
     }
 
     #[test]
@@ -399,7 +380,7 @@ mod tests {
         );
         assert_eq!(c.units.len, 25.4);
         assert_eq!(c.uncertainty, Some(1e-4 * 25.4));
-        // A measure in metres in an inch context: its own unit, 1e-6 * 1000 mm.
+        // A measure in metres in an inch context: its own unit, 1e-6 m = 1e-6 * 1000 mm.
         let c = ctx(
             &format!(
                 "{inch}#12=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT($,.METRE.));\
@@ -425,7 +406,7 @@ mod tests {
             "#1",
             "#20,#21",
         );
-        assert_eq!(c.uncertainty, Some(2e-4 * (1e-3 * 1000.0)));
+        assert_eq!(c.uncertainty, Some(2e-4));
     }
 
     #[test]
@@ -461,7 +442,7 @@ mod tests {
             "#1",
             "#20,#21,#99",
         );
-        assert_eq!(c.uncertainty, Some(1e-4 * (1e-3 * 1000.0)));
+        assert_eq!(c.uncertainty, Some(1e-4));
     }
 
     /// The mm per unit of `SI_UNIT(prefix, .METRE.)` and the rad per unit of
