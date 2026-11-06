@@ -1,18 +1,17 @@
-//! Native B-rep construction calls and dependency-limited Rust entrypoints.
+//! Runner for unit `topology.brep_p9`: the B-rep construction calls of
+//! `solidcore::topology::brep::p9`, ported from upstream `SmBrep` (`SmBrep.cpp`); checked
+//! against its golden.
 //!
-//! The Rust side builds a wire edge, face or network source itself
-//! ([`crate::own_builder`]), reads an `.smb` file with the Rust reader
-//! ([`crate::own_builder::read_with`]), and repeats the shim's setup edits
-//! ([`own_setup`]) on either, so no C++ state reaches it. Split refusals compare
-//! their retained endpoint as well as the complete semantic topology/geometry
-//! snapshot. Successful native mutations on deferred paths are not parity passes.
-//! `OrientSheetSurfaces` (op 1) runs under a topology change tracker on both sides
-//! (`harness/cpp/shim/sc_tracked.h`, `topology_brep_p3::run_tracked`): its record is
-//! the status, then the tracker's lists and events, so the face and surface
-//! `SwapUV` notifications are compared.
+//! The case builds a wire edge, face or network source itself ([`crate::own_builder`]),
+//! or reads an `.smb` file with the Rust reader ([`crate::own_builder::read_with`]), and
+//! makes the upstream test fixture's setup edits ([`own_setup`]) on either. Split
+//! refusals record their retained endpoint as well as the complete semantic
+//! topology/geometry snapshot. `OrientSheetSurfaces` (op 1) runs under a topology change
+//! tracker (`topology_brep_p3::run_tracked`): its record is the status, then the
+//! tracker's lists and events, so the face and surface `SwapUV` notifications are
+//! recorded.
 use super::boolean_merge_p1::{graph_reachable, Canon};
 use super::topology_edgeuse_p1::{self as spec, BrepIn};
-use super::topology_vertexuse::import_raw;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -27,7 +26,6 @@ use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::topology::brep::p9 as port;
 use solidcore::topology::{ArenaId, Brep, EdgeId, FaceId, RegionId, VertexuseId};
 use solidcore::SolidError;
-use solidcore_ffi::units::topology_brep_p9 as ffi;
 
 /// Differential runner for `topology.brep_p9`.
 pub struct Runner;
@@ -134,20 +132,6 @@ fn ordinary<T>(r: solidcore::Result<T>) -> Result<i32, SolidError> {
         Ok(_) => Ok(0),
         Err(SolidError::Upstream { code, .. }) => Ok(code),
         Err(e) => Err(e),
-    }
-}
-fn request<'a>(i: &Inputs, path: &'a str, block: &'a [f64]) -> ffi::Request<'a> {
-    ffi::Request {
-        op: i.op,
-        selector: i.selector,
-        variant: i.variant,
-        editing: i.editing,
-        same: i.same,
-        path,
-        block,
-        parameter: i.parameter,
-        point: i.point,
-        tolerances: i.tolerances,
     }
 }
 fn target<I: ArenaId>(count: usize, selector: u8) -> Option<I> {
@@ -721,26 +705,6 @@ fn curve_ref(edge: EdgeId, kind: i64) -> solidcore::geom::object::ObjectRef {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_p9"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let path = spec::path_of(Some(&i.brep))?;
-        let block = spec::brep_block_of(Some(&i.brep), false, false)?;
-        let raw = ffi::eval(request(&i, &path, &block), false).map_err(|e| error(&e))?;
-        let n = *raw.get(1).ok_or_else(|| error("short native output"))? as usize;
-        let mut record = vec![*raw.first().ok_or_else(|| error("missing native status"))?];
-        record.extend(
-            raw.get(2..2 + n)
-                .ok_or_else(|| error("short native record"))?,
-        );
-        let (mut b, _) = import_raw(
-            raw.get(2 + n..)
-                .ok_or_else(|| error("short native graph"))?,
-        )?;
-        canon_record(&b, i.op, &mut record);
-        // the same Rust-only lists emptied as on the Rust side
-        skeleton_caches(&mut b);
-        Ok(graph_reachable(&b, record))
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
