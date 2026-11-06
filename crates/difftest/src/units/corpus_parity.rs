@@ -420,46 +420,6 @@ pub fn run_child(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// A directory only this user can reach (mode 0700 on Unix), made fresh under the
-/// system temp directory for a file another runner writes and reads by name, and removed with everything in it
-/// when dropped (on every return path). `create_dir` fails on any existing entry,
-/// a planted symlink included, and the next name is tried.
-pub(super) struct PrivateDir(pub(super) PathBuf);
-
-impl PrivateDir {
-    pub(super) fn new() -> std::io::Result<Self> {
-        let base = std::env::temp_dir();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        let mut last = None;
-        for attempt in 0..64_u32 {
-            let dir = base.join(format!(
-                "corpus-parity-{}-{nanos:09}-{attempt}",
-                std::process::id()
-            ));
-            let mut builder = std::fs::DirBuilder::new();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::DirBuilderExt;
-                builder.mode(0o700);
-            }
-            match builder.create(&dir) {
-                Ok(()) => return Ok(Self(dir)),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
-                Err(e) => return Err(e),
-            }
-        }
-        Err(last.unwrap_or_else(|| std::io::Error::other("no free name")))
-    }
-}
-
-impl Drop for PrivateDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 /// Runs one side on `path` in a child process, with [`TIMEOUT`].
 fn measure_isolated(side: &str, path: &str) -> Measured {
     let exe = match std::env::current_exe() {
