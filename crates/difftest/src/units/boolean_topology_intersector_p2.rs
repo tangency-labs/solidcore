@@ -1,7 +1,6 @@
-//! Runner for unit `boolean.topology_intersector_p2`. C++:
-//! `solidcore_ffi::units::boolean_topology_intersector_p2` (shim
-//! `harness/cpp/shim/boolean_topology_intersector_p2.cpp`). Rust:
-//! `solidcore::boolean::topology_intersector::p2`.
+//! Runner for unit `boolean.topology_intersector_p2`: upstream `SmTopologyIntersector`'s
+//! second part ported into `solidcore::boolean::topology_intersector::p2`, checked
+//! against the unit's golden.
 //!
 //! **Shared script.** Part 2's members run on the same `SmTopologyIntersector` over the
 //! same two real B-reps as part 1's, so a case is a part 1 script
@@ -9,11 +8,9 @@
 //! layout, prefix cutting, guards) whose ops may include part 2's (`remove_rel`,
 //! `squeeze`, `delete_faces`, `fix_gaps`, `intersect_topo`, `set_rels`, `iir`,
 //! `fixup_class`, `fixup_split`, `edge_edge`, `edge_face_coin`, `close_loop`; shim ops 41
-//! to 52). The
-//! C++ side runs through part 2's entry point, the Rust side through the same
-//! interpreter as part 1's, which dispatches part 2's ops to
+//! to 52). They run through the same interpreter as part 1's, which dispatches part 2's ops to
 //! [`solidcore::boolean::topology_intersector::p2`]. `RegisterExistingSSI` is part 1's
-//! script op 16, now run by the port on both sides.
+//! script op 16, run by the port.
 //!
 //! **Scripts.** Each generated script relates a few vertex pairs of the two B-reps
 //! (so mates exist and conflict), then runs part 2's ops; classification pairs of the
@@ -34,10 +31,9 @@
 
 use serde_json::Value;
 
-use solidcore_ffi::units::boolean_topology_intersector_p2 as ffi;
 
 use super::boolean_topology_intersector_p1::{
-    gen_brep, gen_h, gen_list, gen_sel, gen_tol, run_cpp_with, run_rust, BrepIn, CcIn, Gen, Hin,
+    gen_brep, gen_h, gen_list, gen_sel, gen_tol, run_rust, BrepIn, CcIn, Gen, Hin,
     Inputs, IvlIn, OpIn, PciIn, SrfIn, K_EDGE, K_EDGE_CURVE, K_FACE, K_NULL, K_VERTEX,
     MIN_GENERATED,
 };
@@ -1079,12 +1075,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let k = &solidcore::kernel::Kernel::default();
-        let i: Inputs = case.parse()?;
-        run_cpp_with(k, &i, ffi::eval)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

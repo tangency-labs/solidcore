@@ -1,15 +1,12 @@
-//! Runner for unit `boolean.topology_intersector_p1`. C++:
-//! `solidcore_ffi::units::boolean_topology_intersector_p1` (shim
-//! `harness/cpp/shim/boolean_topology_intersector_p1.cpp`). Rust:
-//! `solidcore::boolean::topology_intersector::p1`.
+//! Runner for unit `boolean.topology_intersector_p1`: upstream `SmTopologyIntersector`
+//! ported into `solidcore::boolean::topology_intersector::p1`, checked against the unit's
+//! golden.
 //!
-//! **Two real B-reps.** Each case builds two `SmBrep`s on the C++ side (an upstream
-//! `.smb` file, a wire edge, a face from a surface, or the wire network of
-//! `prog_test` `my_test_topology`; the second may be absent), makes an
-//! `SmTopologyIntersector` over them and runs a script of the unit's functions. The
-//! Rust side builds both B-reps with the Rust kernel ([`own_breps`]: the Rust `.smb`
-//! reader and constructors, renumbered into the fixture's traversal order, so no C++
-//! export reaches it) into two [`Brep`]s behind one adapter ([`Two`], which implements the
+//! **Two real B-reps.** Each case builds two B-reps (an upstream `.smb` file, a wire
+//! edge, a face from a surface, or the wire network of `prog_test` `my_test_topology`;
+//! the second may be absent) with the Rust kernel ([`own_breps`]: the Rust `.smb` reader
+//! and constructors, renumbered into the reference fixture's traversal order) into two
+//! [`Brep`]s behind one adapter ([`Two`], which implements the
 //! port's [`IntersectorBrep`] and the proto topology's `ProtoBrep` with the ported
 //! topology functions) and runs the same script on a [`TopologyIntersector`]. Both
 //! sides produce the same flat record: per op its code and outputs; object handles
@@ -105,10 +102,7 @@ use solidcore::topology::{
     Brep, BrepId, EdgeId, EdgeuseId, FaceId, LoopId, LoopuseId, RegionId, VertexId, VertexuseId,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::boolean_topology_intersector_p1::{self as ffi, Op};
-use solidcore_ffi::units::boolean_topology_intersector_p2 as ffi2;
 
-use super::topology_vertexuse::import;
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -580,20 +574,6 @@ fn blocks(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     Ok(v)
 }
 
-/// The C++ exports of the case's B-reps.
-fn export(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let pa = path_of(Some(&i.brep_a))?;
-    let pb = path_of(i.brep_b.as_ref())?;
-    let block = blocks(i)?;
-    crate::export_memo::export(
-        "boolean_topology_intersector_p1",
-        &[&pa, &pb],
-        &block,
-        || ffi::eval(Op::Export, [&pa, &pb], &block),
-    )
-    .map_err(|e| harness(format!("c++ export: {e}")))
-}
-
 /// A build failure as an operation error.
 pub(super) fn build_failure(export: &[f64]) -> Output {
     Output::err(format!(
@@ -606,6 +586,13 @@ pub(super) fn build_failure(export: &[f64]) -> Output {
         export.get(1).copied().unwrap_or(0.0)
     ))
 }
+
+/// The magnitude from which `IntersectInsertRelate`'s full intersection does not finish
+/// upstream (HANG-16's class): a script stops before op 47 on a B-rep block at or above it.
+const HANG_COORD: f64 = 1.0e154;
+/// The largest approximation tolerance op 47 runs with (a time-budget bound: larger
+/// ones finish upstream but take seconds to minutes).
+const IIR_MAX_APPROX: f64 = 0.1;
 
 // ---- handles ------------------------------------------------------------------------------
 
@@ -2651,11 +2638,11 @@ fn resolve(
             return Err(fail("intersect_insert_relate"));
         }
         // the FFI's hang guard of IntersectInsertRelate (HANG-25, HANG-16's class)
-        if matches!(op, OpIn::Iir) && (approx == 0.0 || start.block_max_abs >= ffi2::HANG_COORD) {
+        if matches!(op, OpIn::Iir) && (approx == 0.0 || start.block_max_abs >= HANG_COORD) {
             return Err(fail("intersect_insert_relate_hang"));
         }
         // and its time-budget guard (a large tolerance finishes, but slowly)
-        if matches!(op, OpIn::Iir) && (approx.is_nan() || approx.abs() > ffi2::IIR_MAX_APPROX) {
+        if matches!(op, OpIn::Iir) && (approx.is_nan() || approx.abs() > IIR_MAX_APPROX) {
             return Err(fail("intersect_insert_relate_time_budget"));
         }
         if let OpIn::SetTols { approx: a, .. } = op {
@@ -3104,286 +3091,6 @@ impl NormalOrZero for Surface {
 
 // ---- the script, C++ side ---------------------------------------------------------------
 
-fn push_h(v: &mut Vec<f64>, h: Hin) {
-    v.extend([h[0] as f64, h[1] as f64, h[2] as f64]);
-}
-
-fn push_list(v: &mut Vec<f64>, l: &[Hin]) {
-    v.push(l.len() as f64);
-    for h in l {
-        push_h(v, *h);
-    }
-}
-
-fn push_pc(v: &mut Vec<f64>, pc: &PcIn) {
-    v.push(pc.cls as f64);
-    push_h(v, pc.h);
-}
-
-fn encode(i: &Inputs, ops: &[ROp]) -> Result<Vec<f64>, HarnessError> {
-    let mut v = blocks(i)?;
-    v.push(f64::from(i.ctor));
-    v.push(i.approx);
-    v.push(i.ang);
-    v.push(ops.len() as f64);
-    for r in ops {
-        match &r.op {
-            OpIn::Relate { a, b } => {
-                v.push(1.0);
-                push_h(&mut v, *a);
-                push_h(&mut v, *b);
-            }
-            OpIn::OtherMate { h } => {
-                v.push(2.0);
-                push_h(&mut v, *h);
-            }
-            OpIn::ThisMate { h } => {
-                v.push(3.0);
-                push_h(&mut v, *h);
-            }
-            OpIn::BrepMate { h } => {
-                v.push(4.0);
-                push_h(&mut v, *h);
-            }
-            OpIn::IsMated { a, b } => {
-                v.push(5.0);
-                push_h(&mut v, *a);
-                push_h(&mut v, *b);
-            }
-            OpIn::MappedBrep { ty } => v.extend([6.0, *ty as f64]),
-            OpIn::CommonEdges => v.push(7.0),
-            OpIn::CommonVertices => v.push(8.0),
-            OpIn::SetSubset { list } => {
-                v.push(9.0);
-                push_list(&mut v, list);
-            }
-            OpIn::FixupEnd {
-                dim,
-                tol,
-                pc_b,
-                pc_o,
-            }
-            | OpIn::FixupMid {
-                dim,
-                tol,
-                pc_b,
-                pc_o,
-            } => {
-                v.push(if matches!(r.op, OpIn::FixupEnd { .. }) {
-                    11.0
-                } else {
-                    12.0
-                });
-                v.push(f64::from(*dim));
-                v.push(*tol);
-                push_pc(&mut v, pc_b);
-                push_pc(&mut v, pc_o);
-            }
-            OpIn::Getters => v.push(13.0),
-            OpIn::SetTols { approx, ang } => v.extend([14.0, *approx, *ang]),
-            OpIn::SetBreps { a, b } => {
-                v.push(15.0);
-                push_h(&mut v, *a);
-                push_h(&mut v, *b);
-            }
-            OpIn::RegisterSsi { s1, s2, curves } => {
-                v.push(16.0);
-                push_h(&mut v, *s1);
-                push_h(&mut v, *s2);
-                v.push(curves.len() as f64);
-                for c in curves {
-                    push_curve(&mut v, &c.c3)?;
-                    for uv in [&c.uv1, &c.uv2] {
-                        match uv {
-                            Some(c) => {
-                                v.push(1.0);
-                                push_curve(&mut v, c)?;
-                            }
-                            None => v.push(0.0),
-                        }
-                    }
-                    v.push(c.ty as f64);
-                    v.push(c.dev);
-                }
-            }
-            OpIn::CheckSsi { s1, s2 } => {
-                v.push(17.0);
-                push_h(&mut v, *s1);
-                push_h(&mut v, *s2);
-            }
-            OpIn::ClearSsi => v.push(18.0),
-            OpIn::CanImprint { ty } => v.extend([19.0, *ty as f64]),
-            OpIn::Lowest { list } => {
-                v.push(20.0);
-                push_list(&mut v, list);
-            }
-            OpIn::SetEdgeClass { e, t0, t1, tol, .. } => {
-                v.push(21.0);
-                push_h(&mut v, *e);
-                v.extend([*t0, *t1, *tol]);
-            }
-            OpIn::CheckInterior { e, t, tol, .. } => {
-                v.push(22.0);
-                push_h(&mut v, *e);
-                v.extend([*t, *tol]);
-            }
-            OpIn::SplitTwo { e1, e2, tol } => {
-                v.push(23.0);
-                push_h(&mut v, *e1);
-                push_h(&mut v, *e2);
-                v.push(*tol);
-            }
-            OpIn::ImprintFace { f, p, tol, .. } => {
-                v.push(24.0);
-                push_h(&mut v, *f);
-                v.extend(p);
-                v.push(*tol);
-            }
-            OpIn::VertexFace {
-                verts,
-                faces,
-                manifold,
-                ignore,
-            } => {
-                v.push(25.0);
-                push_list(&mut v, verts);
-                push_list(&mut v, faces);
-                v.extend([flag(*manifold), flag(*ignore)]);
-            }
-            OpIn::EdgeFace {
-                edges,
-                faces,
-                manifold,
-                ignore,
-            } => {
-                v.push(26.0);
-                push_list(&mut v, edges);
-                push_list(&mut v, faces);
-                v.extend([flag(*manifold), flag(*ignore)]);
-            }
-            OpIn::FaceFace {
-                verts,
-                faces1,
-                faces2,
-                ignore,
-                nesting,
-            } => {
-                v.push(27.0);
-                push_list(&mut v, verts);
-                push_list(&mut v, faces1);
-                push_list(&mut v, faces2);
-                v.extend([flag(*ignore), flag(*nesting)]);
-            }
-            OpIn::FaceFaceCoin {
-                edges,
-                faces,
-                ignore,
-                nesting,
-            } => {
-                v.push(28.0);
-                push_list(&mut v, edges);
-                push_list(&mut v, faces);
-                v.extend([flag(*ignore), flag(*nesting)]);
-            }
-            OpIn::Resolve => v.push(29.0),
-            OpIn::Imprint => v.push(30.0),
-            OpIn::ShellVerts { first, swap } => v.extend([31.0, f64::from(*first), flag(*swap)]),
-            OpIn::WireLamina {
-                first,
-                lamina,
-                swap,
-            } => {
-                v.extend([32.0, f64::from(*first), flag(*lamina), flag(*swap)]);
-            }
-            OpIn::MgrNew {
-                capture,
-                override_tol,
-            } => v.extend([33.0, *capture, *override_tol]),
-            OpIn::SetEditing { which, enable } => {
-                v.extend([34.0, f64::from(*which), flag(*enable)]);
-            }
-            OpIn::RemoveRel { a, b } => {
-                v.push(41.0);
-                push_h(&mut v, *a);
-                push_h(&mut v, *b);
-            }
-            OpIn::Squeeze { bv, ov } => {
-                v.push(42.0);
-                push_h(&mut v, *bv);
-                push_h(&mut v, *ov);
-            }
-            OpIn::DeleteFaces { faces, keep } => {
-                v.push(43.0);
-                push_list(&mut v, faces);
-                v.push(flag(keep.is_some()));
-                push_list(&mut v, keep.as_deref().unwrap_or(&[]));
-            }
-            OpIn::FixGaps { verts } => {
-                v.push(44.0);
-                push_list(&mut v, verts);
-            }
-            OpIn::IntersectTopo => v.push(45.0),
-            OpIn::SetRels => v.push(46.0),
-            OpIn::Iir => v.push(47.0),
-            OpIn::FixupClass { b, o } => {
-                v.push(48.0);
-                push_cc(&mut v, b);
-                push_cc(&mut v, o);
-            }
-            OpIn::FixupSplit { index, b, o } => {
-                v.push(49.0);
-                v.push(*index as f64);
-                push_cc(&mut v, b);
-                push_cc(&mut v, o);
-            }
-            OpIn::EdgeEdge {
-                edges1,
-                edges2,
-                manifold,
-                ignore,
-            } => {
-                v.push(50.0);
-                push_list(&mut v, edges1);
-                push_list(&mut v, edges2);
-                v.extend([flag(*manifold), flag(*ignore)]);
-            }
-            OpIn::EdgeFaceCoin {
-                verts,
-                excluded,
-                ignore,
-                nesting,
-            } => {
-                v.push(51.0);
-                push_list(&mut v, verts);
-                push_list(&mut v, excluded);
-                v.extend([flag(*ignore), flag(*nesting)]);
-            }
-            OpIn::CloseLoop { v: bv } => {
-                v.push(52.0);
-                push_h(&mut v, *bv);
-            }
-            // dropped by the resolver
-            OpIn::ChainFaces => {}
-            OpIn::MergeBreps => v.push(35.0),
-        }
-    }
-    Ok(v)
-}
-
-/// A resolved classification input (`curve t0 t1 tol n (a b pci pci pci)*`).
-fn push_cc(v: &mut Vec<f64>, cc: &CcIn) {
-    push_h(v, cc.c);
-    v.extend([cc.t0, cc.t1, cc.tol, cc.ivls.len() as f64]);
-    for iv in &cc.ivls {
-        v.extend([iv.a, iv.b]);
-        for pc in &iv.pcs {
-            v.push(pc.cls as f64);
-            push_h(v, pc.h);
-            v.extend([pc.t.unwrap_or(0.0), flag(pc.t.is_some()), pc.dev]);
-        }
-    }
-}
-
 /// The imported B-reps, their counts and the resolved script of a case.
 struct Prepared {
     two: Two,
@@ -3460,41 +3167,15 @@ pub(super) fn own_breps(
 /// A case's two B-reps (the second optional).
 pub(super) type BrepPair = (Brep, Option<Brep>);
 
-/// The B-reps a side resolves the script on: the Rust side's own build
-/// ([`own_breps`]). The C++ side resolves on the same Rust build, so both get the same
-/// numbers (parameters relative to an edge's interval, points on its curve), and only
-/// when the Rust build fails on the import of its own exports.
-fn side_breps(
-    rust: bool,
-    i: &Inputs,
-) -> Result<BrepPair, Box<Result<Output, HarnessError>>> {
-    match own_breps(&i.brep_a, i.brep_b.as_ref()) {
-        Ok(Ok(x)) => return Ok(x),
-        Ok(Err(o)) if rust => return Err(Box::new(Ok(o))),
-        Err(e) if rust => return Err(Box::new(Err(e))),
-        _ => {}
-    }
-    let ex = export(i).map_err(|e| Box::new(Err(e)))?;
-    let Some((a, b)) = ffi::split_exports(&ex) else {
-        return Err(Box::new(Ok(build_failure(&ex))));
+/// Builds the case's B-reps with the Rust kernel ([`own_breps`]) and resolves the
+/// script; `Err(Ok(output))` is the output reported when the B-reps cannot be built or an
+/// op cannot be resolved.
+fn prepare(k: &Kernel, i: &Inputs) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
+    let (mut brep_a, mut brep_b) = match own_breps(&i.brep_a, i.brep_b.as_ref()) {
+        Ok(Ok(x)) => x,
+        Ok(Err(o)) => return Err(Box::new(Ok(o))),
+        Err(e) => return Err(Box::new(Err(e))),
     };
-    let (brep_a, _) = import(&a).map_err(|e| Box::new(Err(e)))?;
-    let brep_b = match &b {
-        Some(b) => Some(import(b).map_err(|e| Box::new(Err(e)))?.0),
-        None => None,
-    };
-    Ok((brep_a, brep_b))
-}
-
-/// Builds the B-reps of one side ([`side_breps`]) and resolves the script;
-/// `Err(Ok(output))` is the output that side reports when the B-reps cannot be built
-/// or an op cannot be resolved.
-fn prepare(
-    k: &Kernel,
-    i: &Inputs,
-    rust: bool,
-) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
-    let (mut brep_a, mut brep_b) = side_breps(rust, i)?;
     if matches!(i.ops.first(), Some(OpIn::MergeBreps)) {
         if let Some(other) = brep_b.as_mut() {
             merge_primary(&mut brep_a, other).map_err(|e| Box::new(Err(e)))?;
@@ -3526,30 +3207,6 @@ fn prepare(
         }
     }
     Ok(Prepared { two, ops, cut })
-}
-
-fn run_cpp(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
-    run_cpp_with(k, i, ffi::eval)
-}
-
-/// The shim entry a case runs through (part 1's, or part 2's with its ops).
-pub(super) type Eval = fn(Op, [&str; 2], &[f64]) -> Result<Vec<f64>, solidcore_ffi::FfiError>;
-
-/// [`run_cpp`] through `eval`.
-pub(super) fn run_cpp_with(k: &Kernel, i: &Inputs, eval: Eval) -> Result<Output, HarnessError> {
-    let p = match prepare(k, i, false) {
-        Ok(p) => p,
-        Err(r) => return *r,
-    };
-    let input = encode(i, &p.ops)?;
-    let pa = path_of(Some(&i.brep_a))?;
-    let pb = path_of(i.brep_b.as_ref())?;
-    let mut out = eval(Op::Run, [&pa, &pb], &input).map_err(|e| harness(format!("c++: {e}")))?;
-    if out.first() != Some(&0.0) {
-        return Ok(build_failure(&out));
-    }
-    put_cut(&mut out, p.cut.as_ref());
-    Ok(Output::new().values("state", out))
 }
 
 // ---- the script, Rust side --------------------------------------------------------------
@@ -4551,7 +4208,7 @@ impl IntersectorBrepP2<H> for Two {
 }
 
 pub(super) fn run_rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
-    let p = match prepare(k, i, true) {
+    let p = match prepare(k, i) {
         Ok(p) => p,
         Err(r) => return *r,
     };
@@ -4571,7 +4228,7 @@ pub(super) fn run_rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
 #[cfg(test)]
 pub(super) fn rust_op_statuses(i: &Inputs) -> Option<Vec<(f64, f64, f64)>> {
     let k = &Kernel::default();
-    let p = prepare(k, i, true).ok()?;
+    let p = prepare(k, i).ok()?;
     let (o, marks) = run_rust_script(i, p).ok()?;
     Some(
         marks
@@ -5061,12 +4718,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let k = &Kernel::default();
-        let i: Inputs = case.parse()?;
-        run_cpp(k, &i)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -5817,52 +5468,6 @@ fn edge_cases() -> Vec<(String, Value)> {
         &mut add,
     );
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::case::CaseSource;
-
-    /// HANG-29: the `--fuzz 30000` inputs whose surface or curve control point of
-    /// `+-1e300` kept the C++ intersection busy past the timeout, for this unit and `_p2`
-    /// (which shares this reader), and UB-166's v knot snap (`ub166` in the name: the
-    /// shim refuses the B-rep). They cannot be fixtures (a harness error always fails a
-    /// case), so this test keeps them: each is refused before the intersection runs.
-    #[cfg(feature = "cpp")]
-    #[test]
-    fn ffi_refuses_surface_points_in_the_hang_range() {
-        let p2 = super::super::boolean_topology_intersector_p2::Runner;
-        let files: [(&str, &dyn UnitDiff); 2] = [
-            (
-                include_str!("../../tests/fuzz_regressions/boolean.topology_intersector_p1.json"),
-                &Runner,
-            ),
-            (
-                include_str!("../../tests/fuzz_regressions/boolean.topology_intersector_p2.json"),
-                &p2,
-            ),
-        ];
-        for (text, runner) in files {
-            let recorded: Value = serde_json::from_str(text).unwrap();
-            for recorded in recorded["cases"].as_array().unwrap() {
-                let case = Case {
-                    unit: runner.id().into(),
-                    name: recorded["name"].as_str().unwrap().into(),
-                    source: CaseSource::Inline,
-                    inputs: recorded["inputs"].clone(),
-                };
-                let error = runner.run_cpp(&case).unwrap_err().to_string();
-                let expected = if case.name.contains("ub166") {
-                    // the shim's UB-166 refusal (SC_ERR_ARG)
-                    "shim_rejected_args"
-                } else {
-                    "point out of range"
-                };
-                assert!(error.contains(expected), "{}: {error}", case.name);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
