@@ -45,6 +45,7 @@ use solidcore::surface::twist_volume::TwistVolume;
 use solidcore::surface::unbend_volume::UnbendVolume;
 use solidcore::surface::volume::p1::{
     BEND_VOLUME_TYPE, B_SPLINE_VOLUME_TYPE, TRANSFORM_TYPE, TWIST_VOLUME_TYPE, UNBEND_VOLUME_TYPE,
+    VOLUME_TYPE,
 };
 use solidcore::surface::volume::{Discontinuities3d, InvPoints, Volume, VolumeKind};
 use solidcore::topology::database_io::{DatabaseReader, FileType};
@@ -734,6 +735,674 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     Ok(to_output(&o))
 }
 
+// ---- input contract -----------------------------------------------------------------
+//
+// A port of the input contract of the C++ reference wrapper
+// (`crates/solidcore-ffi/src/units/surface_volume_p2.rs`, `check`): finite values of at
+// most `MAX_COORD`, B-spline records within `MAX_CP` / `MAX_DEGREE` with non-decreasing
+// knots, no call path that hands a transform's `EvaluateBoundingBoxSimple` a null
+// parameter pseudo box or a twist's an unbounded box without a box output, no call path
+// that may hand an unbend's `EvaluateBoundingBoxSimple` a bounded box with a side shorter
+// than `MIN_SIDE`, and `read_db` text in a strict token grammar without the reader's null
+// or uninitialised cases. The generator redraws until it holds.
+
+/// Most maps in a volume chain.
+const MAX_MAPS: usize = 6;
+/// Most control points per direction of a B-spline map.
+const MAX_CP: usize = 6;
+/// Highest degree per direction of a B-spline map.
+const MAX_DEGREE: usize = 4;
+/// Largest value magnitude.
+const MAX_COORD: f64 = 1e8;
+/// Most nested volume reads in a `read_db` text (the head included), as
+/// `solidcore::topology::database_io::MAX_READ_NESTING`.
+const MAX_READ_NESTING: usize = 32;
+/// Longest database text.
+const MAX_DATA: usize = 1 << 16;
+/// Shortest side of a bounded box handed to an unbend's `EvaluateBoundingBoxSimple`
+/// (`SmLine::CreateLineSegment` fails on a zero-length box edge and upstream then uses a
+/// null or deleted line).
+const MIN_SIDE: f64 = 1e-9;
+/// `SM_INFINITE_PARAMETER` and its square root, the unbounded interval markers.
+const INFINITE_MARKERS: [f64; 4] = [1_234_567.0, -1_234_567.0, 1111.111, -1111.111];
+
+fn fin(v: f64) -> bool {
+    v.is_finite() && v.abs() <= MAX_COORD
+}
+
+fn fins<'a>(vs: impl IntoIterator<Item = &'a f64>) -> bool {
+    vs.into_iter().all(|&v| fin(v))
+}
+
+fn tf_ok(t: &Tf) -> bool {
+    fins(t.iter().flatten())
+}
+
+fn pb_ok(pb: &PbIn) -> bool {
+    fins(pb.basis.iter().flatten()) && fins(pb.ivl.iter().flatten())
+}
+
+/// Whether a box is finite, and whether it is bounded with a side shorter than
+/// [`MIN_SIDE`]; `None` when it is not finite. Also whether it has a bounded end
+/// (`AnyBounds`).
+fn box_info(bx: &Bx) -> Option<(bool, bool)> {
+    let [lo, hi] = bx;
+    if !fins(lo.iter().chain(hi)) {
+        return None;
+    }
+    let inf = |x: &f64| INFINITE_MARKERS.contains(x);
+    let any_bounds = lo.iter().zip(hi).any(|(a, b)| !(inf(a) && inf(b)));
+    let bounded = !lo.iter().chain(hi).any(inf);
+    let flat = lo.iter().zip(hi).any(|(a, b)| (b - a).abs() < MIN_SIDE);
+    Some((any_bounds, bounded && flat))
+}
+
+/// The class of one map of a chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Base,
+    Transform,
+    Twist,
+    BSpline,
+    Unbend,
+    Bend,
+}
+
+/// One map of a chain: its class and whether it has an orient map.
+#[derive(Debug, Clone, Copy)]
+struct Map {
+    kind: Kind,
+    orient: bool,
+}
+
+/// Whether a B-spline record is within the size bounds with `hi + deg + 2`
+/// non-decreasing knots per direction and a full net, all finite.
+fn bspline_ok(r: &BsIn) -> bool {
+    r.hi.iter().all(|&h| h < MAX_CP)
+        && r.deg.iter().all(|&d| d <= MAX_DEGREE)
+        && r.knots.iter().zip(r.hi.iter().zip(r.deg)).all(|(k, (h, d))| {
+            k.len() == h + d + 2 && fins(k) && k.windows(2).all(|w| w.first() <= w.last())
+        })
+        && r.cpts.len() == r.hi.iter().map(|h| h + 1).product::<usize>()
+        && fins(r.cpts.iter().flatten())
+}
+
+/// The chain of a volume that keeps the contract: 1 to [`MAX_MAPS`] maps of a known kind
+/// with their data, finite orient maps.
+fn chain_of(v: &Vol) -> Option<Vec<Map>> {
+    if v.is_empty() || v.len() > MAX_MAPS {
+        return None;
+    }
+    v.iter()
+        .map(|m| {
+            let kind = match m.kind {
+                0 => Kind::Base,
+                1 => m.t.as_ref().filter(|t| tf_ok(t)).map(|_| Kind::Transform)?,
+                2 => {
+                    let t = m.tw.as_ref()?;
+                    let ok = fins(t.o.iter().chain(&t.axis).chain(&t.mid)) && fin(t.period) && fin(t.min);
+                    ok.then_some(Kind::Twist)?
+                }
+                3 => m.bs.as_ref().filter(|r| bspline_ok(r)).map(|_| Kind::BSpline)?,
+                4 | 6 => {
+                    if m.kind == 4 {
+                        Kind::Unbend
+                    } else {
+                        Kind::Bend
+                    }
+                }
+                5 | 7 => {
+                    let u = m.ub.as_ref()?;
+                    let ok = fins(u.c.iter().chain(&u.axis).chain(&u.mid)) && fin(u.d) && fin(u.tol);
+                    if !ok {
+                        return None;
+                    }
+                    if m.kind == 5 {
+                        Kind::Unbend
+                    } else {
+                        Kind::Bend
+                    }
+                }
+                _ => return None,
+            };
+            // a twist's and a component unbend's or bend's frame is their orient map
+            let orient = if matches!(m.kind, 2 | 5 | 7) {
+                true
+            } else {
+                if !m.orient.as_ref().is_none_or(tf_ok) {
+                    return None;
+                }
+                m.orient.is_some()
+            };
+            Some(Map { kind, orient })
+        })
+        .collect()
+}
+
+// undefined call paths
+
+/// Whether the domain check of a line or box (`IsLineInParamDomain` with
+/// compounding, as `IsBoxInParamDomain` and `IsPseudoBoxInInSpaceDomain` run it) on
+/// map `i` passes: `Some(false)` when a later map is a plain `SmVolume` (its
+/// `IsCurveInParamDomainSimple` is `FALSE`), `None` when a B-spline map decides it
+/// from data.
+fn domain_check(chain: &[Map], i: usize) -> Option<bool> {
+    if chain.get(i).is_none_or(|m| m.kind == Kind::BSpline) {
+        return None;
+    }
+    for m in chain.iter().skip(i + 1) {
+        match m.kind {
+            Kind::Base => return Some(false),
+            Kind::BSpline => return None,
+            _ => {}
+        }
+    }
+    Some(true)
+}
+
+/// Which box outputs a call requests.
+#[derive(Debug, Clone, Copy)]
+struct Wants {
+    /// The axis-aligned box.
+    bx: bool,
+    /// The pseudo box.
+    pb: bool,
+}
+
+impl Wants {
+    fn any(self) -> bool {
+        self.bx || self.pb
+    }
+}
+
+/// Whether `EvaluateBoundingBox` on map `i` with the out-space outputs `out` and
+/// the in-space outputs `inside` may hand a transform's `EvaluateBoundingBoxSimple`
+/// a null parameter pseudo box (data-dependent domain checks count as passing).
+fn ebb_undefined(
+    chain: &[Map],
+    i: usize,
+    has_ppb: bool,
+    (out, inside): (Wants, Wants),
+    comp: bool,
+) -> bool {
+    let Some(m) = chain.get(i) else {
+        return false;
+    };
+    if (!out.any() && !inside.any()) || domain_check(chain, i) == Some(false) {
+        return false;
+    }
+    if inside.any() && m.orient && !has_ppb {
+        return true;
+    }
+    if out.any() {
+        if m.kind == Kind::Transform && !has_ppb {
+            return true;
+        }
+        if comp && i + 1 < chain.len() {
+            let next_out = Wants {
+                bx: out.bx,
+                pb: true,
+            };
+            return mpb_undefined(chain, i + 1, next_out, true, false);
+        }
+    }
+    false
+}
+
+/// Whether `MapPseudoBox` on map `i` with the outputs `outs` may reach a
+/// transform's `EvaluateBoundingBoxSimple` with a null parameter pseudo box.
+fn mpb_undefined(chain: &[Map], i: usize, outs: Wants, comp: bool, trim: bool) -> bool {
+    let Some(m) = chain.get(i) else {
+        return false;
+    };
+    if !trim && domain_check(chain, i) == Some(false) {
+        return false;
+    }
+    let next = comp && i + 1 < chain.len();
+    let has_this = outs.pb || next;
+    let here = if m.orient {
+        m.kind == Kind::Transform && !has_this
+    } else {
+        trim && m.kind == Kind::Transform && (outs.bx || has_this)
+    };
+    let next_outs = Wants {
+        bx: outs.bx,
+        pb: true,
+    };
+    here || (next && mpb_undefined(chain, i + 1, next_outs, comp, trim))
+}
+
+/// Whether `InvMapPoint` on map `i` may reach an undefined box mapping.
+fn inv_map_undefined(chain: &[Map], i: usize, has_dom: bool, comp: bool) -> bool {
+    if !comp || i + 1 >= chain.len() {
+        return false;
+    }
+    (has_dom
+        && mpb_undefined(
+            chain,
+            i,
+            Wants {
+                bx: false,
+                pb: true,
+            },
+            false,
+            true,
+        ))
+        || inv_map_undefined(chain, i + 1, has_dom, true)
+}
+
+/// Whether `InvEvaluatePoint` / `GlobalPointSolve` on map `0` may reach an undefined
+/// box mapping.
+fn inv_eval_undefined(chain: &[Map], has_dom: bool, comp: bool) -> bool {
+    if !comp || chain.len() < 2 {
+        return false;
+    }
+    let out = Wants { bx: true, pb: true };
+    let inside = Wants {
+        bx: false,
+        pb: false,
+    };
+    (has_dom && ebb_undefined(chain, 0, false, (out, inside), false))
+        || inv_map_undefined(chain, 1, has_dom, true)
+}
+
+/// Whether `EvaluateBoundingBox` on map `i` with the out-space outputs `out` and
+/// the in-space outputs `inside` may reach an unbend's `EvaluateBoundingBoxSimple`
+/// with a too-flat box: on map `i` itself with the caller's box (`flat`), on a later
+/// map with a computed box (rejected whatever its size).
+fn ebb_unbend(
+    chain: &[Map],
+    i: usize,
+    (out, inside): (Wants, Wants),
+    comp: bool,
+    flat: bool,
+) -> bool {
+    let Some(m) = chain.get(i) else {
+        return false;
+    };
+    if (!out.any() && !inside.any()) || domain_check(chain, i) == Some(false) {
+        return false;
+    }
+    if out.any() {
+        if m.kind.is_unbend() && flat {
+            return true;
+        }
+        if comp && i + 1 < chain.len() {
+            let next_out = Wants {
+                bx: out.bx,
+                pb: true,
+            };
+            return mpb_unbend(chain, i + 1, next_out, true, false);
+        }
+    }
+    false
+}
+
+/// Whether `MapPseudoBox` on map `i` with the outputs `outs` may reach an unbend's
+/// `EvaluateBoundingBoxSimple`. Its box there is computed from the in-space pseudo
+/// box (sampled through the inverse orient map, or its axis-aligned extent when
+/// trimming), so any such call is rejected.
+fn mpb_unbend(chain: &[Map], i: usize, outs: Wants, comp: bool, trim: bool) -> bool {
+    let Some(m) = chain.get(i) else {
+        return false;
+    };
+    if !trim && domain_check(chain, i) == Some(false) {
+        return false;
+    }
+    let next = comp && i + 1 < chain.len();
+    let has_this = outs.pb || next;
+    let here = m.kind.is_unbend() && (m.orient || (trim && (outs.bx || has_this)));
+    let next_outs = Wants {
+        bx: outs.bx,
+        pb: true,
+    };
+    here || (next && mpb_unbend(chain, i + 1, next_outs, comp, trim))
+}
+
+/// Whether `InvMapPoint` on map `i` may reach an unbend's `EvaluateBoundingBoxSimple`.
+fn inv_map_unbend(chain: &[Map], i: usize, has_dom: bool, comp: bool) -> bool {
+    if !comp || i + 1 >= chain.len() {
+        return false;
+    }
+    (has_dom
+        && mpb_unbend(
+            chain,
+            i,
+            Wants {
+                bx: false,
+                pb: true,
+            },
+            false,
+            true,
+        ))
+        || inv_map_unbend(chain, i + 1, has_dom, true)
+}
+
+/// Whether `InvEvaluatePoint` / `GlobalPointSolve` on map `0` may reach an unbend's
+/// `EvaluateBoundingBoxSimple` (`flat`: the caller's domain box is too flat).
+fn inv_eval_unbend(chain: &[Map], has_dom: bool, comp: bool, flat: bool) -> bool {
+    if !comp || chain.len() < 2 {
+        return false;
+    }
+    let out = Wants { bx: true, pb: true };
+    let inside = Wants {
+        bx: false,
+        pb: false,
+    };
+    (has_dom && ebb_unbend(chain, 0, (out, inside), false, flat))
+        || inv_map_unbend(chain, 1, has_dom, true)
+}
+
+// database text
+
+/// A strict tokenizer over the ASCII database text, modelling the `istream`
+/// extractions and `GoToNextLine` of the readers on text it accepts.
+struct Text<'a> {
+    b: &'a [u8],
+    at: usize,
+    failed: bool,
+}
+
+/// What an extraction found.
+enum Tok<'a> {
+    /// The stream is at its end (or failed before): the value stays unchanged.
+    End,
+    /// A token.
+    Word(&'a str),
+}
+
+impl<'a> Text<'a> {
+    fn token(&mut self) -> Result<Tok<'a>, ()> {
+        if self.failed {
+            return Ok(Tok::End);
+        }
+        while self.b.get(self.at).is_some_and(u8::is_ascii_whitespace) {
+            self.at += 1;
+        }
+        let start = self.at;
+        while self
+            .b
+            .get(self.at)
+            .is_some_and(|c| !c.is_ascii_whitespace())
+        {
+            self.at += 1;
+        }
+        if start == self.at {
+            self.failed = true;
+            return Ok(Tok::End);
+        }
+        let w = self
+            .b
+            .get(start..self.at)
+            .and_then(|s| core::str::from_utf8(s).ok())
+            .ok_or(())?;
+        if w.len() > 200 {
+            return Err(());
+        }
+        Ok(Tok::Word(w))
+    }
+
+    fn next_line(&mut self) {
+        if self.failed {
+            return;
+        }
+        while let Some(&c) = self.b.get(self.at) {
+            self.at += 1;
+            if c == b'\n' {
+                break;
+            }
+        }
+    }
+
+    fn integer(&mut self) -> Result<Option<i64>, ()> {
+        match self.token()? {
+            Tok::End => Ok(None),
+            Tok::Word(w) => {
+                let digits = w.strip_prefix(['+', '-']).unwrap_or(w);
+                if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) {
+                    return Err(());
+                }
+                let v: i64 = w
+                    .parse()
+                    .map_err(|_| ())?;
+                if v.unsigned_abs() > i32::MAX as u64 {
+                    return Err(());
+                }
+                Ok(Some(v))
+            }
+        }
+    }
+
+    fn double(&mut self) -> Result<(), ()> {
+        if let Tok::Word(w) = self.token()? {
+            let body = w.strip_prefix(['+', '-']).unwrap_or(w);
+            let (mantissa, exp) = match body.split_once(['e', 'E']) {
+                Some((m, e)) => (m, Some(e)),
+                None => (body, None),
+            };
+            let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+            let digits = |s: &str| s.bytes().all(|c| c.is_ascii_digit());
+            let exp_ok = exp.is_none_or(|e| {
+                let e = e.strip_prefix(['+', '-']).unwrap_or(e);
+                !e.is_empty() && digits(e)
+            });
+            if (int.is_empty() && frac.is_empty()) || !digits(int) || !digits(frac) || !exp_ok {
+                return Err(());
+            }
+            let v: f64 = w.parse().map_err(|_| ())?;
+            if !v.is_finite() || v.abs() > 1e300 {
+                return Err(());
+            }
+        }
+        Ok(())
+    }
+
+    /// `>> word >> word >> long; GoToNextLine` after a "has map" flag.
+    fn map_type(&mut self) -> Result<i64, ()> {
+        self.token()?;
+        self.token()?;
+        let t = self
+            .integer()?
+            .ok_or(())?;
+        self.next_line();
+        Ok(t)
+    }
+
+    /// The derived data and base data of a volume of type `t`; `Ok(false)` when the
+    /// read fails without reading anything.
+    fn volume(&mut self, t: i64, depth: usize) -> Result<bool, ()> {
+        // the Rust reader's documented bound (`MAX_READ_NESTING`, 32 nested reads):
+        // a deeper stream is a deliberate deviation (Rust fails, C++ recurses on)
+        if depth >= MAX_READ_NESTING {
+            return Err(());
+        }
+        let (lines, per_line) = match t {
+            TRANSFORM_TYPE => (4, 4),
+            TWIST_VOLUME_TYPE | UNBEND_VOLUME_TYPE | BEND_VOLUME_TYPE => (2, 1),
+            VOLUME_TYPE => return Err(()),
+            _ => return Ok(false),
+        };
+        for _ in 0..lines {
+            for _ in 0..per_line {
+                self.double()?;
+            }
+            self.next_line();
+        }
+        // base data: next map
+        if self.integer()?.is_some_and(|f| f != 0) {
+            self.next_line();
+            let nt = self.map_type()?;
+            self.volume(nt, depth + 1)?;
+        } else {
+            self.next_line();
+        }
+        // orient map
+        if self.integer()?.is_some_and(|f| f != 0) {
+            self.next_line();
+            let ot = self.map_type()?;
+            if ot != TRANSFORM_TYPE {
+                return Err(());
+            }
+            self.volume(ot, depth + 1)?;
+        } else {
+            self.next_line();
+        }
+        Ok(true)
+    }
+}
+
+
+fn check_text(t: i64, data: &[u8]) -> Result<(), ()> {
+    if data.len() > MAX_DATA {
+        return Err(());
+    }
+    if data.split(|&c| c == b'\n').any(|l| l.len() > 200) {
+        return Err(());
+    }
+    let mut text = Text {
+        b: data,
+        at: 0,
+        failed: false,
+    };
+    text.volume(t, 0).map(|_| ())
+}
+
+impl Kind {
+    fn is_unbend(self) -> bool {
+        self == Kind::Unbend
+    }
+}
+
+/// Whether a case keeps the input contract (see the section header).
+#[allow(clippy::too_many_lines)]
+fn keeps_contract(i: &Inputs) -> bool {
+    let p3 = |p: &[f64; 3]| fins(p);
+    let opt3 = |p: &Option<[f64; 3]>| p.as_ref().is_none_or(fins);
+    if let Inputs::ReadDb { ty, data } = i {
+        return fin(*ty as f64) && check_text(*ty, data.as_bytes()).is_ok();
+    }
+    let Some(chain) = i.vol().and_then(chain_of) else {
+        return false;
+    };
+    let undefined = match i {
+        Inputs::PtInParam { p, .. } | Inputs::EvalPoint { p, .. } | Inputs::Eval1st { p, .. } => {
+            return p3(p);
+        }
+        Inputs::LineInInSpace { a, b, .. } => return p3(a) && p3(b),
+        Inputs::BoxInParam { bx, .. } => return box_info(bx).is_some(),
+        Inputs::PboxInInSpace { pb, .. } | Inputs::PboxSimple { pb, .. } => return pb_ok(pb),
+        Inputs::HasDisc { .. } => return true,
+        Inputs::EvalBbox {
+            bx,
+            ppb,
+            want,
+            comp,
+            ..
+        } => {
+            let Some((_, flat)) = box_info(bx) else {
+                return false;
+            };
+            if !ppb.as_ref().is_none_or(pb_ok) {
+                return false;
+            }
+            let [ob, opb, ib, ipb] = *want;
+            let out = Wants { bx: ob, pb: opb };
+            let inside = Wants { bx: ib, pb: ipb };
+            ebb_undefined(&chain, 0, ppb.is_some(), (out, inside), *comp)
+                || ebb_unbend(&chain, 0, (out, inside), *comp, flat)
+        }
+        Inputs::MapPbox {
+            pb,
+            want,
+            comp,
+            trim,
+            ..
+        } => {
+            if !pb_ok(pb) {
+                return false;
+            }
+            let outs = Wants {
+                bx: want[0],
+                pb: want[1],
+            };
+            mpb_undefined(&chain, 0, outs, *comp, *trim)
+                || mpb_unbend(&chain, 0, outs, *comp, *trim)
+        }
+        Inputs::InvEval {
+            p,
+            guess,
+            dom,
+            comp,
+            ..
+        } => {
+            let flat = match dom {
+                Some(d) => match box_info(d) {
+                    Some((_, flat)) => flat,
+                    None => return false,
+                },
+                None => false,
+            };
+            if !(p3(p) && opt3(guess)) {
+                return false;
+            }
+            inv_eval_undefined(&chain, dom.is_some(), *comp)
+                || inv_eval_unbend(&chain, dom.is_some(), *comp, flat)
+        }
+        Inputs::InvMap {
+            p,
+            guess,
+            dom,
+            comp,
+            ..
+        } => {
+            if !(p3(p) && opt3(guess) && dom.as_ref().is_none_or(pb_ok)) {
+                return false;
+            }
+            inv_map_undefined(&chain, 0, dom.is_some(), *comp)
+                || inv_map_unbend(&chain, 0, dom.is_some(), *comp)
+        }
+        Inputs::Global { p, dom, comp, .. } => {
+            let flat = match dom {
+                Some(d) => match box_info(d) {
+                    Some((_, flat)) => flat,
+                    None => return false,
+                },
+                None => false,
+            };
+            if !p3(p) {
+                return false;
+            }
+            inv_eval_undefined(&chain, dom.is_some(), *comp)
+                || inv_eval_unbend(&chain, dom.is_some(), *comp, flat)
+        }
+        Inputs::BboxSimple { bx, ppb, want, .. } => {
+            let Some((any_bounds, flat)) = box_info(bx) else {
+                return false;
+            };
+            if !ppb.as_ref().is_none_or(pb_ok) {
+                return false;
+            }
+            let [want_box, want_pb] = *want;
+            let kind = chain.first().map(|m| m.kind);
+            (want_box || want_pb)
+                && ((kind == Some(Kind::Transform) && ppb.is_none())
+                    || (kind == Some(Kind::Twist) && !want_box && !any_bounds)
+                    || (kind == Some(Kind::Unbend) && flat))
+        }
+        Inputs::InvEvalSimple { p, guess, dom, .. } => {
+            return p3(p) && opt3(guess) && dom.as_ref().is_none_or(|d| box_info(d).is_some());
+        }
+        Inputs::GlobalSimple { p, dom, .. } => {
+            return p3(p) && dom.as_ref().is_none_or(|d| box_info(d).is_some());
+        }
+        Inputs::LocalSimple { p, g, dom, .. } => {
+            return p3(p) && p3(g) && dom.as_ref().is_none_or(|d| box_info(d).is_some());
+        }
+        Inputs::ReadDb { .. } => return false,
+    };
+    !undefined
+}
+
 // ---- generation ---------------------------------------------------------------------
 
 /// `SM_INFINITE_PARAMETER`, the unbounded interval marker.
@@ -1260,7 +1929,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        for _ in 0..64 {
+            let i = gen_case(rng);
+            if keeps_contract(&i) {
+                return serde_json::to_value(i).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
