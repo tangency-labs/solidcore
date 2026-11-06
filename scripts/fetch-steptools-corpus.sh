@@ -15,7 +15,7 @@
 # executes anything from it.
 #
 # Usage: scripts/fetch-steptools-corpus.sh [dest]      (default <repo>/corpus/steptools)
-# Used by: cargo run --profile difftest -p difftest --features cpp -- --step-corpus
+# Used by: cargo run --profile difftest -p difftest -- --step-corpus
 set -euo pipefail
 
 BASE="https://steptools.com/docs/stpfiles"

@@ -2,18 +2,15 @@
 # Two-tier mutation testing for the solidcore kernel.
 #
 # Tier 1 runs cargo-mutants against the package's unit tests. Tier 2 replays each
-# unit-test survivor against one difftest unit (Rust port vs the C++ reference),
-# because difftest — not the unit tests — is the correctness gate. A mutant that
-# passes both tiers is behavior no check constrains: the useful output.
+# unit-test survivor against one difftest unit's golden (`--goldens`), because the
+# goldens record far more of the kernel's results than the unit tests check. A mutant
+# that passes both tiers is behavior no check constrains: the useful output.
 #
 # Usage:
 #   scripts/mutants.sh --module crates/solidcore/src/geom/vector2d.rs --unit geom.vector2d
 #   scripts/mutants.sh --in-diff-base origin/main --unit <id>   # the PR's changed lines
 #   scripts/mutants.sh --module ... --shard 1/20 --no-difftest  # tier 1 only
 #   scripts/mutants.sh --module ... --re 'is_small_topology' --unit ...  # one mutant
-#
-# Tier 2 needs the C++ reference: natively on Linux with bin/cpp (scripts/fetch-cpp.sh),
-# or through --docker-image on other hosts (see docs/mutation-testing.md).
 #
 # Output: reports/mutants/<utc-stamp>/ with cargo-mutants' mutants.out, its log, the
 # survivor list and tier2.tsv. Reports are not committed (/reports/mutants is ignored).
@@ -23,7 +20,7 @@ set -uo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root" || exit 1
 
-usage() { sed -n '2,20p' "$0"; }
+usage() { sed -n '2,17p' "$0"; }
 
 pkg=solidcore
 module=
@@ -35,8 +32,6 @@ timeout=180
 max_replay=
 mutant_re=
 out=
-docker_image=
-docker_cpp_dir=/work/bin/cpp-linux
 run_difftest=1
 fail_on_both=0
 list_only=0
@@ -53,8 +48,6 @@ while [ $# -gt 0 ]; do
     --max-replay) max_replay=$2; shift 2 ;;
     --re) mutant_re=$2; shift 2 ;;
     -o|--out) out=$2; shift 2 ;;
-    --docker-image) docker_image=$2; shift 2 ;;
-    --docker-cpp-dir) docker_cpp_dir=$2; shift 2 ;;
     --no-difftest) run_difftest=0; shift ;;
     --fail-on-both-tier) fail_on_both=1; shift ;;
     --list-only) list_only=1; shift ;;
@@ -154,41 +147,18 @@ if [ "$run_difftest" = 1 ] && [ "$missed" -gt 0 ]; then
     fi
   done <"$mo/missed.txt"
 
-  cname=
   applied=
   cleanup() {
     if [ -n "${applied:-}" ]; then
       patch -R -p0 <"$applied" >/dev/null 2>&1
     fi
-    if [ -n "${cname:-}" ]; then
-      docker rm -f "$cname" >/dev/null 2>&1
-    fi
   }
-  if [ -n "$docker_image" ]; then
-    command -v docker >/dev/null 2>&1 || { echo "mutants: docker not found" >&2; exit 2; }
-    # One container for every survivor: the kernel rebuild is cached between runs.
-    cname=solidcore-mutants-$$
-    docker run -d --name "$cname" -v "$root:/work" -w /work "$docker_image" sleep infinity >/dev/null \
-      || { echo "mutants: cannot start $docker_image" >&2; exit 2; }
-    trap cleanup EXIT
-    run_unit() {
-      docker exec "$cname" bash -lc \
-        "export PATH=\$HOME/.cargo/bin:\$PATH SOLIDCORE_CPP_DIR=$docker_cpp_dir CARGO_TARGET_DIR=/tmp/sc-target CARGO_BUILD_JOBS=2; nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --unit $unit"
-    }
-  else
-    trap cleanup EXIT
-    cpp=${SOLIDCORE_CPP_DIR:-$root/bin/cpp}
-    if [ ! -f "$cpp/lib/libSMLib.a" ]; then
-      echo "mutants: no C++ reference at $cpp (scripts/fetch-cpp.sh); tier 2 skipped" >&2
-      echo "mutants: pass --docker-image or --no-difftest" >&2
-      exit 2
-    fi
-    run_unit() {
-      # shellcheck disable=SC2086 # NICE is an optional "nice -n 10" prefix.
-      SOLIDCORE_CPP_DIR="$cpp" CARGO_BUILD_JOBS=2 $NICE \
-        cargo run --profile difftest -p difftest --features cpp -- --unit "$unit"
-    }
-  fi
+  trap cleanup EXIT
+  run_unit() {
+    # shellcheck disable=SC2086 # NICE is an optional "nice -n 10" prefix.
+    CARGO_BUILD_JOBS=2 $NICE \
+      cargo run --profile difftest -p difftest -- --unit "$unit" --goldens
+  }
 
   tier2=$out/tier2.tsv
   : >"$tier2"
@@ -212,10 +182,10 @@ if [ "$run_difftest" = 1 ] && [ "$missed" -gt 0 ]; then
       continue
     fi
     applied=$diff
-    summary=$(run_unit 2>&1 | grep -E '^(PASS|FAIL|PARTIAL) ' | head -1)
+    summary=$(run_unit 2>&1 | grep -E '^(PASS|FAIL) ' | head -1)
     case "$summary" in
       PASS*) verdict=both-tier-missed; both=$((both + 1)) ;;
-      FAIL* | PARTIAL*) verdict=caught-by-difftest ;;
+      FAIL*) verdict=caught-by-difftest ;;
       *) verdict=unknown ;;
     esac
     printf '%s\t%s\t%s\n' "$line" "$verdict" "${summary:-no-summary}" >>"$tier2"

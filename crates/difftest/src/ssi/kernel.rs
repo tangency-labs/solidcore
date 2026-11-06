@@ -1,8 +1,8 @@
 //! What the Rust engines of `--ssi-corpus` share: a corpus surface built with
 //! solidcore's own types (`rust_surface`), and an intersection in the port's form
-//! written out sampled the way the C++ runner samples it (`write_intersection`). The
-//! port (`rust`, needs the `cpp` feature for its parity checks) and `solidcore-ssi` (the
-//! `solidcore-ssi` crate on the same surfaces, no C++) both use them.
+//! written out sampled the way the corpus' C++ runner samples it (`write_intersection`).
+//! The port (`rust`) and `solidcore-ssi` (the `solidcore-ssi` crate on the same surfaces)
+//! both use them.
 
 use solidcore::curve::curve::Curve;
 use solidcore::geom::axis2_placement::Axis2Placement;

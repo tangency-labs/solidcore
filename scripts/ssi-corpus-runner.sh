@@ -7,11 +7,11 @@
 # previous `difftest --ssi-corpus` run kept under bin/ssi-corpus/raw/, so both scorers grade
 # byte-identical engine output.
 #
-#   cargo build --profile difftest -p difftest --features cpp
-#   SSI_RUNNER=$PWD/scripts/ssi-corpus-runner.sh SSI_ENGINE=solidcore-cpp \
+#   cargo build --profile difftest -p difftest
+#   SSI_RUNNER=$PWD/scripts/ssi-corpus-runner.sh SSI_ENGINE=solidcore-rust \
 #     python3 -I corpus/ssi/scoring/score.py gsi 1e-6
 #
-# Environment: SSI_SC_ENGINE (cpp | rust, default cpp), SSI_SC_DIFFTEST (difftest binary,
+# Environment: SSI_SC_ENGINE (rust | ssi | solidcore-ssi, default rust), SSI_SC_DIFFTEST (difftest binary,
 # default bin/difftest/difftest), SSI_SC_RAW (see above).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,4 +24,4 @@ if [ -n "${SSI_SC_RAW:-}" ]; then
   id="$(basename "$1" .json)"
   exec cp "$SSI_SC_RAW/$id.json" "$4"
 fi
-exec "${SSI_SC_DIFFTEST:-$ROOT/bin/difftest/difftest}" --ssi-case "$1" "$3" "${SSI_SC_ENGINE:-cpp}" "$4"
+exec "${SSI_SC_DIFFTEST:-$ROOT/bin/difftest/difftest}" --ssi-case "$1" "$3" "${SSI_SC_ENGINE:-rust}" "$4"

@@ -28,9 +28,8 @@ Only these upstream paths are read, ported or exercised:
 | `AGENTS.md`, `.agents/`        | Upstream developer documentation (OCCT/USD files excluded) |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md` | Licence text and notices                          |
 
-The C++ reference build (`harness/cpp`) compiles only `source/SMLib` and
-`source/SM_API`, from a local clone that is never committed (`upstream/` is
-gitignored).
+The upstream sources are read, never built or linked: a local clone that is never
+committed (`upstream/` is gitignored), also the source of the `TestFiles` fixtures.
 
 ## Upstream material not used
 
@@ -68,9 +67,9 @@ These are fetched at run time (never committed) and used only by difftest's
 - Copyright: (c) 2026 SolidCraft contributors
 - Use: 119 surface/surface intersection cases with exact ground truth. The scorer in
   `crates/difftest/src/ssi/` (`score.rs`, `polyset.rs`, `geom.rs`) is ported from the
-  corpus' `scoring/score.py` and `scoring/ssi_geom.py`, and the C++ shim
-  `harness/cpp/shim/ssi_corpus.cpp` mirrors its `runner/ssi_runner.cpp`; each of those
-  files says so in its header. The truth generators are not ported.
+  corpus' `scoring/score.py` and `scoring/ssi_geom.py`, and `crates/difftest/src/ssi/kernel.rs`
+  samples intersections as its `runner/ssi_runner.cpp` does; each of those files says so in
+  its header. The truth generators are not ported.
 
 ### Yang, Jia & Yan (2023)
 

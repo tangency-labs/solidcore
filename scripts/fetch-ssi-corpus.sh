@@ -8,7 +8,7 @@
 # executes anything from it.
 #
 # Usage: scripts/fetch-ssi-corpus.sh [dest]      (default <repo>/corpus/ssi)
-# Used by: cargo run --profile difftest -p difftest --features cpp -- --ssi-corpus
+# Used by: cargo run --profile difftest -p difftest -- --ssi-corpus
 set -euo pipefail
 
 URL="https://github.com/jyviko/ssi-corpus.git"
