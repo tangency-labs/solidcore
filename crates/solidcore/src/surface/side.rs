@@ -114,7 +114,11 @@ pub struct Across {
     /// their largest Euclidean coordinate: a point within `2 u |H|` and its weight within `2
     /// u w` moves by at most `4 sqrt3 u |E|`, the length by `2 p` times that). No net of
     /// floats places its length nearer than this to a length asked for; 0 for a closed form.
-    /// Not part of the enclosure, which is the stored net's own length.
+    /// Not part of the enclosure, which is the stored net's own length. It is a stop
+    /// allowance only: stopping a length solve tighter than one ulp of the stored net can
+    /// move the length is not resolvable, so the solve's stop is at least this wide; the
+    /// certificate (the enclosure, `extend`'s `exact()`, the `1e-6 d`
+    /// rounding criterion) is unchanged.
     pub resolution: f64,
 }
 

@@ -66,7 +66,10 @@
 //! lies within `max(1e-9 d, its truncation and rounding parts and the stored net's
 //! resolution)` of `d`, as the measure reports them (the resolution: how far one ulp of the
 //! stored points' coordinates moves the length, [`Across::resolution`]; no net of floats is
-//! nearer to `d` than that, about `2.7e-14` at a part 230 from the origin), with the truncation (series cutoff) part at most `1e-9 d` and the rounding part at
+//! nearer to `d` than that, about `2.7e-14` at a part 230 from the origin: a stop allowance,
+//! since stopping a length solve tighter than one ulp of the stored net can move the length
+//! is not resolvable; the certificate is unchanged), with the truncation (series cutoff) part
+//! at most `1e-9 d` and the rounding part at
 //! most `1e-6 d` (owner); the extension's own rounding bound ([`Extended::extension`]) is a
 //! rounding part too, held to `1e-6 d`. An extension whose length at `d` cannot be measured
 //! so (a leaf that did not converge, a rounding part past `1e-6 d`, an extension bound past
@@ -524,7 +527,10 @@ fn says(b: Option<&Across>, extension: f64, d: f64) -> Says {
     }
     let (lower, upper) = (b.enclosure.lower, b.enclosure.upper);
     // the stop, or the enclosure's parts and the stored net's own resolution of the length
-    // (no net of floats is nearer to a length than that, [`Across::resolution`]) where wider
+    // (no net of floats is nearer to a length than that, [`Across::resolution`]) where wider:
+    // a stop allowance, as stopping tighter than one ulp of the net can move the length is
+    // not resolvable; the certificate (the enclosure, `exact`, the 1e-6 d rounding
+    // criterion) is unchanged
     let tol = (STOP * d).max(b.truncation + b.rounding + b.resolution);
     if exact(b, extension, d) && lower >= d - tol && upper <= d + tol {
         Says::Met
