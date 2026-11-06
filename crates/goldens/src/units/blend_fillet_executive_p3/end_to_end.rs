@@ -834,6 +834,11 @@ fn setback_fillet_edges(
             input.continuity,
             input.thumbweight,
         )?;
+        // A set-back vertex is no Ball: its corner is the one the setback is set on, as
+        // the product's blend marks it. A zero distance sets nothing back.
+        if setback.distance > 0.0 {
+            session.add_set_back_vertex(*vertex);
+        }
         session.create_corners(k, None)?;
         let mut corners = Vec::new();
         for corner in session.fillet_corners()? {
