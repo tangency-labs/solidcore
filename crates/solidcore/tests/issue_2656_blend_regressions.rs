@@ -57,9 +57,8 @@ use solidcore::topology::{edge, Brep, EdgeId};
 use solidcore::Kernel;
 use std::f64::consts::FRAC_PI_4;
 
-/// SolidCraft's fixes at the 5d2635d36 pin: the corpus's `fixes.json` and the eight the bump
-/// turns on (tangency-labs/solidcraft#11875), less `offset_extends_ball_patches_as_themselves`,
-/// which the exact extension made the only behaviour.
+/// SolidCraft's fixes at the 5d2635d36 pin: the corpus's `fixes.json` and the bump's other fixes
+/// (tangency-labs/solidcraft#11875).
 fn solidcraft_kernel() -> Kernel {
     let names: Vec<String> = serde_json::from_str(include_str!("kernel_cases/fixes.json")).unwrap();
     let mut f = UpstreamFixes::default();
