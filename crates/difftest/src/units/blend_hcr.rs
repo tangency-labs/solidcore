@@ -1,22 +1,20 @@
-//! Runner for unit `blend.hcr`. C++: `solidcore_ffi::units::blend_hcr`. Rust:
-//! `solidcore::blend::hcr`.
+//! Runner for unit `blend.hcr`. Ported from upstream `SmHCR` (`source/SMLib/src/SmHCR.cpp`);
+//! checked against its golden. Rust: `solidcore::blend::hcr`.
 //!
-//! The C++ side builds a real `SmBrep` (the B-rep blocks of unit `topology.vertexuse`:
-//! upstream test files, a wire edge, a face from a B-spline or plane surface, the wire
-//! network), optionally adds a second wire edge, constructs an `SmHCR` on it from a view
-//! vector or a view placement, seeds silhouette edges (the silhouette branch of
-//! `ComputeSilhouettes`' edge loop) and back-facing edges, and runs one member. It
-//! exports the scene B-rep (`GetSceneBrep()`, the copy transformed by the unported
-//! `SmBrep` copy constructor and `Transform`) with its `CalculateBoundingBox`. The Rust
-//! side makes everything itself, in the shim's call order, so no C++ state reaches it:
-//! the B-rep block built by the Rust kernel ([`crate::own_builder`], `.smb` files by the
-//! Rust reader), the extra wire edge (`create_wire_edge_from_curve`), the HCR from
-//! [`Hcr::new`] / [`Hcr::with_transform`] (its own scene copy, transform, infinite
-//! region and bounding box), the scene renumbered into the shim's traversal order
+//! A case builds a B-rep (the B-rep blocks of unit `topology.vertexuse`: upstream test
+//! files, a wire edge, a face from a B-spline or plane surface, the wire network),
+//! optionally adds a second wire edge, constructs an HCR on it from a view vector or a
+//! view placement, seeds silhouette edges (the silhouette branch of
+//! `ComputeSilhouettes`' edge loop) and back-facing edges, and runs one member. The B-rep
+//! block is built by the Rust kernel ([`crate::own_builder`], `.smb` files by the Rust
+//! reader), the extra wire edge by `create_wire_edge_from_curve`, the HCR by
+//! [`Hcr::new`] / [`Hcr::with_transform`] (its own scene copy, transform, infinite region
+//! and bounding box), the scene renumbered into the reference shim's traversal order
 //! ([`crate::own_builder::renumber_with`], so edge and vertex selectors name the same
-//! entities), then the same seeds and member. The C++ side checks the seeds and op
-//! arguments against its scene with `ffi::validate` (shim op 8); the Rust side makes the
-//! same checks against its own scene ([`validate_rust`]).
+//! entities as the golden's cases always have). The seeds and op arguments are checked
+//! against the scene as the reference wrapper checked them ([`validate_rust`]), and the
+//! B-rep blocks by `topology.vertexuse`'s block contract (`fixture::validate_block`, pure
+//! Rust).
 //!
 //! Compared: the construction state (transforms, projection box, ray offset tolerance,
 //! view vector, options), `IsSilhouetteEdge` / `IsBackFacingEdge`, the intervals and
@@ -56,6 +54,8 @@
 //! `IntersectCurveWithSilhouettes` reports that as `InvalidInput` ("UB-170").
 
 use super::topology_vertexuse::{gen_brep, path_of, push_curve, push_surface, sel, BrepIn, CrvIn};
+use solidcore_ffi::units::topology_vertexuse as fixture;
+
 use crate::{own_reader, Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -73,8 +73,14 @@ use solidcore::geom::object::ObjectRef;
 use solidcore::topology::brep::p2::ArenaNotifyState;
 use solidcore::topology::{edge, EdgeId, VertexId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::{blend_hcr as ffi, topology_vertexuse as fixture};
 use std::collections::BTreeSet;
+
+/// Largest magnitude of a scene value (B-rep block, extra wire, view, op 7's point; the
+/// `±f64::MAX` markers aside). With a coordinate near `1e20` in a scene of size `2e4`
+/// (between `1e18`, which returns, and `1e20`), `SmHCR::IsPointVisible` ->
+/// `SmRayTracer::FireRay` -> `SmGrid::Step3DDDA` never leaves its voxel walk: the
+/// grid's voxels are so large that the ray's steps no longer move it.
+const MAX_SCENE_MAGNITUDE: f64 = 1.0e15;
 
 /// The unit runner.
 pub struct Runner;
@@ -257,70 +263,25 @@ fn ops_block(r: &Resolved) -> (u8, Vec<f64>) {
     (op, v)
 }
 
-/// What the C++ side computes before running: the scene (shim op 8), the resolved
-/// selectors and the op block, validated against that scene.
-struct Prepared {
-    path: String,
-    brep: Vec<f64>,
-    hcr: Vec<f64>,
-    op: u8,
-    ops: Vec<f64>,
-}
-
-/// [`Prepared`], or the label of a rejection.
-fn prepare(i: &Inputs) -> Result<Result<Prepared, String>, HarnessError> {
-    let path = path_of(&i.brep)?;
-    let brep = brep_block(&i.brep)?;
-    let hcr = hcr_block(i)?;
-    // a failed build of the B-rep block (the shim's `build` returns NULL), reported with
-    // its status as the Rust side reports its own failed build
-    if let Ok(ex) = fixture::eval(fixture::Op::Export, &path, &brep) {
-        if ex.first() == Some(&-1.0) {
-            let status = ex.get(1).copied().unwrap_or(0.0);
-            return Ok(Err(format!("brep_build_status_{status}")));
-        }
-    }
-    let scene = match ffi::scene(&path, &brep, &hcr) {
-        Ok(s) => s,
-        Err(e) => return Ok(Err(format!("rejected: {e}"))),
-    };
-    let s = ffi::split(&scene).ok_or_else(|| harness("short scene output"))?;
-    let c = fixture::counts(s.export).ok_or_else(|| harness("scene export"))?;
-    let Some(r) = resolve(i, c[7], c[9]) else {
-        return Ok(Err("no_edge".into()));
-    };
-    let (op, ops) = ops_block(&r);
-    if let Err(e) = ffi::validate(op, &scene, &ops) {
-        return Ok(Err(format!("rejected: {e}")));
-    }
-    Ok(Ok(Prepared {
-        path,
-        brep,
-        hcr,
-        op,
-        ops,
-    }))
-}
-
 // ---- the Rust side's own scene and checks ---------------------------------------------------
 
-/// The label of an input rejection (`ffi::scene` / `ffi::validate`'s `bad`).
+/// The label of an input rejection (the reference wrapper's `bad`).
 fn bad(msg: &str) -> String {
     format!("rejected: invalid argument: blend.hcr: {msg}")
 }
 
-/// `ffi`'s `MAX_SCENE_MAGNITUDE` check on the inputs (the `±f64::MAX` markers aside).
+/// The reference wrapper's [`MAX_SCENE_MAGNITUDE`] check on the inputs (the `±f64::MAX` markers aside).
 fn check_magnitudes(v: &[f64]) -> Result<(), String> {
     if v.iter().any(|x| {
         let a = x.abs();
-        a > ffi::MAX_SCENE_MAGNITUDE && a < f64::MAX
+        a > MAX_SCENE_MAGNITUDE && a < f64::MAX
     }) {
         return Err(bad("scene value above 1e15 (grid walk does not end)"));
     }
     Ok(())
 }
 
-/// `ffi`'s view checks on the inputs (UB-169: a view vector `SmVector3d::Unitize`
+/// The reference wrapper's view checks on the inputs (UB-169: a view vector `SmVector3d::Unitize`
 /// cannot unitize; the placement, tolerances and flags are typed inputs here).
 fn check_view(i: &Inputs) -> Result<(), String> {
     if i.placement.is_none() {
@@ -333,7 +294,7 @@ fn check_view(i: &Inputs) -> Result<(), String> {
     Ok(())
 }
 
-/// `ffi::validate`'s checks of the seeds and op arguments (`ops`, as [`ops_block`]
+/// The reference wrapper's checks of the seeds and op arguments (`ops`, as [`ops_block`]
 /// makes them) against the Rust scene `h` (its edge and vertex counts and which edges
 /// have a curve).
 fn validate_rust(op: u8, h: &Hcr, ops: &[f64]) -> Result<(), String> {
@@ -437,7 +398,7 @@ fn source_key(e: EntityRef) -> ObjectRef {
 fn rust_hcr(k: &mut Kernel, i: &Inputs) -> Result<Result<Hcr, Output>, HarnessError> {
     use crate::own_builder::{build_as, failed_output, renumber_with, Built, Conventions};
     let conv = &Conventions::EDGEUSE_GRAPH;
-    // `ffi::scene`'s input checks
+    // the reference wrapper's scene input checks
     let (brep, hcr) = (brep_block(&i.brep)?, hcr_block(i)?);
     if let Err(m) = check_magnitudes(&brep).and_then(|()| check_magnitudes(&hcr)) {
         return Ok(Err(Output::err(m)));
@@ -446,7 +407,7 @@ fn rust_hcr(k: &mut Kernel, i: &Inputs) -> Result<Result<Hcr, Output>, HarnessEr
     if let Err(e) = fixture::validate_block(&path_of(&i.brep)?, &brep) {
         return Ok(Err(Output::err(format!("rejected: {e}"))));
     }
-    // `ffi::validate_hcr` admits the extra curve through a wire fixture too.
+    // the reference wrapper admits the extra curve through a wire fixture too.
     if let Some(x) = &i.extra {
         let wire = brep_block(&BrepIn::Wire { curve: x.curve.clone(), t0: x.t0, t1: x.t1 })?;
         if let Err(e) = fixture::validate_block("", &wire) {
@@ -535,31 +496,10 @@ fn output(status: f64, record: Vec<f64>) -> Output {
 // The shim emits an empty -2 record only when its existing UB/null-topology
 // guards refuse the call. An operation that actually ran emits its record even
 // on failure; do not turn a real status -2 with a record into a rejection.
-fn native_output(status: f64, record: Vec<f64>) -> Output {
-    if status == -2.0 && record.is_empty() {
-        Output::rejected("blend.hcr native UB-170/null-topology guard refused undefined input")
-    } else {
-        output(status, record)
-    }
-}
 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.hcr"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let p = match prepare(&i)? {
-            Ok(p) => p,
-            Err(msg) => return Ok(Output::err(msg)),
-        };
-        let v = match ffi::eval(p.op, &p.path, &p.brep, &p.hcr, &p.ops) {
-            Ok(v) => v,
-            Err(e) => return Ok(Output::err(format!("rejected: {e}"))),
-        };
-        let o = ffi::split(&v).ok_or_else(|| harness("short output"))?;
-        Ok(native_output(o.status, o.record.to_vec()))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1034,17 +974,6 @@ mod ub170_tests {
     use super::*;
 
     #[test]
-    fn native_guard_is_rejected_without_hiding_operation_results() {
-        assert!(native_output(-2.0, vec![]).rejected.is_some());
-        for (status, record) in [(0.0, vec![]), (-2.0, vec![1.0]), (3.0, vec![])] {
-            let o = native_output(status, record.clone());
-            assert!(o.rejected.is_none());
-            assert_eq!(o.values.get("status"), Some(&vec![status]));
-            assert_eq!(o.values.get("record"), Some(&record));
-        }
-    }
-
-    #[test]
     fn guarded_ub170_cases_complete_independently_in_rust() {
         // These unchanged generated cases formerly returned UB-170 InvalidInput.
         // Native rejection is checked separately; no native output is supplied
@@ -1077,8 +1006,6 @@ mod ub170_tests {
                 source: crate::case::CaseSource::Generated { seed },
                 inputs: Runner.generate(&mut rng).unwrap(),
             };
-            let cpp = Runner.run_cpp(&case).unwrap();
-            assert!(cpp.rejected.is_some(), "{}: {cpp:?}", case.name);
             let rust = Runner.run_rust(&case).unwrap();
             assert!(rust.error.is_none(), "{}: {rust:?}", case.name);
             assert!(rust.deferred.is_none(), "{}: {rust:?}", case.name);
