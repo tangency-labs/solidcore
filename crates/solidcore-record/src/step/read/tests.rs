@@ -1174,6 +1174,134 @@ fn nesting_in_parameter_space_is_bounded() {
     );
 }
 
+/// A chain of `n` surfaces in ascending id order over the surface `#10` (given in `base`):
+/// `#20` is `link` of `#10`, and each `#(20 + k)` is `link` of `#(19 + k)`, so `#(20 + k)` lies
+/// `k + 1` references above `#10`. `link` holds `{}` where the basis goes.
+fn ascending_surfaces(base: &str, link: &str, n: u64) -> String {
+    let mut d = String::from(base);
+    for k in 0..n {
+        let basis = if k == 0 { 10 } else { 19 + k };
+        write!(
+            d,
+            "#{}={};",
+            20 + k,
+            link.replace("{}", &format!("#{basis}"))
+        )
+        .unwrap();
+    }
+    d
+}
+
+/// The depth bound holds through the surface cache too (#2612): read link by link in
+/// ascending id order with one shared reader, `#(20 + k)` is read exactly when
+/// `k + 1 <= MAX_GEOM_DEPTH`, in every read order, and 200 000 links neither pass nor
+/// overflow the stack. A rectangular trimmed surface takes its parameter units from the
+/// kinds stored with its basis (angles on a cylinder, in degrees here), not by walking the
+/// chain again on every read.
+#[test]
+fn surface_nesting_is_bounded_through_the_cache() {
+    let expected = |k: u64| {
+        if k < MAX_GEOM_DEPTH as u64 {
+            Ok(())
+        } else {
+            Err("surface definitions nested too deeply".to_string())
+        }
+    };
+    let offsets = |n| {
+        file(&format!(
+            "{BASE}{}",
+            ascending_surfaces("#10=PLANE('',#4);", "OFFSET_SURFACE('',{},1.,.F.)", n)
+        ))
+    };
+    let n = 3 * MAX_GEOM_DEPTH as u64;
+    let ex = offsets(n);
+    let want: Vec<_> = (0..n).map(expected).collect();
+    let mut shared = Reader::new(&ex, MM);
+    let ascending: Vec<_> = (0..n).map(|k| shared.surface(20 + k).map(|_| ())).collect();
+    assert_eq!(ascending, want);
+    let mut shared = Reader::new(&ex, MM);
+    let mut descending: Vec<_> = (0..n)
+        .rev()
+        .map(|k| shared.surface(20 + k).map(|_| ()))
+        .collect();
+    descending.reverse();
+    assert_eq!(descending, want);
+    let alone: Vec<_> = (0..n)
+        .map(|k| Reader::new(&ex, MM).surface(20 + k).map(|_| ()))
+        .collect();
+    assert_eq!(alone, want);
+
+    let n = 200_000;
+    let ex = offsets(n);
+    let mut shared = Reader::new(&ex, MM);
+    for k in 0..n {
+        assert_eq!(
+            shared.surface(20 + k).map(|_| ()),
+            expected(k),
+            "#{}",
+            20 + k
+        );
+    }
+    drop(shared);
+
+    let deg = Units { len: 1.0, ang: DEG };
+    let ex = file(&format!(
+        "{BASE}{}",
+        ascending_surfaces(
+            "#10=CYLINDRICAL_SURFACE('',#4,5.);",
+            "RECTANGULAR_TRIMMED_SURFACE('',{},0.,90.,0.,1.,.T.,.T.)",
+            n
+        )
+    ));
+    let mut shared = Reader::new(&ex, deg);
+    for k in 0..n {
+        let r = shared.surface(20 + k);
+        if k < MAX_GEOM_DEPTH as u64 {
+            let Ok(s) = r else {
+                panic!("#{}: {r:?}", 20 + k)
+            };
+            let Surface::RectangularTrimmed { u2, v2, .. } = *s else {
+                panic!("{s:?}")
+            };
+            assert_eq!((u2, v2), (90.0 * DEG, 1.0));
+        } else {
+            assert_eq!(r.map(|_| ()), expected(k), "#{}", 20 + k);
+        }
+    }
+    drop(shared);
+
+    // Trimmed curves over a circle in degrees, the same way: angles, read once each.
+    let mut d = String::from("#11=CIRCLE('',#4,1.);");
+    for k in 0..n {
+        let basis = if k == 0 { 11 } else { 19 + k };
+        write!(
+            d,
+            "#{}=TRIMMED_CURVE('',#{basis},(PARAMETER_VALUE(0.)),(PARAMETER_VALUE(90.)),.T.,.PARAMETER.);",
+            20 + k
+        )
+        .unwrap();
+    }
+    let ex = file(&format!("{BASE}{d}"));
+    let mut shared = Reader::new(&ex, deg);
+    for k in 0..n {
+        let r = shared.curve(20 + k);
+        if k < MAX_GEOM_DEPTH as u64 {
+            let Ok(c) = r else {
+                panic!("#{}: {r:?}", 20 + k)
+            };
+            let Curve::Trimmed { trim_2, .. } = &*c else {
+                panic!("{c:?}")
+            };
+            assert_eq!(*trim_2, vec![Trim::Parameter(90.0 * DEG)]);
+        } else {
+            assert_eq!(
+                r.map(|_| ()),
+                Err("curve definitions nested too deeply".to_string())
+            );
+        }
+    }
+}
+
 #[test]
 fn surface_refusals_say_why() {
     for (data, why) in [
