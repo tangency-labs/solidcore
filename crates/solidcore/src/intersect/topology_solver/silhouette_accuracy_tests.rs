@@ -145,7 +145,12 @@ fn projected_trimmed_sphere_maximum_keeps_the_trim_endpoint() {
     // The unconstrained farthest equator point is outside this half-longitude
     // face. Its farthest included point is the trim endpoint (-0.5, 0, -1).
     let expected = (0.7_f64 * 0.7 + 0.3 * 0.3).sqrt();
-    check_face_projection(k, &Surface::from(sphere), Vec3::new(0.0, 0.0, 1.0), expected);
+    check_face_projection(
+        k,
+        &Surface::from(sphere),
+        Vec3::new(0.0, 0.0, 1.0),
+        expected,
+    );
 }
 
 #[test]
