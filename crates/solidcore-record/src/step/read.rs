@@ -1084,16 +1084,19 @@ impl<'a> Reader<'a> {
                 radius: positive(self.length(p.get(2), "radius")?, "sphere radius")?,
             }),
             "TOROIDAL_SURFACE" | "DEGENERATE_TOROIDAL_SURFACE" => {
-                let major_radius = self.length(p.get(2), "major radius")?;
+                // Both radii are positive_length_measures (ISO 10303-42).
+                let major_radius =
+                    positive(self.length(p.get(2), "major radius")?, "torus major radius")?;
                 let minor_radius =
                     positive(self.length(p.get(3), "minor radius")?, "torus minor radius")?;
-                // A negative major radius (outside the schema, which some writers use for a
-                // spindle torus) is the same formula: its tube on the other side of the axis.
-                if !major_radius.is_finite() {
-                    return Err("torus major radius must be finite".into());
-                }
                 let position = position(self)?;
                 if e.name() == "DEGENERATE_TOROIDAL_SURFACE" {
+                    // WR1: major_radius < minor_radius, the tube through its own axis.
+                    if major_radius >= minor_radius {
+                        return Err(
+                            "degenerate torus major radius must be below its minor radius".into(),
+                        );
+                    }
                     let select_outer = boolean(p.get(4), "degenerate torus select_outer")?;
                     Ok(Surface::DegenerateTorus {
                         position,
