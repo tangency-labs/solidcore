@@ -180,7 +180,10 @@ fn solidcraft_flags_build_minus_nine_as_the_fork() {
     assert!(brep_is_manifold_solid(&b).unwrap());
     assert_eq!(b.face_list().len(), 6);
     let v = volume(k, &mut b);
-    assert!((v - analytic(-9.0)).abs() <= 1e-10 * analytic(-9.0), "V {v}");
+    assert!(
+        (v - analytic(-9.0)).abs() <= 1e-10 * analytic(-9.0),
+        "V {v}"
+    );
     assert!((v - FORK_VOLUME_D9).abs() <= 1e-8 * FORK_VOLUME_D9, "V {v}");
 }
 
