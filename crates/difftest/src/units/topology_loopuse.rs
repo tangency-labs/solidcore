@@ -1,42 +1,36 @@
-//! Runner for unit `topology.loopuse`. C++: `solidcore_ffi::units::topology_loopuse`.
+//! Runner for unit `topology.loopuse`. Ported from upstream `SmLoopuse.cpp` (the shim
+//! `harness/cpp/shim/topology_loopuse.cpp` was the reference); checked against its golden.
 //! Rust: `solidcore::topology::loopuse`.
 //!
 //! The B-reps are those of unit `topology.edgeuse_p1` (upstream `.smb` files, wire edges,
-//! faces from B-spline surfaces and real `SmPlane`s, the wire network of `prog_test`
-//! `my_test_topology`): the C++ side builds a real `SmBrep` per call and imports the
-//! graph the shim exports ([`super::topology_edgeuse_p1::import`], which carries each
-//! loop use's `m_eOrientation`; each face's `m_pFU`, which the export lacks, comes from
-//! the shim's `FaceFu` op). The Rust side builds every non-file source itself
+//! faces from B-spline surfaces and planes, the wire network of `prog_test`
+//! `my_test_topology`): the runner builds every non-file source itself
 //! ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
 //! ([`crate::own_reader::brep_in_order`]), both renumbered into the shim's traversal
-//! order: no C++ export reaches the Rust side. The ported functions run on both.
+//! order ([`own_brep`]), and runs the ported functions on it. The generator redraws the
+//! B-rep (a few times) when it has none of the loops or loop uses the op selects.
 //! Loop, loop use, edge use and target arguments are selectors taken modulo the count
-//! of their kind (`-1` selects null). Results are compared as traversal indices; the
+//! of their kind (`-1` selects null). Results are recorded as traversal indices; the
 //! mutating ops (`FlipLoopOrientation`, `CollectEdgeuses`, `SetEdgeuse`, the setters)
-//! compare the loop, edge and vertex use links of the whole B-rep afterwards.
+//! record the loop, edge and vertex use links of the whole B-rep afterwards.
 //!
-//! `LuLists` attaches an attribute (id 777) to the selected objects on the C++ side; the
-//! Rust filter is the predicate "is one of those objects". `Closed3d` with `edge_tol`
+//! `LuLists` filters on the predicate "is one of the selected objects" (upstream attaches
+//! an attribute, id 777, to them). `Closed3d` with `edge_tol`
 //! first sets every edge's tolerance to it (`fixtures/topology.loopuse/tolerance_limit.json`:
 //! zero, tiny and negative tolerances), so that gaps exceed their `XSectTol3d` and the
-//! over-tolerance branch (with its early stop when `check_all` is false) is compared.
+//! over-tolerance branch (with its early stop when `check_all` is false) is exercised.
 //!
 //! `IsConnectedTo` with a vertex or edge target runs `SmVertex::IsConnectedTo` /
 //! `SmEdge::IsConnectedTo` (null dereference status when the loop has no loop use, or,
 //! for a vertex, a loop use whose vertices cannot be walked).
 //!
-//! `GetUVCornerBoundaries` of an edge loop runs `GetOrCreateUVTrimCurve` on both sides
+//! `GetUVCornerBoundaries` of an edge loop runs `GetOrCreateUVTrimCurve`
 //! (`topology.edgeuse_p3`; creating a curve defers on its own callees).
 //!
 //! Deferred: `FlipLoopOrientation` of a loop on a face (the post-edit `SmFace::Notify`
 //! reaches `SmFace::GetUpwardEdgeuses`, `topology.face_p4`), and `IsMissingSeamAtVertices` past
-//! the closure test (the sector computation's own deferrals). `IsClosed3d` on edges
-//! whose curve the export holds only as its B-spline part (ellipses and other
-//! `SmBSplineCurve` subclasses of the `.smb` files) and `IsMissingSeamAtVertices` on such
-//! surfaces are deferred as in unit `topology.edgeuse_p2`.
+//! the closure test (the sector computation's own deferrals).
 
-use std::cell::RefCell;
-use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -49,13 +43,8 @@ use solidcore::topology::{
     RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
-use solidcore_ffi::units::topology_loopuse::{self as ffi, Op};
 
-use super::topology_edgeuse_p1::{
-    brep_block_of, gen_brep, harness, import_with_types, path_of, sel, BrepIn, ImportTypes,
-    FILES,
-};
+use super::topology_edgeuse_p1::{gen_brep, harness, sel, BrepIn, ImportTypes, FILES};
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// The difftest runner.
@@ -185,8 +174,6 @@ enum Resolved {
 }
 
 struct Setup {
-    path: String,
-    block: Vec<f64>,
     brep: Brep,
     types: ImportTypes,
     op: Resolved,
@@ -278,220 +265,47 @@ fn resolve(op: &OpIn, c: [usize; 10], b: &Brep) -> Option<Resolved> {
     })
 }
 
-/// The C++ export of a B-rep block and each face's `m_pFU` (`None` for a failed build).
-type Graph = (Vec<f64>, Option<Vec<f64>>);
-
-/// A cached graph with its key (the `.smb` path and the block's bits).
-type CachedGraph = (String, Vec<u64>, Rc<Graph>);
-
-thread_local! {
-    /// The last few graphs (both sides of a case build the same B-rep).
-    static GRAPHS: RefCell<Vec<CachedGraph>> = const { RefCell::new(Vec::new()) };
+/// The case's B-rep: a shim-built source built with the Rust kernel
+/// ([`crate::own_builder`]), an `.smb` file read with the Rust reader
+/// ([`crate::own_reader::brep_in_order`]), both in the shim's traversal order; or the
+/// output of a failed build.
+fn own_brep(i: &Inputs) -> Result<Result<Brep, Output>, HarnessError> {
+    use crate::own_builder::{build, failed_output, Built};
+    let mut k = Kernel::default();
+    let built = match build(&mut k, &i.brep, i.validate_only, i.init_gaps)? {
+        Some(built) => built,
+        None => crate::own_reader::brep_in_order(
+            &mut k,
+            &i.brep,
+            i.validate_only,
+            i.init_gaps,
+            &crate::own_builder::Conventions::EDGEUSE_GRAPH,
+        )?,
+    };
+    Ok(match built {
+        Built::Brep(b) => Ok(*b),
+        Built::Failed(e) => Err(failed_output(&e)),
+    })
 }
 
-fn graph_of(path: &str, block: &[f64]) -> Result<Rc<Graph>, HarnessError> {
-    let bits: Vec<u64> = block.iter().map(|x| x.to_bits()).collect();
-    if let Some(g) = GRAPHS.with(|c| {
-        c.borrow()
-            .iter()
-            .find(|(p, b, _)| p == path && *b == bits)
-            .map(|(_, _, g)| Rc::clone(g))
-    }) {
-        return Ok(g);
-    }
-    // refuses a block value above 1e150 before the native export (HANG-29)
-    let ex = ffi::export(path, block).map_err(|e| harness(format!("c++ export: {e}")))?;
-    let fus = if ffi1::counts(&ex).is_some() {
-        Some(
-            ffi::eval(Op::FaceFu, path, block)
-                .map_err(|e| harness(format!("c++ face uses: {e}")))?,
-        )
-    } else {
-        None
+/// The case's B-rep ([`own_brep`]) and resolved op.
+fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
+    let brep = match own_brep(i)? {
+        Ok(b) => b,
+        Err(o) => return Ok(Err(o)),
     };
-    let g = Rc::new((ex, fus));
-    GRAPHS.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() >= 4 {
-            c.remove(0);
-        }
-        c.push((path.to_string(), bits, Rc::clone(&g)));
-    });
-    Ok(g)
-}
-
-/// The case's B-rep and resolved op. `own` (the Rust side) builds a shim-built source
-/// with the Rust kernel ([`crate::own_builder`]) and reads an `.smb` file with the Rust
-/// reader ([`crate::own_reader::brep_in_order`]); only the C++ side imports the shim's
-/// graph export.
-fn setup(i: &Inputs, own: bool) -> Result<Result<Setup, Output>, HarnessError> {
-    use crate::own_builder::{build, counts, failed_output, Built};
-    let path = path_of(Some(&i.brep))?;
-    let block = brep_block_of(Some(&i.brep), i.validate_only, i.init_gaps)?;
-    if own {
-        // an input the FFI refuses is a harness error on both sides: building a face on
-        // a surface with a coordinate above 1e150 does not return upstream (HANG-29,
-        // 2026-10-20 fuzz sweep fuzz00839), so the Rust port does not build it either
-        solidcore_ffi::units::topology_edgeuse_p2::check_block_magnitudes(&block)
-            .map_err(|e| harness(e.to_string()))?;
-        let mut k = Kernel::default();
-        match build(&mut k, &i.brep, i.validate_only, i.init_gaps)? {
-            Some(Built::Brep(b)) => {
-                let brep = *b;
-                let c = counts(&brep);
-                let Some(op) = resolve(&i.op, c, &brep) else {
-                    return Ok(Err(Output::err("no_entity_of_that_kind")));
-                };
-                return Ok(Ok(Setup {
-                    path,
-                    block,
-                    brep,
-                    types: ImportTypes::default(),
-                    op,
-                }));
-            }
-            Some(Built::Failed(e)) => return Ok(Err(failed_output(&e))),
-            None => {
-                // an `.smb` file: the Rust reader's B-rep in the shim's traversal order,
-                // its geometry owned as the Rust reader owns it (no C++ export reaches
-                // the Rust side)
-                let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
-                let built = crate::own_reader::brep_in_order(
-                    &mut k,
-                    &i.brep,
-                    i.validate_only,
-                    i.init_gaps,
-                    conv,
-                )?;
-                let brep = match built {
-                    Built::Brep(b) => *b,
-                    Built::Failed(e) => return Ok(Err(failed_output(&e))),
-                };
-                let c = counts(&brep);
-                let Some(op) = resolve(&i.op, c, &brep) else {
-                    return Ok(Err(Output::err("no_entity_of_that_kind")));
-                };
-                return Ok(Ok(Setup {
-                    path,
-                    block,
-                    brep,
-                    types: ImportTypes::default(),
-                    op,
-                }));
-            }
-        }
-    }
-    let g = graph_of(&path, &block)?;
-    let (ex, fus) = (&g.0, &g.1);
-    let (Some(c), Some(fus)) = (ffi1::counts(ex), fus) else {
-        let st = ex.get(1).copied().unwrap_or(0.0);
-        return Ok(Err(Output::err(format!("brep_build_status_{st}"))));
-    };
-    let (mut brep, types) = import_with_types(ex)?;
-    // each face's m_pFU, which the export lacks
-    let n = fus.get(1).copied().unwrap_or(-1.0);
-    if fus.first() != Some(&0.0) || n != brep.faces().len() as f64 {
-        return Err(harness("c++ face uses: bad output"));
-    }
-    for (f, &fu) in fus.get(2..).unwrap_or(&[]).iter().enumerate() {
-        brep.face_mut(FaceId::from_index(f as u32))
-            .map_err(|e| harness(e.to_string()))?
-            .faceuse = opt(fu as i64, FaceuseId::from_index);
-    }
+    let c = crate::own_builder::counts(&brep);
     let Some(op) = resolve(&i.op, c, &brep) else {
         return Ok(Err(Output::err("no_entity_of_that_kind")));
     };
     Ok(Ok(Setup {
-        path,
-        block,
         brep,
-        types,
+        types: ImportTypes::default(),
         op,
     }))
 }
 
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let s = match setup(i, false)? {
-        Ok(s) => s,
-        Err(o) => return Ok(o),
-    };
-    let mut input = s.block.clone();
-    let t = |input: &mut Vec<f64>, t: TargetIn| input.extend([t.0 as f64, t.1 as f64]);
-    let op = match &s.op {
-        Resolved::LuQuery(lu) => {
-            input.push(*lu as f64);
-            Op::LuQuery
-        }
-        Resolved::LuLists(lu, use_attr, attributed, conn) => {
-            input.extend([*lu as f64, flag(*use_attr), attributed.len() as f64]);
-            for a in attributed {
-                t(&mut input, *a);
-            }
-            t(&mut input, *conn);
-            Op::LuLists
-        }
-        Resolved::LuConnected(lu, target) => {
-            input.push(*lu as f64);
-            t(&mut input, *target);
-            Op::LuConnected
-        }
-        Resolved::LoopQuery(l) => {
-            input.push(*l as f64);
-            Op::LoopQuery
-        }
-        Resolved::LoopConnected(l, target) => {
-            input.push(*l as f64);
-            t(&mut input, *target);
-            Op::LoopConnected
-        }
-        Resolved::Closed3d(of_loop, index, all, want, edge_tol) => {
-            input.extend([flag(*of_loop), *index as f64, flag(*all)]);
-            input.extend(want.map(flag));
-            input.extend([flag(edge_tol.is_some()), edge_tol.unwrap_or(0.0)]);
-            Op::Closed3d
-        }
-        Resolved::MissingSeam(lu) => {
-            input.push(*lu as f64);
-            Op::MissingSeam
-        }
-        Resolved::UvCorners(l, dom, tol) => {
-            input.push(*l as f64);
-            input.extend(dom);
-            input.push(*tol);
-            Op::UvCorners
-        }
-        Resolved::Flip(l) => {
-            input.push(*l as f64);
-            Op::Flip
-        }
-        Resolved::Collect(lu, eu) => {
-            input.extend([*lu as f64, *eu as f64]);
-            Op::Collect
-        }
-        Resolved::SetEdgeuse(lu, eu) => {
-            input.extend([*lu as f64, *eu as f64]);
-            Op::SetEdgeuse
-        }
-        Resolved::SetOrient(lu, o) => {
-            input.extend([*lu as f64, f64::from(*o)]);
-            Op::SetOrient
-        }
-        Resolved::SetLoop(lu, l) => {
-            input.extend([*lu as f64, *l as f64]);
-            Op::SetLoop
-        }
-    };
-    let out = ffi::eval(op, &s.path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    if out.first() != Some(&0.0) {
-        return Err(harness("c++: B-rep build failed after export"));
-    }
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(output_of(&s.op, body))
-}
-
-/// The output of an op body, as both sides build it.
+/// The output of an op body.
 fn output_of(op: &Resolved, body: &[f64]) -> Output {
     if body.first() == Some(&NOT_RUN) && body.len() == 1 {
         // only on paths the Rust side defers; compared, it fails the case
@@ -916,7 +730,7 @@ fn inexact_geometry(s: &Setup) -> Option<Output> {
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let mut s = match setup(i, true)? {
+    let mut s = match setup(i)? {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };
@@ -1031,8 +845,8 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
         init_gaps: rng.chance(0.2),
         op: gen_op(rng),
     };
-    // A B-rep without the loopuse or loop the op selects compares only the same refusal
-    // on both sides: draw another. One that doesn't build, or no draw with the kind, keeps
+    // A B-rep without the loopuse or loop the op selects records only a refusal: draw
+    // another. One that doesn't build, or no draw with the kind, keeps
     // the case as it is, so its error stays visible.
     for _ in 0..BREP_DRAWS {
         if !lacks_kind(&i) {
@@ -1054,10 +868,10 @@ fn selects_loop(op: &OpIn) -> bool {
 
 /// Whether `i`'s B-rep builds but has none of the loops or loopuses its op selects.
 fn lacks_kind(i: &Inputs) -> bool {
-    let counts = path_of(Some(&i.brep)).ok().zip(brep_block_of(Some(&i.brep), i.validate_only, i.init_gaps).ok());
-    let Some(c) = counts.and_then(|(path, block)| graph_of(&path, &block).ok()).and_then(|g| ffi1::counts(&g.0)) else {
+    let Ok(Ok(b)) = own_brep(i) else {
         return false;
     };
+    let c = crate::own_builder::counts(&b);
     let [_, _, _, _, n_lu, n_l, ..] = c;
     if selects_loop(&i.op) { n_l == 0 } else { n_lu == 0 }
 }
@@ -1065,13 +879,6 @@ fn lacks_kind(i: &Inputs) -> bool {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.loopuse"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if super::topology_face_p4::level0::is_level0(case) {
-            return super::topology_face_p4::level0::run_cpp(case);
-        }
-        run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1114,61 +921,6 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The 2026-10-20 fuzz sweep's `fuzz00839` input (base `face30_007_collect`): a
-    /// rational (3, 1) B-spline face with control point `net[1][0]` at `y`.
-    fn huge_net_case(y: f64) -> Inputs {
-        serde_json::from_value(serde_json::json!({
-            "brep": {"dom": [0, 0, 1, 1], "kind": "face", "surface": {"bspline": {
-                "form": 0, "oob": false, "p": 3, "q": 1,
-                "u": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
-                "v": [0.0, 0.0, 0.7005122861252279, 0.7733533798280249,
-                      0.8525573221342606, 1.0, 1.0],
-                "net": [
-                    [[0.0, 0.0, 0.0, 0.7774707505804863],
-                     [0.0, 0.6198957499925698, 0.0, 0.6198957499925698],
-                     [0.0, 1.0915138706736038, 0.0, 0.5457569353368019],
-                     [0.0, 2.4045273584428104, 0.0, 0.8015091194809368],
-                     [0.0, 5.768466463948802, 0.0, 1.4421166159872005]],
-                    [[1.035518961276856, y, 0.0, 1.035518961276856],
-                     [0.6749879732711839, 0.6749879732711839, 0.0, 0.6749879732711839],
-                     [0.5570242833368088, 1.1140485666736175, 0.0, 0.5570242833368088],
-                     [1.767758480218435, 5.303275440655305, 0.0, 1.767758480218435],
-                     [0.8390131234931159, 3.3560524939724634, 0.0, 0.8390131234931159]],
-                    [[3.337575234482273, 0.0, 0.0, 1.6687876172411364],
-                     [1.4544881976507322, 0.7272440988253661, 0.0, 0.7272440988253661],
-                     [1.2632511706398604, 1.2632511706398604, 0.0, 0.6316255853199302],
-                     [2.252418776247515, 3.378628164371273, 0.0, 1.1262093881237576],
-                     [2.2576856125184137, 4.515371225036827, 0.0, 1.1288428062592069]],
-                    [[2.926413483977064, 0.0, 0.0, 0.9754711613256879],
-                     [3.1378995657767907, 1.045966521925597, 0.0, 1.045966521925597],
-                     [4.413252585810463, 2.942168390540309, 0.0, 1.4710841952701545],
-                     [3.2810402043525775, 3.2810402043525775, 0.0, 1.0936800681175258],
-                     [1.9890594549815495, 2.6520792733087326, 0.0, 0.6630198183271832]]
-                ]}}},
-            "eu": 21, "init_gaps": true, "lu": 0, "op": "collect", "validate_only": true
-        }))
-        .unwrap()
-    }
-
-    /// HANG-29: the C++ graph export never returns for a control point of `-1e300`
-    /// (`-1e155` already); both sides refuse the block with the same message. The same
-    /// face at the bound (`-1e150`) still runs on both sides and agrees.
-    #[cfg(feature = "cpp")]
-    #[test]
-    fn huge_block_value_is_refused_on_both_sides() {
-        let i = huge_net_case(-1e300);
-        let c = run_cpp(&i).unwrap_err().to_string();
-        let r = run_rust(&i).unwrap_err().to_string();
-        assert!(c.contains("B-rep value above 1e150 (HANG-29)"), "{c}");
-        assert!(r.contains("B-rep value above 1e150 (HANG-29)"), "{r}");
-
-        let i = huge_net_case(-1e150);
-        let (c, r) = (run_cpp(&i).unwrap(), run_rust(&i).unwrap());
-        assert!(r.deferred.is_none(), "{:?}", r.deferred);
-        let d = crate::compare(&c, &r, Runner.abs_floors());
-        assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
-    }
 
     /// `selects_loop` names the kind `resolve` refuses an op without, for every op drawn.
     #[test]
