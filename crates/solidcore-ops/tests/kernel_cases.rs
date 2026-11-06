@@ -54,7 +54,7 @@ use solidcore_ops::blend::{
 };
 use solidcore_ops::boolean::{boolean, BooleanOp};
 use solidcore_ops::split::{split_faces, Tool};
-use solidcore_ops::stitch::stitch;
+use solidcore_ops::stitch::{merge_faces, stitch};
 use solidcore_ops::sweep::{extrude, loft, revolve, Curve, DraftCorner};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
 use solidcore_record::brep::{Brep as Record, Frame, Surface as RecordSurface};
@@ -82,6 +82,8 @@ const PORTED: &[&str] = &[
     "chamfer_sides",
     "stitch",
     "split_body_by_sheet",
+    "split_body",
+    "merge_faces",
 ];
 
 /// The relative tolerance the rig grades volume and area with when a case states none.
@@ -287,7 +289,7 @@ fn made(b: solidcore_ops::Result<Body>) -> Result<Slot, String> {
 /// Converts the trace's planar or cylindrical tool to record parameters; angles alone
 /// change units from the trace's degrees to the record's radians.
 fn split_tool(t: &Value) -> Result<Tool, Stop> {
-    let bad = |field: &str| Stop::Fail(format!("split_faces: tool parameter {field}"));
+    let bad = |field: &str| Stop::Fail(format!("split: tool parameter {field}"));
     let object = t.as_object().ok_or_else(|| bad("object"))?;
     if object.len() != 1 {
         return Err(bad("exactly one named kind"));
@@ -325,12 +327,39 @@ fn split_tool(t: &Value) -> Result<Tool, Stop> {
         });
     }
     Err(Stop::Unsupported(format!(
-        "split_faces: tool kind {kind} not ported"
+        "split: tool kind {kind} not ported"
     )))
+}
+
+/// Converts either split operation's ordered pair without aliasing the two outputs.
+fn made_parts(
+    result: solidcore_ops::Result<Option<(Body, Body)>>,
+    no_split: &str,
+) -> Result<Vec<Slot>, String> {
+    let (back, front) = result
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| no_split.to_owned())?;
+    Ok([back, front]
+        .into_iter()
+        .map(|body| Slot {
+            body: Arc::new(body),
+            order: None,
+        })
+        .collect())
 }
 
 /// Runs a traced call in output order, keeping a split's two bodies distinct.
 fn call_outputs(c: &Value, ins: &mut [Slot]) -> Result<Result<Vec<Slot>, String>, Stop> {
+    if c["op"].as_str() == Some("split_body") {
+        if ins.len() != 1 {
+            return Err(Stop::Fail("split_body: requires one body".to_owned()));
+        }
+        let tool = split_tool(&c["params"]["tool"])?;
+        return Ok(made_parts(
+            solidcore_ops::split::split_body(&ins[0].body, &tool),
+            "tool does not divide the body",
+        ));
+    }
     if c["op"].as_str() != Some("split_body_by_sheet") {
         return call(c, ins).map(|r| r.map(|out| vec![out]));
     }
@@ -355,19 +384,10 @@ fn call_outputs(c: &Value, ins: &mut [Slot]) -> Result<Result<Vec<Slot>, String>
     if order.faces.get(face).is_none() {
         return Err(bad("face outside sheet record order"));
     }
-    Ok(
-        match solidcore_ops::split::split_body_by_sheet(&body[0].body, &sheet.body, order, face) {
-            Ok(Some((back, front))) => Ok([back, front]
-                .into_iter()
-                .map(|body| Slot {
-                    body: Arc::new(body),
-                    order: None,
-                })
-                .collect()),
-            Ok(None) => Err("sheet does not divide the body".to_owned()),
-            Err(e) => Err(e.to_string()),
-        },
-    )
+    Ok(made_parts(
+        solidcore_ops::split::split_body_by_sheet(&body[0].body, &sheet.body, order, face),
+        "sheet does not divide the body",
+    ))
 }
 
 /// Runs one traced call: its output, or the operation's error as text.
@@ -609,6 +629,42 @@ fn call_with_copy(
             }
             let r = blend(&s.body, kind, &unique, &each, &[], Corners::Filled).map(|_| ());
             in_place(Slot { order: None, ..s }, r)
+        }
+        "merge_faces" => {
+            if ins.len() != 1 {
+                return Err(bad("one input"));
+            }
+            let mut s = copy_for_edit(&first()?)?;
+            let selection = &p["keep"];
+            if selection["kind"].as_str() != Some("edge") {
+                return Err(bad("keep must select edges"));
+            }
+            let keep = selection["picked"]
+                .as_array()
+                .ok_or_else(|| bad("keep picked"))?
+                .iter()
+                .map(|pick| {
+                    pick["index"]
+                        .as_u64()
+                        .and_then(|i| usize::try_from(i).ok())
+                        .ok_or_else(|| bad("keep edge index"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if s.order.is_none() {
+                let (_, order) = s
+                    .body
+                    .to_record()
+                    .map_err(|e| Stop::Fail(format!("order before merge_faces: {e}")))?;
+                s.order = Some(order);
+            }
+            let order = s.order.as_ref().unwrap();
+            if keep.iter().any(|&i| order.edges.get(i).is_none()) {
+                return Err(bad("keep edge outside record order"));
+            }
+            let body = Arc::try_unwrap(s.body).map_err(|_| {
+                Stop::Fail("copy before merge_faces: the copy is shared".to_owned())
+            })?;
+            made(merge_faces(body, order, &keep))
         }
         "stitch" => {
             let s = copy_for_edit(&first()?)?;
@@ -1305,6 +1361,7 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
         "thicken",
         "chamfer_sides",
         "stitch",
+        "merge_faces",
     ] {
         let step = serde_json::json!({
             "op": op, "error": "expected edit refusal",
@@ -1358,6 +1415,9 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
             "distance": 1, "first": [0,0,1], "second": {"distance": 2}
         }}),
         serde_json::json!({"op": "stitch", "params": {"tolerance": 1e-5}}),
+        serde_json::json!({"op": "merge_faces", "params": {
+            "keep": {"kind": "edge", "picked": []}
+        }}),
     ] {
         step["error"] = serde_json::json!("expected refusal");
         match call(&step, &mut [input.clone()]) {
@@ -1774,6 +1834,177 @@ fn split_faces_replays_the_sketch_circle() {
 #[test]
 fn split_faces_replays_another_bodys_face() {
     replay_face_split_case("cov-split-face-by-another-bodys-face");
+}
+
+/// A plane's normal orders two unequal parts; both names must bind distinct bodies.
+#[test]
+fn split_body_keeps_distinct_parts_and_preserves_input() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0; 3]).unwrap());
+    let (before, order) = body.to_record().unwrap();
+    for reversed in [false, true] {
+        let z = if reversed { -1.0 } else { 1.0 };
+        let step = serde_json::json!({"op": "split_body", "params": {"tool": {
+            "plane": {"origin": [3,0,0], "xaxis": [0,1,0], "yaxis": [0,0,z],
+                "u": [-1,11], "v": [-11,11]}
+        }}});
+        let parts = call_outputs(
+            &step,
+            &mut [Slot {
+                body: Arc::clone(&body),
+                order: Some(order.clone()),
+            }],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(parts.len(), 2);
+        assert!(!Arc::ptr_eq(&parts[0].body, &parts[1].body));
+        let want = if reversed {
+            [700.0, 300.0]
+        } else {
+            [300.0, 700.0]
+        };
+        for (part, volume) in parts.iter().zip(want) {
+            assert!((part.body.volume(1e-9).unwrap() - volume).abs() < 1e-7);
+            assert_eq!(part.body.counts().unwrap(), [6, 12, 8]);
+            assert!(part.order.is_none());
+        }
+        assert_eq!(body.to_record().unwrap().0, before);
+        for (name, volume) in ["back", "front"].into_iter().zip(want) {
+            let mut traced = step.clone();
+            traced["inputs"] = serde_json::json!(["solid"]);
+            traced["outputs"] = serde_json::json!(["back", "front"]);
+            let entry = serde_json::json!({
+                "bodies": {"solid": {"trusted": true}}, "calls": [traced],
+                "result": [{"made": name}],
+                "expected": {"body_count":1,"volume_mm3":volume,"faces":6,
+                    "edges":12,"vertices":8,"tolerance":{"rel":1e-9}}
+            });
+            let records = serde_json::json!({"solid":before})
+                .as_object()
+                .unwrap()
+                .clone();
+            assert!(run_case_with_records(&entry, || records.clone())
+                .unwrap()
+                .is_some());
+        }
+    }
+}
+
+/// Keeping the new split edge prevents merging only that seam, even after record reordering.
+#[test]
+fn merge_faces_keeps_record_edges_and_preserves_input() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap());
+    let (record, order) = body.to_record().unwrap();
+    let top = record
+        .faces
+        .iter()
+        .position(|f| {
+            matches!(f.surface,
+        RecordSurface::Plane {origin,..} if origin[2]==30.0)
+        })
+        .unwrap();
+    let split = serde_json::json!({"op":"split_faces","params":{
+        "faces":[top],"tools":[{"plane":{"origin":[3,0,0],"xaxis":[0,1,0],
+            "yaxis":[0,0,1],"u":[-1,21],"v":[-1,31]}}]
+    }});
+    let split = call(
+        &split,
+        &mut [Slot {
+            body,
+            order: Some(order),
+        }],
+    )
+    .unwrap()
+    .unwrap();
+    let (before, original_order) = split.body.to_record().unwrap();
+    let seam = before
+        .edges
+        .iter()
+        .position(|edge| {
+            edge.vertices.iter().all(|&i| {
+                let p = before.vertices[i as usize].point;
+                (p[0] - 3.0).abs() < 1e-7 && (p[2] - 30.0).abs() < 1e-7
+            })
+        })
+        .unwrap();
+    let seam_id = original_order.edges[seam];
+    for mode in 0..3 {
+        let mut order = original_order.clone();
+        if mode == 1 {
+            order.edges.rotate_left(5);
+        }
+        let pick = order.edges.iter().position(|&id| id == seam_id).unwrap();
+        for keep_seam in [false, true] {
+            let picked = if keep_seam {
+                serde_json::json!([{"index":pick}])
+            } else {
+                serde_json::json!([])
+            };
+            let step = serde_json::json!({"op":"merge_faces","params":{"keep":{"kind":"edge","picked":picked}}});
+            let out = call(
+                &step,
+                &mut [Slot {
+                    body: Arc::clone(&split.body),
+                    order: (mode != 2).then_some(order.clone()),
+                }],
+            )
+            .unwrap()
+            .unwrap();
+            assert!(out.order.is_none());
+            assert_eq!(
+                out.body.counts().unwrap(),
+                if keep_seam { [7, 15, 10] } else { [6, 12, 8] }
+            );
+            assert!((out.body.volume(1e-9).unwrap() - 6000.0).abs() < 1e-6);
+            assert!((out.body.area(1e-9).unwrap() - 2200.0).abs() < 1e-6);
+            assert_eq!(split.body.to_record().unwrap().0, before);
+        }
+    }
+}
+
+/// Invalid trace data is a replay failure; validly shaped but invalid geometry is a refusal.
+#[test]
+fn split_body_and_merge_faces_metadata_do_not_masquerade_as_refusals() {
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0; 3]).unwrap());
+    let input = Slot { body, order: None };
+    for keep in [
+        serde_json::json!(null),
+        serde_json::json!({"kind":"face","picked":[]}),
+        serde_json::json!({"kind":"edge"}),
+        serde_json::json!({"kind":"edge","picked":[{}]}),
+        serde_json::json!({"kind":"edge","picked":[{"index":100000}]}),
+    ] {
+        let step = serde_json::json!({"op":"merge_faces","params":{"keep":keep}});
+        assert!(matches!(
+            call(&step, &mut [input.clone()]),
+            Err(Stop::Fail(_))
+        ));
+    }
+    for tool in [serde_json::json!(null), serde_json::json!({"plane":{}})] {
+        let step = serde_json::json!({"op":"split_body","params":{"tool":tool}});
+        assert!(matches!(
+            call_outputs(&step, &mut [input.clone()]),
+            Err(Stop::Fail(_))
+        ));
+    }
+    let step = serde_json::json!({"op":"split_body","params":{"tool":{"plane":{
+        "origin":[3,0,0],"xaxis":[0,0,0],"yaxis":[0,0,1],"u":[-1,11],"v":[-1,11]
+    }}}});
+    assert!(matches!(call_outputs(&step, &mut [input]), Ok(Err(_))));
+}
+
+/// Captured split followed by merging its redundant faces, with the original grading.
+#[test]
+fn split_body_replays_face_plane() {
+    replay_face_split_case("3447-split-along-plane-of-a-face");
+}
+
+/// The other captured split/merge workflow, using the body's own extended face as tool.
+#[test]
+fn split_body_replays_own_extended_face() {
+    replay_face_split_case("4654-split-body-by-its-own-face-extended");
 }
 
 #[test]
