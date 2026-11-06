@@ -1,12 +1,13 @@
-//! Differential checks of `SmBrep::AssertValid` and the capi `smlib_brep_check`
-//! sequence (`ValidatePointers`, then `AssertValid`) against the pinned C++ reference.
-//! Both sides build the body themselves: the `sc_edgeuse_graph.h` sources with the Rust
-//! kernel ([`crate::own_builder`]), `.smb` files with the Rust reader, and the
-//! primitives with `SmApiCreate*` / `primitive::api_primitives`. Both are numbered in
-//! the shim's traversal order, so the mutation selectors and every report identity name
-//! the same entities. Report messages are compared after the shim replaces printed
-//! edge addresses by the edge's report identity. No C++ state reaches the Rust side.
-use super::topology_edgeuse_p1::{brep_block_of, path_of, BrepIn};
+//! Runner for unit `topology.assert_valid`: `SmBrep::AssertValid` and the capi
+//! `smlib_brep_check` sequence (`ValidatePointers`, then `AssertValid`). Ported from upstream
+//! `SmBrep::AssertValid`; checked against its golden. The case builds the body: the
+//! `sc_edgeuse_graph.h` sources with the Rust kernel ([`crate::own_builder`]), `.smb` files
+//! with the Rust reader, and the primitives with `primitive::api_primitives`. Entities are
+//! numbered in traversal order, so the mutation selectors and every report identity name
+//! the same entities; printed edge addresses in report messages are replaced by the edge's
+//! report identity.
+
+use super::topology_edgeuse_p1::BrepIn;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,7 +21,6 @@ use solidcore::topology::{
     edge, vertex, Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopuseId, NamingScheme, VertexId,
 };
 use solidcore::{EntityRef, Kernel, Vec3};
-use solidcore_ffi::units::topology_assert_valid as ffi;
 
 /// Native `AssertValid` runner.
 pub struct Runner;
@@ -148,56 +148,6 @@ const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder
     // the runner records `Notify` itself, after the build
     naming: NamingScheme::Unknown,
 };
-fn block(src: &Src) -> Result<(String, Vec<f64>), HarnessError> {
-    Ok(match src {
-        Src::Prim(p) => (
-            String::new(),
-            match p {
-                Prim::Sphere { origin, radius } => {
-                    vec![200.0, origin[0], origin[1], origin[2], *radius]
-                }
-                Prim::Cylinder {
-                    origin,
-                    radius,
-                    height,
-                } => vec![201.0, origin[0], origin[1], origin[2], *radius, *height],
-                Prim::Cone {
-                    origin,
-                    radius_base,
-                    radius_top,
-                    height,
-                } => vec![
-                    202.0,
-                    origin[0],
-                    origin[1],
-                    origin[2],
-                    *radius_base,
-                    *radius_top,
-                    *height,
-                ],
-                Prim::Torus {
-                    origin,
-                    major,
-                    minor,
-                } => vec![203.0, origin[0], origin[1], origin[2], *major, *minor],
-            },
-        ),
-        Src::Brep(b) => (path_of(Some(b))?, brep_block_of(Some(b), false, false)?),
-    })
-}
-fn args(i: &Inputs) -> [f64; 5] {
-    [
-        f64::from(i.level),
-        f64::from(i.walk),
-        f64::from(if i.copy && i.copy_op != 0 {
-            i.copy_op
-        } else {
-            i.mutation
-        }),
-        i.index as f64,
-        i.value,
-    ]
-}
 /// The Rust B-rep of the source in the shim's traversal order, or the output of a
 /// failed build.
 fn own_brep(k: &mut Kernel, src: &Src) -> Result<Result<Brep, Output>, HarnessError> {
@@ -873,41 +823,10 @@ fn offset_copy(k: &mut Kernel, mut copy: Brep, i: &Inputs) -> solidcore::Result<
         &mut notifications,
     )
 }
-const NULL_LINK_TESTS: &str =
-    "the level-2 tests dereference the nulled surface or curve (crash in C++, UB-281)";
 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.assert_valid"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        if i.tests && (i.mutation == 8 || i.mutation == 9) {
-            return Ok(Output::rejected(NULL_LINK_TESTS));
-        }
-        let (path, block) = block(&i.brep)?;
-        let op = if i.update {
-            5
-        } else if i.tests {
-            2
-        } else if i.copy && i.copy_op != 0 {
-            4
-        } else if i.copy {
-            3
-        } else {
-            u8::from(i.capi)
-        };
-        let out = ffi::eval(op, &path, &block, args(&i)).map_err(|e| herr(e.to_string()))?;
-        if i.update {
-            return update_output(&out);
-        }
-        if i.tests {
-            return tests_output(&out);
-        }
-        if i.copy {
-            return output(&out, true).map(copy_summary);
-        }
-        output(&out, i.capi)
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
