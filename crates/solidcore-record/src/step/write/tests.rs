@@ -200,7 +200,7 @@ fn reals_are_written_in_their_shortest_exact_form() {
 }
 
 #[test]
-fn strings_escape_quotes_backslashes_and_non_ascii() {
+fn strings_escape_quotes_backslashes_control_characters_and_non_ascii() {
     let cases = [
         ("", "''"),
         ("plain text 1", "'plain text 1'"),
@@ -210,7 +210,10 @@ fn strings_escape_quotes_backslashes_and_non_ascii() {
         ("é", "'\\X2\\00E9\\X0\\'"),
         ("Größe", "'Gr\\X2\\00F6\\X0\\\\X2\\00DF\\X0\\e'"),
         ("😀", "'\\X2\\D83DDE00\\X0\\'"),
-        ("a\nb\t", "'a\\X\\0Ab\\X\\09'"),
+        // Control characters as their ISO 10646 code in a `\X2\` run, the one form Part 21
+        // gives every code (the module's deviations).
+        ("a\nb", "'a\\X2\\000A\\X0\\b'"),
+        ("\t\u{1f}\u{7f}", "'\\X2\\0009\\X0\\\\X2\\001F\\X0\\\\X2\\007F\\X0\\'"),
     ];
     for (s, t) in cases {
         assert_eq!(string(s), t, "{s:?}");
@@ -770,6 +773,126 @@ fn refusals_say_why() {
     );
     // A refused entity leaves nothing behind but the entities it refers to.
     assert!(!w.data().contains("lower_case") && !w.data().contains("=X("));
+}
+
+/// `basis` trimmed `n` times over: a curve nested `n` deep.
+fn trimmed_chain(basis: Curve, n: usize) -> Curve {
+    (0..n).fold(basis, |c, _| Curve::Trimmed {
+        basis: Arc::new(c),
+        trim_1: vec![Trim::Parameter(0.0)],
+        trim_2: vec![Trim::Parameter(1.0)],
+        sense: true,
+        preference: TrimPreference::Parameter,
+    })
+}
+
+/// Takes a chain apart one link at a time, so dropping a chain far deeper than the bound does
+/// not recurse in the test either.
+fn drop_chain(c: Curve) {
+    let mut next = Some(c);
+    while let Some(c) = next.take() {
+        if let Curve::Trimmed { basis, .. } = c {
+            next = Arc::try_unwrap(basis).ok();
+        }
+    }
+}
+
+#[test]
+fn nesting_is_bounded_as_the_reader_bounds_it() {
+    use crate::step::read::MAX_GEOM_DEPTH;
+    let x = |m: f64| line([0.0; 3], [1.0, 0.0, 0.0], m);
+    let curves = "curve definitions nested too deeply";
+    let surfaces = "surface definitions nested too deeply";
+    // A curve: as deep as the reader reads it is written and reads back; one more is refused.
+    curve_back(&trimmed_chain(x(1.0), MAX_GEOM_DEPTH));
+    assert_eq!(
+        curve_err(&trimmed_chain(x(1.0), MAX_GEOM_DEPTH + 1)),
+        Err(curves.into())
+    );
+    // A surface: offsets of offsets.
+    let offsets = |n: usize| {
+        (0..n).fold(Surface::Plane { position: WORLD }, |b, _| Surface::Offset {
+            basis: Arc::new(b),
+            distance: 1.0,
+            self_intersect: Logical::False,
+        })
+    };
+    surface_back(&offsets(MAX_GEOM_DEPTH));
+    assert_eq!(
+        GeomWriter::new(&mut Writer::new()).surface(&offsets(MAX_GEOM_DEPTH + 1)),
+        Err(surfaces.into())
+    );
+    // A pcurve's 2D curve counts from the pcurve, as the reader counts it.
+    let plane = Arc::new(Surface::Plane { position: WORLD });
+    let pcurve = |n: usize| Pcurve {
+        surface: plane.clone(),
+        curve: Arc::new(trimmed_chain(x(1.0), n)),
+    };
+    pcurve_back(&pcurve(MAX_GEOM_DEPTH));
+    assert_eq!(
+        GeomWriter::new(&mut Writer::new()).pcurve(&pcurve(MAX_GEOM_DEPTH + 1)),
+        Err(curves.into())
+    );
+    // Through every link between curves and surfaces: a surface curve's associated surface,
+    // a surface of revolution's profile, an extrusion's profile, an offset curve's basis.
+    let up = vector([0.0, 0.0, 1.0], 1.0);
+    let z = Axis1 {
+        origin: [0.0; 3],
+        direction: Some([0.0, 0.0, 1.0]),
+    };
+    let linked = |n: usize| {
+        let mut c = x(1.0);
+        for i in 0..n {
+            c = match i % 4 {
+                0 => Curve::OffsetCurve3d {
+                    basis: Arc::new(c),
+                    distance: 1.0,
+                    self_intersect: Logical::False,
+                    ref_direction: [0.0, 0.0, 1.0],
+                },
+                1 => Curve::SurfaceCurve {
+                    kind: SurfaceCurveKind::Surface,
+                    curve_3d: Arc::new(x(2.0)),
+                    associated: vec![Associated::Surface(Arc::new(Surface::Revolution {
+                        profile: Arc::new(c),
+                        axis: z,
+                    }))],
+                    master: PreferredRep::Curve3d,
+                },
+                2 => Curve::SurfaceCurve {
+                    kind: SurfaceCurveKind::Surface,
+                    curve_3d: Arc::new(x(3.0)),
+                    associated: vec![Associated::Surface(Arc::new(Surface::Extrusion {
+                        profile: Arc::new(c),
+                        vector: up,
+                    }))],
+                    master: PreferredRep::Curve3d,
+                },
+                _ => trimmed_chain(c, 1),
+            };
+        }
+        c
+    };
+    // An offset or a trim is one level, a link through a surface two: eight links in this
+    // order are 1 + 2 + 2 + 1, twice, levels deep.
+    assert_eq!(MAX_GEOM_DEPTH, 12, "the chain below is counted for 12");
+    let deepest = 8;
+    curve_back(&linked(deepest));
+    assert_eq!(curve_err(&linked(deepest + 1)), Err(curves.into()));
+    // Far deeper than any file: refused, not a stack overflow.
+    let deep = trimmed_chain(x(1.0), 100_000);
+    assert_eq!(curve_err(&deep), Err(curves.into()));
+    drop_chain(deep);
+}
+
+#[test]
+fn the_header_has_no_time_stamp() {
+    // Empty, so the text depends on the entities alone (the module's deviations).
+    let t = Writer::new().file("a.stp", SCHEMA);
+    assert!(
+        t.contains("\nFILE_NAME('a.stp','',(''),(''),'solidcore','solidcore','');\n"),
+        "{t}"
+    );
 }
 
 #[test]
