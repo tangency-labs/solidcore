@@ -15,6 +15,9 @@ has one closed edge. Equal chamfer setbacks 2.995 prepare offsets
 6.483916671439901, but execution returns status 1001 and "Fillet Surface
 Computation Failure". The reported Core985 application wrapper independently
 returns status 1001 for the same operand.
+After the goldens migration, pristine main `3ed619475` still passes the operand
+test and fails the chamfer test with status 1001; the production dispatch fix is
+still needed on that baseline.
 
 Temporary native tracing, removed before implementation, identifies
 `BlendSpine::Point`, supports `[None,Cone]`, followed by
@@ -52,11 +55,17 @@ supply that proof.
 ## Validation and limits
 
 The dedicated native tests on pristine main: one passes (operand), one fails
-(actual chamfer). With the Point dispatch guard, both pass in the standard
+(actual chamfer). With the Point dispatch guard, both pass in the pre-migration
 optimized difftest profile: the chamfer completes, is manifold, passes Level2,
 and its volume agrees with the independent meridian within 1e-9 relative.
 A separate native run gives 6 faces, 9 edges, 5 vertices and volume
 112773.94647118454 (about 1.4e-13 relative from the independent value).
+The merged `3ed619475` baseline with the fix gives the byte-identical saved body.
+The strengthened regression checks the exact definition on a 5-by-5 grid against
+the meridian cone and checks both contact heights, as well as validity and volume.
+The separate geometry probe's maximum relative radius error is 8.52e-16, with
+contact heights within 3e-14. Both final regression tests pass on the merged
+kernel; the same source still fails at the chamfer on pristine `3ed619475`.
 Generic chord certification remains expensive (the two tests took 83.08 seconds
 on this machine). A stack sample locates that work in `gn_certify_span` through
 `GnSectionFsg::build_chord`; this is not a performance improvement claim.

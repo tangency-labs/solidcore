@@ -68,7 +68,7 @@ fn base_volume() -> f64 {
     bottom + arc_volume(30.0, 60.0) + top
 }
 
-fn expected_volume() -> f64 {
+fn chamfer_contacts() -> [[f64; 2]; 2] {
     // Independently solve the offset circle/cone meridians, selecting the contact
     // on both finite faces. Neither a kernel result nor the old cached volume.
     let d = 2.995;
@@ -88,8 +88,61 @@ fn expected_volume() -> f64 {
     let za = 33.0 + (z - 33.0) * rho / (rho + r);
     let rb = x - r / n;
     let zb = z + 0.15 * r / n;
+    [[ra, za], [rb, zb]]
+}
+
+fn expected_volume() -> f64 {
+    let [[ra, za], [rb, zb]] = chamfer_contacts();
     let frustum = |h: f64, a: f64, b: f64| PI * h / 3.0 * (a * a + a * b + b * b);
     base_volume() - arc_volume(za, 60.0) - frustum(zb - 60.0, 15.0, rb) + frustum(zb - za, ra, rb)
+}
+
+fn chamfer_is_the_meridian_cone(k: &Kernel, b: &Brep) {
+    let [[ra, za], [rb, zb]] = chamfer_contacts();
+    // Check the definition, independently of its certified display approximation.
+    let _exact = solidcore::surface::procedural_blend::NetScope::exact(k);
+    let mut band_faces = 0;
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for id in b.face_list() {
+        let surface = b.face(*id).unwrap().surface.as_ref().unwrap();
+        let domain = solidcore::topology::face::uv_domain(b, *id).unwrap();
+        let uv = |u: f64, v: f64| {
+            solidcore::geom::vector2d::Point2::new(
+                domain.min().x + (domain.max().x - domain.min().x) * u,
+                domain.min().y + (domain.max().y - domain.min().y) * v,
+            )
+        };
+        let midpoint = surface.evaluate_point(k, uv(0.5, 0.5)).unwrap();
+        // Locate the band by its height. This also accepts an analytic cone and
+        // rectangular angular patches of the same band.
+        if !(midpoint.z > za && midpoint.z < zb) {
+            continue;
+        }
+        band_faces += 1;
+        for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            for v in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let point = surface.evaluate_point(k, uv(u, v)).unwrap();
+                let radius = (point.x * point.x + point.y * point.y).sqrt();
+                let expected = ra + (rb - ra) * (point.z - za) / (zb - za);
+                assert!(
+                    (radius - expected).abs() <= 1e-9 * radius.abs().max(expected.abs()),
+                    "chamfer radius {radius} != cone radius {expected} at {point:?}"
+                );
+                low = low.min(point.z);
+                high = high.max(point.z);
+            }
+        }
+    }
+    assert!(band_faces > 0, "the chamfer band is missing");
+    assert!(
+        (low - za).abs() <= 1e-9 * za.abs(),
+        "lower contact {low} != {za}"
+    );
+    assert!(
+        (high - zb).abs() <= 1e-9 * zb.abs(),
+        "upper contact {high} != {zb}"
+    );
 }
 
 fn valid_volume(k: &mut Kernel, b: &mut Brep, expected: f64) {
@@ -118,7 +171,7 @@ fn captured_vase_has_its_meridian_volume() {
 }
 
 #[test]
-fn closed_vase_chamfer_has_its_meridian_volume() {
+fn closed_vase_chamfer_has_its_meridian_geometry_and_volume() {
     let (mut k, mut b) = input();
     let point = Vec3::new(-15.0, 0.0, 60.0);
     let picked = b
@@ -156,5 +209,6 @@ fn closed_vase_chamfer_has_its_meridian_volume() {
     }
     stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
     b.refresh_cached_topology();
+    chamfer_is_the_meridian_cone(&k, &b);
     valid_volume(&mut k, &mut b, expected_volume());
 }
