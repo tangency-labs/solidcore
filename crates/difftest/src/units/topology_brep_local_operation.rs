@@ -1,15 +1,15 @@
-//! Differential coverage for `topology.brep_local_operation` (`SmBrep::LocalOperation`).
+//! Runner for unit `topology.brep_local_operation` (`SmBrep::LocalOperation`). Ported from
+//! upstream `SmBrep::LocalOperation`; checked against its golden.
 //!
-//! The fixtures are upstream `.smb` solids read by the native `SmBrep::ReadFromFile` and
-//! imported into Rust from the native raw graph, as `topology.brep_mirror`'s. A case
-//! replaces the surfaces of one to three faces (`GetFaces` order) by planes derived from
-//! the faces' own surfaces (the point at the middle of the face's UV domain moved along
-//! the normal there, the normal tilted), by the real `SmBrep::LocalOperation` and by
-//! `topology::brep::local_operation::local_operation`. A case compares the status, the
+//! The fixtures are upstream `.smb` solids read by the Rust reader, as
+//! `topology.brep_mirror`'s. A case replaces the surfaces of one to three faces
+//! (`GetFaces` order) by planes derived from the faces' own surfaces (the point at the
+//! middle of the face's UV domain moved along the normal there, the normal tilted), with
+//! `topology::brep::local_operation::local_operation`. The output is the status, the
 //! whole B-rep graph (topology, vertex points, tolerances, intervals, UV domains) and
 //! samples of every edge curve, every edge use's UV trim curve and every face surface
-//! (type code, natural domain, evaluated points). Inputs the native reader cannot build,
-//! and replacements the shim cannot make, are `rejected`, not failed.
+//! (type code, natural domain, evaluated points). Replacements that cannot be made (a face
+//! index out of range, a face without a surface, a degenerate normal) are `rejected`.
 //!
 //! Generated cases: `genNNNN` on every solid but `Solids/nurb_fillet.smb` and
 //! `cone.smb`, and `fcNNNN` on those two, their own seed stream
@@ -32,12 +32,10 @@ use solidcore::topology::face::p2 as face_ops;
 use solidcore::topology::topology::{NotifyRecords, Topology};
 use solidcore::topology::{Brep, BrepId, EdgeId, RegionId};
 use solidcore::Result as SolidResult;
-use solidcore_ffi::units::topology_brep_local_operation::{self as ffi, Replacement};
-use solidcore_ffi::FfiError;
 
 use super::boolean_merge_p1::{graph_owned, OwnerSource};
 use super::topology_brep_mirror::{geometry, herr, normalize_face_shells, status, FILES};
-use super::topology_vertexuse::{import_raw_with_owners, path_of, BrepIn};
+use super::topology_vertexuse::{path_of, BrepIn};
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// The runner of `SmBrep::LocalOperation`.
@@ -90,43 +88,11 @@ impl Default for Inputs {
     }
 }
 
-/// The shared B-rep block of `ReadFromFile(file, rebuild)`; no validate-only, no gaps.
-fn block(i: &Inputs) -> Vec<f64> {
-    vec![0.0, f64::from(i.rebuild), 0.0, 0.0]
-}
-
 fn path(i: &Inputs) -> Result<String, HarnessError> {
     path_of(&BrepIn::File {
         file: i.file.clone(),
         rebuild: i.rebuild,
     })
-}
-
-/// The native output, or `Err(output)` when the fixture or the replacements are refused.
-fn native(i: &Inputs, op: u8) -> Result<Result<Vec<f64>, Output>, HarnessError> {
-    let replaced: Vec<Replacement> = i
-        .replaced
-        .iter()
-        .map(|r| Replacement {
-            face: r.face,
-            offset: r.offset,
-            tilt: r.tilt,
-        })
-        .collect();
-    match ffi::eval(op, &path(i)?, &block(i), &replaced) {
-        Ok(raw) if raw.first() == Some(&-999.) => Ok(Err(Output::rejected(format!(
-            "fixture constructor status {}",
-            raw.get(1).copied().unwrap_or(-1.)
-        )))),
-        Ok(raw) if raw.first() == Some(&-998.) => {
-            Ok(Err(Output::rejected("replacement not buildable")))
-        }
-        Ok(raw) => Ok(Ok(raw)),
-        Err(e @ FfiError::InvalidArgument(_)) => {
-            Ok(Err(Output::rejected(format!("ffi guard: {e}"))))
-        }
-        Err(e) => Err(herr(e)),
-    }
 }
 
 /// The replacement planes of `i` on `b`, as the shim makes them; `None` where it refuses.
@@ -249,21 +215,6 @@ fn with_notifications<R>(
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_local_operation"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let raw = match native(&i, if i.attributed { 3 } else { 1 })? {
-            Ok(raw) => raw,
-            Err(refused) => return Ok(refused),
-        };
-        let n = *raw.first().ok_or_else(|| herr("short record"))? as usize;
-        let record = raw.get(1..=n).ok_or_else(|| herr("short record"))?.to_vec();
-        let (mut b, owners) =
-            import_raw_with_owners(raw.get(n + 1..).ok_or_else(|| herr("short graph"))?)?;
-        strip_unrecorded(&mut b).map_err(herr)?;
-        normalize_face_shells(&mut b).map_err(herr)?;
-        graph_owned(&b, record, OwnerSource::Native(&owners))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
