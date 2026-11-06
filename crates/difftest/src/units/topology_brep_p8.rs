@@ -1,5 +1,5 @@
-//! Runner for unit `topology.brep_p8`. C++: `solidcore_ffi::units::topology_brep_p8`.
-//! Rust: `solidcore::topology::brep::p8`.
+//! Runner for unit `topology.brep_p8`: `solidcore::topology::brep::p8`, ported from upstream
+//! `SmBrep`'s face builders (`SmBrep.cpp`); checked against its golden.
 //!
 //! **Ops.** Each case runs one face builder on a new B-rep (`new SmBrep()`, its void
 //! infinite region): `in_region` (`CreateFaceInRegionFromSurface`), `from_surface`
@@ -16,14 +16,14 @@
 //! (every owner and adjacency link) and the geometry of every vertex (point,
 //! tolerance), edge (tolerance, interval, curve), face (tolerance, UV domain, rectangular
 //! trim flag, surface) and edge use (UV trim curve), curves and surfaces as their type,
-//! natural domain and sampled points (layout in the ffi module).
+//! natural domain and sampled points.
 //!
-//! **Guards.** The FFI wrapper rejects what upstream does not handle safely (see its
-//! docs); generated cases avoid those inputs. A plane fit whose loop tessellation has
-//! zero area (curves far from the origin relative to their size) makes upstream
+//! **Guards.** Generated cases avoid inputs upstream does not handle safely. A plane fit
+//! whose loop tessellation has zero area (curves far from the origin relative to their
+//! size) makes upstream
 //! `FindOuterLoops` read past its arrays (`plan/upstream-issues.md` UB-119); the port
 //! refuses it (`InvalidInput` from `topology::trimming_tools`) and the case defers as
-//! `cpp-guard:ub-119`: the shim cannot tell it before the call.
+//! `cpp-guard:ub-119`.
 //!
 //! **Deferred.** Calls into units that are not ported return `Unported` on the Rust side
 //! (`DeleteEdge` / `DeleteVertex` of `topology.brep_p4`, and further down the Euler
@@ -58,10 +58,9 @@ use solidcore::topology::{
     Brep, EdgeId, EdgeuseId, FaceId, RegionId, ShellId, VertexId,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_brep_p8::{self as ffi, Op};
 
 use super::topology_brep_p3::{put_counts, walk, Fail};
-use super::topology_vertexuse::{push_curve, push_surface, BssIn, CrvIn, SrfIn};
+use super::topology_vertexuse::{BssIn, CrvIn, SrfIn};
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -164,151 +163,6 @@ enum Inputs {
 
 const fn yes() -> bool {
     true
-}
-
-fn flag(b: bool) -> f64 {
-    f64::from(u8::from(b))
-}
-
-// ---- encoding ---------------------------------------------------------------------------
-
-fn push_surface_opt(v: &mut Vec<f64>, s: Option<&SrfIn>) -> Result<(), HarnessError> {
-    match s {
-        None => {
-            v.push(-1.0);
-            Ok(())
-        }
-        Some(s) => push_surface(v, s),
-    }
-}
-
-fn push_c3(v: &mut Vec<f64>, c: &C3In) -> Result<(), HarnessError> {
-    match c {
-        C3In::Bspline(c) => {
-            v.push(0.0);
-            push_curve(v, c)
-        }
-        C3In::Line { a, b } => {
-            v.push(1.0);
-            v.extend(a);
-            v.extend(b);
-            Ok(())
-        }
-        C3In::BsplineRaw(c) => {
-            v.push(2.0);
-            push_curve(v, c)
-        }
-    }
-}
-
-fn encode(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    let op = match i {
-        Inputs::InRegion {
-            surface,
-            region_null,
-            dom,
-        } => {
-            push_surface_opt(&mut v, surface.as_ref())?;
-            v.push(flag(*region_null));
-            v.extend(dom);
-            Op::InRegion
-        }
-        Inputs::FromSurface { surface, dom } => {
-            push_surface_opt(&mut v, surface.as_ref())?;
-            v.extend(dom);
-            Op::FromSurface
-        }
-        Inputs::FacesFromSurface {
-            surface,
-            continuity,
-        } => {
-            push_surface_opt(&mut v, surface.as_ref())?;
-            v.push(f64::from(*continuity));
-            Op::FacesFromSurface
-        }
-        Inputs::PlanarFace {
-            region_null,
-            tol,
-            curves,
-        }
-        | Inputs::PlanarFaces {
-            region_null,
-            tol,
-            curves,
-        } => {
-            v.extend([flag(*region_null), *tol, curves.len() as f64]);
-            for c in curves {
-                push_c3(&mut v, c)?;
-            }
-            if matches!(i, Inputs::PlanarFace { .. }) {
-                Op::PlanarFace
-            } else {
-                Op::PlanarFaces
-            }
-        }
-        Inputs::FacesWithCurves {
-            surface,
-            region_null,
-            loops,
-            has3d,
-            curves,
-        } => {
-            push_surface(&mut v, surface)?;
-            v.push(flag(*region_null));
-            v.push(loops.len() as f64);
-            v.extend(loops.iter().map(|&n| n as f64));
-            v.push(flag(*has3d));
-            v.push(curves.len() as f64);
-            for c in curves {
-                push_c3(&mut v, &c.c)?;
-                v.push(f64::from(c.orient));
-            }
-            Op::FacesWithCurves
-        }
-        Inputs::MakeFaces {
-            surface,
-            dom,
-            orient,
-            region_null,
-            loops,
-            has3d,
-            has_uv,
-            curves,
-            points,
-        } => {
-            push_surface(&mut v, surface)?;
-            v.extend(dom);
-            v.push(f64::from(*orient));
-            v.push(flag(*region_null));
-            v.push(loops.len() as f64);
-            v.extend(loops.iter().map(|&n| n as f64));
-            v.extend([flag(*has3d), flag(*has_uv), curves.len() as f64]);
-            for c in curves {
-                if *has3d {
-                    let c3 = c.c3.as_ref().ok_or_else(|| harness("missing 3d curve"))?;
-                    push_c3(&mut v, c3)?;
-                }
-                if *has_uv {
-                    let uv = c.uv.as_ref().ok_or_else(|| harness("missing uv curve"))?;
-                    push_curve(&mut v, uv)?;
-                }
-                v.push(f64::from(c.orient));
-            }
-            v.push(points.len() as f64);
-            for p in points {
-                v.extend(p);
-            }
-            Op::MakeFaces
-        }
-    };
-    Ok((op, v))
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, input) = encode(i)?;
-    let out = ffi::eval(op, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1536,10 +1390,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         UNIT
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
