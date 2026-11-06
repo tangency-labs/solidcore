@@ -113,3 +113,15 @@ exclusion assertion is replaced by the expected one retained exact definition;
 that assertion runs the existing zero-bound and JSON round-trip checks too.
 The corrected traced-round geometry test is preserved and passes. No solver
 source or published #2791 branch is changed by this compatibility check.
+Its measured ball and rail errors are respectively 1.504352198367087e-14 mm
+and 1.4210854715202004e-14 mm; Level-2 validity is clean.
+
+## Integration base
+
+The change is rebased onto main
+`b34bb3e376c4f9c49238373d7b6bd30c8b4534b2`, including the merged unequal-chamfer
+correction. Its `round_rows` signature, two radii and contact construction are
+unchanged by this diff. Rerunning `observe.py` on this base with the nodal
+correction reproduces the corrected measurements above exactly, and the close
+render is byte-identical to the attached after image. The earlier base named at
+the top remains the control for the tests-first failures and before measurements.
