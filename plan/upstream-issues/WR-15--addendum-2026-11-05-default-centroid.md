@@ -12,5 +12,19 @@ call-order identity.
 
 The flag `point_set_centroid_all_blocks` and methods `centroid_opt_in` and
 `centroid_with_kernel` are removed; callers should use `centroid()`. This is a
-source-breaking API change. The historical C++ finding remains confirmed; any
-divergence on current native fixtures has not been verified in this change.
+source-breaking API change. The historical C++ finding remains confirmed; no C++
+was built or run for this change.
+
+The Rust golden changes 19 centroid vectors in 15 cases, retaining all 2,032 case
+IDs and every non-centroid field. For each changed vector, an independent
+100-digit sum of the input binary64 coordinates divided by the point count agrees
+with the new mean (largest absolute difference `7.105427357601002e-15`). The old
+vectors instead agree with omitting the final 50 points while dividing by the
+original count. The arithmetic-mean definition is
+[`sum(Y_i) / N` (NIST)](https://www.itl.nist.gov/div898/handbook/eda/section3/eda351.htm);
+it is an oracle, not a claim about floating-point error bounds.
+
+Same-host unchanged-main runs isolate the change to those 15 cases. Three
+tight-box differences (`gen0219`, `gen0227`, `gen0423`) and 164 rounding-only
+record differences also occur on unchanged main; their golden fields are left
+untouched, not blessed as part of this fix.
