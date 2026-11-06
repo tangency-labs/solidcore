@@ -1455,6 +1455,7 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+        crate::util::inline_curve_definitions(&case.inputs)?;
         let op = case.parse()?;
         rust(&op)
     }
