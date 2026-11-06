@@ -2,6 +2,7 @@
 //! on edge, face and vertex indices). Their own test binary: each holds the process kernel for
 //! seconds.
 #![allow(
+    clippy::disallowed_methods, // closed-form oracles, not ops geometry
     clippy::unwrap_used,
     clippy::indexing_slicing,
     clippy::panic,
@@ -493,7 +494,12 @@ fn a_chamfer_angle_past_the_other_face_is_refused_naming_its_bound() {
     };
     // a right angle between the faces: the top rim of a cylinder at 90.573 degrees
     let b = make_cylinder([0.0; 3], 10.0, 20.0).unwrap();
-    refused(&b, edge_at(&b, [0.0, 10.0, 20.0]), 1.580797063408824, PI / 2.0);
+    refused(
+        &b,
+        edge_at(&b, [0.0, 10.0, 20.0]),
+        1.580797063408824,
+        PI / 2.0,
+    );
     // and a straight edge, exactly at the bound as well as past it
     let b = block();
     let e = top_front(&b);
@@ -508,7 +514,12 @@ fn a_chamfer_angle_past_the_other_face_is_refused_naming_its_bound() {
 fn nearest_edge(b: &Body, p: [f64; 3]) -> usize {
     let (k, brep) = kernel_copy(b);
     let q = Vec3::new(p[0], p[1], p[2]);
-    let distance = |&e: &EdgeId| edge_closest_point(&k, &brep, e, q).unwrap().closest.distance;
+    let distance = |&e: &EdgeId| {
+        edge_closest_point(&k, &brep, e, q)
+            .unwrap()
+            .closest
+            .distance
+    };
     let list = brep.edge_list();
     let all = list.iter().map(distance);
     all.enumerate()
@@ -541,8 +552,14 @@ fn a_tangent_chain_is_one_chamfer_measured_at_its_widest_wedge() {
     let (b, _) = Body::from_record(&record, true).unwrap();
     let up = [0.0, 0.0, 1.0];
     let rim = [
-        nearest_edge(&b, [12.397279543126551, 4.505296518190091, 9.999999999999998]),
-        nearest_edge(&b, [7.602194600606031, -4.505901858302108, 9.999999999999998]),
+        nearest_edge(
+            &b,
+            [12.397279543126551, 4.505296518190091, 9.999999999999998],
+        ),
+        nearest_edge(
+            &b,
+            [7.602194600606031, -4.505901858302108, 9.999999999999998],
+        ),
     ];
     assert_ne!(rim[0], rim[1]);
     // each arc's faces at its middle: the top's normal is up, the wall's leans `wall`, so
