@@ -1,13 +1,14 @@
-//! Differential coverage for `topology.brep_p5`.
+//! Runner for unit `topology.brep_p5`: `CombineCoincidentVertices`, the coincident vertex
+//! target, `DeleteTopologicalVertex`, `FindAndSetInfiniteRegion`, `GlueVertices`,
+//! `MakeEdgeInFace`, `MakeManifold`, `RemoveTopologicalEdgesAndVertices`, `RemoveFaces`,
+//! `StitchAndOrient`, `SqueezeFace`, `Transform`, `CreateWireEdgeFromCurve` and the topology
+//! change notifications. Ported from upstream `SmBrep` (`SmBrep.cpp`); checked against its
+//! golden.
 //!
-//! `combine_target` compares only the old-tol target stage against the surviving
-//! vertex after real native `CombineCoincidentVertices`. Other operations compare
-//! status/output lifecycle and the semantic graph or explicitly defer. Successful
-//! topology mutation is compared only for `CreateWireEdgeFromCurve` (op 13, fixtures);
-//! nonidentity transformation is not certified here.
-//! Inputs the FFI guards refuse (undefined natively) are `rejected`, not failed.
-//! The Rust side builds the fixture itself ([`own_fixture`], the shim's `p5_build` with
-//! the Rust kernel); no C++ export is read on the Rust side.
+//! The case builds its fixture itself ([`own_fixture`], the upstream test fixture's
+//! `p5_build` with the Rust kernel). Each op records its status and outputs, then the
+//! semantic graph of the B-rep reachable after it (`combine_target` records only the
+//! target stage, the notifications their lists).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,11 +24,8 @@ use solidcore::topology::brep::p1::SetRegionVoidType;
 use solidcore::topology::brep::p5;
 use solidcore::topology::{Brep, EdgeId, FaceId, LoopId, RegionId, VertexId};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::topology_brep_p5::{self as ffi, Op};
-use solidcore_ffi::FfiError;
 
 use super::boolean_merge_p1::{graph_owned, OwnerSource};
-use super::topology_vertexuse::import_raw_with_owners;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// Part 5's runner.
@@ -111,58 +109,6 @@ fn curve() -> Curve {
         &Extent1d::from_min_max(-2., 3.),
         &BoundedLineOptions::default(),
     ))
-}
-fn args(i: &Inputs) -> [f64; 22] {
-    let s = i.scale.unwrap_or([1.; 3]);
-    [
-        f(i.editing),
-        i.first as f64,
-        i.second as f64,
-        i.aux as f64,
-        f64::from(i.mode),
-        i.tolerance,
-        i.origin[0],
-        i.origin[1],
-        i.origin[2],
-        i.x[0],
-        i.x[1],
-        i.x[2],
-        i.y[0],
-        i.y[1],
-        i.y[2],
-        f(i.scale.is_some()),
-        s[0],
-        s[1],
-        s[2],
-        f(i.scale_tolerances),
-        f(i.flag),
-        f(i.allow_spine_edges),
-    ]
-}
-fn op(i: &Inputs) -> Result<Op, HarnessError> {
-    Op::from_code(i.op)
-        .filter(|op| *op != Op::Export)
-        .ok_or_else(|| HarnessError::new("unknown op"))
-}
-fn refused_fixture(raw: &[f64]) -> Option<Output> {
-    (raw.first() == Some(&-999.)).then(|| {
-        Output::rejected(format!(
-            "fixture constructor status {}",
-            raw.get(1).copied().unwrap_or(-1.)
-        ))
-    })
-}
-/// The native record, or `Err(output)` when the FFI guard refuses an input that is
-/// undefined natively. Nothing runs on the native side, so the case is rejected
-/// (as `topology.brep_p1`'s runner does), neither passed nor failed.
-fn native(i: &Inputs) -> Result<Result<Vec<f64>, Output>, HarnessError> {
-    match ffi::eval(op(i)?, &i.fixture, &args(i)) {
-        Ok(raw) => Ok(Ok(raw)),
-        Err(e @ FfiError::InvalidArgument(_)) => {
-            Ok(Err(Output::rejected(format!("ffi guard: {e}"))))
-        }
-        Err(e) => Err(HarnessError::new(e.to_string())),
-    }
 }
 
 fn rust_record(k: &mut Kernel, b: &mut Brep, i: &Inputs) -> SolidResult<Vec<f64>> {
@@ -611,42 +557,6 @@ fn own_fixture(f: &[f64; 11]) -> Result<Result<Brep, Output>, HarnessError> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_p5"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let raw = match native(&i)? {
-            Ok(raw) => raw,
-            Err(refused) => return Ok(refused),
-        };
-        if let Some(out) = refused_fixture(&raw) {
-            return Ok(out);
-        }
-        if matches!(i.op, 2 | 15) {
-            return Ok(Output::new().values(
-                if i.op == 2 {
-                    "target_stage"
-                } else {
-                    "notification_stage"
-                },
-                raw,
-            ));
-        }
-        let n = *raw
-            .first()
-            .ok_or_else(|| HarnessError::new("short record"))? as usize;
-        let record = raw
-            .get(1..=n)
-            .ok_or_else(|| HarnessError::new("short record"))?
-            .to_vec();
-        let (mut b, owners) = import_raw_with_owners(
-            raw.get(n + 1..)
-                .ok_or_else(|| HarnessError::new("short graph"))?,
-        )?;
-        // the face loop lists and loop edge lists the export does not carry, derived
-        // from the exported uses as the Rust B-rep holds them (the Rust side builds its
-        // input itself, so its faces and loops have them)
-        b.refresh_cached_topology();
-        graph_owned(&b, record, OwnerSource::Native(&owners))
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
