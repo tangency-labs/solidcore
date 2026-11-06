@@ -37,19 +37,21 @@
 //!   rational net whose weights are a product along and across the side, as a revolution's
 //!   or an extrusion's) the weights stay `w_n`: each row is the 3D segment `P_n + s T`
 //!   along its end tangent `T = C'(b)`, equally spaced, reaching any distance. Where the
-//!   ratios differ (a variable round's sections) a row with a ratio below the largest would
-//!   have growing weights and its line would end at a finite point, so the extension is the
-//!   ruled surface `S + s S_u` itself (#2878), in the homogeneous form `(H W + s (H_u W - H
-//!   W_u), W^2)` (`H`, `W` the side's homogeneous points and weight along it, `H_u`, `W_u`
-//!   their derivatives along the rows): its weight does not change along `s`, so every row
-//!   is straight and reaches any distance, C1 at the joint. It is of degree `2q` along the
-//!   side, so the source is written in that form too, its homogeneous points times `W`: the
-//!   same surface and parameters, with [`Extended::source`] the rounding of that product,
-//!   not 0. A form not clamped across the side, or whose degree `2q` is past
-//!   [`MAX_DEGREE`], is refused.
+//!   ratios differ (a variable round's sections) a row with a ratio below the largest has
+//!   growing weights and its line ends at a finite point: the length across saturates, a
+//!   bounded reach. Past that reach (an ask this form refuses as not exact, #2878) the
+//!   extension is the ruled surface `S + s S_u` itself, in the homogeneous form `(H W + s
+//!   (H_u W - H W_u), W^2)` (`H`, `W` the side's homogeneous points and weight along it,
+//!   `H_u`, `W_u` their derivatives along the rows): its weight does not change along `s`,
+//!   so every row is straight and reaches any distance, C1 at the joint. It is of degree
+//!   `2q` along the side, so the source is written in that form too, its homogeneous points
+//!   times `W`: the same surface and parameters, with [`Extended::source`] the rounding of
+//!   that product, not 0. Where that form has no B-spline (not clamped across the side, a
+//!   knot across it of full multiplicity, a degree `2q` past [`MAX_DEGREE`]) or does not
+//!   reach the ask either, the refusal stands, naming the longest distance found.
 //!
 //! **Knots.** The source's net and knots are kept bit for bit (but for the Ruled product
-//! form above): the end knot stays at multiplicity `p` as the joint, and the extension's
+//! form past its reach, above): the end knot stays at multiplicity `p` as the joint, and the extension's
 //! spans follow it. No knot is removed.
 //!
 //! **Weights.** Every weight control point of the result is positive, which proves `w > 0` on
@@ -167,9 +169,9 @@ pub struct Extended {
     pub surface: Surface,
     /// (a) How far the result over the source's box is from the source: 0, proved (the
     /// result's net and knots there are the source's, bit for bit; an analytic's label and
-    /// form are the source's). Ruled over rows whose end weight ratios differ writes the
-    /// source in its product form (module docs): the same surface and parameters, this the
-    /// certified 3D bound of that product's rounding.
+    /// form are the source's). Ruled past the reach of rows whose end weight ratios differ
+    /// writes the source in its product form (module docs): the same surface and parameters,
+    /// this the certified 3D bound of that product's rounding.
     pub source: f64,
     /// How far the extension's part past the side is from the construction's definition (the
     /// continued polynomial, the mirror, the C2 row): a certified bound on the 3D distance,
@@ -225,10 +227,9 @@ impl Surface {
     /// # Errors
     ///
     /// - `InvalidInput`: a distance not finite and positive; a side not the form's end; a
-    ///   form moved off its analytic label; a form not clamped at the side, or for the Ruled
-    ///   product form across it, or with a knot across it of full multiplicity;
+    ///   form moved off its analytic label; a form not clamped at the side;
     /// - `Unsupported`: a kind with no exact B-spline form here (a curve bounded, STEP or
-    ///   in-volume surface); a Ruled product form past [`MAX_DEGREE`]; an offset surface is the offset of its base extended
+    ///   in-volume surface); an offset surface is the offset of its base extended
     ///   (`offset_extended`), with its base's errors; a procedural blend is extended by its
     ///   definition (`blend`: across its section continued, along its spine by a span of its
     ///   construction), refused for a G^n section across, a net cut across or turned, or a
@@ -288,8 +289,13 @@ impl Surface {
                 "the side is not the end of the surface's B-spline form",
             ));
         }
-        let made = |e: f64| -> Result<Option<Made>> {
-            let Some(grown) = source.extended(how, e)? else {
+        let made = |product: bool, e: f64| -> Result<Option<Made>> {
+            let grown = if product {
+                Some(source.ruled_product(e)?).filter(Local::is_positive)
+            } else {
+                source.extended(how, e)?
+            };
+            let Some(grown) = grown else {
                 return Ok(None);
             };
             // a net that overflowed is no extension to measure: unproved, not refused
@@ -311,7 +317,29 @@ impl Surface {
                 Some(Ok(a)) => Ok(Some(a)),
                 Some(Err(e)) => Err(e),
             };
-        let ((surface, extension), enclosure) = solve(&made, &across, &source, distance)?;
+        let solved = match solve(&|e| made(false, e), &across, &source, distance) {
+            // past the rows' reach: the ruled surface itself (#2878), or the refusal naming
+            // the longer of the two forms' distances
+            Err(SolidError::ExtendRefused {
+                refusal: ExtendRefusal::NotExact,
+                distance: named,
+                ..
+            }) if how == Continuity::Ruled && source.has_product_form() => {
+                match solve(&|e| made(true, e), &across, &source, distance) {
+                    Err(SolidError::ExtendRefused {
+                        refusal: ExtendRefusal::NotExact,
+                        distance: reached,
+                        ..
+                    }) => Err(not_exact(match (named, reached) {
+                        (Some(x), Some(y)) => Some(x.max(y)),
+                        (x, y) => x.or(y),
+                    })),
+                    other => other,
+                }
+            }
+            other => other,
+        };
+        let ((surface, extension), enclosure) = solved?;
         let surface = surface.ok_or_else(op_err)?;
         // a bound that is not finite certifies nothing of the extension (its net's rounding
         // ran away, as near a vanishing weight): not exact (the solve met none such)
@@ -707,7 +735,8 @@ fn solve(
         }
     }
     let (Some((mut lo, mut flo)), Some((mut hi, mut fhi))) = (short, past) else {
-        // every ask short of d, the length saturating: refused, naming the longest reached
+        // every ask short of d, the length saturating (a ruled extension whose rows' end
+        // weight ratios differ): refused, naming the longest reached
         if past.is_none() && reach.is_some() {
             return Err(not_exact(reach));
         }
@@ -1034,25 +1063,39 @@ impl Local {
         self.err * (2.0 + pmax) / wmin * (1.0 + gamma(8))
     }
 
-    /// The rounding of the Ruled product form ([`Self::ruled_product`]), from the source's
-    /// rows: `(a, m)`, where `a m` bounds each coordinate's error in a product `H W`, and `m`
-    /// is the largest such product, `m = s w` (`s` the largest homogeneous coordinate, `w`
-    /// the largest weight of the last two columns). `a` is `2 gamma_(6 i) + gamma_(q + 6)`:
-    /// the `i` insertions of the Bezier cut, a convex combination each (`gamma_6` of the
-    /// larger, on each factor), then the Bernstein product's sum of at most `q + 1` terms, its
-    /// coefficient of exact integers rounding three times, each term twice more.
-    fn product_rounding(&self) -> Result<(f64, f64)> {
+    /// The rounding of the Ruled product form ([`Self::ruled_product`]), relative to the
+    /// product's size: `2 gamma_(6 i) + gamma_(q + 6)`, from the `i` insertions of the Bezier
+    /// cut, a convex combination each (`gamma_6` of the larger, on each factor), then the
+    /// Bernstein product's sum of at most `q + 1` terms, its coefficient of exact integers
+    /// rounding three times, each term twice more.
+    fn product_rounding(&self) -> Result<f64> {
         let inserted: usize = interior_knots(&self.across, self.q)?
             .iter()
             .map(|&(_, mult)| self.q.saturating_sub(mult))
             .sum();
-        let w = self
-            .rows
-            .iter()
-            .flat_map(|r| r.iter().rev().take(2))
-            .fold(0.0_f64, |m, x| m.max(x[3].abs()));
-        let a = 2.0 * gamma(6 * inserted) + gamma(self.q + 6);
-        Ok((a, self.size() * w))
+        Ok(2.0 * gamma(6 * inserted) + gamma(self.q + 6))
+    }
+
+    /// Whether every weight is positive.
+    fn is_positive(&self) -> bool {
+        !self.rational
+            || self
+                .rows
+                .iter()
+                .flatten()
+                .all(|x| x[3] > 0.0 && x[3].is_finite())
+    }
+
+    /// Whether Ruled has a form past the rows' reach: their end weight ratios differ past
+    /// rounding (equal ratios reach any distance) and the product form has a B-spline.
+    fn has_product_form(&self) -> bool {
+        if !self.rational || self.q == 0 || 2 * self.q > MAX_DEGREE {
+            return false;
+        }
+        let ratios = || self.rows.iter().map(|r| end_ratio(r).unwrap_or(f64::NAN));
+        let rho = ratios().fold(f64::NEG_INFINITY, f64::max);
+        let least = ratios().fold(f64::INFINITY, f64::min);
+        rho - least > gamma(4) * rho.abs() && interior_knots(&self.across, self.q).is_ok()
     }
 
     /// [`Extended::source`] of the Ruled product form, a bound on the 3D distance of the
@@ -1061,7 +1104,14 @@ impl Local {
     /// (Bezier points are convex combinations of net points, and a product's Bernstein
     /// coefficients convex combinations of its factors' products).
     fn product_source_bound(&self) -> Result<f64> {
-        let (a, m) = self.product_rounding()?;
+        let a = self.product_rounding()?;
+        // each coordinate of a product is at most `s w`, `s` the largest of `H`, `w` of `W`
+        let w = self
+            .rows
+            .iter()
+            .filter_map(|r| r.last())
+            .fold(0.0_f64, |m, x| m.max(x[3].abs()));
+        let m = self.size() * w;
         let (mut wmin, mut pmax) = (f64::INFINITY, 0.0_f64);
         for x in self.rows.iter().flatten() {
             wmin = wmin.min(x[3]);
@@ -1113,13 +1163,7 @@ impl Local {
                 cur
             }
         };
-        let positive = !grown.rational
-            || grown
-                .rows
-                .iter()
-                .flatten()
-                .all(|x| x[3] > 0.0 && x[3].is_finite());
-        Ok(positive.then_some(grown))
+        Ok(Some(grown).filter(Self::is_positive))
     }
 
     /// The source's rows and knots, the end knot down to multiplicity `p` as the joint, then
@@ -1305,17 +1349,6 @@ impl Local {
         } else {
             1.0
         };
-        // (#2878) rows whose end ratios differ: one rho leaves some rows' lines ending at a
-        // finite point, the product form reaches any distance; ratios equal to rounding keep
-        // the one-rho form and the source's net
-        if self.rational {
-            let least = ends
-                .iter()
-                .fold(f64::INFINITY, |m, (pn, pn1)| m.min(pn1[3] / pn[3]));
-            if rho - least > gamma(4) * rho.abs() {
-                return self.ruled_product(e);
-            }
-        }
         let (mut err, mut ext) = (0.0_f64, Vec::new());
         for (pn, pn1) in ends {
             let leg = lin(rho, pn, -1.0, pn1);
@@ -1338,16 +1371,18 @@ impl Local {
         Ok(out)
     }
 
-    /// Ruled, for rows whose end weight ratios differ (#2878): the ruled surface `S + s S_u`
-    /// past the joint, in the homogeneous form `(H W + s (H_u W - H W_u), W^2)` (module docs),
-    /// and the source written in that form, its homogeneous points times `W`. The curves
-    /// across are cut into Bezier pieces and multiplied piece by piece, so the result is of
-    /// degree `2 q` across. The weights past the joint are the joint's, bit for bit.
+    /// Ruled past the reach of rows whose end weight ratios differ (#2878): the ruled surface
+    /// `S + s S_u` past the joint, in the homogeneous form `(H W + s (H_u W - H W_u), W^2)`
+    /// (module docs), and the source written in that form, its homogeneous points times `W`.
+    /// The curves across are cut into Bezier pieces and multiplied piece by piece, so the
+    /// result is of degree `2 q` across. The weights past the joint are the joint's, bit for
+    /// bit. The caller has checked [`Self::has_product_form`].
     ///
-    /// Its bound: with `a`, `m` of [`Self::product_rounding`], the joint's `H W` is within `a
-    /// m`, and `|H_u|`, `|W_u|` are at most `2 p / h` of `s`, `w`, so `X2 = H_u W - H W_u` is
-    /// at most `4 p m / h` within `a + gamma_4` of that (`H_u` and `X2`'s difference); the
-    /// point `X1 + (i e / p) X2` adds `gamma_4` (`t` and its product and sum).
+    /// Its bound: with `a` of [`Self::product_rounding`] and `m = s w` (`s` the largest
+    /// homogeneous coordinate, `w` the largest weight of the last two columns), the joint's
+    /// `H W` is within `a m`, and `|H_u|`, `|W_u|` are at most `2 p / h` of `s`, `w`, so `X2 =
+    /// H_u W - H W_u` is at most `4 p m / h` within `a + gamma_4` of that (`H_u`'s and `X2`'s
+    /// differences); the point `X1 + (i e / p) X2` adds `gamma_4` (`t`, its product and sum).
     fn ruled_product(&self, e: f64) -> Result<Self> {
         let b = self.end()?;
         let h = b - self.before_end(0)?;
@@ -1358,13 +1393,6 @@ impl Local {
         if n < 2 || q == 0 {
             return Err(op_err());
         }
-        if 2 * q > MAX_DEGREE {
-            return Err(SolidError::Unsupported {
-                operation: OP,
-                reason: "the ruled surface of rows whose end weight ratios differ is past the \
-                         largest degree across",
-            });
-        }
         let joints = interior_knots(&self.across, q)?;
         let column = |i: usize| -> Result<Vec<H>> {
             self.rows
@@ -1373,9 +1401,10 @@ impl Local {
                 .collect()
         };
         let end = column(n - 1)?;
+        let before = column(n - 2)?;
         let derivative: Vec<H> = end
             .iter()
-            .zip(&column(n - 2)?)
+            .zip(&before)
             .map(|(x, y)| lin(pf / h, *x, -pf / h, *y))
             .collect();
         let hu = bezier_pieces(&derivative, &self.across, q)?;
@@ -1418,7 +1447,13 @@ impl Local {
                     .collect::<Result<Vec<H>>>()
             })
             .collect::<Result<Vec<Vec<H>>>>()?;
-        let (a, m) = self.product_rounding()?;
+        let a = self.product_rounding()? + gamma(8);
+        let wmax = self
+            .rows
+            .iter()
+            .flat_map(|r| r.iter().rev().take(2))
+            .fold(0.0_f64, |m, x| m.max(x[3].abs()));
+        let m = self.size() * wmax;
         let form = Self {
             rows,
             knots: self.knots.clone(),
@@ -1430,7 +1465,7 @@ impl Local {
             across: product_knots(&self.across, &joints, q)?,
         };
         let mut out = form.joined(ext, &vec![b + e; p + 1])?;
-        out.err = self.err * m + (a + gamma(8)) * m * (1.0 + 4.0 * pf * e / h);
+        out.err = self.err * wmax + a * m * (1.0 + 4.0 * pf * e / h);
         Ok(out)
     }
 
@@ -1573,9 +1608,16 @@ fn mirror(pn: H, pn1: H) -> (impl Fn(H) -> H, f64, f64) {
     (map, amp, round)
 }
 
+/// The row's `w_(n-1) / w_n`.
+fn end_ratio(row: &[H]) -> Option<f64> {
+    let mut back = row.iter().rev();
+    let (pn, pn1) = (back.next()?, back.next()?);
+    Some(pn1[3] / pn[3])
+}
+
 /// (#2878) The distinct interior knots of `knots` with their multiplicities, for the curves
 /// across cut into continuous Bezier pieces of degree `q`: refused unless clamped at both ends
-/// with no interior knot past multiplicity `q`.
+/// with no interior knot past multiplicity `q`, as [`Local::has_product_form`] checks first.
 fn interior_knots(knots: &[f64], q: usize) -> Result<Vec<(f64, usize)>> {
     let (Some(&lo), Some(&hi)) = (knots.first(), knots.last()) else {
         return Err(op_err());

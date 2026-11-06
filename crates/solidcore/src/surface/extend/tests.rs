@@ -1039,8 +1039,9 @@ fn ruled_on_a_polynomial_row_is_the_elevated_tangent_line() {
 #[test]
 fn ruled_with_end_weight_ratios_that_differ_is_c1_straight_and_reaches_any_distance() {
     // a rational row pair whose last two weights differ in ratio (1 and 2 on the two rows):
-    // the ruled surface S + s S_u (#2878), straight at every v, C1 at the joint, past the
-    // reach of any one-rho form, with the source the same surface and parameters
+    // within one rho's reach its form, the source's net kept; past it the ruled surface S + s
+    // S_u (#2878); straight at every v, C1 at the joint, the source the same surface and
+    // parameters either way
     let rows = [
         vec![[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
         vec![[0.5, 0.0, 0.0, 1.0], [1.0, 0.0, 2.0, 2.0]],
@@ -1065,7 +1066,12 @@ fn ruled_with_end_weight_ratios_that_differ_is_c1_straight_and_reaches_any_dista
             a.enclosure.lower >= distance - tol && a.enclosure.upper <= distance + tol,
             "{a:?} for {distance}"
         );
-        assert!(e.source > 0.0 && e.source <= 1e-12, "{}", e.source);
+        assert!(e.source <= 1e-12, "{}", e.source);
+        if distance == 0.1 {
+            assert_eq!(e.source, 0.0);
+        } else if distance == 1e3 {
+            assert!(e.source > 0.0);
+        }
         for u in [0.0, 0.25, 0.5, 0.75, 1.0] {
             for v in [0.0, 0.3, 0.5, 0.9, 1.0] {
                 let uv = Vec2::new(u, v);
@@ -1122,15 +1128,16 @@ fn ruled_product_net() -> Surface {
 }
 
 /// Ruled over rows whose end ratios differ, past every side and over interior knots across
-/// (one of them already double): the source is the same surface and parameters to the bound
-/// reported, and past the joint every row is straight along the side's tangent, C1.
+/// (one of them already double), past the rows' reach: the source is the same surface and
+/// parameters to the bound reported, and past the joint every row is straight along the side's
+/// tangent, C1.
 #[test]
 fn the_ruled_product_form_past_every_side_keeps_the_source_and_every_row_is_straight() {
     let s = ruled_product_net();
     let (nu, nv) = (5, 5);
     for side in BoxSide::ALL {
         let e = s
-            .extended_by_distance(&k(), &dom(&s), side, Continuity::Ruled, 40.0)
+            .extended_by_distance(&k(), &dom(&s), side, Continuity::Ruled, 400.0)
             .unwrap();
         assert!(
             e.source > 0.0 && e.source <= 1e-11,
@@ -1201,11 +1208,12 @@ fn the_ruled_product_form_extends_past_a_second_side() {
             &k(),
             &[BoxSide::UMin, BoxSide::UMax],
             Continuity::Ruled,
-            5.0,
+            400.0,
         )
         .unwrap();
     assert!(
-        sides.source > 0.0 && sides.source <= 1e-10,
+        // the second form's rounding is of the first's reach: held to the stop's rounding part
+        sides.source > 0.0 && sides.source <= 1e-6 * 400.0,
         "{}",
         sides.source
     );
@@ -1221,9 +1229,10 @@ fn the_ruled_product_form_extends_past_a_second_side() {
     }
 }
 
-/// A degree across whose double has no B-spline form here is refused, saying so.
+/// A degree across whose double has no B-spline form here keeps the rows' refusal, naming a
+/// distance that works.
 #[test]
-fn the_ruled_product_form_past_the_largest_degree_is_refused() {
+fn the_ruled_product_form_past_the_largest_degree_keeps_the_rows_refusal() {
     let q = MAX_DEGREE / 2 + 1;
     let rows: Vec<Vec<[f64; 4]>> = (0..2_u32)
         .map(|i| {
@@ -1242,8 +1251,16 @@ fn the_ruled_product_form_past_the_largest_degree_is_refused() {
         .chain(std::iter::repeat_n(1.0, q + 1))
         .collect();
     let s = spline(&rows, 1, q, &[0.0, 0.0, 1.0, 1.0], &v, true);
-    let r = s.extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, 1.0);
-    assert!(matches!(r, Err(SolidError::Unsupported { .. })), "{r:?}");
+    let d = 1e3;
+    let err = s
+        .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, d)
+        .unwrap_err();
+    let named = not_exact_naming(err).unwrap();
+    assert!(named > 0.0 && named < d, "{named}");
+    let e = s
+        .extended_by_distance(&k(), &dom(&s), BoxSide::UMax, Continuity::Ruled, named)
+        .unwrap();
+    assert_eq!(e.source, 0.0);
 }
 
 /// A ball of radius 2 between the planes y = 0 (side -1) and z = 0 (side +1) along the
