@@ -431,7 +431,6 @@ fn call_with_copy(
                 outer,
                 in_place,
             ))
-
         }
         "boolean" => {
             let operation = match p["op"].as_str() {
@@ -1394,6 +1393,44 @@ fn union_all_replays_an_odd_operand_list_without_consuming_inputs() {
         assert_eq!(input.body.to_record().unwrap().0, record);
         assert!((input.body.volume(1e-9).unwrap() - 8.0).abs() <= 8.0e-9);
     }
+}
+
+/// Replay every captured union-all trace against its recorded geometric expectations.
+#[test]
+#[ignore = "the 17 captured unions are slow; also covered by the full kernel rig"]
+fn union_all_replays_captured_cases() {
+    let fixes: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(corpus().join("fixes.json")).unwrap())
+            .unwrap();
+    session::set_fixes(fixes.iter().map(String::as_str)).unwrap();
+    let mut files = Vec::new();
+    entries(&corpus(), &mut files);
+    files.sort();
+    let listed = known_failing();
+    let mut checked = 0;
+    for entry in files {
+        let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+        if !e["calls"].as_array().is_some_and(|calls| {
+            calls
+                .iter()
+                .any(|call| call["op"].as_str() == Some("union_all"))
+        }) {
+            continue;
+        }
+        let result = grade(&entry, &listed, Duration::from_secs(180));
+        assert_eq!(
+            result.kind,
+            Kind::Pass,
+            "{}: {}",
+            entry.display(),
+            result.note
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 0,
+        "the union-all capture corpus must remain covered"
+    );
 }
 
 #[test]
