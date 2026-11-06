@@ -29,7 +29,6 @@ use solidcore::surface::from_parameters::from_parameters;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::p2::TsectCurveType;
 use solidcore::surface::surface::{Surface, SurfaceKind};
-use solidcore::SolidError;
 use solidcore::topology::brep::p1 as brep_p1;
 use solidcore::topology::brep::p10::merge_curves_on_surface_through_surface;
 use solidcore::topology::brep::p2::{is_manifold_solid, is_sheet};
@@ -43,6 +42,7 @@ use solidcore::topology::face::p2 as face_p2;
 use solidcore::topology::proto_topology::p1::CopyBrepMap;
 use solidcore::topology::{Brep, EdgeId, FaceId, NamingScheme};
 use solidcore::EntityRef;
+use solidcore::SolidError;
 use solidcore_convert::brep::Order;
 use solidcore_record::brep::Surface as RecordSurface;
 
