@@ -19,6 +19,79 @@ use crate::topology::brep_cache::{arena_identity, BrepObjects, CacheObject};
 use crate::topology::topology_traverser::Marks;
 use crate::topology::BrepId;
 
+/// A prepopulated cache must evaluate its UV curve on S, not copy the 3D fit.
+#[test]
+fn cached_silhouette_measurements_use_the_source_surface() {
+    use crate::curve::curve::Curve;
+    use crate::nurbs::b_spline_curve::BSplineCurve;
+    use crate::surface::plane::Plane;
+    use crate::surface::surface::p4::NoObject;
+    use crate::surface::surface_cache::p1::{
+        AltCacheKey, AltSrfCacheType, SurfaceCache, SurfaceCacheOptions,
+    };
+
+    let k = Kernel::default();
+    let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+    let surface = Surface::from(Plane::new(
+        Vec3::ZERO,
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec2::new(1.0, 1.0),
+        &domain,
+    ));
+    let uv = Curve::from(
+        BSplineCurve::create_line_segment(2, Vec3::new(0.0, 0.25, 0.0), Vec3::new(1.0, 0.25, 0.0))
+            .unwrap(),
+    );
+    let fit = Curve::from(
+        BSplineCurve::create_line_segment(
+            3,
+            Vec3::new(0.0, 0.25, 10.0),
+            Vec3::new(1.0, 0.25, 10.0),
+        )
+        .unwrap(),
+    );
+    let mut cache: SurfaceCache<NoObject> =
+        SurfaceCache::new(surface.clone(), domain, SurfaceCacheOptions::default());
+    let key = AltCacheKey {
+        vec: Some(Vec3::new(0.0, 0.0, 1.0)),
+        boolean: Some(false),
+        ..AltCacheKey::default()
+    };
+    cache
+        .add_curves_to_cache(
+            AltSrfCacheType::TrimmedSilhouette,
+            1e-5,
+            0.25,
+            &key,
+            Some(vec![fit]),
+            Some(vec![uv]),
+        )
+        .unwrap();
+    let (curves, uv_curves) = super::p1::cached_silhouette_measurement_curves(
+        &k, &cache, &surface, domain, 1e-5, 0.25, &key,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!((curves.len(), uv_curves.len()), (1, 1));
+    let point = curves[0].evaluate_point(&k, 0.5).unwrap();
+    let uv_point = uv_curves[0].evaluate_point(&k, 0.5).unwrap();
+    assert_eq!(uv_point, Vec3::new(0.5, 0.25, 0.0));
+    assert_eq!(
+        point,
+        surface
+            .evaluate_point(&k, Vec2::new(uv_point.x, uv_point.y))
+            .unwrap()
+    );
+    assert_eq!(point.z, 0.0);
+    // No matching tolerance is a cache miss, not an empty successful query.
+    assert!(super::p1::cached_silhouette_measurement_curves(
+        &k, &cache, &surface, domain, 1e-6, 0.25, &key,
+    )
+    .unwrap()
+    .is_none());
+}
+
 #[test]
 fn projected_sphere_face_maximum_matches_surface_and_closed_form() {
     check_sphere_projection(0.0, 1.0);

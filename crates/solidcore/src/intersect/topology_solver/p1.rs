@@ -117,7 +117,7 @@ use crate::query::face::p2::{
     point_classify_prepared, point_classify_requested, PointClassifyOptions,
 };
 use crate::surface::surface::p2::{surface_cache, Surface, B_SPLINE_SURFACE_TYPE};
-use crate::surface::surface_cache::p1::{AltCacheKey, AltSrfCacheType};
+use crate::surface::surface_cache::p1::{AltCacheKey, AltSrfCacheType, SurfaceCache};
 use crate::surface::trim_srf_cache::POINT_CLASS_UNKNOWN;
 use crate::topology::face::p2::create_curves_by_trimming_snapshot;
 
@@ -2014,23 +2014,18 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         ..AltCacheKey::default()
     };
 
-    // when silhouette curves to these tolerances have been made - get copies
-    if let Some(copies) = cache.has_cached_curves(
-        AltSrfCacheType::TrimmedSilhouette,
+    // Read both hit paths through the same surface-evaluated representation.
+    if let Some(curves) = cached_silhouette_measurement_curves(
+        k,
+        &cache,
+        srf,
+        objects.face_uv_domain(face)?,
         approx_tol,
         angle_tol,
         &key,
-        true,
-        true,
     )? {
-        return silhouette_measurement_curves(
-            k,
-            srf,
-            objects.face_uv_domain(face)?,
-            copies.curves_uv.unwrap_or_default(),
-        );
+        return Ok(curves);
     }
-
     // No cached trimmed silhouette curves in existance -- create them
     // (SM_CAST_PTR(SmBSplineSurface, pSurface): every kind derived from it; upstream
     // dereferences NULL for any other kind)
@@ -2093,39 +2088,48 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         Some(trim_uv),
     )?;
 
-    // Don't clean up here we just use the curves that were created
-    match cache.has_cached_curves(
-        AltSrfCacheType::TrimmedSilhouette,
+    cached_silhouette_measurement_curves(
+        k,
+        &cache,
+        srf,
+        objects.face_uv_domain(face)?,
         approx_tol,
         angle_tol,
         &key,
-        true,
-        true,
-    )? {
-        Some(copies) => silhouette_measurement_curves(
-            k,
-            srf,
-            objects.face_uv_domain(face)?,
-            copies.curves_uv.unwrap_or_default(),
-        ),
-        None => Err(SolidError::sm_err(OP_FACE_SIL)),
-    }
+    )?
+    .ok_or(SolidError::sm_err(OP_FACE_SIL))
 }
 
 /// Measure on S(uv(t)), rather than the independent fitted 3D silhouette.
 /// The UV trace and its trimming still carry their construction error; lifting
 /// removes the additional 3D fitting error, not the need to bound that UV error.
-fn silhouette_measurement_curves(
+pub(super) fn cached_silhouette_measurement_curves<O: SolutionObject>(
     k: &Kernel,
+    cache: &SurfaceCache<O>,
     surface: &Surface,
     domain: Extent2d,
-    uv_curves: Vec<Curve>,
-) -> Result<(Vec<Curve>, Vec<Curve>)> {
+    approx_tol: f64,
+    angle_tol: f64,
+    key: &AltCacheKey,
+) -> Result<Option<(Vec<Curve>, Vec<Curve>)>> {
+    let Some(copies) = cache.has_cached_curves(
+        AltSrfCacheType::TrimmedSilhouette,
+        approx_tol,
+        angle_tol,
+        key,
+        false,
+        true,
+    )?
+    else {
+        return Ok(None);
+    };
+    // Keep the cache API's partial-copy behavior for requested UV curves.
+    let uv_curves = copies.curves_uv.unwrap_or_default();
     let curves = uv_curves
         .iter()
         .map(|uv| CrvOnSurf::new(k, uv.clone(), surface.clone(), Some(domain), 0).map(Curve::from))
         .collect::<Result<Vec<_>>>()?;
-    Ok((curves, uv_curves))
+    Ok(Some((curves, uv_curves)))
 }
 
 /// `pFace->GetSurface()->GlobalPointSolve(uv_domain, op, point, tol,
