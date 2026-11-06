@@ -1317,6 +1317,64 @@ fn chamfer_dispatch_preserves_order_direction_sizes_and_operand() {
 }
 
 #[test]
+fn blend_replay_keeps_the_record_edge_after_reordering_and_aliasing() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [20.0; 3]).unwrap());
+    let (before, original) = body.to_record().unwrap();
+    let selected = before
+        .edges
+        .iter()
+        .position(|edge| {
+            edge.vertices.iter().all(|&i| {
+                let point = before.vertices[i as usize].point;
+                point[1] == 0.0 && point[2] == 20.0
+            })
+        })
+        .unwrap();
+    let selected = original.edges[selected];
+    for mode in 0..3 {
+        let mut order = original.clone();
+        match mode {
+            1 => order.edges.rotate_left(3),
+            2 => order.edges.insert(0, selected),
+            _ => {}
+        }
+        // One record can name the same kernel edge more than once. Pick its last alias.
+        let index = order
+            .edges
+            .iter()
+            .rposition(|&edge| edge == selected)
+            .unwrap();
+        let input = Slot {
+            body: Arc::clone(&body),
+            order: Some(order),
+        };
+        let step = serde_json::json!({"op":"blend_dropping","params":{
+            "kind":"round","sizes":[2.0],
+            "edges":{"kind":"edge","picked":[{"index":index}]}
+        }});
+        let result = call(&step, &mut [input.clone()]).unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&result.body, &input.body));
+        assert!(result.order.is_none());
+        assert_eq!(result.body.counts().unwrap(), [7, 15, 10]);
+        let expected = 8000.0 - 80.0 * (1.0 - std::f64::consts::FRAC_PI_4);
+        assert!((result.body.volume(1e-9).unwrap() - expected).abs() / expected < 1e-9);
+        let record = result.body.to_record().unwrap().0;
+        for point in [[0., 2., 20.], [20., 2., 20.], [0., 0., 18.], [20., 0., 18.]] {
+            assert!(
+                record.vertices.iter().any(|v| v
+                    .point
+                    .iter()
+                    .zip(point)
+                    .all(|(a, b)| (a - b).abs() < 1e-9)),
+                "mode {mode} rounded another edge: missing rail endpoint {point:?}"
+            );
+        }
+        assert_eq!(input.body.to_record().unwrap().0, before);
+    }
+}
+
+#[test]
 fn repeated_blend_picks_keep_first_size_and_source() {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let record = solidcore_ops::make_box([0.0; 3], [20.0; 3])
