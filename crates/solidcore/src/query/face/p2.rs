@@ -606,6 +606,7 @@ fn surface_cache_of_face(
             surface.delete_trim_cache();
             match e {
                 SolidError::Unported { .. }
+                | SolidError::Cancelled { .. }
                 | SolidError::InvalidInput { .. }
                 | SolidError::PortInvariant { .. }
                 | SolidError::NotFound { .. } => Err(e),
@@ -687,6 +688,14 @@ pub fn face_vertices(
 fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Surface>> {
     let enabled = match surface.kind() {
         SurfaceKind::BSpline(s) => s.is_out_of_bounds_enabled(),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let s = pb.net();
+            s.is_out_of_bounds_enabled()
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let s = bp.net();
+            s.is_out_of_bounds_enabled()
+        }
         SurfaceKind::Plane(p) => p.base().is_out_of_bounds_enabled(),
         SurfaceKind::Cone(s) => s.rev().base().is_out_of_bounds_enabled(),
         SurfaceKind::Sphere(s) => s.base().base().is_out_of_bounds_enabled(),
@@ -706,6 +715,14 @@ fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Surface>> {
     let mut copy = surface.clone_for_evaluation()?;
     match copy.kind_mut() {
         SurfaceKind::BSpline(s) => *s.out_of_bounds_enabled_mut() = true,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let s = pb.net_mut();
+            *s.out_of_bounds_enabled_mut() = true;
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let s = bp.net_mut();
+            *s.out_of_bounds_enabled_mut() = true;
+        }
         SurfaceKind::Plane(p) => *p.out_of_bounds_enabled_mut() = true,
         SurfaceKind::Cone(s) => *s.rev.base_mut().out_of_bounds_enabled_mut() = true,
         SurfaceKind::Sphere(s) => *s.base.base_mut().out_of_bounds_enabled_mut() = true,
@@ -1339,6 +1356,7 @@ pub fn classify_param_on_faces(
         match point_classify(k, b, face, uv, &mut pc, opts) {
             Err(
                 e @ (SolidError::Unported { .. }
+                | SolidError::Cancelled { .. }
                 | SolidError::InvalidInput { .. }
                 | SolidError::PortInvariant { .. }
                 | SolidError::NotFound { .. }),
@@ -2141,7 +2159,7 @@ pub fn curve_on_classify_mut<O: ClassObject>(
             cc.set_surface1(objects.face_surface(f));
             match intersect_ts_bound(k, objects, &mut made_trims, cc, f, do_check_3d) {
                 Ok(()) => {}
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Err(SolidError::sm_err(OP_CURVE)),
             }
         } else {
@@ -2738,10 +2756,6 @@ pub(crate) mod tests {
         let original = b.face(f).unwrap().surface.as_ref().unwrap();
         let copy = snapshot.face(f).unwrap().surface.as_ref().unwrap();
         assert!(copy.shares_cache_slot_with(original));
-        // a plain copy (the copy constructor) does not
-        let plain = b.clone();
-        let copy = plain.face(f).unwrap().surface.as_ref().unwrap();
-        assert!(!copy.shares_cache_slot_with(original));
     }
 
     #[test]
@@ -3104,7 +3118,7 @@ pub(crate) mod tests {
         };
         b.face_mut(f).unwrap().surface = None;
         let mut cache = CurveOnClassifyCache {
-            snapshot: Some(b.clone()),
+            snapshot: Some(b.clone_standing_for_self().unwrap()),
         };
         let result = crate::topology::vertexuse::calc_vertex_face_gap(
             &k,
@@ -3159,7 +3173,7 @@ pub(crate) mod tests {
                 2,
             )),
         };
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self().unwrap();
         let loops = boundary_loops(
             &k,
             &mut SnapshotObjects::new(&objects, &b, &mut copy),
@@ -3181,7 +3195,7 @@ pub(crate) mod tests {
             Extent1d::from_min_max(0., 1.),
             1e-6,
         );
-        let mut snapshot = b.clone();
+        let mut snapshot = b.clone_standing_for_self().unwrap();
         let mut made = Vec::new();
         intersect_ts_bound(
             &k,
@@ -3202,7 +3216,7 @@ pub(crate) mod tests {
                 3,
             )),
         };
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self().unwrap();
         intersect_edges(
             &k,
             &mut SnapshotObjects::new(&objects, &b, &mut copy),
@@ -3223,7 +3237,7 @@ pub(crate) mod tests {
             b: &b,
             source: Curve::from(Line::from_points(Vec3::ZERO, Vec3::X, 2)),
         };
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self().unwrap();
         let loops = boundary_loops(
             &k,
             &mut SnapshotObjects::new(&objects, &b, &mut copy),

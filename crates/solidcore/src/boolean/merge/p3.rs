@@ -27,7 +27,7 @@
 //! goes on with half-imprinted B-reps.
 //! `BooleanLists` copies its surface operands with the base copy constructor, which slices
 //! every derived surface to a geometry-less `SmSurface` (WR-196). The `Surface` enum has no
-//! geometry-less kind, so that copy is its own type here ([`BaseSlicedSurface`]) with the
+//! geometry-less kind, so that copy is its own type here (`BaseSlicedSurface`) with the
 //! base virtual defaults the list path reaches on it: `GetNaturalUVDomain` is the zero
 //! extent and `CreateFaceFromSurface` fails at the base `Evaluate` / `EvaluatePoint` with
 //! `SM_ERR`, so a surface list fails as upstream's does and the planar 2D path is never
@@ -424,6 +424,7 @@ pub fn boolean_trees<D: BooleanDriver>(
                 -6 => BooleanOperation::Slice,
                 _ => return Err(SolidError::sm_err(OP)),
             };
+            k.check_cancelled(OP)?;
             let result = driver
                 .manifold_boolean(
                     k,
@@ -437,7 +438,7 @@ pub fn boolean_trees<D: BooleanDriver>(
                 .map_err(|e| {
                     // undefined behaviour the port detects (InvalidInput) keeps its
                     // error, as Unported does
-                    if e.is_unported()
+                    if e.is_unported_or_cancelled()
                         || matches!(
                             e,
                             SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }
@@ -756,7 +757,7 @@ fn source_ref(e: EntityRef) -> crate::geom::object::ObjectRef {
 /// no context), as the arena entry's component copies do. (not upstream) The store holds
 /// the source's own attributes under [`source_ref`], so the copy's `SM_NO_COPY`
 /// notifications give the copy's objects theirs; the copy keeps them.
-fn copy_brep(
+pub(crate) fn copy_brep(
     k: &mut Kernel,
     source: &Brep,
     copy_map: Option<&mut CopyBrepMap<EntityRef>>,
@@ -787,7 +788,7 @@ fn copy_brep(
 
 /// `SmBrep::MergeBrep(source, pOptCopyBrepMap, pOptReverseMap, bAddAnalytics)`
 /// (`topology::brep::p3::merge_brep`), notifying as [`copy_brep`].
-fn combine_brep(
+pub(crate) fn combine_brep(
     k: &mut Kernel,
     target: &mut Brep,
     source: &Brep,
@@ -821,27 +822,6 @@ fn combine_brep(
     let restored = state.restore_attributes(target);
     r?;
     restored
-}
-
-/// `SmBrep::CreateFaceFromSurface(surface, domain, face)`
-/// (`topology::brep::p8::create_face_from_surface`), notifying as [`copy_brep`]: an
-/// arena-only store, the new face owning its surface under its arena identity.
-fn create_face_from_surface(
-    k: &mut Kernel,
-    brep: &mut Brep,
-    surface: Surface,
-    domain: Extent2d,
-) -> Result<FaceId> {
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::new(brep);
-    let mut env = state.env(None);
-    let mut marks = Marks::default();
-    let this_face = |f: FaceId| crate::topology::loopuse::notify_ref(EntityRef::Face(f));
-    let mut fenv = crate::topology::brep::p8::FaceBuildEnv {
-        env: &mut env,
-        marks: &mut marks,
-        this_face: &this_face,
-    };
-    crate::topology::brep::p8::create_face_from_surface(k, brep, Some(surface), &domain, &mut fenv)
 }
 
 /// A surface copied by the base copy constructor `SmSurface::SmSurface(const SmSurface&)`
@@ -996,7 +976,10 @@ fn list_operand(k: &mut Kernel, breps: &[Brep], surfaces: &[Surface]) -> Result<
         let mut result = copy_brep(k, first, None, None, true, true)?;
         for source in rest {
             // MergeBrep's ordinary status is ignored upstream.
-            ignored(combine_brep(k, &mut result, source, None, None, true))?;
+            ignored(crate::error::passed_on(
+                combine_brep(k, &mut result, source, None, None, true),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         (result, false)
     } else {
@@ -1019,7 +1002,7 @@ fn list_operand(k: &mut Kernel, breps: &[Brep], surfaces: &[Surface]) -> Result<
                 let copy = source.copy(k)?;
                 let is_plane = copy.is_kind_of(PLANE_TYPE)?;
                 let domain = copy.natural_uv_domain_with_nurb(k)?;
-                create_face_from_surface(k, &mut result, copy, domain)?;
+                crate::topology::brep::sheet::face_on(k, &mut result, copy, &domain)?;
                 is_plane
             } else {
                 // new (*pContext) SmSurface(*pOrig): the base copy constructor slices the
@@ -1076,6 +1059,10 @@ pub(crate) fn copy_component(
             edge_source_key: &|e: EdgeId| source_ref(EntityRef::Edge(e)),
             edge_destination_key: &|e: EdgeId| notify_ref(EntityRef::Edge(e)),
             face_source_key: &|f: FaceId| source_ref(EntityRef::Face(f)),
+            // (`result`'s lists, a surface's included, are under `source_ref` here, so
+            // the surface copy's read under a surface owner's own name could only find a
+            // list of the component's: none of the result surface's own)
+            surface_attributes: false,
             face_destination_key: face_ref,
         };
         ignored(bp7::copy_faces_with_merge(
@@ -1105,7 +1092,7 @@ pub(crate) fn copy_component(
 }
 
 /// The independent B-rep or planar surface outputs of [`boolean_lists`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct BooleanListsResult {
     /// One B-rep per separate solid, for 3D or non-planar inputs.
     pub breps: Vec<Brep>,
@@ -1233,14 +1220,26 @@ pub fn boolean_lists_with_notifications(
                         // Defaults: pOptNewFaces=NULL, bUseMerge=TRUE,
                         // pOptMergeObject=NULL. Returned outputs are not inspected.
                         if let Some(notify) = notifications.as_deref_mut() {
-                            bp7::copy_faces(
+                            // (not upstream: upstream's objects are their own
+                            // identities) the result under the caller's names, the
+                            // component's objects under their own (`notify_ref`, its
+                            // faces `face_ref`), as `copy_component` names them
+                            let source_key = notify.key_of;
+                            let mut component_env = crate::topology::edge::NotifyEnv {
+                                records: &mut *notify.records,
+                                attributes: &mut *notify.attributes,
+                                context: notify.context.as_deref_mut(),
+                                key_of: &crate::topology::loopuse::notify_ref,
+                            };
+                            bp7::copy_faces_from(
                                 k,
                                 &mut result,
                                 &connected,
                                 &mut component,
                                 true,
+                                source_key,
                                 &face_ref,
-                                notify,
+                                &mut component_env,
                             )?;
                         } else {
                             // the arena entry keeps no notification state: the copy
@@ -1254,17 +1253,16 @@ pub fn boolean_lists_with_notifications(
                             // reference attribute) and the result keeps its own.
                             copy_component(k, &mut result, &connected, &mut component, &face_ref)?;
                         }
-                        ignored(stitch_and_orient(
-                            k,
-                            &mut component,
-                            -0.1,
-                            false,
-                            None,
-                            None,
-                        ))?;
+                        ignored(crate::error::passed_on(
+                            stitch_and_orient(k, &mut component, -0.1, false, None, None),
+                            k.fixes.brep_edit_statuses_pass_on,
+                        )?)?;
                         output.breps.push(component);
                         result.set_editing_enabled(true);
-                        ignored(remove_faces(k, &mut result, &connected))?;
+                        ignored(crate::error::passed_on(
+                            remove_faces(k, &mut result, &connected),
+                            k.fixes.brep_edit_statuses_pass_on,
+                        )?)?;
                         let next = bp::faces(&result, None)?;
                         if next.len() >= faces.len() {
                             return Err(SolidError::invalid_input(
@@ -1811,5 +1809,64 @@ mod tests {
         driver.pairs.clear();
         assert!(boolean_trees(&mut k, &mut input, &[0, -1, 100], None, &mut driver).is_err());
         assert!(driver.pairs.is_empty());
+    }
+
+    /// `combine_brep` (`MergeBrep` into the list's copy of its first B-rep) seeds the
+    /// source's own attributes itself, so `topology::brep::p3::merge_brep` lends nothing
+    /// more: each face and edge of a two-box list ends with exactly its own one list.
+    #[test]
+    fn list_operand_carries_each_breps_attributes_once() {
+        use crate::geom::attribute::{Attribute, Behavior};
+        let mut k = Kernel::default();
+        let mut breps = Vec::new();
+        for (value, x) in [(0_i64, 0.0), (1, 20.0)] {
+            let mut b = crate::primitive::api_primitives::create_box(
+                &mut k,
+                crate::math::Point3::new(x, 0.0, 0.0),
+                10.0,
+                10.0,
+                10.0,
+            )
+            .unwrap();
+            let entities: Vec<EntityRef> = bp::faces(&b, None)
+                .unwrap()
+                .into_iter()
+                .map(EntityRef::Face)
+                .chain(
+                    bp::edges(&b, None)
+                        .unwrap()
+                        .into_iter()
+                        .map(EntityRef::Edge),
+                )
+                .collect();
+            for e in entities {
+                b.add_attribute(e, Attribute::long(7, value, Behavior::Copy))
+                    .unwrap();
+            }
+            breps.push(b);
+        }
+        let (result, planar) = list_operand(&mut k, &breps, &[]).unwrap();
+        assert!(!planar);
+        let faces = bp::faces(&result, None).unwrap();
+        let edges = bp::edges(&result, None).unwrap();
+        assert_eq!((faces.len(), edges.len()), (12, 24));
+        let mut values = Vec::new();
+        for e in faces
+            .into_iter()
+            .map(EntityRef::Face)
+            .chain(edges.into_iter().map(EntityRef::Edge))
+        {
+            let list = result.entity_attributes(e);
+            assert_eq!(list.len(), 1, "{e:?}");
+            values.push(list[0].1.long_value().unwrap());
+        }
+        values.sort_unstable();
+        assert_eq!(values, [vec![0; 18], vec![1; 18]].concat());
+        // the operands keep their own, once each
+        for b in &breps {
+            for f in bp::faces(b, None).unwrap() {
+                assert_eq!(b.entity_attributes(EntityRef::Face(f)).len(), 1);
+            }
+        }
     }
 }

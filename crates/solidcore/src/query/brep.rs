@@ -47,7 +47,8 @@
 //!   initialised (empty) box: every `CalculateBoundingBox` override (`SmCurve`,
 //!   `SmBSplineCurve`, `SmLine`, `SmHermiteCurve`, `SmCrvOnSurf`, `SmCompositeCurve`)
 //!   fails only before it writes the caller's box. [`SolidError::Unported`] still
-//!   propagates.
+//!   propagates. With `UpstreamFixes::brep_edit_statuses_pass_on` (fork 60a8a51) the
+//!   four statuses are passed on.
 //! - **Point classification.** [`BrepQuery::point_3d_classify`] returns the
 //!   classification instead of filling the caller's (every upstream caller constructs a
 //!   fresh one just before and drops it on failure), with [`EntityRef`] objects. Its
@@ -57,6 +58,10 @@
 //!   single-region classification without boundary intersections skips it, as upstream).
 //!   A caller keeps one query while
 //!   the B-rep is not edited and makes a fresh one after an edit (upstream revalidates).
+//!   The query also keeps the face surface caches its boundary solves and ray fires
+//!   make, for its next solve, as upstream keeps each on its surface: each face's
+//!   cache is built once per query, not once per solve. They serve a solve only in the
+//!   kernel and editing state they were made in.
 //!   [`BrepQuery::of_brep`] and [`BrepClassifier::of_brep`] resolve a lone B-rep's
 //!   identities from its [`Brep::naming`] scheme and proven owner keys
 //!   ([`BrepIdentity::default`] assumes [`arena_identity`]). Face boundary solves prepare
@@ -266,14 +271,20 @@ pub fn calculate_tight_bounding_box<'a>(
     // Union all of the Tight Edge bounding boxes.
     for e in bp1::edges(b, None)? {
         // (CalculateBoundingBox initialises the box first)
-        let mut edge_bbox = ignored(qe::calculate_bounding_box(k, b, e, NORMAL_BOX, false))?
-            .and_then(|boxes| boxes.normal)
-            .unwrap_or_default();
+        let mut edge_bbox = ignored(crate::error::passed_on(
+            qe::calculate_bounding_box(k, b, e, NORMAL_BOX, false),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .and_then(|boxes| boxes.normal)
+        .unwrap_or_default();
         if edge_bbox.is_contained_by(&brep_bbox, 0.0) {
             continue;
         }
         // (an edge without curve, or a failure, leaves the loose box)
-        if let Some(Some(tight)) = ignored(qe::calculate_tight_bounding_box(k, b, e))? {
+        if let Some(Some(tight)) = ignored(crate::error::passed_on(
+            qe::calculate_tight_bounding_box(k, b, e),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)? {
             edge_bbox = tight;
         }
         brep_bbox = brep_bbox.union(&edge_bbox);
@@ -283,18 +294,19 @@ pub fn calculate_tight_bounding_box<'a>(
     // face).
     let mut face_bbox = Extent3d::new();
     for f in bp1::faces(b, None)? {
-        if let Some(loose) = ignored(qf1::calculate_bounding_box(k, lb.get(), f, false))? {
+        if let Some(loose) = ignored(crate::error::passed_on(
+            qf1::calculate_bounding_box(k, lb.get(), f, false),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)? {
             face_bbox = loose;
         }
         if face_bbox.is_contained_by(&brep_bbox, 0.0) {
             continue;
         }
-        ignore_status(qf3::calculate_tight_bounding_box_into(
-            k,
-            &mut lb,
-            f,
-            &mut face_bbox,
-        ))?;
+        ignore_status(crate::error::passed_on(
+            qf3::calculate_tight_bounding_box_into(k, &mut lb, f, &mut face_bbox),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         brep_bbox = brep_bbox.union(&face_bbox);
     }
 
@@ -533,6 +545,10 @@ const CLASSIFY_RAYS: [(Vec3, Vec3); 3] = [
 pub struct BrepQuery<'a> {
     identity: ProvenBrepIdentity<'a>,
     cache: OnceCell<BrepCache>,
+    /// The face surface caches the classification solves made, kept for the next solve
+    /// as upstream keeps them on the surfaces (`smsurf_GetSurfaceCache`).
+    face_caches: ray::KeptFaceCaches,
+    bbox: OnceCell<Extent3d>,
 }
 
 impl core::fmt::Debug for BrepQuery<'_> {
@@ -580,6 +596,8 @@ impl<'a> BrepQuery<'a> {
         Self {
             identity,
             cache: OnceCell::new(),
+            face_caches: ray::KeptFaceCaches::new(),
+            bbox: OnceCell::new(),
         }
     }
 
@@ -597,7 +615,28 @@ impl<'a> BrepQuery<'a> {
         Self {
             identity: ProvenBrepIdentity::plain(identity),
             cache: OnceCell::from(cache),
+            face_caches: ray::KeptFaceCaches::new(),
+            bbox: OnceCell::new(),
         }
+    }
+
+    /// The kept face caches of this query.
+    #[must_use]
+    pub(crate) const fn face_caches(&self) -> &ray::KeptFaceCaches {
+        &self.face_caches
+    }
+
+    /// Cached 3D bounding box of `b` with default options.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`calculate_bounding_box`].
+    pub fn bounding_box(&self, k: &Kernel, b: &mut Brep) -> Result<Extent3d> {
+        if let Some(&bbox) = self.bbox.get() {
+            return Ok(bbox);
+        }
+        let bbox = calculate_bounding_box(k, b, BoundingBoxOptions::default())?;
+        Ok(*self.bbox.get_or_init(|| bbox))
     }
 
     /// The base identities (without proven overrides).
@@ -641,14 +680,26 @@ impl<'a> BrepQuery<'a> {
     ) -> Result<crate::topology::brep::p2::RayFireResult> {
         let identity = self.effective_identity();
         let cache = self.cache(k, b)?;
-        crate::topology::brep::p2::ray_fire_with_solver(
+        let bbox = self.bounding_box(k, b)?;
+        crate::topology::brep::p2::ray_fire_with_bbox_and_solver(
             k,
             b,
+            bbox,
             start,
             direction,
             tolerance,
             None,
-            |b, point, options| solve_mutable_brep_point(k, b, &identity, cache, point, options),
+            |b, point, options| {
+                ray::solve_mutable_brep_point_kept(
+                    k,
+                    b,
+                    &identity,
+                    cache,
+                    &self.face_caches,
+                    point,
+                    options,
+                )
+            },
         )
     }
 
@@ -742,7 +793,15 @@ impl<'a> BrepQuery<'a> {
             } else {
                 let b = target.mutable()?;
                 let cache = self.cache(k, b)?;
-                solve_mutable_brep_point(k, b, &identity, cache, point, options)?
+                ray::solve_mutable_brep_point_kept(
+                    k,
+                    b,
+                    &identity,
+                    cache,
+                    &self.face_caches,
+                    point,
+                    options,
+                )?
             };
 
             // when the point is on a Brep Face
@@ -775,21 +834,31 @@ impl<'a> BrepQuery<'a> {
         // Now do a ray fire to determine which region this lies in. Fire extra rays
         // only if the first rays fail: `Some(region)` on success (the region may be
         // none), `None` on failure.
-        // (the solve of each ray fire builds the cache when needed)
+        // (the solve of each ray fire builds the cache when needed; the face caches its
+        // solves make are kept for the next, `bp2::ray_fire` on them)
         let mut fire = |direction: Vec3| -> Result<Option<Option<RegionId>>> {
             let b = target.mutable()?;
             let fired = self.cache(k, b).and_then(|cache| {
-                bp2::ray_fire(
+                let bbox = self.bounding_box(k, b)?;
+                bp2::ray_fire_with_bbox_and_solver(
                     k,
                     b,
-                    brep_id,
-                    cache,
-                    keys,
-                    owner_of,
+                    bbox,
                     point,
                     direction,
                     point_zone_tol_3d,
                     None,
+                    |b, point, options| {
+                        ray::solve_mutable_brep_point_kept(
+                            k,
+                            b,
+                            &identity,
+                            cache,
+                            &self.face_caches,
+                            point,
+                            options,
+                        )
+                    },
                 )
             });
             Ok(native_failure(fired)?.map(|r| r.region))
@@ -917,13 +986,19 @@ impl LazyBrep<'_> {
         }
     }
 
-    /// The B-rep to edit, copying a shared one first.
-    pub fn get_mut(&mut self) -> &mut Brep {
+    /// The B-rep to edit, copying a shared one first: a copy that stands for it
+    /// ([`Brep::clone_standing_for_self`]: the same ids, its geometry's owners kept).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Brep::clone_standing_for_self`], at the first edit of a shared B-rep.
+    pub fn get_mut(&mut self) -> Result<&mut Brep> {
         match self {
-            Self::Own(b) => b,
-            Self::Shared { source, copy } => {
-                copy.get_or_insert_with(|| Box::new((*source).clone()))
-            }
+            Self::Own(b) => Ok(b),
+            Self::Shared { source, copy } => match copy {
+                Some(c) => Ok(c),
+                slot @ None => Ok(slot.insert(Box::new(source.clone_standing_for_self()?))),
+            },
         }
     }
 }
@@ -1418,32 +1493,106 @@ mod tests {
         assert!(trim_count(&b) > 0, "the trims are made on the box itself");
     }
 
+    /// A query keeps the face caches its ray solves build (upstream keeps them on the
+    /// surfaces): a face's cache is built once however many points it classifies, and
+    /// the classifications equal those of a fresh query per point (#2494).
+    #[test]
+    fn classifications_build_each_face_cache_once() {
+        let mut k = Kernel::default();
+        let mut cylinder = || {
+            crate::primitive::api_primitives::create_cylinder(&mut k, Point3::ZERO, 5.0, 20.0)
+                .unwrap()
+        };
+        let (mut kept_brep, mut fresh_brep) = (cylinder(), cylinder());
+        let points = [
+            Point3::new(1.0, 1.0, 5.0),
+            Point3::new(-2.0, 1.0, 15.0),
+            Point3::new(0.5, -3.0, 10.0),
+            Point3::new(10.0, 0.0, 10.0),
+            Point3::new(0.0, 0.0, 30.0),
+        ];
+        let faces = kept_brep.faces().ids().count();
+
+        let query = BrepQuery::of_brep(&kept_brep);
+        let mut kept = Vec::new();
+        for p in points {
+            for boundary in [false, true] {
+                let pc = query.point_3d_classify(&k, &mut kept_brep, p, 1e-6, boundary);
+                kept.push(format!("{pc:?}"));
+            }
+        }
+        let builds = query.face_caches.builds();
+        assert!(builds > 0, "the ray fires reach a face cache");
+        assert!(builds <= faces, "{builds} builds for {faces} faces");
+
+        let mut fresh = Vec::new();
+        let mut fresh_builds = 0;
+        for p in points {
+            for boundary in [false, true] {
+                let query = BrepQuery::of_brep(&fresh_brep);
+                let pc = query.point_3d_classify(&k, &mut fresh_brep, p, 1e-6, boundary);
+                fresh.push(format!("{pc:?}"));
+                fresh_builds += query.face_caches.builds();
+            }
+        }
+        assert_eq!(kept, fresh);
+        assert!(
+            fresh_builds > builds,
+            "{fresh_builds} fresh vs {builds} kept"
+        );
+        // what the solves may make on the B-rep: tolerances and UV trim curves
+        let made = |b: &Brep| {
+            let tolerances: Vec<_> = b
+                .edges()
+                .iter()
+                .map(|(_, e)| e.tolerance.to_bits())
+                .chain(b.vertices().iter().map(|(_, v)| v.tolerance.to_bits()))
+                .collect();
+            (tolerances, trim_count(b))
+        };
+        assert_eq!(made(&kept_brep), made(&fresh_brep));
+
+        // the same points again: every cache is kept
+        for p in points {
+            let _ = query.point_3d_classify(&k, &mut kept_brep, p, 1e-6, false);
+        }
+        assert_eq!(query.face_caches.builds(), builds);
+
+        // another kernel state (a tolerance) builds them again
+        k.tolerances.approx_tol_3d *= 2.0;
+        let _ = query.point_3d_classify(&k, &mut kept_brep, points[0], 1e-6, false);
+        assert!(query.face_caches.builds() > builds);
+    }
+
     #[test]
     fn lazy_brep_edits_the_callers_brep_or_a_copy() {
         let mut b = Brep::new();
         let v = b.add_vertex(Point3::new(1.0, 2.0, 3.0)).unwrap();
 
         let mut shared = LazyBrep::from(&b);
-        shared.get_mut().vertex_mut(v).unwrap().tolerance = 0.5;
+        shared.get_mut().unwrap().vertex_mut(v).unwrap().tolerance = 0.5;
         assert_eq!(shared.get().vertex(v).unwrap().tolerance, 0.5);
         drop(shared);
         assert_ne!(b.vertex(v).unwrap().tolerance, 0.5);
 
         let mut own = LazyBrep::from(&mut b);
-        own.get_mut().vertex_mut(v).unwrap().tolerance = 0.5;
+        own.get_mut().unwrap().vertex_mut(v).unwrap().tolerance = 0.5;
         drop(own);
         assert_eq!(b.vertex(v).unwrap().tolerance, 0.5);
     }
 
     #[test]
-    fn a_clone_keeps_the_locked_box() {
+    fn a_standing_copy_keeps_the_locked_box() {
         let k = Kernel::default();
         let mut b = Brep::new();
         b.add_vertex(Point3::new(1.0, 2.0, 3.0)).unwrap();
         lock_bounding_box(&k, &mut b, false).unwrap();
         let locked = b.locked_bounding_box();
         assert!(locked.is_some());
-        assert_eq!(b.clone().locked_bounding_box(), locked);
+        assert_eq!(
+            b.clone_standing_for_self().unwrap().locked_bounding_box(),
+            locked
+        );
     }
 
     #[test]

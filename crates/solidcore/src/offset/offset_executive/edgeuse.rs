@@ -912,6 +912,25 @@ impl OffsetBrep<Handle> for EdgeBrep<'_> {
             .collect())
     }
 
+    fn edge_is_closed(&self, e: Handle) -> Result<bool> {
+        let (arena, e) = e.edge()?;
+        edge::is_closed(self.brep(arena), e)
+    }
+
+    fn vertex_edges(&self, v: Handle) -> Result<Vec<Handle>> {
+        let (arena, v) = v.vertex()?;
+        Ok(vertex::edges(self.brep(arena), v, None)?
+            .into_iter()
+            .map(|e| Handle::topology(arena, EntityRef::Edge(e)))
+            .collect())
+    }
+
+    fn faceuse_shell(&self, fu: Handle) -> Result<Option<Handle>> {
+        let (arena, fu) = fu.faceuse()?;
+        Ok(eu::faceuse_shell(self.brep(arena), fu)?
+            .map(|s| Handle::topology(arena, EntityRef::Shell(s))))
+    }
+
     fn edge_is_lamina(&self, e: Handle) -> Result<bool> {
         let (arena, e) = e.edge()?;
         edge::is_lamina(self.brep(arena), e)
@@ -1246,9 +1265,13 @@ impl CreatorExecutive<Handle> for Executive<'_> {
             Arena::Offset => self.offset_key_of,
         };
         let key = key_of(EntityRef::Face(f)).key.0;
+        let margin = match arena {
+            Arena::Original => self.inner.original_extension_margin(f),
+            Arena::Offset => self.inner.offset_extension_margin(f),
+        };
         let extension = self
             .inner
-            .get_create_extended_surface(k, key, &surface)?
+            .get_create_extended_surface(k, key, &surface, margin)?
             .clone();
         let domain = extension.natural_uv_domain_with_nurb(k)?;
         if let Some(&handle) = self.made.get(&key) {

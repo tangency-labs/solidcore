@@ -46,7 +46,7 @@ use solidcore::topology::brep_data_write::FromBrepEnv;
 use solidcore::topology::proto_topology::p1::api_transform::{api_rotate, TransformObject};
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::topology::{EdgeId, EdgeuseId, FaceId};
-use solidcore::{Brep, EntityRef, Kernel, SolidError};
+use solidcore::{Brep, EntityRef, Kernel};
 
 /// The #1528 operand: a plate 27.5 thick on the profile (0, 0)-(42.5, 0)-(42.5, 20)-(0, 20)
 /// plus the half circle r 10 centred (0, 10) on the x < 0 side, less a blind hole r 5 along
@@ -92,7 +92,11 @@ fn options(create_offset_solid: bool) -> ShellOptions {
 
 /// The default fixes shell the plate through the API as pinned SMLib 1.0.1 does (the
 /// difftest case agrees to 0): a closed manifold solid of 16 faces, 37 edges and 24
-/// vertices, volume 9655.150582612916.
+/// vertices. Volume 9655.150697869625 since #2890 (precise properties integrate from the
+/// trims' base; it was 9655.150582612916): against the closed form 9655.150444016748
+/// (the plate less the blind hole less the cavity inset 2, open at z = 27.5, with the hole's
+/// offset r 7 to x = 9.5 in it) +2.5e-4 (2.6e-8 relative; it was +1.4e-4), within the
+/// volume's accuracy (1e-6).
 #[test]
 fn shell_open_at_the_top_shells_as_upstream() {
     let mut k = Kernel::default();
@@ -109,7 +113,7 @@ fn shell_open_at_the_top_shells_as_upstream() {
         (16, 37, 24)
     );
     let label = "1795 shell 2 open at z 27.5";
-    assert!(report(&k, label, Ok(r), Some(9655.150582612916), 1e-9));
+    assert!(report(&k, label, Ok(r), Some(9655.150697869625), 1e-9));
 }
 
 /// Open at y = 20 the default fixes fail the shell with `SM_ERR` (1001, in
@@ -125,7 +129,10 @@ fn shell_open_at_y20_fails_as_upstream() {
         assert_eq!(open.len(), 1, "the y = 20 face");
         let r = api_shell(&mut k, &mut b, options(cos), &open);
         assert!(
-            matches!(r, Err(SolidError::Upstream { code: 1001, .. })),
+            matches!(
+                r.as_ref().map_err(solidcore::SolidError::sm_status),
+                Err(Some(1001))
+            ),
             "create_offset_solid={cos}: {:?}",
             r.map(|b| b.face_list().len())
         );
@@ -192,9 +199,9 @@ impl Open {
 
 /// The plate shelled through the API (`SmApiShellBrepFull`, as `smlib_shell` and the
 /// difftest runner call it) under `fixes`.
-fn probe(fixes: UpstreamFixes, create_offset_solid: bool, open: Open) -> solidcore::Result<Brep> {
+fn probe(fixes: &UpstreamFixes, create_offset_solid: bool, open: Open) -> solidcore::Result<Brep> {
     let mut k = Kernel {
-        fixes,
+        fixes: *fixes,
         ..Default::default()
     };
     let mut b = drilled(&mut k);
@@ -213,7 +220,7 @@ fn issue_1795_extended_edges_mated() {
     let mut fixes = UpstreamFixes::default();
     fixes.offset_extended_edges_mated = true;
     for open in [Open::Z27, Open::Y20] {
-        match probe(fixes, true, open) {
+        match probe(&fixes, true, open) {
             Err(e) => eprintln!(
                 "PROBE 1795 open={open:?} offset_extended_edges_mated, cos=true: Err({e:?})"
             ),
@@ -472,6 +479,71 @@ fn issue_1795_y20_read_back() {
             eprintln!(
                 "PROBE 1795 {tag} in-memory, api_brep_copy then shell_brep: {}",
                 shell_body(&mut k, c, cos, open)
+            );
+        }
+    }
+}
+
+/// WR-617: the shell's offset faces before the merge (`merge_results` off, the executive's
+/// offset B-rep as `ShellBrep` returns it unmerged), open at y = 20 and, for comparison, at
+/// the top. Prints each face's surface kind and the point at the middle of its domain, then
+/// every edge with an end near the plane x = 0 (the arc's tangent junction with y = 20,
+/// where the merge's vertex relation fails: vertices at (0, 18, 2), (0, 18.5, 2) and
+/// (0, 19.5, 2)), with its end points and faces. Run with `--ignored --nocapture`.
+#[test]
+#[ignore = "probe: WR-617, the unmerged offset faces at the tangent junction"]
+fn issue_1795_unmerged_near_x0() {
+    let kind = |d: String| d.split(['(', ' ', '{']).next().unwrap_or("").to_string();
+    for (open, cos) in [(Open::Y20, false), (Open::Y20, true), (Open::Z27, true)] {
+        let mut k = Kernel::default();
+        let mut b = drilled(&mut k);
+        let faces = open.faces(&k, &b);
+        let mut unmerged = options(cos);
+        unmerged.offset.merge_results = false;
+        let shelled = api_shell(&mut k, &mut b, unmerged, &faces);
+        let Ok(r) = shelled
+            .inspect_err(|e| eprintln!("PROBE 1795 unmerged open={open:?} cos={cos}: Err({e:?})"))
+        else {
+            continue;
+        };
+        eprintln!(
+            "PROBE 1795 unmerged open={open:?} cos={cos}: {} faces, {} edges",
+            r.face_list().len(),
+            r.edge_list().len()
+        );
+        for &f in r.face_list() {
+            let face = r.face(f).unwrap();
+            let s = face.surface.as_ref();
+            let mid = s.map(|s| s.evaluate_point(&k, face.uv_domain.mid()).unwrap());
+            eprintln!(
+                "PROBE 1795 unmerged open={open:?} cos={cos} face {}: {:?} mid {mid:?}",
+                f.index(),
+                s.map(|s| kind(format!("{:?}", s.kind())))
+            );
+        }
+        for &e in r.edge_list() {
+            let points: Vec<Point3> = solidcore::topology::edge::vertices(&r, e, None)
+                .unwrap()
+                .into_iter()
+                .flatten()
+                .map(|v| r.vertex(v).unwrap().point)
+                .collect();
+            if !points.iter().any(|p| p.x.abs() < 0.05) {
+                continue;
+            }
+            let on: Vec<u32> = solidcore::topology::edge::faces(&r, e, None)
+                .unwrap()
+                .into_iter()
+                .map(FaceId::index)
+                .collect();
+            eprintln!(
+                "PROBE 1795 unmerged open={open:?} cos={cos} edge {}: curve {:?} vertices {points:?} faces {on:?}",
+                e.index(),
+                r.edge(e)
+                    .unwrap()
+                    .curve
+                    .as_ref()
+                    .map(|c| kind(format!("{:?}", c.kind())))
             );
         }
     }

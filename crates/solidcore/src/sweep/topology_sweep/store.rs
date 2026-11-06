@@ -519,7 +519,7 @@ impl<'a> SweepStore<'a> {
         self.attributes.absorb(own, &|key| {
             crate::topology::loopuse::entity_of_notify_key(key)
                 .map(|e| identities.object(namespace, e).key)
-                .ok_or(invalid("attribute list names no object"))
+                .ok_or_else(|| invalid("attribute list names no object"))
         })
     }
 
@@ -1085,7 +1085,11 @@ impl SweepAccess for SweepStore<'_> {
                 .ok_or_else(|| invalid("unknown context"))?
                 .kernel;
             if let Body::Hcr(hcr) = &mut e.body {
-                crate::error::ignore_status(hcr.compute_global_visibility(k))?;
+                let p = k.fixes.sweep_statuses_pass_on; // fork c8f6a31 (WR-662)
+                crate::error::ignore_status(crate::error::passed_on(
+                    hcr.compute_global_visibility(k),
+                    p,
+                )?)?;
             }
             Ok(super::access::SweepScene { brep: scene })
         })();
@@ -1883,7 +1887,7 @@ mod tests {
         assert_eq!(store.curve_tag((b, edge)).unwrap(), Some(curve_tag));
         assert_eq!(store.tag(SweepEntity::Edge(b, edge)).unwrap(), None);
         assert!(store
-            .insert_brep(c, store.brep(b).unwrap().clone())
+            .insert_brep(c, store.brep(b).unwrap().clone_standing_for_self().unwrap())
             .is_err());
         store.remove_brep(b).unwrap();
         assert!(!store.attributes.is_live(h));

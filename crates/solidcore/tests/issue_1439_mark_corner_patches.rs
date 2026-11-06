@@ -29,7 +29,6 @@ fn at_corner(b: &Brep, v: VertexId) -> bool {
 /// set-back corner in the session's corner list.
 fn build(mark: Option<bool>) -> (Brep, Vec<(usize, FaceId)>, usize) {
     let mut k = Kernel::default();
-    k.fixes.fillet_setback_from_start_vertex = true;
     let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 60.0, 40.0, 20.0).unwrap();
     let mut edges = Vec::new();
     for e in b.edges().ids() {
@@ -47,6 +46,16 @@ fn build(mark: Option<bool>) -> (Brep, Vec<(usize, FaceId)>, usize) {
         }
         s.prepare_constant_radius_edges(&mut k, &edges, 5.0, 1, 1, 1.0)
             .unwrap();
+        // the corner set back (`AddSetBackVertex`): no Ball is built there
+        let set_back: Vec<_> = s
+            .target()
+            .vertices()
+            .ids()
+            .filter(|&v| at_corner(s.target(), v))
+            .collect();
+        for v in set_back {
+            s.add_set_back_vertex(v);
+        }
         s.create_corners(&k, None).unwrap();
         let corners = s.fillet_corners().unwrap();
         let found: Vec<usize> = corners

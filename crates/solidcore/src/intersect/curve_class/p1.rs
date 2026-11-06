@@ -299,8 +299,8 @@ pub fn get_connected_touches<O: PartialEq + Copy>(
         .collect()
 }
 
-/// `SM_ERR_ASSERT_FAILURE` (`SmMessages.h`).
-const SM_ERR_ASSERT_FAILURE: i32 = 1005;
+// `SM_ERR_ASSERT_FAILURE` (`SmMessages.h`).
+use crate::error::SM_ERR_ASSERT_FAILURE;
 
 /// Filters a consumer's working touch list to transverse crossings
 /// (`SmTouchData::RemoveNonCrossings`): the end directions are normalised (a pole or
@@ -1171,7 +1171,7 @@ impl<O: ClassObject> CurveClassification<O> {
         let mut record = |r: Result<()>| -> Result<()> {
             match r {
                 Ok(()) => Ok(()),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(e) => {
                     ret = Err(e);
                     Ok(())
@@ -1812,7 +1812,7 @@ pub fn set_xsect_edge_through_point_in(
         // If the curve was not changed, then we're done.
         let modified = match r {
             Ok(m) => m,
-            Err(err) if err.is_unported() => return Err(err),
+            Err(err) if err.is_unported_or_cancelled() => return Err(err),
             Err(_) => false,
         };
         out.modified_curve = modified;
@@ -2069,17 +2069,19 @@ pub fn get_cci_geometry_in<'g, O: ClassObject, G: ClassGeometry<O>>(
     // When curve classification is being done as part of a boolean operation
     if let Some(ti) = classification.topology_intersector() {
         // look for edge->BooleanMate (GetOtherMate, else GetBrepMate)
-        out.emate = geometry.topology_intersector_mate(ti, edge).ok_or(
-            // UNPORTED(boolean.topology_intersector_p1): SmTopologyIntersector::GetOtherMate
-            // (an adapter that cannot reach the intersector behind its handle)
-            // Proof (unreachable): only if topology_intersector() is Some and the adapter
-            // returns no mate; the library ClassGeometry impls resolve it; 0 hits in the
-            // green difftest sweep.
-            SolidError::unported(
-                "SmTopologyIntersector::GetOtherMate",
-                "boolean.topology_intersector_p1",
-            ),
-        )?;
+        out.emate = geometry
+            .topology_intersector_mate(ti, edge)
+            .ok_or_else(|| {
+                // UNPORTED(boolean.topology_intersector_p1): SmTopologyIntersector::GetOtherMate
+                // (an adapter that cannot reach the intersector behind its handle)
+                // Proof (unreachable): only if topology_intersector() is Some and the adapter
+                // returns no mate; the library ClassGeometry impls resolve it; 0 hits in the
+                // green difftest sweep.
+                SolidError::unported(
+                    "SmTopologyIntersector::GetOtherMate",
+                    "boolean.topology_intersector_p1",
+                )
+            })?;
 
         // when pEdge has a boolean operation temporary mate
         if let Some(emate) = out.emate {
@@ -2327,7 +2329,7 @@ fn apply_point_solution_impl<O, S: Copy>(
     match eval {
         None => return Ok(out),
         Some(Ok(p)) => out.sss_point = p,
-        Some(Err(e)) if e.is_unported() => return Err(e),
+        Some(Err(e)) if e.is_unported_or_cancelled() => return Err(e),
         Some(Err(SolidError::Upstream { code, .. })) if code == SM_ERR => return Ok(out),
         Some(Err(_)) => {}
     }
@@ -2810,7 +2812,7 @@ pub fn compute_face_point_class_in(
         &mut BrepCacheFace { b: &mut *b, f },
     ) {
         Ok(c) => Some(c),
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => {
             if make_surface_cache(k, &surface, None::<EntityRef>).is_err() {
                 return Err(SolidError::null_pointer(OP));
@@ -2998,7 +3000,7 @@ fn surface_local_point_solve(
 fn surface_approximate_size(k: &Kernel, surface: &Surface) -> Result<Vec2> {
     match surface.approximate_size(k, None) {
         Ok(size) => Ok(size),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
         Err(_) => Ok(Vec2::ZERO),
     }
 }

@@ -112,7 +112,7 @@ const OP_MERGE_BREPS: &str = "boolean::api_brep::merge_breps";
 const OP_PIECEWISE: &str = "boolean::api_brep::piecewise_merge";
 
 /// The outcome of a two-B-rep boolean ([`boolean`], [`boolean_with_options`]).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BooleanOutcome {
     /// `rpResult`: the first operand, modified in place by the merge.
     pub result: Brep,
@@ -123,7 +123,7 @@ pub struct BooleanOutcome {
 }
 
 /// The outcome of [`boolean_with_curves`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BooleanWithCurves {
     /// The result and the second operand when kept, as [`boolean`]'s.
     pub outcome: BooleanOutcome,
@@ -133,7 +133,7 @@ pub struct BooleanWithCurves {
 }
 
 /// The outcome of a successful [`boolean_2d`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Boolean2dOutcome {
     /// `rpResult`: the first operand, modified; the second was consumed.
     Result(Brep),
@@ -148,7 +148,7 @@ pub enum Boolean2dOutcome {
 }
 
 /// The outcome of [`piecewise_merge`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PiecewiseMergeOutcome {
     /// `rpResult`: the first operand, modified.
     pub result: Brep,
@@ -490,7 +490,8 @@ pub fn piecewise_merge(
 /// (`SmApiBoolean2d`, `SmPrimitiveCreation::Boolean2D`): union, intersection, A minus
 /// B, exclusive or or merge of their regions. On success with faces on both sides the
 /// first operand is modified into the result and the second consumed; an operand
-/// without faces leaves both unchanged ([`Boolean2dOutcome::Unassigned`]).
+/// without faces leaves both unchanged ([`Boolean2dOutcome::Unassigned`]). The first
+/// operand's attributes ([`Brep::add_attribute`]) carry through to the result.
 ///
 /// # Errors
 ///
@@ -505,14 +506,17 @@ pub fn boolean_2d(
     use crate::topology::topology_traverser::Marks;
     let mut primary = brep1;
     let mut other = brep2;
-    let mut primitive = PrimitiveCreation::new(None, 0, false);
     let mut primary_marks = Marks::default();
     let mut other_marks = Marks::default();
     let mut result = None;
     {
-        let mut state = ArenaNotifyState::new(&primary);
-        state.seed(&other);
-        primitive.boolean_2d(
+        // (not upstream) with the primary operand's own attributes, given back to the
+        // result afterwards, as upstream's live on the objects Boolean2D splits, glues
+        // and keeps; the other operand is notified under identities disjoint from the
+        // primary's, so that its edits never reach the primary's attributes
+        let mut state = ArenaNotifyState::with_attributes_of(&mut primary);
+        state.seed_tagged(&other);
+        let r = PrimitiveCreation::boolean_2d_keyed(
             k,
             &mut primary,
             &mut other,
@@ -520,7 +524,11 @@ pub fn boolean_2d(
             &mut result,
             (&mut primary_marks, &mut other_marks),
             &mut state.env(None),
-        )?;
+            Some(&crate::topology::brep::p2::copy_source_ref),
+        );
+        let restored = state.restore_attributes(result.as_mut().unwrap_or(&mut primary));
+        r?;
+        restored?;
     }
     Ok(match result {
         Some(mut result) => {
@@ -742,13 +750,13 @@ mod tests {
     fn merge_breps_rejects_without_consuming() {
         let mut k = Kernel::default();
         for n in 0..2 {
-            let mut breps = vec![Brep::new(); n];
+            let mut breps: Vec<Brep> = (0..n).map(|_| Brep::new()).collect();
             let e = merge_breps(&mut k, &mut breps, BooleanOperation::Union).unwrap_err();
             assert!(matches!(e, SolidError::InvalidInput { .. }));
             assert_eq!(breps.len(), n);
         }
         for op in ALL {
-            let mut breps = vec![Brep::new(); 3];
+            let mut breps: Vec<Brep> = (0..3).map(|_| Brep::new()).collect();
             if merge_breps_kernel_operation(op).is_some() {
                 // The merge is constructed and runs.
                 assert!(

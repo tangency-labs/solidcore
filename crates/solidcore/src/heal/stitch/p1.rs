@@ -61,6 +61,10 @@
 //! - `UnifyNormals` ignores `NormalizedEvaluate`'s status and goes on with `sPnt` / `sDir`
 //!   as they were: `SmVector3d`'s default `SM_UNDEF_DOUBLE` (defined; the 3D evaluation
 //!   writes them only after its last status), [`Point3::UNDEF`] / [`Vec3::UNDEF`] here.
+//!   Not upstream: the sample loop over the caller's `ULONG` count of each lamina edge
+//!   use checks the kernel's cancel token on every sample, so a huge count (`u64::MAX`
+//!   ran without end, #2490 fuzz) can be cancelled; only a cancelled call returns early
+//!   (`Cancelled`), no result changes.
 //! - `SmBrep::GlueVertices`, `RemoveFaces` (with the B-rep's own editing flag) and
 //!   `StitchAndOrient` call `topology.brep_p5`, which defers at its own barriers;
 //!   `GlueEdgesGeneral` calls `topology.brep_p7` on a default record per arena object
@@ -408,14 +412,17 @@ pub fn select_topology_to_keep<C: StitchCallback + ?Sized>(
                 let surface2 =
                     fp2::surface(b, face2)?.ok_or_else(|| deref("face without surface"))?;
                 // 0 samples: do a precise measurement; no max distance (status ignored)
-                if let Some(g) = ignored(curve1.surface_max_distance_between(
-                    k,
-                    &edge::interval(b, edge1)?,
-                    surface2,
-                    &fp2::uv_domain(b, face2)?,
-                    0,
-                    None,
-                ))? {
+                if let Some(g) = ignored(crate::error::passed_on(
+                    curve1.surface_max_distance_between(
+                        k,
+                        &edge::interval(b, edge1)?,
+                        surface2,
+                        &fp2::uv_domain(b, face2)?,
+                        0,
+                        None,
+                    ),
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)? {
                     max_to_surface = Some(g.max_distance);
                 }
                 let d = max_to_surface.ok_or_else(sm_err)?;
@@ -435,14 +442,17 @@ pub fn select_topology_to_keep<C: StitchCallback + ?Sized>(
                 };
                 let surface1 =
                     fp2::surface(b, face1)?.ok_or_else(|| deref("face without surface"))?;
-                if let Some(g) = ignored(curve2.surface_max_distance_between(
-                    k,
-                    &edge::interval(b, edge2)?,
-                    surface1,
-                    &fp2::uv_domain(b, face1)?,
-                    0,
-                    Some(e1_to_e2_faces),
-                ))? {
+                if let Some(g) = ignored(crate::error::passed_on(
+                    curve2.surface_max_distance_between(
+                        k,
+                        &edge::interval(b, edge2)?,
+                        surface1,
+                        &fp2::uv_domain(b, face1)?,
+                        0,
+                        Some(e1_to_e2_faces),
+                    ),
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)? {
                     max_to_surface = Some(g.max_distance);
                 }
                 let d = max_to_surface.ok_or_else(sm_err)?;
@@ -479,8 +489,16 @@ pub fn select_topology_to_keep<C: StitchCallback + ?Sized>(
         }
 
         // knot counts (statuses ignored: a failing call leaves its list empty)
-        let knots1 = ignored(curve_of(b, edge1)?.knots(k, None))?.map_or(0, |(k1, _)| k1.len());
-        let knots2 = ignored(curve_of(b, edge2)?.knots(k, None))?.map_or(0, |(k2, _)| k2.len());
+        let knots1 = ignored(crate::error::passed_on(
+            curve_of(b, edge1)?.knots(k, None),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .map_or(0, |(k1, _)| k1.len());
+        let knots2 = ignored(crate::error::passed_on(
+            curve_of(b, edge2)?.knots(k, None),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .map_or(0, |(k2, _)| k2.len());
 
         // when knot counts vary - keep the smallest count
         if knots2 != knots1 {
@@ -630,8 +648,11 @@ fn test_and_split_edge_with(
     }
 
     // Check on the interior (status ignored: a failure reports not interior).
-    let interior =
-        ignored(check_interior_edge(k, b, e, dropped.parameter, this_tol))?.unwrap_or(false);
+    let interior = ignored(crate::error::passed_on(
+        check_interior_edge(k, b, e, dropped.parameter, this_tol),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
+    .unwrap_or(false);
     if !interior {
         out.reason = SplitReason::CloseToBoundary;
         return Ok(out);
@@ -640,7 +661,7 @@ fn test_and_split_edge_with(
     // Must have a point which can split the Edge.
     let (e1, e2, new_v) = match split(k, b, e, dropped.parameter) {
         Ok(r) => r,
-        Err(err) if err.is_unported() => return Err(err),
+        Err(err) if err.is_unported_or_cancelled() => return Err(err),
         Err(_) => {
             // most probable reason; don't really care too much.
             out.reason = SplitReason::CloseToBoundary;
@@ -1354,7 +1375,10 @@ impl<'c> Stitch<'c> {
 
         // the vertex and edge pairs have been found and they are in tolerance so delete
         // FacesToDelete (increments unlocked mark value; status ignored)
-        ignore_status(self.edit_remove_faces(k, b, faces_to_delete))?;
+        ignore_status(crate::error::passed_on(
+            self.edit_remove_faces(k, b, faces_to_delete),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
 
         // now follow the procedure that is used in DoStitching for stitching vertex
         // and edge pairs
@@ -1549,13 +1573,15 @@ impl<'c> Stitch<'c> {
     /// it, across manifold edges by their face uses and across lamina edges found
     /// within the stitch tolerance of `num_samples` points of each edge use (opposite
     /// tangents within 5 degrees, binormals more than 90 degrees apart). Flipped faces
-    /// are swapped ([`fp1::swap_uv`]) and returned in flip order. Increments an
+    /// are swapped ([`fp1::swap_uv_with_notifications`], each face's and surface's
+    /// edit notifications through `env`) and returned in flip order. Increments an
     /// unlocked mark value.
     ///
     /// # Errors
     ///
     /// Those of the B-rep box, the edge tree, the curve evaluations and drops, the
-    /// binormal evaluations and the swaps (`SER`); a null pointer upstream dereferences.
+    /// binormal evaluations and the swaps (`SER`); a null pointer upstream dereferences;
+    /// `Cancelled` when the kernel's token is cancelled during the sampling.
     #[allow(clippy::too_many_lines)] // one upstream routine
     pub fn unify_normals(
         &mut self,
@@ -1563,6 +1589,7 @@ impl<'c> Stitch<'c> {
         b: &mut Brep,
         start_face: FaceId,
         num_samples: u64,
+        env: &mut edge::NotifyEnv<'_>,
     ) -> Result<Vec<FaceId>> {
         let stitch_tol_3d = self.tol_3d;
         with_mark_lock(k, ALL_MARKS, |k, mark| -> Result<Vec<FaceId>> {
@@ -1571,11 +1598,10 @@ impl<'c> Stitch<'c> {
 
             // CalculateBoundingBox(sBrepBBox) with the header defaults; status ignored
             // upstream (a failure leaves the default-initialised box)
-            let brep_bbox = ignored(qbrep::calculate_bounding_box(
-                k,
-                &mut *b,
-                BoundingBoxOptions::default(),
-            ))?
+            let brep_bbox = ignored(crate::error::passed_on(
+                qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default()),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?
             .unwrap_or_default();
 
             let edges = bp1::edges(b, None)?;
@@ -1616,7 +1642,7 @@ impl<'c> Stitch<'c> {
                         }
                         if eu1::faceuse_orientation(b, fuse)? == OrientType::Opposite {
                             flipped.push(rad_f);
-                            fp1::swap_uv(k, b, rad_f)?;
+                            fp1::swap_uv_with_notifications(k, b, rad_f, env)?;
                         }
                         // Only oriented faces get onto stack and get marked
                         marks.mark(k, Entity::Face(rad_f), mark);
@@ -1624,6 +1650,8 @@ impl<'c> Stitch<'c> {
                         continue;
                     }
                     for j in 0..num_samples {
+                        // not upstream: a huge caller count can be cancelled (module docs)
+                        k.check_cancelled("heal::stitch::p1::Stitch::unify_normals")?;
                         #[allow(clippy::cast_precision_loss)] // upstream ULONG to double
                         let param = (j as f64 + 1.0) / (num_samples as f64 + 2.0);
                         let orig_ivl = edge::interval(b, eu_edge)?;
@@ -1631,11 +1659,13 @@ impl<'c> Stitch<'c> {
                         // first derivative, default bOKToMakeUVTrimCurve. The status is
                         // ignored upstream; a failure leaves sPnt / sDir at SmVector3d's
                         // default SM_UNDEF_DOUBLE, here UNDEF.
-                        let (pnt, dir) =
-                            ignored(normalized_evaluate(k, b, eu, param, false, true, true))?
-                                .map_or((Point3::UNDEF, Vec3::UNDEF), |(p, d)| {
-                                    (p, d.unwrap_or(Vec3::UNDEF))
-                                });
+                        let (pnt, dir) = ignored(crate::error::passed_on(
+                            normalized_evaluate(k, b, eu, param, false, true, true),
+                            k.fixes.brep_edit_statuses_pass_on,
+                        )?)?
+                        .map_or((Point3::UNDEF, Vec3::UNDEF), |(p, d)| {
+                            (p, d.unwrap_or(Vec3::UNDEF))
+                        });
                         let mut vbox = Extent3d::from_point(pnt);
                         vbox.expand_absolute(stitch_tol_3d);
                         let objects = edge_tree.objects_in_box(&vbox)?;
@@ -1665,10 +1695,14 @@ impl<'c> Stitch<'c> {
                             if !dropped.success {
                                 continue;
                             }
-                            let norm_param = ivl
-                                .inversion(dropped.parameter)
-                                .parameter
-                                .unwrap_or(UNDEF_PARAM);
+                            let norm_param = match ivl.inversion(dropped.parameter).parameter {
+                                Some(t) => t,
+                                // (fork e7ebc8d passes the failed inversion on: `SER`)
+                                None if k.fixes.brep_edit_statuses_pass_on => {
+                                    return Err(SolidError::sm_err(OP));
+                                }
+                                None => UNDEF_PARAM,
+                            };
                             if norm_param < 0.02 || norm_param > 0.98 {
                                 continue;
                             }
@@ -1680,8 +1714,11 @@ impl<'c> Stitch<'c> {
                                 true,
                             )?;
                             // status ignored: a failure leaves the angle 0
-                            let angle_rad =
-                                ignored(tangent(&pv)?.angle_between(dir))?.unwrap_or(0.0);
+                            let angle_rad = ignored(crate::error::passed_on(
+                                tangent(&pv)?.angle_between(dir),
+                                k.fixes.brep_edit_statuses_pass_on,
+                            )?)?
+                            .unwrap_or(0.0);
                             let angle_deg = angle_rad * 180.0 / PI;
                             // Make sure we are going in either same or opposite direction
                             if angle_deg > 5.0 && angle_deg < 175.0 {
@@ -1707,7 +1744,7 @@ impl<'c> Stitch<'c> {
                                 .ok_or_else(|| deref("faceuse without face"))?;
                             if eu1::faceuse_orientation(b, prim_fu)? == OrientType::Opposite {
                                 flipped.push(f_other);
-                                fp1::swap_uv(k, b, f_other)?;
+                                fp1::swap_uv_with_notifications(k, b, f_other, env)?;
                             }
                             marks.mark(k, Entity::Face(f_other), mark);
                             f_stack.push(f_other);
@@ -1747,6 +1784,7 @@ impl<'c> Stitch<'c> {
             min_unstitched_vert_gap: BIG_DOUBLE,
         };
         let tol = self.tol_3d;
+        k.check_cancelled("heal::stitch::p1::Stitch::stitch_vertex_pairs")?;
 
         let n1 = list1.len();
         if n1 < 1 {
@@ -2010,7 +2048,7 @@ impl<'c> Stitch<'c> {
             let s_ljj = at1(&sorted2, ljj_to_glue)?;
             match self.edit_glue_vertices(k, b, vtx1, vtx2_to_glue, None) {
                 Ok(()) => {}
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(e) => {
                     // Prevent infinite loop: if the glue failed, don't mess with these two
                     // vertices anymore.
@@ -2025,14 +2063,17 @@ impl<'c> Stitch<'c> {
             }
 
             // status ignored
-            ignore_status(update_object_tolerance(
-                k,
-                b,
-                EntityRef::Vertex(vtx1),
-                min_dist,
-                old_tol,
-                check_gaps,
-            ))?;
+            ignore_status(crate::error::passed_on(
+                update_object_tolerance(
+                    k,
+                    b,
+                    EntityRef::Vertex(vtx1),
+                    min_dist,
+                    old_tol,
+                    check_gaps,
+                ),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             out.max_vertex_gap = smos_max(out.max_vertex_gap, min_dist);
 
             // Remove from our vertex list, and add to Processed list.
@@ -2079,6 +2120,7 @@ impl<'c> Stitch<'c> {
         };
 
         for &v in verts {
+            k.check_cancelled("heal::stitch::p1::Stitch::stitch_edges_of_vertices")?;
             let Some(v) = v else {
                 continue; // Can this happen? Don't really care.
             };
@@ -2238,14 +2280,17 @@ impl<'c> Stitch<'c> {
                         Ok(()) => {
                             out.glued.push(e);
                             out.deleted.push(test_e);
-                            ignore_status(update_object_tolerance(
-                                k,
-                                b,
-                                EntityRef::Edge(e),
-                                dist_to_curve,
-                                old_tol,
-                                false,
-                            ))?;
+                            ignore_status(crate::error::passed_on(
+                                update_object_tolerance(
+                                    k,
+                                    b,
+                                    EntityRef::Edge(e),
+                                    dist_to_curve,
+                                    old_tol,
+                                    false,
+                                ),
+                                k.fixes.brep_edit_statuses_pass_on,
+                            )?)?;
                             set_none(&mut v_edges, kk)?; // per notes above
                             if !self.making_manifold_solid {
                                 // spine edges are allowed: just go on to the next [kk]
@@ -2256,7 +2301,7 @@ impl<'c> Stitch<'c> {
                             set_none(&mut v_edges, jj)?;
                             break;
                         }
-                        Err(err) if err.is_unported() => return Err(err),
+                        Err(err) if err.is_unported_or_cancelled() => return Err(err),
                         Err(_) if !self.ignore_problems => return Err(sm_err()),
                         Err(_) => {}
                     }
@@ -2435,8 +2480,11 @@ pub(crate) fn glue_edges_general(
     delete: EdgeId,
     inside_faceuses: Option<&[FaceuseId]>,
 ) -> Result<()> {
-    // (not upstream) with `b`'s own attributes, given back afterwards
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::with_attributes_of(b);
+    // (not upstream) with `b`'s own attributes, given back afterwards, and the kernel's
+    // reused record map (the same records a fresh state has)
+    let (tag, records) = take_arena_records(k, b);
+    let mut state =
+        crate::topology::brep::p2::ArenaNotifyState::with_attributes_of_reusing(records, b);
     let r = Context::with_notification_context(k, |k, context| {
         let mut env = state.env(Some(context));
         crate::topology::brep::p7::glue_edges_general(
@@ -2452,8 +2500,29 @@ pub(crate) fn glue_edges_general(
         )
     });
     let restored = state.restore_attributes(b);
+    k.arena_notify_records = (tag, state.into_records());
     r??;
     restored
+}
+
+/// The kernel's reused arena record map for `b` ([`Kernel::arena_notify_records`]) and
+/// `b`'s progress tag to keep it under: the map kept for this B-rep value, or an empty
+/// one when it was kept for another value (record keys are arena identities, which
+/// repeat across B-reps).
+fn take_arena_records(
+    k: &mut Kernel,
+    b: &mut Brep,
+) -> (
+    std::sync::Weak<()>,
+    crate::topology::topology::NotifyRecords,
+) {
+    let tag = std::sync::Arc::downgrade(&b.progress_tag());
+    let (bound, records) = std::mem::take(&mut k.arena_notify_records);
+    if bound.ptr_eq(&tag) {
+        (tag, records)
+    } else {
+        (tag, crate::topology::topology::NotifyRecords::new())
+    }
 }
 
 /// `SmBrep::SqueezeEdge(edge, keep)` (unit `topology.brep_p3`,
@@ -2491,8 +2560,11 @@ pub(crate) fn make_vertex_split_edge(
     e: EdgeId,
     t: f64,
 ) -> Result<(Option<EdgeId>, Option<EdgeId>, Option<VertexId>)> {
-    // a default record per object (upstream every object has its `SmTopology` part)
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::with_attributes_of(b);
+    // a default record per object (upstream every object has its `SmTopology` part), in
+    // the kernel's reused record map
+    let (tag, records) = take_arena_records(k, b);
+    let mut state =
+        crate::topology::brep::p2::ArenaNotifyState::with_attributes_of_reusing(records, b);
     // The kernel's context is the split's own `k`; no separate object context.
     let out = crate::topology::brep::p9::make_vertex_split_edge(
         k,
@@ -2503,6 +2575,7 @@ pub(crate) fn make_vertex_split_edge(
         &|edge, kind| local_identity(kind, edge.index()),
     );
     let restored = state.restore_attributes(b);
+    k.arena_notify_records = (tag, state.into_records());
     let out = out?;
     restored?;
     if !out.split {
@@ -2605,7 +2678,10 @@ fn evaluate_binormal(
 pub fn api_stitch(k: &mut Kernel, b: Option<&mut Brep>) -> Result<()> {
     let b = b.ok_or_else(|| SolidError::invalid_input(API_OP, "SmApiStitch: null B-rep"))?;
     // StitchAndOrient() with its header defaults
-    ignore_status(stitch_and_orient(k, b, -0.1, false, None, None))?;
+    ignore_status(crate::error::passed_on(
+        stitch_and_orient(k, b, -0.1, false, None, None),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     // Check manifold?
     Ok(())
 }
@@ -2689,12 +2765,14 @@ pub fn api_stitch_into_shell(
 }
 
 /// `SmApiUnifyNormals`: [`Stitch::unify_normals`] with the default callback and the
-/// B-rep tolerance as stitch tolerance.
+/// B-rep tolerance as stitch tolerance, notifying through the kernel context's
+/// callbacks under the kernel's identities
+/// ([`crate::topology::brep::p3::with_kernel_callbacks`]).
 ///
 /// # Errors
 ///
-/// [`SolidError::InvalidInput`] for a null B-rep or start face; those of
-/// [`Stitch::unify_normals`].
+/// [`SolidError::InvalidInput`] for a null B-rep or start face, and (before anything
+/// changes) inside another kernel-callback edit; those of [`Stitch::unify_normals`].
 pub fn api_unify_normals(
     k: &mut Kernel,
     b: Option<&mut Brep>,
@@ -2710,7 +2788,9 @@ pub fn api_unify_normals(
     let tol = b.tolerance();
     let mut callback = DefaultStitchCallback::new();
     let mut stitch = Stitch::new(&mut callback, tol, true, true);
-    stitch.unify_normals(k, b, start_face, num_samples)
+    crate::topology::brep::p3::with_kernel_callbacks(k, b, |k, b, env| {
+        stitch.unify_normals(k, b, start_face, num_samples, env)
+    })
 }
 
 /// `SmApiSimpleFaceStitch`: [`Stitch::do_simple_face_stitch`] with the default
@@ -2783,6 +2863,237 @@ mod tests {
     use super::*;
     use crate::geom::object::NotifyOperation;
     use crate::topology::EdgeuseOwner;
+
+    #[test]
+    fn cancellation_status_split_refusal_is_not_a_boundary_answer() {
+        for error in [
+            SolidError::cancelled("split-edge"),
+            SolidError::unported("split-edge", "unit"),
+            SolidError::FaceTrimsUnavailable {
+                operation: "split-edge",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+        ] {
+            let mut k = Kernel::default();
+            let mut b = crate::primitive::api_primitives::create_box(
+                &mut k,
+                Point3::ZERO,
+                10.0,
+                20.0,
+                30.0,
+            )
+            .unwrap();
+            let edge = b.edge_list()[0];
+            let record = b.edge(edge).unwrap();
+            let point = record
+                .curve
+                .as_ref()
+                .unwrap()
+                .evaluate_point(&k, record.interval.evaluate(0.5))
+                .unwrap();
+            let mut reached = false;
+            let result =
+                test_and_split_edge_with(&mut k, &mut b, edge, point, 0.01, |_, _, _, _| {
+                    reached = true;
+                    Err(error.clone())
+                });
+            assert!(reached, "the real box edge must reach its split");
+            assert_eq!(result.unwrap_err(), error);
+        }
+    }
+
+    #[derive(Debug)]
+    struct RefusingStitchEdits {
+        error: SolidError,
+        calls: usize,
+    }
+    impl StitchEditContext for RefusingStitchEdits {
+        fn set_point(
+            &mut self,
+            _k: &mut Kernel,
+            b: &mut Brep,
+            v: VertexId,
+            point: Point3,
+        ) -> Result<()> {
+            b.vertex_mut(v)?.point = point;
+            Ok(())
+        }
+        fn glue_vertices(
+            &mut self,
+            _k: &mut Kernel,
+            _b: &mut Brep,
+            _keep: VertexId,
+            _delete: VertexId,
+            _wire: Option<&[EdgeId]>,
+        ) -> Result<()> {
+            self.calls += 1;
+            Err(self.error.clone())
+        }
+        fn remove_faces(
+            &mut self,
+            _k: &mut Kernel,
+            _b: &mut Brep,
+            _faces: &[FaceId],
+        ) -> Result<()> {
+            panic!("unexpected edit in cancellation propagation test")
+        }
+        fn glue_edges(
+            &mut self,
+            _k: &mut Kernel,
+            _b: &mut Brep,
+            _keep: EdgeId,
+            _orientation: OrientType,
+            _dist: f64,
+            _nest: bool,
+            _delete: EdgeId,
+            _inside: Option<&[FaceuseId]>,
+        ) -> Result<()> {
+            self.calls += 1;
+            Err(self.error.clone())
+        }
+        fn squeeze_edge(
+            &mut self,
+            _k: &mut Kernel,
+            _b: &mut Brep,
+            _e: Option<EdgeId>,
+            _keep: VertexId,
+        ) -> Result<()> {
+            panic!("unexpected edit in cancellation propagation test")
+        }
+        fn split_edge(
+            &mut self,
+            _k: &mut Kernel,
+            _b: &mut Brep,
+            _e: EdgeId,
+            _t: f64,
+        ) -> Result<(Option<EdgeId>, Option<EdgeId>, Option<VertexId>)> {
+            panic!("unexpected edit in cancellation propagation test")
+        }
+        fn brep_pre_edit(&mut self, _k: &mut Kernel, _b: &mut Brep) -> Result<()> {
+            panic!("unexpected edit in cancellation propagation test")
+        }
+        fn delete_face(
+            &mut self,
+            _k: &mut Kernel,
+            _b: &mut Brep,
+            _f: FaceId,
+            _delete_ev: bool,
+            _nest: bool,
+            _out: Option<&mut Vec<EntityRef>>,
+            _region: Option<RegionId>,
+        ) -> Result<()> {
+            panic!("unexpected edit in cancellation propagation test")
+        }
+        fn face_notify(
+            &mut self,
+            _b: &mut Brep,
+            _f: FaceId,
+            _operation: NotifyOperation,
+            _data1: Option<EntityRef>,
+            _data3: Option<EntityRef>,
+        ) -> Result<()> {
+            panic!("unexpected edit in cancellation propagation test")
+        }
+    }
+
+    #[test]
+    fn cancellation_status_stitch_glue_errors_propagate_even_when_problems_are_ignored() {
+        for error in [
+            SolidError::cancelled("stitch-glue"),
+            SolidError::unported("stitch-glue", "unit"),
+            SolidError::FaceTrimsUnavailable {
+                operation: "stitch-glue",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+        ] {
+            for ignore_problems in [false, true] {
+                let mut k = Kernel::default();
+                let mut b = crate::primitive::api_primitives::create_box(
+                    &mut k,
+                    Point3::ZERO,
+                    10.0,
+                    20.0,
+                    30.0,
+                )
+                .unwrap();
+                let vertices = b.vertex_list().to_vec();
+                let mut edits = RefusingStitchEdits {
+                    error: error.clone(),
+                    calls: 0,
+                };
+                let mut cb = DefaultStitchCallback::new();
+                let mut stitch = Stitch::new(&mut cb, 100.0, false, false);
+                stitch.ignore_problems = ignore_problems;
+                stitch.edits = Some(&mut edits);
+                let result = stitch.stitch_vertex_pairs(
+                    &mut k,
+                    &mut b,
+                    &mut [Some(vertices[0])],
+                    &mut [Some(vertices[1])],
+                );
+                assert_eq!(result.unwrap_err(), error);
+                assert_eq!(edits.calls, 1, "the vertex glue must actually be reached");
+
+                let mut b = Brep::new_with_infinite_region().unwrap();
+                let shell = b
+                    .add_shell_record(crate::topology::Shell {
+                        region: b.infinite_region(),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                let edges = edges_between(&mut b, EdgeuseOwner::Shell(Some(shell)), 2);
+                for &edge in &edges {
+                    b.edge_mut(edge).unwrap().curve = Some(Curve::from(
+                        crate::curve::line::Line::from_points(Point3::ZERO, Point3::X, 3),
+                    ));
+                }
+                let vertex = b.edge(edges[0]).unwrap().vertices[0];
+                let mut edits = RefusingStitchEdits {
+                    error: error.clone(),
+                    calls: 0,
+                };
+                let mut cb = DefaultStitchCallback::new();
+                let mut stitch = Stitch::new(&mut cb, 0.01, false, false);
+                stitch.ignore_problems = ignore_problems;
+                stitch.edits = Some(&mut edits);
+                let result = stitch.stitch_edges_of_vertices(&mut k, &mut b, &[Some(vertex)]);
+                assert_eq!(result.unwrap_err(), error);
+                assert_eq!(edits.calls, 1, "the edge glue must actually be reached");
+            }
+        }
+    }
+
+    /// The kernel's reused arena record map is bound to one B-rep value: a later edit of
+    /// the same value starts on a fresh seeding of it whatever the edit before changed,
+    /// and an edit of another value (here a box with the same arena layout, so the same
+    /// keys) starts on an empty map, never on the other's records.
+    #[test]
+    fn arena_records_are_bound_to_one_brep() {
+        use crate::primitive::api_primitives::create_box;
+        use crate::topology::brep::p2::ArenaNotifyState;
+        let mut k = Kernel::default();
+        let mut b1 = create_box(&mut k, Point3::ZERO, 1.0, 2.0, 3.0).unwrap();
+        let mut b2 = create_box(&mut k, Point3::ZERO, 4.0, 5.0, 6.0).unwrap();
+        let fresh = |b: &Brep| (*ArenaNotifyState::new(b).records).clone();
+        // an edit of b1 that changes a record
+        let edit = |k: &mut Kernel, b: &mut Brep, reused: bool| {
+            let (tag, records) = take_arena_records(k, b);
+            assert_eq!(records.is_empty(), !reused);
+            let mut state = ArenaNotifyState::with_attributes_of_reusing(records, b);
+            assert_eq!(*state.records, fresh(b));
+            let key = *state.records.keys().next().unwrap();
+            state.records.get_mut(&key).unwrap().set_user_index1(5);
+            state.restore_attributes(b).unwrap();
+            k.arena_notify_records = (tag, state.into_records());
+        };
+        edit(&mut k, &mut b1, false);
+        edit(&mut k, &mut b1, true);
+        edit(&mut k, &mut b2, false);
+        edit(&mut k, &mut b1, false);
+        // a copy is another value
+        let mut copy = b1.clone_standing_for_self().unwrap();
+        edit(&mut k, &mut copy, false);
+    }
 
     #[test]
     fn actual_stitch_split_keeps_curve_identity_and_refusal_prefix() {

@@ -32,6 +32,10 @@
 //! | [`Torus::inside_out`], [`Torus::major_radius`], [`Torus::minor_radius`] | `GetInsideOut`, `GetMajorRadius`, `GetMinorRadius` (inline) |
 //!
 //! Deviations:
+//! - **Horn torus rebuild.** (WR-697, the fork's tangency-labs/smlib af7a4d9)
+//!   [`Torus::rebuild_step_from_nurb_parameters`] takes radii
+//!   within its scaled zero as one (a horn torus) and the generator angles' start
+//!   directions from the generator circles' centres (`smgu_CircleFrom3Points`).
 //! - **Derived class.** `SmTorus` derives from `SmSurfOfRevolution`; the base object is
 //!   the [`Torus::base`] field ([`SurfOfRevolution`]). A
 //!   [`crate::surface::surface::Surface`] holds it as
@@ -98,12 +102,13 @@ use crate::error::{ignore_status, ignored, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
-use crate::geom::geom_utility::p1::point_project_to_plane;
+use crate::geom::geom_utility::p1::{circle_from_3_points, point_project_to_plane};
 use crate::geom::tol::are_same;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{max2, min2, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQRT, PI, UNDEF_DOUBLE};
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{
     BSplineSurface, BSplineSurfaceForm, IsoCurveOptions, SurfParamType,
 };
@@ -274,7 +279,7 @@ impl Torus {
                 Some(opts.inside_out),
             )
             .map_err(|e| {
-                if e.is_unported() {
+                if e.is_unported_or_cancelled() {
                     e
                 } else {
                     SolidError::null_pointer(OP_NEW)
@@ -340,7 +345,7 @@ impl Torus {
 
         // Build NURB; fail cleanly rather than leak a null-NURB object.
         match torus.make_nurb(k) {
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::sm_err(OP_CANONICAL)),
             Ok(()) => {}
         }
@@ -502,7 +507,7 @@ impl Torus {
     }
 
     /// `RebuildPolarConverter` with the torus's iso circles.
-    fn rebuild_polar_converter(&mut self, k: &Kernel) -> Result<()> {
+    pub(crate) fn rebuild_polar_converter(&mut self, k: &Kernel) -> Result<()> {
         let shape = self.shape();
         self.base.rebuild_polar_converter(k, &|s, k, p, t| {
             Ok(iso_curve(s, shape, k, p, t, None, false)?.curve)
@@ -1116,7 +1121,7 @@ impl Torus {
                 EFF_ZERO_DEG,
             ) {
                 Ok(ivl) => ivl,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Ok(None),
             }
         } else {
@@ -1302,7 +1307,16 @@ impl Torus {
 
         // get torus orientation and size
         let major_vec = other_frame.origin() - ref_frame.origin();
-        let maj_rad = major_vec.length();
+        let mut maj_rad = major_vec.length();
+
+        // not upstream (the fork's tangency-labs/smlib af7a4d9, WR-697): a torus whose
+        // generator circles reach the axis is a horn torus (major radius = minor radius),
+        // as a revolved circle that reaches the axis is. The two radii, fitted to
+        // different iso-circles, differ in their last bits, and a spindle torus's tube
+        // would cross the axis there.
+        if (maj_rad - min_rad).abs() <= scaled_zero {
+            maj_rad = min_rad;
+        }
 
         // Check GenCurve minor circle rotation direction, its y axis is either +/-
         // sweepCircle z
@@ -1310,12 +1324,41 @@ impl Torus {
         let minor_orientation = other_frame.z_axis().cross(major_vec);
         let inside_out = torus_z_axis.dot(minor_orientation) < 0.0;
 
-        // project Nurb Min/Max Point to Torus XY plane to get vec to Center of each
-        // GenCurve
-        let min_plane_point = point_project_to_plane(nurb_min_point, torus_origin, torus_z_axis);
-        let max_plane_point = point_project_to_plane(nurb_max_point, torus_origin, torus_z_axis);
-        let start_for_min_angle = (min_plane_point - torus_origin).unitize_or_z();
-        let start_for_max_angle = (max_plane_point - torus_origin).unitize_or_z();
+        let (start_for_min_angle, start_for_max_angle) = {
+            // not upstream (the fork's af7a4d9, WR-697): the vec to the Center of the
+            // GenCurve at the Nurb Min/Max sweep parameter is the vec to that GenCurve's
+            // own center, the circle through three of its points. The Nurb Min/Max Point
+            // projected to the Torus XY plane is, on a horn torus whose domain ends where
+            // its generators touch the axis, the axis itself: no direction.
+            let mut starts = [Vec3::default(); 2];
+            for (end, start) in [0.0, 1.0].into_iter().zip(starts.iter_mut()) {
+                let sweep = if swap_uv {
+                    nurb_uv_domain.evaluate(0.0, end).y
+                } else {
+                    nurb_uv_domain.evaluate(end, 0.0).x
+                };
+                let mut on_gen = [Point3::default(); 3];
+                for (at, on) in [0.0, 1.0, 2.0].into_iter().zip(on_gen.iter_mut()) {
+                    let gen = if swap_uv {
+                        nurb_uv_domain.evaluate(at / 3.0, 0.0).x
+                    } else {
+                        nurb_uv_domain.evaluate(0.0, at / 3.0).y
+                    };
+                    *on = srf.evaluate_point(if swap_uv {
+                        Point2::new(gen, sweep)
+                    } else {
+                        Point2::new(sweep, gen)
+                    })?;
+                }
+                let [p0, p1, p2] = on_gen;
+                let circle = circle_from_3_points(p0, p1, p2, 3, false)?;
+                let plane_point = point_project_to_plane(circle.center, torus_origin, torus_z_axis);
+                // a GenCurve's center is never on the axis
+                *start = (plane_point - torus_origin).unitize()?;
+            }
+            let [min_start, max_start] = starts;
+            (min_start, max_start)
+        };
         let min_origin = torus_origin + maj_rad * start_for_min_angle;
         let max_origin = torus_origin + maj_rad * start_for_max_angle;
 
@@ -1429,6 +1472,22 @@ impl Torus {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
+        self.transform_notifying(k, rotate_n_move, scale, &mut |_| Ok(()))
+    }
+
+    /// [`Torus::transform`] with the edit notifications of the base surface of revolution's NURB transform sent through
+    /// `notify`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Torus::transform`] and of `notify`.
+    pub(crate) fn transform_notifying(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        notify: &mut EditNotify<'_>,
+    ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
         // no work - identity transform
@@ -1453,12 +1512,13 @@ impl Torus {
         // finish the call in the parent function (status ignored upstream), whose
         // polar-converter rebuild reaches the torus's iso circles
         let shape = self.shape();
-        ignore_status(
-            self.base
-                .transform_using(k, rotate_n_move, scale, &|s, k, p, t| {
-                    Ok(iso_curve(s, shape, k, p, t, None, false)?.curve)
-                }),
-        )?;
+        ignore_status(self.base.transform_using(
+            k,
+            rotate_n_move,
+            scale,
+            &|s, k, p, t| Ok(iso_curve(s, shape, k, p, t, None, false)?.curve),
+            notify,
+        ))?;
 
         // all done
         Ok(())
@@ -2177,6 +2237,46 @@ mod tests {
         assert!(Torus::is_nurb_surface_torus(&k, &bent, 1.0)
             .unwrap()
             .is_none());
+    }
+
+    /// A half torus of minor radius 0.1 at coordinates of about 200: the minor circles at its
+    /// two ends lie in one plane to rounding, which `test_for_iso_circles` takes for parallel (not
+    /// a line off the axis, WR-743), so it is found.
+    #[test]
+    fn small_far_half_torus_is_found_with_near_parallel_iso_planes() {
+        let k = Kernel::default();
+        let frame = Axis2Placement::new(
+            Vec3::new(197.06, 33.35, 56.318),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        let dom = Extent2d::from_bounds(0.0, 0.0, 180.0, 90.0);
+        let t = Torus::create_canonical(&k, &frame, 5.8, 0.1, TorusOptions::default(), Some(&dom))
+            .unwrap();
+        let nurbs = plain(&t);
+        assert!(Torus::is_nurb_surface_torus(&k, &nurbs, 1.0)
+            .unwrap()
+            .is_some());
+    }
+
+    /// A torus with a very short sweep (1e-4 rad) has end circles whose normals differ by less than
+    /// the angle tolerance but whose planes cross at the axis: they are not one plane, so they are
+    /// left to the intersection and the torus is found.
+    #[test]
+    fn short_sweep_torus_is_found_with_near_parallel_iso_planes() {
+        let k = Kernel::default();
+        let frame = Axis2Placement::new(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1e-4_f64.to_degrees(), 90.0);
+        let t = Torus::create_canonical(&k, &frame, 5.8, 0.1, TorusOptions::default(), Some(&dom))
+            .unwrap();
+        let nurbs = plain(&t);
+        assert!(Torus::is_nurb_surface_torus(&k, &nurbs, 1000.0)
+            .unwrap()
+            .is_some());
     }
 
     /// tangency-labs/solidcore#1470 and #1471 (WR-501, WR-408): a torus R 13.1934, r 1.25,

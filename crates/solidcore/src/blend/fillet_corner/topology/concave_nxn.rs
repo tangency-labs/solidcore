@@ -40,7 +40,7 @@ impl FilletCorner {
     ///
     /// # Errors
     /// `SM_ERR` unless exactly two concave edge uses are found;
-    /// [`SolidError::NullPointer`] when two consecutive edge uses share no face;
+    /// [`SolidError::null_pointer`] when two consecutive edge uses share no face;
     /// [`SolidError::InvalidInput`] for a different corner kind, a setback corner (the
     /// caller delegates it), a solver list that does not match the edge uses, or
     /// missing topology upstream dereferences; those of the convexity, solver and
@@ -64,7 +64,8 @@ impl FilletCorner {
         if self.kind != FilletCornerKind::ConcaveNByN {
             return Err(invalid("requires a ConcaveNByN corner"));
         }
-        // Determine if this is a setback corner
+        // Determine if this is a setback corner (kept, where the fork's dc757a6 drops it:
+        // `asked_setback_not_built`)
         if self.set_back_dist > self.approx_tol_3d * 100.0 {
             // Let SmFilletConvexNxNCorner handle setbacks (the caller dispatches it)
             return Err(invalid(

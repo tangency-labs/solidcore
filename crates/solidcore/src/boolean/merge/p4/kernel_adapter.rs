@@ -66,7 +66,29 @@ fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
         upstream_ub_passed: Vec::new(),
         memoize_curve_caches: k.memoize_curve_caches,
         fixes: k.fixes,
+        cancel: k.cancel.clone(),
         notify_records: crate::topology::topology::NotifyRecords::new(),
+        blend_net_tolerance: core::cell::Cell::new(k.blend_net_tolerance.get()),
+        blend_counts: core::cell::Cell::new(k.blend_counts.get()),
+        // (the memo is the kernel's own: a copy starts empty and solves afresh)
+        blend_station_memo: core::cell::RefCell::default(),
+        arena_notify_records: (
+            std::sync::Weak::new(),
+            crate::topology::topology::NotifyRecords::new(),
+        ),
+        blend_w_memo: core::cell::RefCell::default(),
+        // (inside the caller's operation: a scope opened on the copy keeps its memo)
+        blend_operation_scopes: std::sync::Arc::new(core::sync::atomic::AtomicU32::new(
+            k.blend_operation_scopes
+                .load(core::sync::atomic::Ordering::Relaxed),
+        )),
+        // (building cache trees does none of the counted work)
+        work_counters: crate::kernel::WorkCounters::default(),
+        // (building cache trees makes no blend faces)
+        blend_face_log: None,
+        // (the caller's profiler: the copy's scopes record into its tree)
+        #[cfg(feature = "profile")]
+        profiler: k.profiler.clone(),
     }
 }
 
@@ -525,6 +547,7 @@ impl<'keys> ManifoldKernelAdapter<'keys> {
             edge_source_key: &|e| keys.object(true, EntityRef::Edge(e)),
             edge_destination_key: &|e| keys.object(false, EntityRef::Edge(e)),
             face_source_key: &|f| keys.object(true, EntityRef::Face(f)),
+            surface_attributes: true,
             face_destination_key: &|f| keys.object(false, EntityRef::Face(f)),
         };
         action(&mut self.merge.intersector, &mut copy)
@@ -1134,6 +1157,7 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
                 edge_source_key: &|e| source_key(EntityRef::Edge(e)),
                 edge_destination_key: &|e| destination_key(EntityRef::Edge(e)),
                 face_source_key: &|f| source_key(EntityRef::Face(f)),
+                surface_attributes: true,
                 face_destination_key: &|f| destination_key(EntityRef::Face(f)),
             };
             crate::topology::brep::p7::copy_faces_with_merge(
@@ -1302,6 +1326,7 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
             edge_source_key: &edge_source,
             edge_destination_key: &edge_destination,
             face_source_key: &face_source,
+            surface_attributes: true,
             face_destination_key: &face_destination,
         };
         p5::process_wires_and_shell_vertices_with_kernels(
@@ -1346,6 +1371,7 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
             edge_source_key: &edge_source,
             edge_destination_key: &edge_destination,
             face_source_key: &face_source,
+            surface_attributes: true,
             face_destination_key: &face_destination,
         };
         // New topology is made with the primary context; copies notify through the

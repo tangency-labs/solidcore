@@ -588,6 +588,17 @@ impl Line {
         self.anal_domain = domain;
     }
 
+    /// The same line on its STEP parameters moved by `h`: its analytic domain's ends moved
+    /// by `h` and its point by `-h` steps along it, so that the point at each NURB parameter
+    /// is unchanged (to the rounding of `P - h s V`) and the NURB is kept. Not upstream: a
+    /// surface of revolution whose heights are measured from another origin on its axis moves
+    /// its generator's parameters with its own (`implicit::on_axis_from`).
+    pub(crate) fn shift_step_parameter(&mut self, h: f64) {
+        self.point -= h * self.vector * self.scale;
+        self.anal_domain =
+            Extent1d::from_min_max(self.anal_domain.min() + h, self.anal_domain.max() + h);
+    }
+
     /// `TRUE` (`IsAnalytic`).
     #[must_use]
     pub const fn is_analytic(&self) -> bool {
@@ -1911,10 +1922,10 @@ impl Line {
         if both_free {
             // init line parameters
             let mut ivl = Extent1d::from_min_max(0.0, 1.0);
-            let start =
-                tgt_start.unwrap_or(self.point + self.scale * self.anal_domain.min() * self.vector);
-            let end =
-                tgt_end.unwrap_or(self.point + self.scale * self.anal_domain.max() * self.vector);
+            let start = tgt_start
+                .unwrap_or_else(|| self.point + self.scale * self.anal_domain.min() * self.vector);
+            let end = tgt_end
+                .unwrap_or_else(|| self.point + self.scale * self.anal_domain.max() * self.vector);
             let mut vec = end - start;
             let mut scale = vec.length();
 
@@ -2063,6 +2074,8 @@ impl Line {
                     bounded: this.is_bounded(),
                     is_degenerate: &is_degenerate,
                     trim_surface,
+                    // (WR-668's zero-speed end needs three control points; a line has two)
+                    edge_ends: None,
                 },
             )?;
         }
@@ -2184,7 +2197,7 @@ impl Line {
                     line.convert_to_2d()?;
                 }
             }
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(_) => {}
         }
         Ok(line)

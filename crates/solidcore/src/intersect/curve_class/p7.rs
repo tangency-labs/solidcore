@@ -1887,7 +1887,7 @@ fn connect_target<O: ClassObject>(
 ) -> Result<Option<EntityRef>> {
     let (tb, e) = geometry
         .topology_entity(target)
-        .ok_or(SolidError::unported(upstream, unit))?;
+        .ok_or_else(|| SolidError::unported(upstream, unit))?;
     Ok(std::ptr::eq(b, tb).then_some(e))
 }
 
@@ -2119,7 +2119,7 @@ impl<O: ClassObject, G: ClassGeometry<O>> FaceQueries<O> for ReadOnly<'_, G> {
         let Some(e) = same_brep_edge(self.0, b, edge).ok_or_else(unresolved)?? else {
             return Ok(EndInside::default());
         };
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self()?;
         edge_curve_on_classify_in(
             k,
             &mut copy,
@@ -2176,7 +2176,7 @@ impl<O: ClassObject, G: ClassGeometry<O>> FaceQueries<O> for ReadOnly<'_, G> {
     ) -> Result<()> {
         let geometry = self.0;
         let (b, f) = resolve_face(geometry, face).ok_or_else(unresolved_3d)?;
-        let mut copy = b.clone();
+        let mut copy = b.clone_standing_for_self()?;
         point_3d_classify_in(
             k,
             geometry,

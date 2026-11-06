@@ -21,6 +21,16 @@
 //! - **Deterministic and portable.** No clock, no address-dependent ordering, no
 //!   `unsafe`; builds for `wasm32-unknown-unknown`.
 //!
+//! ## Public paths
+//!
+//! Consumer entry points are explicitly re-exported from their named modules, for
+//! example [`topology::brep::faces`], [`topology::face::uv_domain`] and
+//! [`blend::fillet_executive::FilletLaw`]. These paths are the supported API and
+//! remain available when implementation partitions change. Numbered `p1`, `p2`,
+//! etc. modules remain public for compatibility; prefer the named-module exports
+//! for new code. A stable path does not imply that every algorithm branch is
+//! implemented; operations retain their documented errors and limitations.
+//!
 //! ## Modules
 //!
 //! Foundation: [`math`], [`error`], [`kernel`], [`limits`], [`topology`], [`geom`]. Algorithm layers (filled
@@ -38,6 +48,7 @@ pub mod topology;
 pub mod blend;
 pub mod boolean;
 pub mod curve;
+pub mod eval;
 pub mod geom;
 pub mod heal;
 pub mod intersect;
@@ -45,11 +56,14 @@ pub mod mass;
 pub mod nurbs;
 pub mod offset;
 pub mod primitive;
+pub mod prism;
+pub mod profile;
 pub mod query;
 pub mod surface;
 pub mod sweep;
 
 pub use error::{EntityRef, NlibCode, Result, SolidError};
-pub use kernel::{Caches, Kernel, KernelOptions, Rng, Tolerances};
+pub use heal::face_props::Tri;
+pub use kernel::{Caches, CancelToken, Kernel, KernelOptions, Rng, Tolerances};
 pub use math::{Point2, Point3, Transform, Vec2, Vec3};
 pub use topology::{Brep, BrepId, EdgeId, FaceId, LoopId, ShellId, VertexId};

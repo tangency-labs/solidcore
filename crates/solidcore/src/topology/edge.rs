@@ -12,6 +12,7 @@
 //! | [`crate::topology::Edge`] (`Drop`)      | `SmEdge::~SmEdge`                                 |
 //! | [`edgeuse_count`], [`primary_edgeuse`]  | `SmEdge::GetEdgeuseCount`, `GetPrimaryEdgeuse`    |
 //! | [`interval`], [`set_interval`], [`curve`], [`tolerance`] | `SmEdge::GetInterval`, `SetInterval`, `GetCurve`, `GetTolerance` (`SM_USE_OLDTOL`) |
+//! | [`evaluation_curve`]                    | `GetCurve()` as `SmTol::GetZoneTol3d(const SmObject*)` reads it (the curve's `GetEdge()->GetTolerance()`) |
 //! | [`OdeEdgeLength`]                       | `SmODEEdgeLengthIFEO` (constructor, `Evaluate`)   |
 //! | [`end_tangent`]                         | `SmEdge::GetEndTangent`                           |
 //! | [`uv_trim_curve_of_surface`]            | `SmEdge::GetUVTrimCurveOfSurface`                 |
@@ -41,7 +42,7 @@
 //! | [`is_tangent_edge`]                     | `SmEdge::IsTangentEdge`                           |
 //! | [`is_connected_to_face`], [`is_connected_to`] | `SmEdge::IsConnectedToFace`, `IsConnectedTo` |
 //! | [`set_tolerance`]                       | `SmEdge::SetTolerance` (`SM_USE_OLDTOL`)          |
-//! | [`blend_edgeuse`]                       | `SmEdge::GetBlendEdgeuse`                         |
+//! | [`blend_edgeuse`], [`blend_edgeuse_or_why`], [`NotBlendable`] | `SmEdge::GetBlendEdgeuse` (the reasons of its `NULL`: solidcore's) |
 //! | [`same_oriented_edgeuse`]               | `SmEdge::GetSameOrientedEdgeuse`                  |
 //! | `loopuse_edges` (private)               | `SmLoopuse::GetEdges(SmTArray&)` without filter (CO-PORTED, `topology.loopuse`) |
 //!
@@ -53,6 +54,9 @@
 //!   the next element, cyclically) and `m_lListSize` its length; `ReverseList` keeps
 //!   the head and reverses the rest. `GetPrimaryEdgeuse`, `IsLamina`, `GetBrep` and
 //!   `IsWire` were CO-PORTED by earlier units and are re-exported here.
+//! - **UB-290** (unconditional, the fork's tangency-labs/smlib@8d0fbff): [`is_topological`]
+//!   refuses an edge with one face on both sides whose primary edge use and its radial
+//!   are in two loop uses, which `SmBrep::DeleteEdge` would merge into itself.
 //! - **Surface identity.** Upstream compares `SmSurface*` pointers (the target of
 //!   `GetUVTrimCurveOfSurface`, `IsSeam(const SmSurface&)`, `IsTopological`'s two
 //!   surfaces). A port face owns its surface, so a surface is named by the face holding
@@ -103,6 +107,10 @@
 //!   port returns the error. [`SolidError::Unported`] always propagates.
 //! - **Recursion.** `sm_CoverOtherCoincidentFace` recurses once (its second call has
 //!   `bRefineDomains` set); no other recursion.
+//! - **Not upstream: a stored-domain cover stays within one period** (the fork's
+//!   tangency-labs/smlib@b518bbe, under `Kernel::fixes.cover_wraps_across_closed_seam`):
+//!   `sm_CoverOtherCoincidentFace` passes `bRefineDomains` as the cover's
+//!   `bAcrossWrappedSeams`, so only its trim-derived attempt crosses a wrapped seam.
 //! - **Unported callees** return [`SolidError::Unported`]: `SmBrep::GetInfiniteRegion`
 //!   (`topology.brep_p1`) and `SmFace::CalculateUVDomainFromUVTrimCurves`
 //!   (`topology.face_p1`). `SmSurface::CoverOtherCoincidentSurface` is wired to
@@ -162,8 +170,8 @@ pub const CLASS_STRING: &str = "SmEdge";
 
 /// `SmBrep_TYPE` (the `SM_CAST_PTR(SmBrep, ..)` of `Notify`).
 const BREP_TYPE: i64 = 16011;
-/// `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+// `SM_ERR_INVALID_INPUT`.
+use crate::error::SM_ERR_INVALID_INPUT;
 
 /// `SmEdge::IsKindOf`: `SmEdge_TYPE` or a base class type.
 #[must_use]
@@ -263,7 +271,7 @@ struct Cover {
 }
 
 /// `pSurf0->CoverOtherCoincidentSurface(pSurf1, dTol, rdMaxDist, rpCoveringSurf,
-/// &sDomain0, &sDomain1, &rMergedDomain)` (unit `surface.surface_p5`) on the surfaces
+/// &sDomain0, &sDomain1, &rMergedDomain, bAcrossWrappedSeams)` (unit `surface.surface_p5`) on the surfaces
 /// of `face0` and `face1` (two different faces). The covering surface may be expanded
 /// in place, as upstream. A merged domain that was not written stays the caller's
 /// default-constructed `sMergedDomain`.
@@ -285,6 +293,7 @@ fn cover_other_coincident_surface(
     tol: f64,
     domain0: &Extent2d,
     domain1: &Extent2d,
+    across_wrapped_seams: bool,
 ) -> Result<Cover> {
     use crate::query::brep::BrepFaceServices;
     use crate::surface::surface::p5::CoverSolveContext;
@@ -324,6 +333,7 @@ fn cover_other_coincident_surface(
                 Some(CacheObject::Surface(face1)),
             ],
         },
+        across_wrapped_seams,
     );
     b.face_mut(face0)?.surface = Some(this);
     b.face_mut(face1)?.surface = Some(other);
@@ -345,7 +355,12 @@ fn cover_other_coincident_surface(
                 "covered surface owned by another face",
             ));
         };
-        ignore_status(crate::topology::face::p1::remove_uv_trim_curves(b, face))?;
+        // (passed on with the opt-in fix: the fork's `SER` in CoverCoincidentSurface,
+        // WR-663, tangency-labs/smlib 21dcf69)
+        crate::error::ignore_or_pass_on(
+            crate::topology::face::p1::remove_uv_trim_curves(b, face),
+            k.fixes.query_statuses_pass_on,
+        )?;
     }
     Ok(Cover {
         max_dist: r.max_dist,
@@ -396,6 +411,37 @@ pub fn curve(b: &Brep, e: EdgeId) -> Result<Option<&Curve>> {
 /// `GetTolerance` (`SM_USE_OLDTOL`): `m_sZoneTol3d`.
 pub fn tolerance(b: &Brep, e: EdgeId) -> Result<f64> {
     Ok(b.edge(e)?.tolerance)
+}
+
+/// The edge's 3D curve as upstream's `GetCurve()` evaluates: an evaluation copy (the
+/// curve exactly, owner included) carrying, when the curve has an owner, the edge's
+/// tolerance ([`Curve::set_owner_zone_tol_3d`]): the value
+/// `SmTol::GetZoneTol3d(const SmObject*)` reads through the curve's edge
+/// (`GetEdge()->GetTolerance()`; a curve without owner has no edge there and gets the
+/// system tolerance, as `SmApiEdgeComputeLength` does). Not upstream: a port
+/// curve cannot reach its edge, so a curve borrowed from the edge record ([`curve`])
+/// builds no cache over its owner's tolerance (its length, arc-length parameter and
+/// solves return [`SolidError::Unported`] for `SmTol::GetZoneTol3d`); this copy builds
+/// them as upstream does. `None` for an edge without curve.
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dead edge; those of the curve copy (geometry nested
+/// deeper than the shared bound).
+pub fn evaluation_curve(b: &Brep, e: EdgeId) -> Result<Option<Curve>> {
+    const OP_EVALUATION_CURVE: &str = "topology::edge::evaluation_curve";
+    let edge = b.edge(e).map_err(|_| SolidError::NotFound {
+        operation: OP_EVALUATION_CURVE,
+        entity: EntityRef::Edge(e),
+    })?;
+    let Some(curve) = edge.curve.as_ref() else {
+        return Ok(None);
+    };
+    let mut copy = curve.clone_for_evaluation()?;
+    if copy.owner().is_some() {
+        copy.set_owner_zone_tol_3d(Some(edge.tolerance));
+    }
+    Ok(Some(copy))
 }
 
 fn curve_deref<'b>(b: &'b Brep, e: EdgeId, what: &'static str) -> Result<&'b Curve> {
@@ -620,10 +666,18 @@ pub fn create_trimmed_nurbs_curve(k: &Kernel, b: &Brep, e: EdgeId) -> Result<Opt
 
     // Trim the CurveCopy to the EdgeInterval
     let mut ivl = b.edge(e)?.interval; // may snap sIvl by tol to existing knots
-    match copy.trim(k, &mut ivl, TrimMode::Notify) {
+    let status = copy.trim(k, &mut ivl, TrimMode::Notify);
+    trimmed_nurbs_result(status, copy)
+}
+
+/// A failed trim has no curve; control errors leave before the copy is selected.
+fn trimmed_nurbs_result(status: Result<()>, copy: Curve) -> Result<Option<Curve>> {
+    match status {
         Ok(()) => Ok(Some(copy)),
-        Err(err) if err.is_unported() => Err(err),
-        Err(_) => Ok(None),
+        Err(err) => {
+            failed(err)?;
+            Ok(None)
+        }
     }
 }
 
@@ -677,9 +731,10 @@ pub struct RadialSector {
     pub coincident_faceuse: Option<FaceuseId>,
 }
 
-/// An error a caller treats as a failed status: [`SolidError::Unported`] propagates.
+/// An error a caller treats as a failed status: unported dependencies and
+/// cooperative cancellation propagate.
 fn failed(e: SolidError) -> Result<()> {
-    if e.is_unported() {
+    if e.is_unported_or_cancelled() {
         Err(e)
     } else {
         Ok(())
@@ -1780,7 +1835,23 @@ fn cover_other_coincident_face(
         }
     }
 
-    let cover = cover_other_coincident_surface(k, b, face0, face1, tol, &domain0, &domain1)?;
+    // SolidCraft fork (tangency-labs/smlib@b518bbe), under
+    // `Kernel::fixes.cover_wraps_across_closed_seam`: across a seam the covering surface
+    // wraps only on the trim-derived bounds. The stored domains are conservative and may
+    // be the faces' whole surfaces: across the seam they cover too, and the merged face
+    // took them as its domain (360 x 208 for half-turn faces whose trims span 180 x 3).
+    // Within one period they cover as before; a cover that must cross the seam takes the
+    // faces' trims.
+    let cover = cover_other_coincident_surface(
+        k,
+        b,
+        face0,
+        face1,
+        tol,
+        &domain0,
+        &domain1,
+        refine_domains,
+    )?;
     let covering = cover.covering.map(|c| match c {
         Covering::This => face0,
         Covering::Other => face1,
@@ -1848,6 +1919,27 @@ pub fn is_topological(
     };
     // 1st edgeuse locals
     let (face1, surf1) = face_of(eu_a)?;
+
+    // UB-290 (the fork's tangency-labs/smlib@8d0fbff), unconditional: the same face on
+    // both sides, and the edge's primary edge use and its radial partner in two loop uses
+    // (the face meeting itself along the edge from its two sides, or its radial pairing
+    // the other way round): `SmBrep::DeleteEdge`, which reads that pair, would take the two
+    // sides for two faces and merge the face into itself, deleting it. Not removable. With
+    // the pair in one loop use it is a slit, which `DeleteEdge` splits off the loop.
+    {
+        let Some(primary) = primary_edgeuse(b, e)? else {
+            return Ok(out);
+        };
+        let Some(radial) = eu1::radial(b, primary)? else {
+            return Ok(out);
+        };
+        if eu1::face(b, primary)? == eu1::face(b, radial)?
+            && eu1::loopuse(b, primary)? != eu1::loopuse(b, radial)?
+        {
+            return Ok(out);
+        }
+    }
+
     // 3rd edgeuse locals = same oriented edgeuse on different face to edgeuse[0]
     let (face2_, surf2) = face_of(eu_c)?;
     let surfs = [&surf1, &surf2];
@@ -2819,8 +2911,91 @@ fn set_curve_with_identity(
 /// [`SolidError::Unported`] from `SmBrep::GetInfiniteRegion` and
 /// `SmEdgeuse::EvaluateBinormal`.
 pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<EdgeuseId>> {
+    Ok(blend_edgeuse_unless(k, b, e)?.ok())
+}
+
+/// Why an edge has no blend edge use ([`blend_edgeuse_or_why`]): the cases where
+/// [`blend_edgeuse`] gives `None`, told apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NotBlendable {
+    /// Its faces meet tangentially all along it (within the blend's tangency angle at
+    /// each of [`crate::topology::edgeuse::p2::is_tangent_sector`]'s stations): a smooth
+    /// edge, nothing to round.
+    Smooth,
+    /// It is not between two faces: a lamina edge, one face on one side only.
+    NotTwoFaces,
+    /// Its faces are tangent where the blend edge use is chosen (a third of the way along
+    /// it), though not all along it (a crease running out tangentially), or folded back on
+    /// each other there (a cusp).
+    Tangent,
+    /// Its edge uses name no sector to blend: none of the interior side oriented with its
+    /// face (an inconsistent edge use).
+    Ambiguous,
+}
+
+/// [`blend_edgeuse`] with the reason where there is none: `Err(NotBlendable)` for a lamina
+/// edge ([`NotBlendable::NotTwoFaces`]), an inconsistent edge use
+/// ([`NotBlendable::Ambiguous`]), and an edge between faces tangent at the test point, told
+/// apart by [`is_tangent_edge`] at the same angle ([`NotBlendable::Smooth`] where they are
+/// tangent at all its stations, else [`NotBlendable::Tangent`]). Not upstream (solidcore's):
+/// the reasons of `GetBlendEdgeuse`'s `NULL`; the edge use it returns is upstream's.
+///
+/// # Errors
+///
+/// Those of [`blend_edgeuse`]; those of [`is_tangent_edge`] for an edge refused as tangent.
+pub fn blend_edgeuse_or_why(
+    k: &Kernel,
+    b: &mut Brep,
+    e: EdgeId,
+) -> Result<core::result::Result<EdgeuseId, NotBlendable>> {
+    Ok(match blend_edgeuse_unless(k, b, e)? {
+        // smooth where the faces are tangent all along it, at the same angle
+        Err(NotBlendable::Tangent) if is_tangent_edge(k, b, e, 90.0 - crease_angle(k), false)? => {
+            Err(NotBlendable::Smooth)
+        }
+        r => r,
+    })
+}
+
+/// The largest angle (degrees) between the binormal of one face and the normal of the
+/// other at which [`blend_edgeuse`] takes the faces as tangent: 88 degrees, 89.5 with
+/// `fixes.fillet_half_degree_crease`.
+pub(crate) fn crease_angle(k: &Kernel) -> f64 {
+    // set max nonTangent angle to 88 degrees. With `fillet_half_degree_crease` (WR-621,
+    // fork 2e8758b) 89.5 degrees: faces within half a degree of each other are tangent, a
+    // crease of 0.5 to 2 degrees is an edge the model means and is filleted
+    if k.fixes.fillet_half_degree_crease {
+        89.5
+    } else {
+        88.0
+    }
+}
+
+/// A shell step-off keeps partial output only for an ordinary numerical failure.
+fn shell_step_off_status(status: Result<()>) -> Result<()> {
+    match status {
+        Err(err)
+            if err.is_unported_or_cancelled()
+                || matches!(
+                    err,
+                    SolidError::InvalidInput { .. } | SolidError::NotFound { .. }
+                ) =>
+        {
+            Err(err)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// `GetBlendEdgeuse`'s body: its edge use, or why it returns `NULL` (a tangent edge as
+/// [`NotBlendable::Tangent`], not yet told from a smooth one).
+fn blend_edgeuse_unless(
+    k: &Kernel,
+    b: &mut Brep,
+    e: EdgeId,
+) -> Result<core::result::Result<EdgeuseId, NotBlendable>> {
     if is_lamina(b, e)? {
-        return Ok(None); // skip all lamina edges
+        return Ok(Err(NotBlendable::NotTwoFaces)); // skip all lamina edges
     }
 
     let mut eu0 = primary_edgeuse(b, e)?;
@@ -2840,7 +3015,7 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
             eu0 = eu1::mate(b, eu0_r)?;
         }
         if eu0.is_none() {
-            return Ok(None);
+            return Ok(Err(NotBlendable::Ambiguous));
         }
     } else {
         // primary and mate edgeuses are in different regions
@@ -2860,10 +3035,10 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
 
         // check state - edgeuse should be part of interior region with SM_OT_SAME orientation
         match eu0 {
-            None => return Ok(None),
+            None => return Ok(Err(NotBlendable::Ambiguous)),
             Some(x) => {
                 if region_of(x)? == infinite || eu1::orientation(b, x)? == OrientType::Opposite {
-                    return Ok(None);
+                    return Ok(Err(NotBlendable::Ambiguous));
                 }
             }
         }
@@ -2871,7 +3046,7 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
 
     // pEU0 and peU1 now bound the sector to be filleted
     let Some(mut cur0) = eu0 else {
-        return Ok(None);
+        return Ok(Err(NotBlendable::Ambiguous));
     };
     let mut cur1 = eu1::radial(b, cur0)?.ok_or_else(|| null("GetBlendEdgeuse: no radial"))?;
 
@@ -2890,15 +3065,7 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
     let (fu_normal, fu_normal2) = (ev0.face_normal, ev1.face_normal);
     let (bin_vec, bin_vec2) = (ev0.binormal, ev1.binormal);
 
-    // set max nonTangent angle to 88 degrees. With `fillet_half_degree_crease` (WR-621,
-    // fork 2e8758b) 89.5 degrees: faces within half a degree of each other are tangent, a
-    // crease of 0.5 to 2 degrees is an edge the model means and is filleted
-    let max_angle = if k.fixes.fillet_half_degree_crease {
-        89.5
-    } else {
-        88.0
-    };
-    let max_dot = (max_angle * PI / 180.0).cos();
+    let max_dot = (crease_angle(k) * PI / 180.0).cos();
 
     // the faces are tangent and can't be filleted. With `fillet_knife_edge_rounds`
     // (WR-570, fork b7ec55b) only when their binormals point away from each other (the
@@ -2906,12 +3073,9 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
     // edge), whose ball lies back from the edge, filleted like any other edge
     let cusp = k.fixes.fillet_knife_edge_rounds && bin_vec.dot(bin_vec2) > 0.0;
     let dot1 = bin_vec2.dot(fu_normal);
-    if !cusp && dot1.abs() < max_dot {
-        return Ok(None); // Tangent: unable to fillet
-    }
     let dot2 = bin_vec.dot(fu_normal2);
-    if !cusp && dot2.abs() < max_dot {
-        return Ok(None); // Tangent: unable to fillet
+    if !cusp && (dot1.abs() < max_dot || dot2.abs() < max_dot) {
+        return Ok(Err(NotBlendable::Tangent)); // Tangent: unable to fillet
     }
 
     // when filleting a shell (not a solid) - get a sector which is not convex
@@ -2920,18 +3084,9 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
         let opts = eu2::StepOffOptions::default();
         // `SE`: a failing step-off keeps what it wrote into the same locals
         for (eu, ev) in [(cur0, &mut ev0), (cur1, &mut ev1)] {
-            if let Err(err) =
-                eu2::evaluate_binormal_step_off_into(k, b, eu, test_param, step_off, &opts, ev)
-            {
-                if matches!(
-                    err,
-                    SolidError::Unported { .. }
-                        | SolidError::InvalidInput { .. }
-                        | SolidError::NotFound { .. }
-                ) {
-                    return Err(err);
-                }
-            }
+            shell_step_off_status(eu2::evaluate_binormal_step_off_into(
+                k, b, eu, test_param, step_off, &opts, ev,
+            ))?;
         }
         let (pnt, fu_normal) = (ev0.point, ev0.face_normal);
         let (pnt2, fu_normal2) = (ev1.point, ev1.face_normal);
@@ -2952,7 +3107,7 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
         }
     }
     let _ = cur1;
-    Ok(Some(cur0))
+    Ok(Ok(cur0))
 }
 
 #[cfg(test)]
@@ -3030,7 +3185,82 @@ pub(crate) mod notification_test_support {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+
+    #[test]
+    fn cancellation_status_trimmed_curve_handler_preserves_control_errors() {
+        let copy = || Curve::from(BSplineCurve::default());
+        assert!(trimmed_nurbs_result(Ok(()), copy()).unwrap().is_some());
+        assert!(
+            trimmed_nurbs_result(Err(SolidError::sm_err("trim")), copy())
+                .unwrap()
+                .is_none()
+        );
+        for error in [
+            SolidError::cancelled("trim"),
+            SolidError::unported("trim", "unit"),
+            SolidError::FaceTrimsUnavailable {
+                operation: "trim",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+        ] {
+            assert_eq!(
+                trimmed_nurbs_result(Err(error.clone()), copy()).unwrap_err(),
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_status_shell_step_off_handler_preserves_control_errors() {
+        assert_eq!(shell_step_off_status(Ok(())), Ok(()));
+        assert_eq!(
+            shell_step_off_status(Err(SolidError::sm_err("step-off"))),
+            Ok(())
+        );
+        for error in [
+            SolidError::cancelled("step-off"),
+            SolidError::unported("step-off", "unit"),
+            SolidError::FaceTrimsUnavailable {
+                operation: "step-off",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+            SolidError::invalid_input("step-off", "invalid topology"),
+            SolidError::NotFound {
+                operation: "step-off",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+        ] {
+            assert_eq!(shell_step_off_status(Err(error.clone())), Err(error));
+        }
+    }
+
+    #[test]
+    fn cancellation_status_failed_preserves_control_errors() {
+        for error in [
+            SolidError::cancelled("cancelled-callee"),
+            SolidError::unported("callee", "unit"),
+            SolidError::FaceTrimsUnavailable {
+                operation: "face-classification",
+                entity: EntityRef::Face(FaceId::from_index(0)),
+            },
+        ] {
+            assert_eq!(failed(error.clone()), Err(error));
+        }
+    }
+
+    #[test]
+    fn cancellation_status_survives_failed_radial_classification() {
+        let cancelled = SolidError::cancelled("radial-sector-classification");
+        assert_eq!(failed(cancelled.clone()), Err(cancelled));
+        assert_eq!(
+            failed(SolidError::sm_err("ordinary-classification-failure")),
+            Ok(())
+        );
+        let unported = SolidError::unported("callee", "unit");
+        assert_eq!(failed(unported.clone()), Err(unported));
+    }
     use crate::curve::curve::Curve as C;
     use crate::nurbs::b_spline_curve::BSplineCurve;
     use crate::nurbs::crv_basic::Curve as NlCurve;

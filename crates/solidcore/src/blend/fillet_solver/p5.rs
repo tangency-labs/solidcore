@@ -6,6 +6,7 @@
 //! |------|----------|
 //! | [`FilletSolver::test_roll_over`], [`FilletSolver::test_roll_over_with_ops`] | `SmFilletSolver::TestRollOver` |
 //! | [`FilletSolver::process_roll_over`], [`FilletSolver::process_roll_over_with_ops`] | `SmFilletSolver::ProcessRollOver` |
+//! | [`FilletSolver::end_sections_fit_their_faces_with_ops`] | the fork's `SmFilletSolver::EndSectionsFitTheirFaces` (tangency-labs/smlib `a307480`; `p5/end_sections_fit.rs`) |
 //!
 //! Deviations: pseudo-B-rep objects use typed arenas and geometry uses the same
 //! typed ids as the solver list. Completed mutations survive failures. Only unavailable
@@ -38,9 +39,12 @@ use crate::topology::{edge, edgeuse::p1 as eu, edgeuse::p2, Brep, EdgeId, Edgeus
 #[path = "p5/recovery.rs"]
 mod recovery;
 
+#[path = "p5/end_sections_fit.rs"]
+mod end_sections_fit;
+
 #[path = "p5/rails_fit.rs"]
 mod rails_fit;
-pub use rails_fit::{inside_material, is_concave_edge, RailsFit};
+pub use rails_fit::{inside_material, is_concave_edge, is_knife_edge, RailsFit};
 
 const OP: &str = "blend::fillet_solver::p5";
 
@@ -82,6 +86,64 @@ pub trait RailClassificationContext {
     /// # Errors
     /// An unresolved corner.
     fn corner_type(&self, corner: FilletCornerId) -> Result<FilletCornerType>;
+    /// `(IsClosedJoin(), IsEndOnEndFace())` of the corner (the fork's 543d25a, 53c47b8;
+    /// WR-697). The default, for a context without blend corners: no closed Join, and an
+    /// end on its end face exactly at an Nx1 corner.
+    ///
+    /// # Errors
+    /// An unresolved corner.
+    fn corner_blend_tests(&self, corner: FilletCornerId) -> Result<(bool, bool)> {
+        Ok((false, self.corner_type(corner)? == FilletCornerType::NByOne))
+    }
+    /// `GetFilletExecutive()->GetFilletCornerOfVertex(vertex)` of the fork's
+    /// `EndSectionsFitTheirFaces` (tangency-labs/smlib `a307480`): the corner of a
+    /// target vertex.
+    ///
+    /// # Errors
+    /// [`SolidError::Unported`] for a context without an executive.
+    fn corner_of_vertex(
+        &self,
+        vertex: crate::topology::VertexId,
+    ) -> Result<Option<FilletCornerId>> {
+        let _ = vertex;
+        Err(SolidError::unported(
+            "SmFilletExecutive::GetFilletCornerOfVertex (fork EndSectionsFitTheirFaces)",
+            "blend.fillet_executive_p3",
+        ))
+    }
+    /// `SmFace::CurveOnClassify(TRUE, SmCurveClassification(curve, interval, uv, tol),
+    /// TRUE)` of a curve in no body (the fork's end section, tangency-labs/smlib
+    /// `a307480`) against target face `face`: its intervals.
+    ///
+    /// # Errors
+    /// [`SolidError::Unported`] for a context without live bodies; the classifier's.
+    #[allow(clippy::too_many_arguments)]
+    fn classify_free_curve(
+        &mut self,
+        k: &Kernel,
+        target: &mut Brep,
+        pseudo: &Brep,
+        face: crate::topology::FaceId,
+        curve: &crate::curve::curve::Curve,
+        interval: crate::geom::extent1d::Extent1d,
+        uv_curve: Option<&crate::curve::curve::Curve>,
+        zone_tol_3d: f64,
+    ) -> Result<Vec<crate::intersect::curve_class::p1::CurveInterval<FilletClassObject>>> {
+        let _ = (
+            k,
+            target,
+            pseudo,
+            face,
+            curve,
+            interval,
+            uv_curve,
+            zone_tol_3d,
+        );
+        Err(SolidError::unported(
+            "SmFace::CurveOnClassify of a free curve (fork EndSectionsFitTheirFaces)",
+            "blend.fillet_executive_p3",
+        ))
+    }
     /// The executive's corner table (`m_vFilletCorners`), which the rollover
     /// recovery's `CalcRailIntEdgeuse` reads.
     fn corners(&self) -> CornerLookup<'_>;
@@ -123,6 +185,9 @@ impl<C: RailClassificationContext> SplitCorners for ContextCorners<'_, C> {
     }
     fn corner_type(&self, id: FilletCornerId) -> Result<FilletCornerType> {
         self.0.corner_type(id)
+    }
+    fn is_closed_join(&self, id: FilletCornerId) -> Result<bool> {
+        Ok(self.0.corner_blend_tests(id)?.0)
     }
 }
 
@@ -528,6 +593,9 @@ mod tests {
         fn corner_type(&self, id: FilletCornerId) -> Result<FilletCornerType> {
             (self.0)(id)
         }
+        fn is_closed_join(&self, _: FilletCornerId) -> Result<bool> {
+            Ok(false)
+        }
     }
 
     struct NoOwnership;
@@ -634,7 +702,7 @@ mod tests {
             &mut target,
             &mut fb,
             id,
-            &mut CornerTypes(|_| Ok(FilletCornerType::OneByOne)),
+            &mut CornerTypes(|_| Ok(FilletCornerType::NByOneClosed)),
             &mut adjusted,
             &mut NoOwnership,
         );

@@ -93,11 +93,11 @@ use crate::surface::surface_cache::p1::SurfaceCache;
 pub const BIG_ULONG: i32 = 99_999_999;
 
 /// `SM_SUCCESS` (`SmMessages.h`).
-pub const SM_SUCCESS: i32 = 1000;
+pub use crate::error::SM_SUCCESS;
 
 /// `SM_ERR_OUTSIDE_OF_DOMAIN` (`SmMessages.h`): `CheckSeamJump` cannot snap a seam
 /// jump within tolerance.
-pub const SM_ERR_OUTSIDE_OF_DOMAIN: i32 = 1020;
+pub use crate::error::SM_ERR_OUTSIDE_OF_DOMAIN;
 
 /// `IsMovingAlongBoundary`'s default angle limit (`dAngLimitDeg`, degrees).
 pub const DEFAULT_ALONG_ANGLE_DEG: f64 = 5.0;
@@ -527,7 +527,7 @@ impl DropPt {
                 approx_tol_3d,
             ) {
                 Ok(r) => (r.is_good, r.drop_to_surf, r.approx_dev),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 // when smsurf_IsPointOnNormal fails - it's not a good point
                 Err(_) => (false, 0.0, 0.0),
             };

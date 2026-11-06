@@ -1,6 +1,8 @@
 //! Screw sweeps: a profile carried by a screw motion about an axis (a thread's groove, a
 //! coil), each wall its profile curve turned exactly and lifted within a tolerance of
-//! its true screw surface, capped at both ends.
+//! its true screw surface, capped at both ends. Each B-spline wall keeps that screw
+//! surface as its definition, the wall its certified net (#2572,
+//! [`crate::surface::procedural_sweep::ProceduralSweep`]).
 //!
 //! Source: the SolidCraft fork's C API, `capi/src/smlib_sweeps.cpp` of
 //! tangency-labs/smlib at `83748ba` (Apache-2.0), commits `d6d44b4` (the screw sweep),
@@ -38,9 +40,17 @@
 //!   and [`MAX_LAW`] law pairs. Added: the span width's shrinking loop stops after
 //!   [`MAX_SHRINK`] steps, and a wall's control net holds at most [`MAX_NET_POINTS`]
 //!   points; past either the sweep is `InvalidInput`.
+//! - **The caps.** A point at turn 0 is the point itself (moved by the radial shift), and
+//!   one at the last turn is the end cap's placement applied to it, so a wall's first and
+//!   last stations and the caps are the same points by construction; the fork computes
+//!   them as `o + R (p - o) + k lift`, which can be an ulp off.
 //! - **Faces.** Faces are made under arena notification identities and stitched under
 //!   them, as the kernel's own primitives are; the result's cached topology is
 //!   refreshed ([`Brep::refresh_cached_topology`]).
+//! - **Definitions (#2572, not the fork's).** Each B-spline wall's surface carries its
+//!   definition, the profile curve under the screw motion over the wall's stations, and
+//!   the wall's certified distance from it. The wall itself is built as before; an exact
+//!   cylinder (a profile line along the axis) and the caps keep none.
 
 // The fork's range tests are NaN-safe negations (`!(x > y)`); kept as written.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -58,6 +68,7 @@ use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData
 use crate::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::surface::cone::Cone;
+use crate::surface::procedural_sweep::{ProceduralSweep, RadialLaw, ScrewMotion};
 use crate::surface::surface::Surface;
 use crate::topology::brep::p8::{self, FaceBuildEnv};
 use crate::topology::{Brep, FaceId};
@@ -111,6 +122,8 @@ struct Screw {
     k: Vec3,
     e: Vec3,
     pitch: f64,
+    /// The angle the motion ends at, `2 pi turns`: where the end cap sits.
+    total: f64,
     angles: Vec<f64>,
     offsets: Vec<f64>,
 }
@@ -152,8 +165,19 @@ impl Screw {
         }
     }
 
-    /// Where `p` goes at angle `a`.
+    /// Where `p` goes at angle `a`. Where a cap sits the point is the cap's own: at turn 0
+    /// the motion is the identity but for the radial shift, so `p` goes to `p + shift(0)`
+    /// exactly, the point the start cap has (placed by [`Self::placement`] at 0, the identity
+    /// moved by the shift); at the end, `total`, it is [`Self::placement`] at `total` applied
+    /// to `p`, as the end cap's points are placed. Elsewhere `o + R (p - o + shift) + k lift`,
+    /// which at the caps can be an ulp of `|o|` off them.
     fn at(&self, p: Point3, a: f64) -> Point3 {
+        if a == 0.0 {
+            return p + self.shift(0.0);
+        }
+        if a == self.total {
+            return self.placement(a).transform_point(p);
+        }
         self.o + self.turn(p - self.o + self.shift(a), a) + self.k * self.lift(a)
     }
 
@@ -565,6 +589,7 @@ fn screw_of(origin: Point3, axis: Vec3, pitch: f64, turns: f64, tolerance: f64) 
         k: Vec3::new(axis.x / n, axis.y / n, axis.z / n),
         e: Vec3::ZERO,
         pitch,
+        total: TAU * turns,
         angles: Vec::new(),
         offsets: Vec::new(),
     })
@@ -616,7 +641,7 @@ pub fn screw_sweep_body(
     tolerance: f64,
 ) -> Result<Brep> {
     let mut m = screw_of(origin, axis, pitch, turns, tolerance)?;
-    sweep(k, profile, &mut m, turns, tolerance)
+    sweep(k, profile, &mut m, tolerance)
 }
 
 /// [`screw_sweep`] with the section moved off the axis as it turns: a thread's groove
@@ -683,18 +708,12 @@ pub fn screw_sweep_radial_body(
         m.angles.push(TAU * turn);
         m.offsets.push(offset);
     }
-    sweep(k, profile, &mut m, turns, tolerance)
+    sweep(k, profile, &mut m, tolerance)
 }
 
 /// `screw_sweep` of the fork: both entry points, the motion `m` set but for its radial
 /// direction.
-fn sweep(
-    k: &mut Kernel,
-    profile: &[Curve],
-    m: &mut Screw,
-    turns: f64,
-    tolerance: f64,
-) -> Result<Brep> {
+fn sweep(k: &mut Kernel, profile: &[Curve], m: &mut Screw, tolerance: f64) -> Result<Brep> {
     if profile.is_empty() {
         return Err(bad("empty profile"));
     }
@@ -757,7 +776,7 @@ fn sweep(
     }
     // The offset changes slope only at its own angles: they bound pieces too, and a
     // half turn within a sixteenth of a turn of one is left out.
-    let total = TAU * turns;
+    let total = m.total;
     let mut breaks = vec![0.0];
     for &a in &m.angles {
         if a > 0.0 && a < total {
@@ -805,6 +824,15 @@ fn sweep(
         }
         pieces.push(Stations::new(b0, b1, n as usize));
     }
+    // The walls' definition: the motion, and each profile curve as the NURBS its wall
+    // runs on across.
+    let law = if m.offsets.is_empty() {
+        None
+    } else {
+        Some(RadialLaw::new(m.e, m.angles.clone(), m.offsets.clone())?)
+    };
+    let motion = ScrewMotion::new(m.o, m.k, m.pitch, law)?;
+    let curves = profile.iter().map(bspline_of).collect::<Result<Vec<_>>>()?;
     let mut brep = crate::topology::brep::p3::new_brep(
         k,
         crate::geom::tol::USE_DEFAULT,
@@ -814,16 +842,23 @@ fn sweep(
         let (Some(&t0), Some(&t1)) = (st.t.first(), st.t.last()) else {
             return Err(SolidError::sm_err(OP));
         };
-        for ((wall, curve), &r) in walls.iter().zip(profile).zip(&radius) {
+        for (((wall, curve), nurbs), &r) in walls.iter().zip(profile).zip(&curves).zip(&radius) {
             if r > 0.0 && m.offset(t0) == m.offset(t1) {
                 let ends = curve.ends(k)?;
                 cylinder_piece(k, &mut brep, m, ends.start, ends.end, r + m.offset(t0), st)?;
                 continue;
             }
-            let surface = screw_wall(m, wall, st)?;
-            let domain: Extent2d = surface.natural_uv_domain();
+            let net = screw_wall(m, wall, st)?;
+            let domain: Extent2d = net.natural_uv_domain();
+            let mut surface = Surface::from(net);
+            surface.set_sweep_definition(ProceduralSweep::create(
+                nurbs,
+                motion.clone(),
+                &st.t,
+                st.half,
+            )?);
             with_face_env(k, &mut brep, |k, brep, fenv| {
-                p8::create_face_from_surface(k, brep, Some(Surface::from(surface)), &domain, fenv)
+                p8::create_face_from_surface(k, brep, Some(surface), &domain, fenv)
             })?;
         }
     }
@@ -857,4 +892,81 @@ fn solid(brep: Brep) -> Result<Brep> {
         return Err(SolidError::sm_err(OP));
     }
     Ok(brep)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A square section off the axis, with the screw's origin off zero (so `o + (p - o)` is not
+    /// `p` in floating point for some of its corners).
+    fn screw_off_zero() -> (Screw, Vec<Point3>) {
+        let o = Point3::new(0.1, 0.7, 0.3);
+        let m = screw_of(o, Vec3::new(0.0, 0.0, 1.0), 1.5, 2.0, 1e-4).unwrap();
+        let corners = vec![
+            Point3::new(5.3, 0.7, 0.1),
+            Point3::new(6.1, 0.7, 0.1),
+            Point3::new(6.1, 0.7, 0.9),
+            Point3::new(5.3, 0.7, 0.9),
+        ];
+        (m, corners)
+    }
+
+    #[test]
+    fn the_start_cap_and_the_walls_first_station_are_the_same_points() {
+        let k = Kernel::default();
+        let (mut m, corners) = screw_off_zero();
+        // Some corner must be one where o + (p - o) is not p, or the test proves nothing.
+        assert!(corners.iter().any(|&p| m.o + (p - m.o) != p));
+        for law in [None, Some(0.25)] {
+            if let Some(offset) = law {
+                m.e = Vec3::new(1.0, 0.0, 0.0);
+                m.angles = vec![0.0];
+                m.offsets = vec![offset];
+            }
+            let st = Stations::new(0.0, 1.0, 4);
+            let cap = m.placement(0.0);
+            for &p in &corners {
+                let first = path(&m, p, &st).first().copied().unwrap();
+                assert_eq!(first, p + m.shift(0.0), "the wall's first station");
+                let mut edge = Curve::from(
+                    Line::create_line_segment(3, p, p + Vec3::new(0.0, 0.0, 1.0), None).unwrap(),
+                );
+                edge.transform(&k, &cap, None).unwrap();
+                assert_eq!(edge.ends(&k).unwrap().start, first, "the start cap's point");
+            }
+        }
+    }
+
+    #[test]
+    fn the_end_cap_and_the_walls_last_station_are_the_same_points() {
+        let k = Kernel::default();
+        let (mut m, corners) = screw_off_zero();
+        // Some corner must be one where the motion's own formula is not the cap's, or the
+        // test proves nothing.
+        let end = m.placement(m.total);
+        let formula = |m: &Screw, p: Point3| {
+            m.o + m.turn(p - m.o + m.shift(m.total), m.total) + m.k * m.lift(m.total)
+        };
+        assert!(corners
+            .iter()
+            .any(|&p| formula(&m, p) != end.transform_point(p)));
+        for law in [None, Some(0.25)] {
+            if let Some(offset) = law {
+                m.e = Vec3::new(1.0, 0.0, 0.0);
+                m.angles = vec![0.0, m.total];
+                m.offsets = vec![0.0, offset];
+            }
+            let st = Stations::new(0.5 * m.total, m.total, 4);
+            let cap = m.placement(m.total);
+            for &p in &corners {
+                let last = path(&m, p, &st).last().copied().unwrap();
+                let mut edge = Curve::from(
+                    Line::create_line_segment(3, p, p + Vec3::new(0.0, 0.0, 1.0), None).unwrap(),
+                );
+                edge.transform(&k, &cap, None).unwrap();
+                assert_eq!(edge.ends(&k).unwrap().start, last, "the end cap's point");
+            }
+        }
+    }
 }

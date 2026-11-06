@@ -30,6 +30,7 @@
 //! | [`TwistVolume::is_line_in_param_domain_simple`]   | `IsLineInParamDomainSimple`                    |
 //! | [`TwistVolume::is_curve_in_param_domain_simple`]  | `IsCurveInParamDomainSimple`                   |
 //! | [`TwistVolume::read_from_db`]                     | `ReadFromDB`                                   |
+//! | [`TwistVolume::write_to_db`]                      | `WriteToDB` (the members, before the base data) |
 //! | [`TwistVolume::make_exact_b_spline_1st_out_surface`] | `MakeExactBSpline1stOutSurface` (in no unit in units.json; called by `SrfInVolume::make_exact_b_spline_if_possible_with`) |
 //! | [`TwistVolume::make_exact_b_spline_1st_out_curve`] | `MakeExactBSpline1stOutCurve` (in no unit in units.json; called by `CrvInVolume::make_exact_b_spline_if_possible_with`) |
 //! | [`TWIST_VOLUME_TYPE`], [`is_kind_of`], [`Volume::type_code`] and friends | `GetType`, `GetTypeString`, `GetClassString` (`SM_COMMON`), `IsKindOf` |
@@ -54,7 +55,8 @@
 //!   [`TwistVolume::members_eq`]).
 //! - **`EvaluateSimple`'s `Duw`** is `(-per sin a, -per cos a, 0)` where the header
 //!   documents `(-per sin a, per cos a, 0)`; `Evaluate` uses the documented form.
-//!   Both are kept as written.
+//!   Both are kept as written by default; [`Volume::evaluate_simple`]
+//!   corrects the simple form when `Kernel::fixes.twist_simple_duw_sign` is set.
 //! - **Bounding boxes.** `EvaluateBoundingBoxSimple` keeps upstream's optional
 //!   outputs as `Option<&mut _>`; the unbounded branch writes the axis-aligned box
 //!   unconditionally, so a request for the pseudo box alone is
@@ -107,10 +109,10 @@ use crate::kernel::Kernel;
 use crate::math::{max4, EFF_ZERO_DEG, INFINITE_PARAMETER, PI, UNDEF_DOUBLE};
 use crate::surface::surface::p2::Surface;
 use crate::surface::volume::p1::{
-    concat_evals, is_kind_of as volume_is_kind_of, EvalOptions, Volume, VolumeKind,
+    concat_evals_opt_in, is_kind_of as volume_is_kind_of, EvalOptions, Volume, VolumeKind,
 };
 use crate::surface::volume::p2::ignore_read;
-use crate::topology::database_io::{DatabaseReader, FileType};
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 
 /// `lSmpSize` of `MakeExactBSpline1stOutSurface`: the sample grid is
 /// `(SMP_SIZE + 1) x (SMP_SIZE + 1)`.
@@ -411,7 +413,12 @@ impl TwistVolume {
                 };
                 let next_derivs = next.map(position, n, &map_opts)?;
                 // Concatenate Evaluate(ParamPoint) = Next(Mid(ParamPoint))
-                concat_evals(n, &d, &next_derivs)
+                concat_evals_opt_in(
+                    n,
+                    &d,
+                    &next_derivs,
+                    opts.fixes.volume_lift_third_derivative_terms,
+                )
             }
             _ => Ok(d),
         }
@@ -425,6 +432,15 @@ impl TwistVolume {
     ///
     /// [`SolidError::InvalidInput`] (`SM_ERR_INVALID_INPUT`) for `n > 3`.
     pub fn evaluate_simple(&self, param_point: Point3, n: usize) -> Result<Vec<Vec3>> {
+        self.evaluate_simple_impl(param_point, n, false)
+    }
+
+    pub(crate) fn evaluate_simple_impl(
+        &self,
+        param_point: Point3,
+        n: usize,
+        fix_duw_sign: bool,
+    ) -> Result<Vec<Vec3>> {
         // check input - limit the number of derivatives
         if n > MAX_DERIV {
             return Err(SolidError::invalid_input(
@@ -472,7 +488,8 @@ impl TwistVolume {
             // 2nd derivs (Duu, Duv, Dvv are zero)
             if n >= 2 {
                 let per2 = per * per;
-                put(sv(1, 0, 1), Vec3::new(per * -sin, per * -cos, 0.0));
+                let duw_y = if fix_duw_sign { per * cos } else { per * -cos };
+                put(sv(1, 0, 1), Vec3::new(per * -sin, duw_y, 0.0));
                 put(sv(0, 1, 1), Vec3::new(per * -cos, -per * sin, 0.0));
                 put(
                     sv(0, 0, 2),
@@ -996,6 +1013,23 @@ impl TwistVolume {
         // read base class data (status ignored)
         ignore_read(volume.read_base_from_db(db, version))?;
         Ok(volume)
+    }
+
+    /// The part of `WriteToDB` before the volume base data, the members
+    /// [`TwistVolume::read_from_db`] reads: `twist_period_dist` and `period_min_dist` (ASCII: each value
+    /// followed directly by its label, as upstream).
+    pub fn write_to_db(&self, db: &mut DatabaseWriter) {
+        if db.file_type() == FileType::Ascii {
+            db.out_f64(self.twist_period_dist);
+            db.out_str("TwistVolume Twist NeutralDistance \n");
+            db.out_f64(self.period_min_dist);
+            db.out_str(
+                "TwistVolume SingularityTol: min legal distance from singularity at U = 0\n",
+            );
+        } else {
+            db.write_double(self.twist_period_dist);
+            db.write_double(self.period_min_dist);
+        }
     }
 }
 

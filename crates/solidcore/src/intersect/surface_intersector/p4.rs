@@ -47,7 +47,10 @@
 //!   upstream); a NaN step (from NaN tolerances) would loop forever upstream. Here
 //!   each step loop stops after [`MAX_STEP_TRIES`] tries and the trace after
 //!   [`MAX_TRACE_ITERATIONS`] steps (also counting the snapped points upstream does
-//!   not count) with [`SolidError::InvalidInput`]. `DoLawIntersection`'s span
+//!   not count) with [`SolidError::InvalidInput`]; and, with
+//!   `fixes.ssi_start_loop_trace_budget`, the traces of one start-point loop of
+//!   `DoIntersection` together after [`MAX_START_LOOP_TRACE_STEPS`] steps (HANG-52),
+//!   the same way. `DoLawIntersection`'s span
 //!   subdivision stops at [`MAX_LAW_POINTS`] points the same way.
 //! - **Recursion.** `DoPointIntersection` retries once from a singular end point
 //!   through itself, guarded by the function-static `bInsideMe` (set for the nested
@@ -88,7 +91,7 @@ use crate::curve::curve::p5::make_curve_cache;
 use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::curve_cache::CurveCache;
 use crate::curve::hermite_curve::HermiteCurve;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignored, passed_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
@@ -123,6 +126,22 @@ pub const MAX_STEP_TRIES: usize = 4096;
 /// The steps of one [`SurfaceIntersector::trace_curve`] call (upstream fails on the
 /// 5000th counted point).
 pub const MAX_TRACE_ITERATIONS: usize = 100_000;
+
+/// The `ComputeNextPoint` calls of all the traces of one start-point loop of
+/// `DoIntersection` together, with `fixes.ssi_start_loop_trace_budget` (HANG-52).
+/// Upstream bounds one trace by 5000 points only, and a trace that creeps toward a
+/// surface boundary in ever smaller steps reaches that after about 15,000 calls, after
+/// which the loop goes on with the next start point: a filleted 30x20x10 box's face 14
+/// (`ExtendSurface` defeature) has 40+ start points of such traces, about 600,000 calls.
+///
+/// Measured calls: at most 185 per trace and 515 per loop over faces 0-13 of that probe; at most 498
+/// per trace and 525 per loop over the 119 SSI corpus cases. A trace upstream
+/// completes (under 5000 points) needs about 3 calls a point, so up to about 15,000
+/// on its own; the bound is 50,000: 95 times the largest loop measured, three such
+/// long traces, and 12 times below that face. When it runs out the intersection
+/// fails with [`SolidError::InvalidInput`] (the same error as the other loop bounds),
+/// also from the reverse trace, rather than returning the curves found so far.
+pub const MAX_START_LOOP_TRACE_STEPS: u64 = 50_000;
 
 /// The points of a [`SurfaceIntersector::do_law_intersection`] subdivision.
 pub const MAX_LAW_POINTS: usize = 100_000;
@@ -410,6 +429,26 @@ fn too_many(op: &'static str) -> SolidError {
 impl SurfaceIntersector<'_> {
     // ---- tracing -----------------------------------------------------------------------
 
+    /// Not upstream: starts the [`MAX_START_LOOP_TRACE_STEPS`] bound (the
+    /// `start_loop_trace_steps` field) of a start-point loop (`bounded`) or lifts it.
+    pub(super) fn set_trace_budget(&mut self, bounded: bool) {
+        self.trace_steps_left = if bounded {
+            self.start_loop_trace_steps
+        } else {
+            u64::MAX
+        };
+        self.trace_budget_refused = false;
+    }
+
+    /// Not upstream: fails when a trace step was refused for the start-point loop's
+    /// bound, which a caller that ignores the failed trace's status must not pass over.
+    pub(super) fn check_trace_budget(&self) -> Result<()> {
+        if self.trace_budget_refused {
+            return Err(too_many(OP_TRACE));
+        }
+        Ok(())
+    }
+
     /// `SER(SM_ERR)` unless the UV points of `next` are in both domains (enlarged by
     /// `uv_tol`).
     fn check_in_domains(&self, next: TsectId, uv_tol: [f64; 2]) -> Result<()> {
@@ -645,7 +684,7 @@ impl SurfaceIntersector<'_> {
                     Some(cache) => cache,
                     None => slot.insert(match make_curve_cache::<()>(k, curve, None) {
                         Ok(c) => c,
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => return Err(SolidError::null_pointer(OP_FIC)),
                     }),
                 };
@@ -952,7 +991,8 @@ pub fn do_law_intersection_with<'s, V: IntersectorVirtuals<'s> + ?Sized>(
         if let Err(
             e @ (SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }
-            | SolidError::Unported { .. }),
+            | SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }),
         ) = v.intersector_mut().add_point_to_curve(id)
         {
             return Err(e);
@@ -977,6 +1017,13 @@ fn trace_step<'s, V: IntersectorVirtuals<'s> + ?Sized>(
     next: TsectId,
     step: &mut Step,
 ) -> Result<bool> {
+    // (not upstream: the start-point loop's bound, HANG-52)
+    let base = v.intersector_mut();
+    if base.trace_steps_left == 0 {
+        base.trace_budget_refused = true;
+        return Err(too_many(OP_TRACE));
+    }
+    base.trace_steps_left -= 1;
     match v.compute_next_point(k, prev, step_size, next) {
         Ok(n) => {
             step.found_good_point = n.found_good_point;
@@ -990,7 +1037,7 @@ fn trace_step<'s, V: IntersectorVirtuals<'s> + ?Sized>(
             step.hit_boundary = n.boundary_hit;
             Ok(true)
         }
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(false),
     }
 }
@@ -1098,6 +1145,7 @@ pub fn trace_curve_with<'s, V: IntersectorVirtuals<'s> + ?Sized>(
     // 4. iterate the trace, adding points to the curve
     let mut iterations = 0usize;
     while !done {
+        k.check_cancelled(OP_TRACE)?;
         iterations += 1;
         if iterations > MAX_TRACE_ITERATIONS {
             return Err(too_many(OP_TRACE));
@@ -1381,7 +1429,7 @@ fn stop_at_found_curve_end<'s, V: IntersectorVirtuals<'s> + ?Sized>(
         let end = v.intersector_mut().alloc_point(fresh);
         let n = match v.compute_next_point(k, prev, short_step, end) {
             Ok(n) => Some(n),
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => None,
         };
         if let Some(n) = n {
@@ -1420,6 +1468,41 @@ pub fn do_point_intersection_with<'s, V: IntersectorVirtuals<'s> + ?Sized>(
 }
 
 #[allow(clippy::too_many_lines)]
+/// Not upstream (#2500): an extension that came back onto the curve already traced
+/// (`extension_closed`) keeps the curve points up to half its length past `from` (the
+/// curve parameter it started at), the other half of the gap being the other end's; the
+/// point at the half is the last kept one past it. Clears `extension_closed`.
+///
+/// # Errors
+///
+/// An unknown curve point.
+fn keep_half_of_closed_extension<'s, V: IntersectorVirtuals<'s> + ?Sized>(
+    v: &mut V,
+    from: f64,
+) -> Result<()> {
+    v.intersector_mut().extension_closed = false;
+    let Some(&last) = v.intersector().curve_points.last() else {
+        return Ok(());
+    };
+    let half = from + 0.5 * (v.intersector().point(last)?.curve_parameter - from);
+    while v.intersector().curve_points.len() > 2 {
+        let n = v.intersector().curve_points.len();
+        let (Some(&before), Some(&tail)) = (
+            v.intersector().curve_points.get(n - 2),
+            v.intersector().curve_points.get(n - 1),
+        ) else {
+            break;
+        };
+        if v.intersector().point(before)?.curve_parameter < half
+            || v.intersector().point(tail)?.curve_parameter <= half
+        {
+            break;
+        }
+        v.intersector_mut().curve_points.pop();
+    }
+    Ok(())
+}
+
 fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
     v: &mut V,
     k: &Kernel,
@@ -1448,6 +1531,7 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
     // init the through and start point lists
     v.intersector_mut().through_points.clear();
     v.intersector_mut().start_points.clear();
+    v.intersector_mut().extension_closes_at = None;
 
     // an optional start direction as the 3D tangent of a previous point
     let temp_tsp = opts.start_direction.map(|d| {
@@ -1487,7 +1571,7 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
         *v.intersector_mut().point_mut(pid)? = tsp.clone();
         match r {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::sm_err(OP_DPI)),
         }
 
@@ -1506,8 +1590,12 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
             let mut start = TsectPnt::zeroed();
             start.assign(&tsp);
             let start_id = v.intersector_mut().alloc_point(start);
-            // (status ignored)
-            ignored(v.intersector_mut().add_start_point(k, start_id))?;
+            // (status ignored; passed on with `ssi_proto_topology_statuses_pass_on`,
+            // fork bcc6f01)
+            ignored(passed_on(
+                v.intersector_mut().add_start_point(k, start_id),
+                k.fixes.ssi_proto_topology_statuses_pass_on,
+            )?)?;
             v.intersector_mut().point_mut(pid)?.curve_parameter = 0.0;
             if !(opts.start_direction.is_some() && n > 1) {
                 v.intersector_mut().start_point = Some(start_id);
@@ -1517,14 +1605,17 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
             v.intersector_mut().end_point = Some(pid);
         } else {
             // the points between are through points (status ignored, but linking
-            // a linked point is undefined upstream)
-            if let Err(
-                e @ (SolidError::InvalidInput { .. }
-                | SolidError::PortInvariant { .. }
-                | SolidError::Unported { .. }),
-            ) = v.intersector_mut().add_through_point(pid)
-            {
-                return Err(e);
+            // a linked point is undefined upstream; passed on with
+            // `ssi_proto_topology_statuses_pass_on`, fork bcc6f01)
+            match v.intersector_mut().add_through_point(pid) {
+                Err(
+                    e @ (SolidError::InvalidInput { .. }
+                    | SolidError::PortInvariant { .. }
+                    | SolidError::Unported { .. }
+                    | SolidError::Cancelled { .. }),
+                ) => return Err(e),
+                Err(e) if k.fixes.ssi_proto_topology_statuses_pass_on => return Err(e),
+                _ => {}
             }
         }
     }
@@ -1544,6 +1635,16 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
     {
         v.intersector_mut().doing_extension_clipping = true;
     }
+    // Not upstream (#2500): an extension past the end stops back at the start
+    v.intersector_mut().extension_closed = false;
+    if v.intersector().extension_stops_on_closure
+        && opts.extend_after_end
+        && v.intersector().end_point.is_none()
+    {
+        let start = v.intersector().point(tsp_id)?.crv_pos();
+        v.intersector_mut().extension_closes_at = Some(start);
+        v.intersector_mut().extension_left_closure = false;
+    }
 
     // Reverse direction of tracing if indicated by the start direction
     if let Some(d) = opts.start_direction {
@@ -1562,9 +1663,15 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
     let input_trace_direction = v.intersector().curve_trace_direction;
     let traced = match trace_curve_with(v, k, tsp_id, &out.curves_3d) {
         Ok(()) => true,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => false,
     };
+    if traced && v.intersector().extension_closed {
+        // the extension past the end came back to the start: half of it
+        let from = v.intersector().last_through_parameter;
+        keep_half_of_closed_extension(v, from)?;
+    }
+    v.intersector_mut().extension_closes_at = None;
     if traced {
         // trace backwards from the first point too
         if opts.extend_before_start
@@ -1574,7 +1681,35 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
         {
             v.intersector_mut().reverse_curve_direction()?;
             v.intersector_mut().curve_trace_direction *= -1.0;
-            trace_curve_with(v, k, tsp_id, &out.curves_3d)?;
+            // Not upstream (#2500): the extension back from the start stops at the
+            // traced curve's end (the reversed curve's first point)
+            v.intersector_mut().extension_closes_at = None;
+            v.intersector_mut().extension_closed = false;
+            let start_param = match v.intersector().curve_points.last().copied() {
+                Some(id) => v.intersector().point(id)?.curve_parameter,
+                None => 0.0,
+            };
+            if v.intersector().extension_stops_on_closure {
+                let ends = (
+                    v.intersector().curve_points.first().copied(),
+                    v.intersector().curve_points.last().copied(),
+                );
+                if let (Some(first), Some(last)) = ends {
+                    let end = v.intersector().point(first)?.crv_pos();
+                    let start = v.intersector().point(last)?.crv_pos();
+                    // a curve traced away from its start closes back on its end
+                    if end.distance(start) > 10.0 * v.intersector().this_approx_tol_3d {
+                        v.intersector_mut().extension_closes_at = Some(end);
+                        v.intersector_mut().extension_left_closure = false;
+                    }
+                }
+            }
+            let backward = trace_curve_with(v, k, tsp_id, &out.curves_3d);
+            v.intersector_mut().extension_closes_at = None;
+            backward?;
+            if v.intersector().extension_closed {
+                keep_half_of_closed_extension(v, start_param)?;
+            }
             v.intersector_mut().reverse_curve_direction()?;
             v.intersector_mut().curve_trace_direction *= -1.0;
         }
@@ -1697,6 +1832,8 @@ fn surface_is_singularity(k: &Kernel, surface: &Surface, uv: Point2) -> Result<b
         | SurfaceKind::Sphere(_)
         | SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)
@@ -1761,6 +1898,48 @@ mod tests {
         si.trace_curve(&Kernel::default(), id, &[]).unwrap();
         assert_eq!(si.curve_points(), &[id]);
         assert!(!si.curve_is_closed);
+    }
+
+    /// HANG-52: a bounded start-point loop refuses the trace step after its last one
+    /// and records it, which `check_trace_budget` reports as the loop's too-many error
+    /// (the loop ignores a failed trace's status); lifting the bound lifts the refusal.
+    #[test]
+    fn trace_steps_are_bounded_by_the_start_point_loop_budget() {
+        let k = &Kernel::default();
+        let a = plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+        let b = plane([0.0, 0.5, -0.5], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+        let mut si = SurfaceIntersector::new(k, &a, &unit(), &b, &unit(), false).unwrap();
+        let prev = si.alloc_point(TsectPnt::zeroed());
+        let next = si.alloc_point(TsectPnt::zeroed());
+        let mut st = Step {
+            found_good_point: false,
+            deviation: 0.0,
+            angle_found: 0.0,
+            clipped: false,
+            hit_boundary: false,
+        };
+        assert_eq!(si.trace_steps_left, u64::MAX);
+        si.check_trace_budget().unwrap();
+
+        si.set_trace_budget(true);
+        assert_eq!(si.trace_steps_left, MAX_START_LOOP_TRACE_STEPS);
+        si.trace_steps_left = 2;
+        for _ in 0..2 {
+            assert!(trace_step(&mut si, k, prev, 0.1, next, &mut st).is_ok());
+        }
+        si.check_trace_budget().unwrap();
+        assert!(matches!(
+            trace_step(&mut si, k, prev, 0.1, next, &mut st),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        assert!(matches!(
+            si.check_trace_budget(),
+            Err(SolidError::InvalidInput { .. })
+        ));
+
+        si.set_trace_budget(false);
+        si.check_trace_budget().unwrap();
+        assert!(trace_step(&mut si, k, prev, 0.1, next, &mut st).is_ok());
     }
 
     #[test]

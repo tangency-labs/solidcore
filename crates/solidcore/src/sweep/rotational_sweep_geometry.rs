@@ -167,7 +167,7 @@ fn check_edge_curve_line(curve: Option<&Curve>, interval: &Extent1d, eps: f64) -
     let sample_points = 5;
     match bsp.is_segment_line(interval, sample_points, eps) {
         Ok(seg) => Ok(seg.is_line),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         // SER inside an SmBoolean function: the nonzero status reads as TRUE
         Err(_) => Ok(true),
     }
@@ -487,6 +487,7 @@ impl RotationalSweepGeometry {
         let mut new = Self::new(self.base_pt, self.axis, self.angle, self.eps);
         new.base.set_make_analytics(self.base.make_analytics);
         new.analytic_revolutions = self.analytic_revolutions;
+        new.base.statuses_pass_on = self.base.statuses_pass_on;
         new
     }
 
@@ -615,8 +616,11 @@ impl RotationalSweepGeometry {
         diff_vec /= len;
 
         let mut cs = Axis2Placement::default();
-        // (status not checked upstream)
-        let _ = cs.set_canonical(pt, self.axis, diff_vec);
+        // (status not checked upstream; the fork passes it on, c8f6a31)
+        let status = cs.set_canonical(pt, self.axis, diff_vec);
+        if self.base.statuses_pass_on {
+            status?;
+        }
         Ok(cs)
     }
 
@@ -691,8 +695,11 @@ impl RotationalSweepGeometry {
         let rad = (rot_center - original_pt).length();
 
         let mut a2p = Axis2Placement::default();
-        // (status not checked upstream)
-        let _ = a2p.set_canonical(rot_center, x_vect, y_vect);
+        // (status not checked upstream; the fork passes it on, c8f6a31)
+        let status = a2p.set_canonical(rot_center, x_vect, y_vect);
+        if self.base.statuses_pass_on {
+            status?;
+        }
 
         // degree 2
         let circle = BSplineCurve::create_circle_segment(

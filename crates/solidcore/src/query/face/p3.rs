@@ -11,7 +11,7 @@
 //! | Rust                                          | Upstream                                    |
 //! |-----------------------------------------------|---------------------------------------------|
 //! | [`calculate_tight_bounding_box`], [`calculate_tight_bounding_box_into`] | `SmFace::CalculateTightBoundingBox` |
-//! | `face_directed_max` (opt-in, WR-588), `cell_directed_max`, `cell_monotone` | `sm_FaceDirectedMax`, `sm_CellDirectedMax`, `sm_CellMonotone` (the fork tangency-labs/smlib@9d44c1b) |
+//! | `face_directed_max` (opt-in, WR-588), `cell_directed_max`, `cell_monotone`, `cell_division` (WR-651) | `sm_FaceDirectedMax`, `sm_CellDirectedMax`, `sm_CellMonotone` (the fork tangency-labs/smlib@9d44c1b), `sm_CellDivision` (tangency-labs/smlib@326de73) |
 //! | [`face_classify_uv_line`]                     | `sm_FaceClassifyUVLine` (file static)       |
 //! | [`face_classify_uv_line_mut`]                 | `sm_FaceClassifyUVLine` (in place)          |
 //! | [`find_and_classify_loop_bisector`], [`LoopBisector`] | `sms_FindAndClassifyLoopBisector`   |
@@ -20,8 +20,13 @@
 //! | [`ClassifyCurveObjects`], [`LoopObjectCurves`] | the curves `ReSet` stores in an `SmCurveClassification` |
 //! | `surface_is_planar`, `surface_bounding_box` (private) | `SmSurface::IsPlanar`, `SmSurface::CalculateBoundingBox` of the face's surface |
 //! | `find_element_in_masked_array` (private)      | `SmTArray::FindElementInMaskedArray`        |
+//! | [`check_face_coordinates`]                    | none (HANG-29 guard)                        |
 //!
 //! Deviations:
+//! - **Coordinate bound (HANG-29).** [`calculate_tight_bounding_box`] and the face
+//!   point and edge-curve classifications of `query::face::p1` first refuse a face whose
+//!   vertices, loose edge boxes or loose surface box reach a coordinate above `1e150`
+//!   ([`check_face_coordinates`]); upstream does not return on such a face.
 //! - **Object model.** The face is a record of a [`Brep`]; the functions take the B-rep
 //!   and the face's id. Statuses are results: `SM_SUCCESS` is `Ok`, `SER` / `NER`
 //!   returns propagate as errors, `AERN_MSG(.., SM_ERR_INVALID_INPUT, ..)` is
@@ -68,9 +73,9 @@
 //!   of two different edges; an edge owns its curve in the port, so two edges never
 //!   share one (`bSingleCurveOnEdges` is always false), as in `query::edge`.
 //! - **`SmCrvOnSurf`** preserves a face surface's concrete dispatch.
-//! - **`FindElementInMaskedArray`** tests `lBitMask & (1<ii)` upstream (a comparison,
-//!   not a shift); the port keeps that test, so only elements `2..` are searched and only
-//!   when bit 0 of the mask is set (`plan/upstream-issues.md`).
+//! - **`FindElementInMaskedArray` (`WR-167`).** Each element is searched only when
+//!   its own mask bit is set; indices beyond the mask width have no bit. This corrects
+//!   upstream's `1<ii` comparison (`plan/upstream-issues/` `WR-167`).
 //! - **Dropped** (no effect on results in the reference build, which defines neither
 //!   `SM_DEBUG_CODE` nor active asserts): the debug graphics and dumps, every
 //!   `SM_ASSERT*` and `SM_DBG_WARN`, `lFaceIndx` of `SectorClassifyCurveOn` (debug only),
@@ -141,8 +146,8 @@ const OP_BISECTOR: &str = "query::face::p3::find_and_classify_loop_bisector";
 const OP_SECTOR: &str = "query::face::p3::sector_classify_curve_on";
 const OP_OBJECTS: &str = "query::face::p3::LoopObjectCurves";
 
-/// `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+// `SM_ERR_INVALID_INPUT`.
+use crate::error::SM_ERR_INVALID_INPUT;
 
 /// The most step-off rounds of the sector classification (`lCount < 20`).
 const MAX_STEP_OFF_ROUNDS: u32 = 20;
@@ -343,6 +348,74 @@ pub(crate) fn surface_bounding_box(
     Ok(normal)
 }
 
+// ---- coordinate bound (HANG-29) ---------------------------------------------------------------
+
+/// The loose axis-aligned edge box [`check_face_coordinates`] reads.
+const EDGE_NORMAL_BOX: crate::nurbs::b_spline_curve::BoundingBoxRequest =
+    crate::nurbs::b_spline_curve::BoundingBoxRequest {
+        normal: true,
+        pseudo: false,
+        polar: false,
+    };
+
+/// Refuses a face whose geometry reaches a coordinate beyond
+/// [`crate::limits::MAX_COORDINATE_MAGNITUDE`] (`1e150`): its vertex points, the loose
+/// boxes of its edges and the loose box of its surface over the face's UV domain. The
+/// face queries that classify points on the face run it first
+/// ([`calculate_tight_bounding_box`], [`crate::query::face::p1::point_3d_classify`],
+/// [`crate::query::face::p1::edge_curve_on_classify`]): upstream creates the face's UV
+/// trim curves there, and with such a coordinate `GlobalCoincidenceChecker` under
+/// `CreateUVTrimCurve` does not return (HANG-29; nightly fuzz `query.face_p1`
+/// `fuzz00201`, a B-spline face with a control point of `1e300`). A lookup that fails
+/// here is left to the query itself, which reports it in upstream's order.
+///
+/// # Errors
+///
+/// [`SolidError::InvalidInput`] (`operation`) for such a face.
+pub fn check_face_coordinates(
+    k: &Kernel,
+    b: &Brep,
+    f: FaceId,
+    operation: &'static str,
+) -> Result<()> {
+    use crate::limits::exceeds_coordinate_bound as beyond;
+    let point_beyond = |p: Point3| beyond(p.x) || beyond(p.y) || beyond(p.z);
+    let box_beyond = |e: &Extent3d| {
+        (0..3).any(|i| {
+            let (lo, hi) = (e.min_at(i), e.max_at(i));
+            lo <= hi && (beyond(lo) || beyond(hi))
+        })
+    };
+    let refuse = || {
+        Err(SolidError::invalid_input(
+            operation,
+            "face geometry coordinate above 1e150 (HANG-29)",
+        ))
+    };
+    let Ok(face) = b.face(f) else {
+        return Ok(());
+    };
+    for v in face_vertices(b, f, false, None).unwrap_or_default() {
+        if b.vertex(v).is_ok_and(|v| point_beyond(v.point)) {
+            return refuse();
+        }
+    }
+    for e in face_edges(b, f).unwrap_or_default() {
+        if let Ok(boxes) = qe::calculate_bounding_box(k, b, e, EDGE_NORMAL_BOX, false) {
+            if boxes.normal.as_ref().is_some_and(box_beyond) {
+                return refuse();
+            }
+        }
+    }
+    if let Some(s) = face.surface.as_ref() {
+        let uv_domain = face.uv_domain;
+        if surface_bounding_box(k, b, f, s, &uv_domain).is_ok_and(|e| box_beyond(&e)) {
+            return refuse();
+        }
+    }
+    Ok(())
+}
+
 // ---- SmFace::CalculateTightBoundingBox --------------------------------------------------------
 
 /// `SmFace::CalculateTightBoundingBox`: the box of the face's vertices, grown by the
@@ -356,7 +429,8 @@ pub(crate) fn surface_bounding_box(
 /// # Errors
 ///
 /// `SM_ERR_NULL_POINTER`-like [`SolidError::InvalidInput`] for a face without surface;
-/// those of [`face_vertices`], the edge boxes ([`qe::calculate_tight_bounding_box`]),
+/// [`SolidError::InvalidInput`] for a face with a coordinate above `1e150` (HANG-29,
+/// [`check_face_coordinates`]); those of [`face_vertices`], the edge boxes ([`qe::calculate_tight_bounding_box`]),
 /// the planarity test and the surface's loose box; [`SolidError::Unported`] from the
 /// global solves and point classifications.
 pub fn calculate_tight_bounding_box<'a>(
@@ -384,6 +458,8 @@ pub fn calculate_tight_bounding_box_into(
     out: &mut Extent3d,
 ) -> Result<()> {
     let b = lb.get();
+    // HANG-29: refuse coordinates the point classifications below cannot handle
+    check_face_coordinates(k, b, f, OP_TIGHT)?;
     let mut face_bbox = Extent3d::new();
 
     // (a copy that keeps the owning face: the point classifications below may edit
@@ -540,7 +616,7 @@ pub fn calculate_tight_bounding_box_into(
                 // (it may attach missing UV trim curves to the B-rep)
                 ignored(point_classify(
                     k,
-                    lb.get_mut(),
+                    lb.get_mut()?,
                     f,
                     uv,
                     &mut pt_class,
@@ -570,7 +646,7 @@ pub fn calculate_tight_bounding_box_into(
 fn eval_pos(eval: &mut SurfaceEval<'_>) -> Result<Point3> {
     match eval.pos() {
         Ok(p) => Ok(p),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(eval
             .values()
             .first()
@@ -587,9 +663,36 @@ fn eval_pos(eval: &mut SurfaceEval<'_>) -> Result<Point3> {
 /// value, so the box is never smaller than the face.
 const FACE_EXTREME_MAX_CELLS: usize = 4096;
 
-/// How deep [`face_directed_max`] halves a cell (`sm_lFaceExtremeMaxDepth`), each way. A
+/// How deep [`face_directed_max`] divides a cell (`sm_lFaceExtremeMaxDepth`), each way. A
 /// cell left undecided at this depth counts with its own greatest value.
 const FACE_EXTREME_MAX_DEPTH: u32 = 16;
+
+/// How near a cell's side a knot may lie and still divide it
+/// (`sm_dFaceExtremeKnotSnap`): `CopySubPatch` snaps a requested side onto a knot within
+/// this distance, so a part nearer than that is no cell of its own.
+const FACE_EXTREME_KNOT_SNAP: f64 = 1.0e-08;
+
+/// Where a cell of `[lo, hi]` is divided along one way (`sm_CellDivision`, WR-651,
+/// tangency-labs/smlib@326de73): at the knot strictly inside it (by more than
+/// [`FACE_EXTREME_KNOT_SNAP`]) nearest its middle, the first such in `knots` on a tie,
+/// else at its middle. Divided at knots, a cell comes to lie within one knot span that
+/// way, as [`cell_monotone`] asks of a rational patch; halved at middles alone, a cell
+/// over a knot off the dyadic points of the domain (a screw surface's at every eighth of
+/// a turn) never does.
+fn cell_division(knots: &[f64], lo: f64, hi: f64) -> f64 {
+    let mid = 0.5 * (lo + hi);
+    let (mut at, mut off) = (mid, crate::math::BIG_DOUBLE);
+    for &knot in knots {
+        if knot > lo + FACE_EXTREME_KNOT_SNAP
+            && knot < hi - FACE_EXTREME_KNOT_SNAP
+            && (knot - mid).abs() < off
+        {
+            at = knot;
+            off = (knot - mid).abs();
+        }
+    }
+    at
+}
 
 /// Whether `x` is above zero, false for NaN (the negation of `x > 0`, without the lint).
 fn is_positive(x: f64) -> bool {
@@ -608,8 +711,8 @@ struct CellDirectedMax {
 }
 
 /// `sm_CellDirectedMax`: `GlobalPointSolve(SM_SO_3D_SIGNED_DIRECTED_MAXIMIZE)` over `cell`
-/// (the solver's solutions within its tolerance of the greatest, each classified on the
-/// face). Status handling as the tight box above: a failed solve gives no solutions and a
+/// (the solver's solutions within its tolerance of the greatest, each classified; only
+/// points inside the face, `SM_PC_FACE`, count, as the fork's tangency-labs/smlib@95bf434). Status handling as the tight box above: a failed solve gives no solutions and a
 /// failed classification keeps the point as classified.
 fn cell_directed_max(
     k: &Kernel,
@@ -648,7 +751,7 @@ fn cell_directed_max(
         out.top = out.top.max(value);
         ignored(point_classify(
             k,
-            lb.get_mut(),
+            lb.get_mut()?,
             f,
             uv,
             &mut pt_class,
@@ -659,7 +762,12 @@ fn cell_directed_max(
                 ..PointClassifyOptions::default()
             },
         ))?;
-        if pt_class.point_class() != PointClassType::Unknown {
+        // Inside the face only (`SM_PC_FACE`, tangency-labs/smlib@95bf434). A point on an
+        // edge or a vertex lies within the face's zone tolerance of its boundary, inside or
+        // out: where the surface runs on past the boundary it is up to that tolerance
+        // outside the face (a box's rounded corner octant boxed to 1.0000243 where it ends
+        // at 1). The boundary's own extremes come from the edges' tight boxes.
+        if pt_class.point_class() == PointClassType::Face {
             in_face_top = in_face_top.max(value);
         }
     }
@@ -781,6 +889,10 @@ fn cell_monotone(k: &Kernel, surface: &Surface, cell: &Extent2d, dir: Vec3) -> R
         SurfaceKind::Cone(c) => c.rev().base(),
         SurfaceKind::Sphere(s) => s.base().base(),
         SurfaceKind::Torus(s) => s.base().base(),
+        // (IsKindOf(SmBSplineSurface_TYPE): the fork's SmProceduralBlend, its net's patch)
+        SurfaceKind::ProceduralBlend(pb) => pb.net(),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(pb) => pb.net(),
         _ => return Ok(false),
     };
     // CopySubPatch snaps to knots: a patch short of the cell says nothing about the rest.
@@ -849,7 +961,8 @@ fn cell_monotone(k: &Kernel, surface: &Surface, cell: &Extent2d, dir: Vec3) -> R
 ///    on the face's boundary or on the cell's own sides, which `best` and the neighbouring
 ///    cells hold;
 ///
-/// otherwise the cell is halved each way. A cell left at [`FACE_EXTREME_MAX_DEPTH`] or past
+/// otherwise the cell is divided each way ([`cell_division`]: at a knot inside it, else at
+/// its middle; WR-651). A cell left at [`FACE_EXTREME_MAX_DEPTH`] or past
 /// [`FACE_EXTREME_MAX_CELLS`] counts with its greatest value. The cells are an explicit
 /// stack (no recursion), taken last first, as the fork's.
 fn face_directed_max(
@@ -862,6 +975,15 @@ fn face_directed_max(
     dir: Vec3,
     mut best: f64,
 ) -> Result<f64> {
+    // (`IsKindOf(SmBSplineSurface_TYPE)`: `GetKnots` through `GetOrCreateGwNurbPointer`)
+    let (knots_u, knots_v) = if has_b_spline_box(surface) {
+        (
+            surface.knots_with_nurb(k, SurfParamType::U, None)?.0,
+            surface.knots_with_nurb(k, SurfParamType::V, None)?.0,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let mut cells: Vec<(Extent2d, u32)> = vec![(*uv_domain, 0)];
     let mut divided = 0usize;
     while let Some((cell, depth)) = cells.pop() {
@@ -898,13 +1020,18 @@ fn face_directed_max(
             best = top.top;
             continue;
         }
-        let mid = cell.mid();
         let (u0, v0, u1, v1) = (cell.min().x, cell.min().y, cell.max().x, cell.max().y);
+        // WR-651 (tangency-labs/smlib@326de73): divided at a knot inside the cell, else at
+        // its middle (`sm_CellDivision`).
+        let at = Point2::new(
+            cell_division(&knots_u, u0, u1),
+            cell_division(&knots_v, v0, v1),
+        );
         let child_depth = depth + 1;
-        cells.push((Extent2d::from_bounds(u0, v0, mid.x, mid.y), child_depth));
-        cells.push((Extent2d::from_bounds(mid.x, v0, u1, mid.y), child_depth));
-        cells.push((Extent2d::from_bounds(u0, mid.y, mid.x, v1), child_depth));
-        cells.push((Extent2d::from_bounds(mid.x, mid.y, u1, v1), child_depth));
+        cells.push((Extent2d::from_bounds(u0, v0, at.x, at.y), child_depth));
+        cells.push((Extent2d::from_bounds(at.x, v0, u1, at.y), child_depth));
+        cells.push((Extent2d::from_bounds(u0, at.y, at.x, v1), child_depth));
+        cells.push((Extent2d::from_bounds(at.x, at.y, u1, v1), child_depth));
     }
     Ok(best)
 }
@@ -1282,12 +1409,15 @@ pub struct LoopBisector {
     pub has_curve: bool,
 }
 
-/// `SmTArray<SmPoint3d>::FindElementInMaskedArray(p, mask, index)`, with upstream's
-/// `lBitMask & (1<ii)` test (see the module Deviations).
+/// Searches points whose corresponding mask bit is set; indices >= 64 have no bit.
 fn find_element_in_masked_array(arr: &[Point3], p: Point3, mask: u64) -> bool {
-    arr.iter()
-        .enumerate()
-        .any(|(ii, &e)| (mask & u64::from(1 < ii)) != 0 && p.approx_eq(e))
+    arr.iter().enumerate().any(|(ii, &e)| {
+        let bit = u32::try_from(ii)
+            .ok()
+            .and_then(|s| 1u64.checked_shl(s))
+            .unwrap_or(0);
+        (mask & bit) != 0 && p.approx_eq(e)
+    })
 }
 
 /// `sms_FindAndClassifyLoopBisector`: for `SmFace::ClassifyLoops`, classifies a UV
@@ -2078,7 +2208,7 @@ pub fn sector_classify_curve_on(
         let use_3d_only = !input.uv_space_okay; // was FALSE [B462]
         let bin1_eval = match evaluate_binormal(k, b, cp_eu1, new_eu1_param, use_3d_only) {
             Ok(v) => v,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => {
                 res.possible_problem = true;
                 res.problem = ClassifyProblem::UnresolvedClassification;
@@ -2137,7 +2267,7 @@ pub fn sector_classify_curve_on(
                     }
                 }
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => {}
         }
 
@@ -2434,7 +2564,7 @@ pub fn sector_classify_curve_on(
 
     let mut guess_uv = match vertexuse::compute_uv_point(k, b, vtxuse, true) {
         Ok(uv) => uv,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(res), // just revert to old behavior.
     };
 
@@ -2505,7 +2635,7 @@ pub fn sector_classify_curve_on(
                 },
             ) {
             Ok(d) => d,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Ok(res), // just revert to old behavior.
         };
         let step_uv = drop.result_uv;
@@ -3077,20 +3207,204 @@ mod tests {
     }
 
     #[test]
-    fn masked_array_keeps_upstream_comparison() {
+    fn wr167_default_mask_membership() {
         let pts = [
-            Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
             Point3::new(3.0, 0.0, 0.0),
+            Point3::new(4.0, 0.0, 0.0),
         ];
-        // elements 0 and 1 are never searched
-        assert!(!find_element_in_masked_array(&pts, pts[0], 0xF));
-        assert!(!find_element_in_masked_array(&pts, pts[1], 0xF));
-        // elements 2.. only with bit 0 set
-        assert!(find_element_in_masked_array(&pts, pts[2], 1));
-        assert!(!find_element_in_masked_array(&pts, pts[2], 2));
-        assert!(find_element_in_masked_array(&pts, pts[3], 0x1));
+        for mask in 0u64..16 {
+            for (i, &p) in pts.iter().enumerate() {
+                assert_eq!(
+                    find_element_in_masked_array(&pts, p, mask),
+                    mask & (1 << i) != 0,
+                    "mask={mask:#x}, i={i}"
+                );
+            }
+            assert!(!find_element_in_masked_array(
+                &pts,
+                Point3::new(9.0, 0.0, 0.0),
+                mask
+            ));
+        }
+        let duplicates = [pts[0], pts[1], pts[0], pts[3]];
+        assert!(find_element_in_masked_array(&duplicates, pts[0], 4));
+        assert!(!find_element_in_masked_array(&duplicates, pts[0], 2));
+        let mut long = vec![pts[0]; 70];
+        for i in [63, 64, 69] {
+            long[i] = Point3::new(i as f64, 0.0, 0.0);
+        }
+        assert!(find_element_in_masked_array(&long, long[63], 1u64 << 63));
+        assert!(!find_element_in_masked_array(
+            &long,
+            long[63],
+            !(1u64 << 63)
+        ));
+        for i in [64, 69] {
+            assert!(!find_element_in_masked_array(&long, long[i], u64::MAX));
+        }
+    }
+
+    #[test]
+    fn wr167_find_element_in_masked_array_by_bit() {
+        let pts = [
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 2.0, 0.0),
+            Point3::new(-3.0, 0.0, 0.0),
+            Point3::new(0.0, -4.0, 0.0),
+        ];
+        assert_eq!([SS_UMIN, SS_VMIN, SS_UMAX, SS_VMAX], [1, 2, 4, 8]);
+        // UMIN must not select either maximum side.
+        assert!(!find_element_in_masked_array(&pts, pts[2], SS_UMIN));
+        assert!(!find_element_in_masked_array(&pts, pts[3], SS_UMIN));
+
+        // The default matches element `ii` if and only if `(mask & (1 << ii)) != 0`:
+        for mask in 0u64..16 {
+            for (ii, &pt) in pts.iter().enumerate() {
+                let want = (mask & (1u64 << ii)) != 0;
+                assert_eq!(
+                    find_element_in_masked_array(&pts, pt, mask),
+                    want,
+                    "mask={mask:#x}, ii={ii}"
+                );
+            }
+        }
+        assert!(!find_element_in_masked_array(
+            &pts,
+            Point3::new(9.0, 9.0, 9.0),
+            0xF
+        ));
+
+        // Shift bounds safety for indices >= 64 (and bit 63 boundary):
+        let mut long = vec![Point3::new(-1.0, -1.0, -1.0); 70];
+        let p63 = Point3::new(63.0, 0.0, 0.0);
+        let p64 = Point3::new(64.0, 0.0, 0.0);
+        let p69 = Point3::new(69.0, 0.0, 0.0);
+        long[63] = p63;
+        long[64] = p64;
+        long[69] = p69;
+        assert!(find_element_in_masked_array(&long, p63, 1u64 << 63));
+        assert!(!find_element_in_masked_array(&long, p63, !(1u64 << 63)));
+        assert!(!find_element_in_masked_array(&long, p64, u64::MAX));
+        assert!(!find_element_in_masked_array(&long, p69, u64::MAX));
+    }
+
+    #[test]
+    fn wr167_bisector_skips_each_masked_pole_edge() {
+        use crate::heal::face_props::Tri;
+
+        let mut k_build = Kernel::default();
+
+        // Asymmetric rectangle `[2, 8] x [2, 7]` on the plane `S(u, v) = (u, v, 0)` over
+        // `[0, 12] x [0, 11]`, so adjacent edges are perpendicular and their classifying
+        // bisectors have distinct start points, midpoints and orthogonal directions.
+        let dom = Extent2d::from_bounds(0.0, 0.0, 12.0, 11.0);
+        let plane = Plane::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(1.0, 1.0),
+            &dom,
+        );
+        let interval = Extent1d::from_min_max(0.0, 1.0);
+        let corners = [(2.0, 2.0), (8.0, 2.0), (8.0, 7.0), (2.0, 7.0)];
+        let curves = (0..4)
+            .map(|i| {
+                let (x0, y0) = corners[i];
+                let (x1, y1) = corners[(i + 1) % 4];
+                Curve::from(
+                    Line::create_line_segment(
+                        3,
+                        Point3::new(x0, y0, 0.0),
+                        Point3::new(x1, y1, 0.0),
+                        Some(&interval),
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect();
+        let b =
+            trim_surface_with_3d_curves(&mut k_build, Surface::from(plane), &[4], curves).unwrap();
+        let faces = crate::topology::brep::p1::faces(&b, None).unwrap();
+        assert_eq!(faces.len(), 1);
+        let f = faces[0];
+        let loops = crate::topology::face::p2::loops(&b, f, false, None).unwrap();
+        assert_eq!(loops.len(), 1);
+        let tgt_loop = loops[0];
+        let tgt_lu = b.loop_(tgt_loop).unwrap().loopuse.unwrap();
+        let eus = loopuse::edgeuses(&b, tgt_lu, None, None).unwrap();
+        assert_eq!(eus.len(), 4);
+
+        let edge_midpoint = |eu: EdgeuseId| -> Point3 {
+            let e = eu1::edge(&b, eu).unwrap().unwrap();
+            let rec = b.edge(e).unwrap();
+            rec.curve
+                .as_ref()
+                .unwrap()
+                .evaluate_point(&k_build, rec.interval.mid())
+                .unwrap()
+        };
+        let mid0 = edge_midpoint(eus[0]);
+        let mid1 = edge_midpoint(eus[1]);
+        assert!((mid0 - mid1).length() > 3.0);
+
+        let run_case = |poles: u64, pole_points: [Point3; 4]| -> (Point3, Point3, Vec3) {
+            let k = Kernel::default();
+            let mut props: FaceProps<H> = FaceProps::for_face(f, 0);
+            props.closed_u = Tri::False;
+            props.closed_v = Tri::False;
+            props.zone_tol_3d = b.face(f).unwrap().tolerance;
+            props.poles = poles;
+            props.pole_points = pole_points.to_vec();
+
+            let mut objects: LoopObjectCurves<H> = LoopObjectCurves::new(&b, f).unwrap();
+            let mut cc: CurveClassification<H> = CurveClassification::new(&k);
+            let out = find_and_classify_loop_bisector(
+                &k,
+                &b,
+                f,
+                0,
+                &[tgt_loop],
+                &[ClassifyLoopIo::default()],
+                &BTreeSet::new(),
+                &props,
+                &mut objects,
+                &mut cc,
+            )
+            .unwrap();
+            assert!(out.has_curve);
+            assert_eq!(out.closed_3d, Some(false));
+            assert!(cc.size() >= 1);
+
+            let crv = objects.classify_curve().unwrap();
+            let ivl = crv.natural_interval();
+            let p_start = crv.evaluate_point(&k, ivl.min()).unwrap();
+            let p_mid = crv.evaluate_point(&k, ivl.mid()).unwrap();
+            let p_end = crv.evaluate_point(&k, ivl.max()).unwrap();
+            let dir = (p_end - p_start).unitize().unwrap();
+            (p_start, p_mid, dir)
+        };
+
+        let far = Point3::new(-99.0, -99.0, 0.0);
+
+        // Each singular side selects its own pole and skips edge 0 for edge 1.
+        for (slot, side_mask) in [(0, SS_UMIN), (1, SS_VMIN), (2, SS_UMAX), (3, SS_VMAX)] {
+            let mut poles_arr = [far; 4];
+            poles_arr[slot] = mid0;
+            let (start, _, dir) = run_case(side_mask, poles_arr);
+            assert!((mid1 - start).cross(dir).length() < 1e-9);
+            assert!((mid0 - start).cross(dir).length() > 2.0);
+        }
+
+        // UMIN alone must not select the UMAX or VMAX pole slot.
+        for slot in [2usize, 3] {
+            let mut poles_arr = [far; 4];
+            poles_arr[slot] = mid0;
+            let (start, _, dir) = run_case(SS_UMIN, poles_arr);
+            assert!((mid0 - start).cross(dir).length() < 1e-9);
+            assert!((mid1 - start).cross(dir).length() > 2.0);
+        }
     }
 
     #[test]

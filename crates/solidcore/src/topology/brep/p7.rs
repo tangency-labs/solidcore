@@ -11,6 +11,7 @@
 //! | [`make_face_with_curves`], [`make_face_with_curves_with_kernel_context`], [`make_face_with_curve_owners`], [`FaceCurvesInput`] | `SmBrep::MakeFaceWithCurves` |
 //! | [`glue_edges_general`]                       | `SmBrep::GlueEdgesGeneral`                   |
 //! | [`copy_faces`], [`copy_faces_with_merge`]    | `SmBrep::CopyFaces`                          |
+//! | [`unstitch`]                                 | `SmBrep::UnStitch` (the fork's, returning its status) |
 //! | [`merge_self_intersection_curves`], [`SelfIntersectionCurve`] | `SmBrep::MergeSelfIntersectionCurves` |
 //!
 //! Deviations:
@@ -39,6 +40,10 @@
 //!   pointer). `CopyFaces` copies from one B-rep into another one: upstream also allows
 //!   the destination to be the source B-rep, which a shared and a mutable borrow cannot
 //!   express (copy within one B-rep through a clone).
+//! - **Exact pcurves (WR-722, opt-in `keep_exact_pcurves`).** `MakeFaceWithCurves`'s keep
+//!   step flips the orientations it matches the given UV curves by on a face made with its
+//!   surface's orientation opposite, and `CopyFaces` without the merge passes the face's
+//!   own trims on to its copy (`pbOptCrvOnSurf`).
 //! - **Index checks.** Loop counts that add up to more curves, orientations or edge uses
 //!   than given, and self-intersection UV curve arrays shorter than the 3D curves, are
 //!   [`SolidError::InvalidInput`] (upstream reads past its arrays).
@@ -63,7 +68,12 @@
 //!   (`topology.brep_p4`). `GlueVertices` calls `topology.brep_p5` with the caller's
 //!   notification environment. `CopyFaces` with the merge builds `boolean.merge_p2`'s
 //!   merge and calls its `MakeFaceuse` (so it takes the kernel mutably, for the
-//!   context's `DoingBoolean`); its copies are notified in `env`'s one identity space.
+//!   context's `DoingBoolean`). (not upstream: upstream's objects are their own
+//!   identities) `CopyFaces` names the copies by `env.key_of` (`this_face` for faces)
+//!   and the source by `env.key_of` too, or by its own naming in [`copy_faces_from`];
+//!   two namings that coincide on the source's objects name the source in a private
+//!   domain for the copy, and are refused where a source object's attribute list is on
+//!   a key the copies' naming gives out (the copies would share it).
 //!   `MergeSelfIntersectionCurves` classifies each UV curve with
 //!   `intersect.curve_class_p4`'s constructor and `query.face_p2`'s `CurveOnClassify`,
 //!   then `intersect.curve_class_p1`'s `SetCurve` and `intersect.curve_class_p5`'s
@@ -109,6 +119,9 @@
 //!   The kernel-context variant binds caller-owned stores to the actual kernel only
 //!   during construction notifications; the external-context API keeps its
 //!   explicit external context, including null.
+//! - **`UnStitch`** requires one distinct surviving copy of each requested face in
+//!   both directions, using the merge's source/output pairs. A refused transfer rolls
+//!   back the body through [`Brep::with_rollback`].
 //! - **Bounds.** No recursion; every loop is over input arrays or B-rep lists.
 
 use crate::boolean::merge::p1::{MergeState, VertexCopy};
@@ -117,6 +130,7 @@ use crate::boolean::topology_intersector::p1::{Relations, TopologyIntersector};
 use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::Curve;
 use crate::error::{ignore_status, ignored, EntityRef, Result, SolidError};
+use crate::geom::attribute::ObjectKey;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::object::{NotifyOperation, ObjectRef};
@@ -397,6 +411,7 @@ fn merge_copy_faces(
     faces: &[FaceId],
     relations: &mut Relations,
     copy: &mut TopologyCopy<'_>,
+    mut copies: Option<&mut FaceCopies>,
 ) -> Result<Vec<FaceId>> {
     let mut new_faces = Vec::new();
     for &f in faces {
@@ -423,6 +438,9 @@ fn merge_copy_faces(
             .context
             .set_doing_boolean(doing_boolean);
         ignored(made)?;
+        if let Some(copies) = copies.as_deref_mut() {
+            copies.extend(list.iter().map(|&made| (f, made)));
+        }
         new_faces.extend(list);
     }
     Ok(new_faces)
@@ -737,10 +755,16 @@ pub fn read_from_file(
 
     // check the UV trim curves unless they are rebuilt (statuses ignored)
     if !rebuild_uv_trim_curves_flag {
-        ignore_status(check_and_fix_uv_trim_curves(k, b))?;
+        ignore_status(crate::error::passed_on(
+            check_and_fix_uv_trim_curves(k, b),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     if rebuild_uv_trim_curves_flag {
-        ignore_status(rebuild_uv_trim_curves(k, b))?;
+        ignore_status(crate::error::passed_on(
+            rebuild_uv_trim_curves(k, b),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     Ok(())
 }
@@ -885,7 +909,7 @@ fn make_face_transfer_attempt_with_state(
         face: None,
     };
     transfer.owned_surface()?;
-    let region = region.or(b.infinite_region());
+    let region = region.or_else(|| b.infinite_region());
     let old_owner = transfer.owned_surface()?.owner();
     let options = p6::FaceTopologyOptions {
         region,
@@ -1321,7 +1345,7 @@ fn make_face_with_curves_transfer_impl(
         return Err(SolidError::invalid_input(OP, "no loops"));
     }
     // GetInfiniteRegion() (an inline field read; NULL when unset)
-    let region = region.or(b.infinite_region());
+    let region = region.or_else(|| b.infinite_region());
     // (the surface tests return flags upstream: a failed test is "no")
     if ignored(surface.is_degenerate_curve(k, EFF_ZERO_DEG, None, DEGENERATE_TOL_3D))?
         .unwrap_or(false)
@@ -1366,7 +1390,10 @@ fn make_face_with_curves_transfer_impl(
                     let entry = uv
                         .get_mut(index + jj)
                         .ok_or_else(|| null("loop counts exceed the curves"))?;
-                    ignore_status(entry.convert_to_2d(k))?;
+                    ignore_status(crate::error::passed_on(
+                        entry.convert_to_2d(k),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?;
                     let uv_curve = entry.clone_for_evaluation()?;
                     let new3d = if crv_on_surf {
                         let c = CrvOnSurf::new(
@@ -1385,14 +1412,17 @@ fn make_face_with_curves_transfer_impl(
                         }
                     } else {
                         let ivl = uv_curve.natural_interval();
-                        ignored(surface.lift_curve(
-                            k,
-                            uv_domain,
-                            &uv_curve,
-                            &ivl,
-                            zone_tol / 4.0,
-                            false,
-                        ))?
+                        ignored(crate::error::passed_on(
+                            surface.lift_curve(
+                                k,
+                                uv_domain,
+                                &uv_curve,
+                                &ivl,
+                                zone_tol / 4.0,
+                                false,
+                            ),
+                            k.fixes.brep_edit_statuses_pass_on,
+                        )?)?
                         .map(|l| l.curve)
                     };
                     if new3d.is_some() {
@@ -1445,17 +1475,20 @@ fn make_face_with_curves_transfer_impl(
                     let Some(Some(curve)) = s3d.get_mut(ci) else {
                         return Err(null("missing curve"));
                     };
-                    let deformed = ignored(curve.deform_to_end_point_targets_on_surface(
-                        k,
-                        new_start,
-                        new_end,
-                        true,
-                        None,
-                        InValueType::Unconstrained,
-                        None,
-                        InValueType::Unconstrained,
-                        Some((surface, None)),
-                    ))?
+                    let deformed = ignored(crate::error::passed_on(
+                        curve.deform_to_end_point_targets_on_surface(
+                            k,
+                            new_start,
+                            new_end,
+                            true,
+                            None,
+                            InValueType::Unconstrained,
+                            None,
+                            InValueType::Unconstrained,
+                            Some((surface, None)),
+                        ),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?
                     .flatten();
                     if let Some(d) = deformed {
                         if let Some(slot) = s3d.get_mut(ci) {
@@ -1690,10 +1723,30 @@ fn make_face_with_curves_transfer_impl(
         // (upstream loops over cpOptUVCurves->GetSize(): a null array is dereferenced)
         let uv: Vec<Curve> = uv_curves
             .ok_or_else(|| null("crv_on_surf without UV curves (upstream dereferences null)"))?;
-        // CreateUVTrimCurves(FALSE, &sNewUVCurves, &crCurveOrientations, ..)
-        let r = face_create_uv_trim_curves(k, b, face, false, uv, &orientations);
+        // CreateUVTrimCurves(FALSE, &sNewUVCurves, &crCurveOrientations, ..). Not upstream
+        // (WR-722, opt-in): on a face made with its surface's orientation opposite, the
+        // upward face use's edge uses run against the loop the orientations are given
+        // along, so they are flipped to match them (upstream's tangent test in
+        // sm_FindBestUVCurve refuses each exact curve there, and it is projected again)
+        let flipped: Vec<OrientType>;
+        let orients = if k.fixes.keep_exact_pcurves && orientation == OrientType::Opposite {
+            flipped = orientations
+                .iter()
+                .map(|&o| {
+                    if o == OrientType::Same {
+                        OrientType::Opposite
+                    } else {
+                        OrientType::Same
+                    }
+                })
+                .collect();
+            &flipped
+        } else {
+            &orientations
+        };
+        let r = face_create_uv_trim_curves(k, b, face, false, uv, orients);
         match r {
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(SolidError::Upstream { code, .. }) if code == crate::error::SM_ERR => {
                 // delete the edge uses of the face's edges
                 for e in face_edges(b, face)? {
@@ -1749,7 +1802,10 @@ pub fn glue_edges_general(
     // a wire edge is just deleted
     if ed::is_wire(b, del)? {
         // status ignored upstream
-        ignore_status(delete_edge(k, b, del, env))?;
+        ignore_status(crate::error::passed_on(
+            delete_edge(k, b, del, env),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         return Ok(());
     }
 
@@ -2030,13 +2086,149 @@ pub fn glue_edges_general(
         for fu in test_split {
             // status ignored; each call first resets rpNewRegion to NULL
             let attempt = p6::test_closure_split_region_attempt(k, b, &mut marks, env, true, fu)?;
+            // (fork 60a8a51 passes the status on: `SER`)
+            if k.fixes.brep_edit_statuses_pass_on {
+                attempt.status?;
+            }
             new_region = attempt.region;
         }
         if ed::is_spine(b, surv)? && new_region.is_none() {
-            ignore_status(test_closure_split_region_edge(k, b, env, surv))?;
+            ignore_status(crate::error::passed_on(
+                test_closure_split_region_edge(k, b, env, surv),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
     }
     Ok(())
+}
+
+// ---- UnStitch -------------------------------------------------------------------------------
+
+/// `UnStitch(pOptFaces)`: breaks `faces` (every face when `None`) out of the stitched
+/// B-rep into separate faces: each copied on its own into a new B-rep of `b`'s tolerance
+/// (`CopyFaces` with the merge, its default: copied one at a time, so they come out
+/// separate), the faces removed from `b`, and the copies copied back. The faces'
+/// identities change (the copies are new faces). The objects' attributes travel with
+/// the copies as `CopyFaces` gives them (`SM_NO_COPY`), as upstream's live on the
+/// objects.
+///
+/// The fork's version (tangency-labs/smlib, its law corners): upstream's is `void` and
+/// ignores each step's status; the fork's returns the first failure. Not the fork's: the
+/// merge passes over a face it fails to make and still reports every face copied. Each
+/// requested face must therefore have exactly one distinct surviving copy, identified by
+/// the merge's source/output pairs, on both transfers. Counts alone cannot detect a
+/// skipped face hidden by another face splitting into two. Any failure restores `b`
+/// through [`Brep::with_rollback`], including a failure after the originals are removed.
+///
+/// # Errors
+///
+/// `SM_ERR` where a requested face is skipped, produces multiple copies, or shares a
+/// copy with another source; those of the B-rep snapshot and construction, `SetTolerance`,
+/// `CopyFaces` and `RemoveFaces`. The body is restored on every error.
+pub fn unstitch(k: &mut Kernel, b: &mut Brep, faces: Option<&[FaceId]>) -> Result<()> {
+    unstitch_with(k, b, faces, copy_faces_carrying)
+}
+
+// Kept at the transfer boundary so tests can simulate a copy that splits one source
+// and skips another without introducing a public hook or global test state.
+fn unstitch_with(
+    k: &mut Kernel,
+    b: &mut Brep,
+    faces: Option<&[FaceId]>,
+    mut copy: impl FnMut(&mut Kernel, &mut Brep, &[FaceId], &mut Brep) -> Result<FaceCopies>,
+) -> Result<()> {
+    b.with_rollback(
+        |b| {
+            // Copy faces one at a time so they come out separate.
+            let mut second = super::p3::new_brep(k, -1.0, -1.0)?;
+            brep_set_tolerance(k, &mut second, b.tolerance(), true, true)?;
+            let faces = match faces {
+                Some(faces) => faces.to_vec(),
+                None => p1::faces(b, None)?,
+            };
+            let mut separated = Vec::new();
+            for &face in &faces {
+                separated.extend(copy(k, b, &[face], &mut second)?);
+            }
+            verify_face_copies(&faces, &separated, &second)?;
+            let editing = b.editing_enabled();
+            b.set_editing_enabled(true);
+            let removed = super::p5::remove_faces(k, b, true, &faces);
+            b.set_editing_enabled(editing);
+            removed?;
+            let back = p1::faces(&second, None)?;
+            let copies = copy(k, &mut second, &back, b)?;
+            verify_face_copies(&back, &copies, b)
+        },
+        Result::is_ok,
+    )
+}
+
+const OP_UNSTITCH: &str = "topology::brep::p7::unstitch";
+
+// One entry for each output, recorded while its source is still known. A skipped
+// source has no entry; a split source has multiple entries.
+type FaceCopies = Vec<(FaceId, FaceId)>;
+
+// Consume each requested identity and each live destination identity once. Besides
+// skips and splits, this refuses two sources claiming the same copy or an output
+// that a later copy removed from the destination.
+fn verify_face_copies(
+    requested: &[FaceId],
+    copies: &[(FaceId, FaceId)],
+    dest: &Brep,
+) -> Result<()> {
+    use std::collections::BTreeSet;
+
+    let mut remaining: BTreeSet<_> = requested.iter().copied().collect();
+    if remaining.len() != requested.len() {
+        return Err(SolidError::sm_err(OP_UNSTITCH));
+    }
+    let mut live: BTreeSet<_> = p1::faces(dest, None)?.into_iter().collect();
+    for &(source, target) in copies {
+        if !remaining.remove(&source) || !live.remove(&target) {
+            return Err(SolidError::sm_err(OP_UNSTITCH));
+        }
+    }
+    if remaining.is_empty() {
+        Ok(())
+    } else {
+        Err(SolidError::sm_err(OP_UNSTITCH))
+    }
+}
+
+/// `CopyFaces(crFaces, pDest)` with its defaults (the merge) between two B-reps' own
+/// attribute stores (`p2::CopyNotifyState`), `SM_ERR` where a face is not copied (the
+/// fork's `SER`).
+fn copy_faces_carrying(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+) -> Result<FaceCopies> {
+    let mut state = p2::CopyNotifyState::with_attributes_of(src, dest)?;
+    let face_ref = |f: FaceId| crate::topology::loopuse::notify_ref(EntityRef::Face(f));
+    let mut copies = Vec::new();
+    let copied = copy_faces_from_with(
+        k,
+        src,
+        faces,
+        dest,
+        true,
+        false,
+        &p2::copy_source_ref,
+        &face_ref,
+        &mut state.env(None),
+        Some(&mut copies),
+    );
+    let restored = state.restore_attributes(src, dest);
+    let (_, all) = copied?;
+    restored?;
+    if all {
+        Ok(copies)
+    } else {
+        Err(SolidError::sm_err(OP_UNSTITCH))
+    }
 }
 
 // ---- CopyFaces ------------------------------------------------------------------------------
@@ -2048,9 +2240,15 @@ pub fn glue_edges_general(
 /// never lowered). Returns the
 /// new faces of `dest`, and whether every face was copied.
 ///
+/// (not upstream: upstream's objects are their own identities.) `env.key_of` names both
+/// B-reps here, so a copy and a source object of one arena id would share a key; the
+/// source is named apart for the copy as [`copy_faces_from`] describes. A caller whose
+/// source objects carry attributes names them apart itself ([`copy_faces_from`]).
+///
 /// # Errors
 ///
-/// `SM_ERR` for a face of another B-rep; [`SolidError::Unported`] (see the module docs).
+/// `SM_ERR` for a face of another B-rep; [`SolidError::Unported`] (see the module docs);
+/// `InvalidInput` as [`copy_faces_from`].
 pub fn copy_faces(
     k: &mut Kernel,
     src: &mut Brep,
@@ -2059,6 +2257,189 @@ pub fn copy_faces(
     use_merge: bool,
     this_face: &dyn Fn(FaceId) -> ObjectRef,
     env: &mut ed::NotifyEnv<'_>,
+) -> Result<(Vec<FaceId>, bool)> {
+    let source_key = env.key_of;
+    copy_faces_from(k, src, faces, dest, use_merge, source_key, this_face, env)
+}
+
+/// [`copy_faces`] with the source objects notified under `source_key` instead of the
+/// environment's identities ([`ed::NotifyEnv::key_of`], which name the destination's):
+/// a copy between two B-reps whose attributes travel with the notifications
+/// (`crate::topology::brep::p2::CopyNotifyState`, `source_key` its
+/// `copy_source_ref`), as upstream's `SM_NO_COPY` gives each new object its source's.
+///
+/// (not upstream: upstream's objects are their own identities.) Namings that coincide
+/// on `src`'s objects (`source_key` and `env.key_of` / `this_face` alike, as
+/// [`copy_faces`] has them) would make a copy and a source object of one arena id share
+/// a key, and `SM_NO_COPY` would cross their attribute lists both ways (#1869 review).
+/// `src` is then named in a private domain for the copy (as `api_brep_copy` does, #1884),
+/// with the caller's records and attribute lists of it lent there and taken back after.
+/// Where a source object's list is on a key that naming gives the copies too, the call
+/// is refused: the source and its copies cannot keep their own lists apart in one store.
+/// `this_face` owns each new face's surface: [`super::validation::check_brep`] resolves
+/// owners by `dest`'s naming scheme, so a key outside it (a caller's own domain on a
+/// [`crate::topology::NamingScheme::Notify`] B-rep) reads as no owner (Test #35).
+///
+/// # Errors
+///
+/// As [`copy_faces`]; `InvalidInput` (before anything changes) for coinciding namings
+/// where a source object's attribute list is on a key the copies' naming gives out, or
+/// when no private domain is left for `src`'s names.
+#[allow(clippy::too_many_arguments)] // copy_faces's arguments and the source identities
+pub fn copy_faces_from(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+) -> Result<(Vec<FaceId>, bool)> {
+    copy_faces_from_with(
+        k, src, faces, dest, use_merge, true, source_key, this_face, env, None,
+    )
+}
+
+/// [`copy_faces_from`] between two B-reps' own attribute stores
+/// (`crate::topology::brep::p2::CopyNotifyState`): the same copy without `MakeFaceuse`'s
+/// surface-attribute copy. (not upstream: upstream's surfaces are objects of their own.)
+/// In such a store a surface goes by its owner face's name, which there names the
+/// destination face of the same arena id, so that copy would give each new face the
+/// attributes of a destination face; the source's surfaces have no lists of their own,
+/// and the faces' own attributes reach the copies through `SM_NO_COPY`.
+///
+/// # Errors
+///
+/// As [`copy_faces_from`].
+#[allow(clippy::too_many_arguments)] // copy_faces_from's arguments
+pub fn copy_faces_between_stores(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+) -> Result<(Vec<FaceId>, bool)> {
+    copy_faces_from_with(
+        k, src, faces, dest, use_merge, false, source_key, this_face, env, None,
+    )
+}
+
+/// [`copy_faces_from`], with `MakeFaceuse`'s surface-attribute copy as `surface_attributes`.
+#[allow(clippy::too_many_arguments)] // copy_faces_from's arguments and the switch
+fn copy_faces_from_with(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    surface_attributes: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+    copies: Option<&mut FaceCopies>,
+) -> Result<(Vec<FaceId>, bool)> {
+    // (not upstream) the copies' names (`env.key_of`, `this_face` for faces) against
+    // the source's: where they coincide on the source's objects, a copy would take the
+    // key of the source object of its arena id.
+    let dest_key_of = env.key_of;
+    let dest_name = |e: EntityRef| match e {
+        EntityRef::Face(f) => this_face(f),
+        other => dest_key_of(other),
+    };
+    let live = p2::live_entities(src);
+    let shift = super::p3::private_source_shift(&live, source_key, &dest_name)?;
+    let Some(shift) = shift else {
+        return copy_faces_named(
+            k,
+            src,
+            faces,
+            dest,
+            use_merge,
+            surface_attributes,
+            source_key,
+            this_face,
+            env,
+            copies,
+        );
+    };
+    // a source object's list on a key the copies' naming also gives out would be a
+    // copy's list too
+    let dest_keys: std::collections::BTreeSet<ObjectKey> =
+        live.iter().map(|&e| dest_name(e).key).collect();
+    let listed: Vec<EntityRef> = live
+        .iter()
+        .copied()
+        .filter(|&e| !env.attributes.attributes(source_key(e).key).is_empty())
+        .collect();
+    if listed
+        .iter()
+        .any(|&e| dest_keys.contains(&source_key(e).key))
+    {
+        return Err(SolidError::invalid_input(
+            OP,
+            "the source and its copies are named alike where the source has attributes",
+        ));
+    }
+    let shifted = |e: EntityRef| {
+        let r = source_key(e);
+        ObjectRef {
+            type_code: r.type_code,
+            key: ObjectKey(r.key.0 + shift),
+        }
+    };
+    // the caller's records and lists of the source, lent to its private names for the
+    // copy and taken back after
+    for &e in &live {
+        if let Some(&r) = env.records.get(&source_key(e).key) {
+            env.records.insert(shifted(e).key, r);
+        }
+    }
+    let mut lent = Vec::new();
+    for &e in &listed {
+        let key = shifted(e).key;
+        for h in env.attributes.attributes(source_key(e).key) {
+            env.attributes.add_attribute(key, h)?;
+            lent.push((key, h));
+        }
+    }
+    let copied = copy_faces_named(
+        k,
+        src,
+        faces,
+        dest,
+        use_merge,
+        surface_attributes,
+        &shifted,
+        this_face,
+        env,
+        copies,
+    );
+    for (key, h) in lent {
+        env.attributes.remove_attribute(key, h, true)?;
+    }
+    for &e in &live {
+        env.records.remove(&shifted(e).key);
+    }
+    copied
+}
+
+/// [`copy_faces_from`] once the source's names (`source_key`) are apart from the copies'.
+#[allow(clippy::too_many_arguments)] // copy_faces_from's arguments
+fn copy_faces_named(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    surface_attributes: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+    copies: Option<&mut FaceCopies>,
 ) -> Result<(Vec<FaceId>, bool)> {
     // pDestinationBrep->SetTolerance(GetTolerance()) = (tol, TRUE, TRUE): grow only
     brep_set_tolerance(k, dest, src.tolerance(), true, true)?;
@@ -2079,17 +2460,18 @@ pub fn copy_faces(
             20.0 * PI / 180.0,
             None,
         )?;
-        let source_key = env.key_of;
+        let destination_key = env.key_of;
         let mut copy = TopologyCopy {
             vertices: VertexCopy {
                 records: env.records,
                 attributes: env.attributes,
                 source_key: &|v| source_key(EntityRef::Vertex(v)),
-                destination_key: source_key,
+                destination_key,
             },
             edge_source_key: &|e| source_key(EntityRef::Edge(e)),
-            edge_destination_key: &|e| source_key(EntityRef::Edge(e)),
+            edge_destination_key: &|e| destination_key(EntityRef::Edge(e)),
             face_source_key: &|f| source_key(EntityRef::Face(f)),
+            surface_attributes,
             face_destination_key: this_face,
         };
         let context = match env.context.as_deref_mut() {
@@ -2103,6 +2485,7 @@ pub fn copy_faces(
             faces,
             &mut Relations::default(),
             &mut copy,
+            copies,
         ))? {
             new_faces = made;
         }
@@ -2127,8 +2510,11 @@ pub fn copy_faces(
         };
         let s1 = fp2::surface(src, f)?.ok_or_else(|| null("face without surface"))?;
         // (status ignored upstream, which then dereferences the null copy)
-        let s2 = ignored(s1.copy_and_add_analytics(k))?
-            .ok_or_else(|| null("CopyAndAddAnalytics failed (upstream dereferences null)"))?;
+        let s2 = ignored(crate::error::passed_on(
+            s1.copy_and_add_analytics(k),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .ok_or_else(|| null("CopyAndAddAnalytics failed (upstream dereferences null)"))?;
         let dom = s2.natural_uv_domain_with_nurb(k)?;
         let input = FaceCurvesInput {
             loops: curves
@@ -2141,6 +2527,9 @@ pub fn copy_faces(
             orientations: curves.curve_orients,
             loop_points: Vec::new(),
         };
+        // Not upstream (WR-722, opt-in): the copy keeps the face's own trims
+        // (`pbOptCrvOnSurf`), not projected again later
+        let keep = (k.fixes.keep_exact_pcurves && input.uv_curves.is_some()).then_some(true);
         match make_face_with_curves(
             k,
             dest,
@@ -2149,7 +2538,7 @@ pub fn copy_faces(
             s2,
             &dom,
             OrientType::Same,
-            None,
+            keep,
             this_face,
             env,
         ) {
@@ -2163,22 +2552,29 @@ pub fn copy_faces(
                 // the default record its constructor gives it, so a face the caller
                 // has no record for gets one (#1628: a fresh empty map failed as soon
                 // as the new face's identity differed from the source face's).
-                let this = (env.key_of)(EntityRef::Face(f));
+                let this = source_key(EntityRef::Face(f));
                 let new_face = made.face.map(this_face);
                 env.records.or_default(this.key);
                 if let Some(nf) = new_face {
                     env.records.or_default(nf.key);
                 }
+                // (the source face notifies under its own identities)
+                let mut src_env = ed::NotifyEnv {
+                    records: &mut *env.records,
+                    attributes: &mut *env.attributes,
+                    context: env.context.as_deref_mut(),
+                    key_of: source_key,
+                };
                 crate::topology::face::p3::notify(
                     src,
                     f,
-                    env,
+                    &mut src_env,
                     None,
                     NotifyOperation::Copy,
                     [new_face, None, None],
                 )?;
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => all_ok = false,
         }
     }
@@ -2207,7 +2603,7 @@ pub fn copy_faces_with_merge(
         20.0 * PI / 180.0,
         None,
     )?;
-    merge_copy_faces(context, src, dest, faces, relations, copy)
+    merge_copy_faces(context, src, dest, faces, relations, copy, None)
 }
 
 // ---- MergeSelfIntersectionCurves ------------------------------------------------------------
@@ -2368,6 +2764,114 @@ mod tests {
             in_brep: true,
             ..Region::default()
         }
+    }
+
+    #[test]
+    fn unstitch_refuses_a_skipped_face_hidden_by_another_faces_two_copies() {
+        use crate::primitive::api_primitives::create_box;
+
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Vec3::ZERO, 20.0, 20.0, 20.0).unwrap();
+        let original = p1::faces(&b, None).unwrap();
+        let mut injected = false;
+        let result = unstitch_with(&mut k, &mut b, None, |k, src, faces, dest| {
+            let before = p1::faces(dest, None)?.len();
+            let mut copies = copy_faces_carrying(k, src, faces, dest)
+                .expect("normal face copy must reach the fault injection");
+            if faces.len() > 1 {
+                // The return trip copies the whole batch. Remove the first output
+                // and make a second copy of the next source: the face count still
+                // looks right, but the first source has no surviving copy.
+                let (skipped, removed) = copies[0];
+                let duplicated = copies[1].0;
+                let editing = dest.editing_enabled();
+                dest.set_editing_enabled(true);
+                super::super::p5::remove_faces(k, dest, true, &[removed])
+                    .expect("fault injection must remove one output");
+                dest.set_editing_enabled(editing);
+                copies.retain(|&(source, _)| source != skipped);
+                copies.extend(
+                    copy_faces_carrying(k, src, &[duplicated], dest)
+                        .expect("fault injection must make a second output"),
+                );
+                assert_eq!(p1::faces(dest, None)?.len(), before + faces.len());
+                assert_eq!(copies.len(), faces.len());
+                injected = true;
+            }
+            Ok(copies)
+        });
+        assert!(injected, "did not reach the return trip: {result:?}");
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(p1::faces(&b, None).unwrap(), original);
+        let validation = super::super::validation::check_brep(
+            &mut k,
+            &mut b,
+            super::super::validation::CheckLevel::Level2,
+        )
+        .unwrap()
+        .lines();
+        assert!(validation.is_empty(), "{validation:?}");
+        assert_eq!(p1::edges(&b, None).unwrap().len(), 12);
+        assert_eq!(p1::vertices(&b, None).unwrap().len(), 8);
+        assert!(p1::edges(&b, None)
+            .unwrap()
+            .into_iter()
+            .all(|e| { crate::topology::edge::faces(&b, e, None).unwrap().len() == 2 }));
+    }
+
+    #[test]
+    fn unstitch_refuses_a_copy_of_the_wrong_source_and_keeps_the_body() {
+        use crate::primitive::api_primitives::create_box;
+
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Vec3::ZERO, 20.0, 20.0, 20.0).unwrap();
+        let original = p1::faces(&b, None).unwrap();
+        let mut injected = false;
+        let result = unstitch_with(
+            &mut k,
+            &mut b,
+            Some(&original[..1]),
+            |k, src, faces, dest| {
+                let mut copies = copy_faces_carrying(k, src, faces, dest)?;
+                if !injected {
+                    assert_eq!(copies.len(), 1);
+                    // One output arrived, but its provenance names a different source.
+                    copies[0].0 = original[1];
+                    injected = true;
+                }
+                Ok(copies)
+            },
+        );
+        assert!(injected);
+        assert_eq!(result, Err(SolidError::sm_err(OP_UNSTITCH)));
+        assert_eq!(p1::faces(&b, None).unwrap(), original);
+        let validation = super::super::validation::check_brep(
+            &mut k,
+            &mut b,
+            super::super::validation::CheckLevel::Level2,
+        )
+        .unwrap()
+        .lines();
+        assert!(validation.is_empty(), "{validation:?}");
+        assert_eq!(p1::edges(&b, None).unwrap().len(), 12);
+        assert_eq!(p1::vertices(&b, None).unwrap().len(), 8);
+    }
+
+    #[test]
+    fn face_copy_provenance_omits_the_source_that_the_merge_skips() {
+        use crate::primitive::api_primitives::create_box;
+
+        let mut k = Kernel::default();
+        let mut src = create_box(&mut k, Vec3::ZERO, 20.0, 20.0, 20.0).unwrap();
+        let requested = p1::faces(&src, None).unwrap();
+        src.face_mut(requested[0]).unwrap().surface = None;
+        let mut dest = super::super::p3::new_brep(&mut k, -1.0, -1.0).unwrap();
+        let copies = copy_faces_carrying(&mut k, &mut src, &requested, &mut dest).unwrap();
+        let sources: Vec<_> = copies.iter().map(|&(source, _)| source).collect();
+        assert_eq!(sources, requested[1..]);
+        let outputs: Vec<_> = copies.iter().map(|&(_, target)| target).collect();
+        assert_eq!(outputs, p1::faces(&dest, None).unwrap());
+        assert_eq!(outputs.len(), 5);
     }
 
     #[test]
@@ -3506,9 +4010,19 @@ mod tests {
             records: &mut records,
             next_key: 1,
         };
-        // an empty file reads as an empty B-rep, whose (absent) UV trim curves
-        // sm_CheckAndFixUVTrimCurves finds nothing to fix in
+        // an empty file is refused: it has no shell count, and upstream goes on with
+        // its uninitialised lCount (#2058)
         let r = read_from_file(&mut k, &mut b, Vec::new(), FileType::Ascii, false, &mut env);
+        assert!(
+            matches!(r, Err(SolidError::InvalidInput { .. })),
+            "read: {r:?}"
+        );
+        // the file of an empty B-rep reads as one, whose (absent) UV trim curves
+        // sm_CheckAndFixUVTrimCurves finds nothing to fix in
+        let empty = crate::topology::brep_data::EMPTY_ASCII_BODY
+            .as_bytes()
+            .to_vec();
+        let r = read_from_file(&mut k, &mut b, empty, FileType::Ascii, false, &mut env);
         assert!(r.is_ok(), "read: {r:?}");
         let mut src = Brep::new();
         let mut dest = Brep::new();

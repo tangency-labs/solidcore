@@ -1,7 +1,7 @@
 //! Not upstream: moving faces of a solid along their normals, the tangent blends on them
 //! following (the SolidCraft fork's `SmOffsetFacesExecutive`, WR-615).
 //!
-//! Fork: tangency-labs/smlib a96ce9f, 607d617 and 758829c, `source/SMLib/src/SmOffsetFaces.cpp`,
+//! Fork: tangency-labs/smlib a96ce9f, 607d617, 758829c and 9504880 (opt-in), `source/SMLib/src/SmOffsetFaces.cpp`,
 //! `source/SMLib/inc/SmOffsetFaces.h` and `SM_AI_FOLLOWED_BLEND` (`SmAttribute.h`). Pinned
 //! SMLib has none of it; the pinned face move (`FaceuseOffset` and `SmBrep::LocalOperation`)
 //! is unchanged.
@@ -21,7 +21,6 @@
 //! | `face_across` (private)               | `sm_FaceAcross`                                   |
 //! | [`OffsetFacesExecutive::move_faces`]  | `OffsetFaces` step 4 (the faces moved)            |
 //! | [`OffsetFacesExecutive::reblend`]     | `OffsetFaces` step 5 (the sharp edges blended again) |
-//! | `outer_faceuse` (private)             | `sm_OuterFaceuse`                                 |
 //! | [`OffsetFacesExecutive::take_off`]    | `OffsetFaces` step 3 (the blends taken off)       |
 //! | [`OffsetFacesExecutive::offset_faces`] | `OffsetFaces`                                    |
 //!
@@ -29,10 +28,12 @@
 //! - **Scope.** The marks, the collection of the followed blends, the
 //!   kept attributes and their restoring (steps 1, 2 and 6 of `OffsetFaces`), the move
 //!   (step 4), the re-blend (step 5), taking the blends off (step 3) and `OffsetFaces`.
-//! - **Mitred groups.** Blends that meet each other at their ends come off together in
-//!   the fork through `SmFeatureExecutive` (`SM_RB_EXTEND_SURFACE`), which is not ported:
-//!   such a group, where every face round it is a plane, is refused
-//!   ([`OffsetFacesRefusal::Unsupported`], the reason naming it) instead.
+//! - **Mitred groups.** Blends that meet each other at their ends come off together
+//!   through [`FeatureExecutive`] (`SM_RB_EXTEND_SURFACE`), as in the fork. The fork's
+//!   `DoDefeature` always succeeds and hands back the base B-rep itself, so only
+//!   `GetBaseWasApplied` is tested. The fork's taking the B-rep in afresh (its copy
+//!   constructor, `RemoveAllTopology`, `MergeBrep`) goes through the boolean merge's
+//!   arena-store wrappers, which carry the marks with the copy as `SM_AB_COPY` does.
 //! - **Cached topology.** After each removal and before [`OffsetFacesExecutive::offset_faces`]
 //!   returns, the port's cached topology fields are refreshed (upstream has none).
 //! - **"Moved no face".** The fork marks the new surfaces and, after the local operation,
@@ -53,9 +54,17 @@
 //! - **Kept attributes** are owned copies ([`Attribute::make_copy`]) instead of heap
 //!   pointers freed by a scope guard.
 //! - **Refusals** return [`SolidError::Upstream`] `SM_ERR` with the refusal and its reason
-//!   on the executive, as the fork's `Refuse` returns `SM_ERR`.
+//!   on the executive, as the fork's `Refuse` returns `SM_ERR`. A put-back the fillet
+//!   executive fails for a reason other than room also records
+//!   [`OffsetFacesRefusal::NotPutBack`] (the fork returns the status untyped), keeping
+//!   the fillet's status.
+//! - **Closed walls (opt-in).** 9504880's removal of the edges between a moved face and
+//!   one that stayed on one surface runs only with
+//!   `Kernel::fixes.local_operation_closes_walls_to_nothing` (WR-566 addendum); a face is
+//!   on a new surface there when it is a moved face ([`MARK_MOVED`]) lying on one.
 //! - No recursion.
 
+use crate::blend::feature_executive::{is_open_base_refusal, FeatureExecutive, RebuildBrepType};
 use crate::blend::fillet_executive::p1::is_radius_supported;
 use crate::blend::fillet_executive::session::FilletSession;
 use crate::blend::fillet_geom::p1::FilletErrorType;
@@ -79,7 +88,10 @@ use crate::surface::plane::Plane;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::p5::DropPointOptions;
 use crate::surface::surface::Surface;
-use crate::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
+use crate::topology::brep::p5::{
+    remove_topological_edges_and_vertices, stitch_and_orient, StitchAndOrientOptions,
+};
+use crate::topology::brep::validation::assert_valid;
 use crate::topology::edgeuse::p1::primary_edgeuse;
 use crate::topology::edgeuse::p3::normalized_evaluate;
 use crate::topology::{edge, Brep, EdgeId, FaceId, FaceuseId};
@@ -134,6 +146,12 @@ pub enum OffsetFacesRefusal {
     NotExact,
     /// `SM_OFR_NO_EFFECT`: the local operation reported success but moved no face.
     NoEffect,
+    /// Not in the fork (its `SER(eStat)` passes the fillet's status on untyped): the
+    /// blends were taken off and the faces moved, but putting the blends back failed in
+    /// the fillet executive for a reason other than room (a corner or a rollover it
+    /// cannot build, #2020). The reason carries the fillet's error comment; the status is
+    /// the fillet's.
+    NotPutBack,
 }
 
 // ---- SmFollowedBlendMark ---------------------------------------------------------------
@@ -711,23 +729,6 @@ impl OffsetFacesExecutive {
 
 // ---- step 4: the faces moved ------------------------------------------------------------
 
-/// `sm_OuterFaceuse`: the face use of `f` on the outside of the solid (bounding its
-/// infinite region), or `None`.
-fn outer_faceuse(b: &Brep, f: FaceId) -> Result<Option<FaceuseId>> {
-    let Some(fu) = crate::topology::face::p2::upward_faceuse(b, f)? else {
-        return Ok(None);
-    };
-    let outside = match b.faceuse(fu)?.shell {
-        Some(shell) => b.shell(shell)?.region == b.infinite_region(),
-        None => false,
-    };
-    Ok(if outside {
-        Some(fu)
-    } else {
-        b.faceuse(fu)?.mate
-    })
-}
-
 /// The objects `FaceuseOffset` names: the B-rep's face uses, faces and face surfaces,
 /// and the surfaces and curves it makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -856,7 +857,7 @@ impl OffsetFacesExecutive {
         let mut faces = Vec::new();
         let mut surfaces = Vec::new();
         for f in moved {
-            let mut fu = outer_faceuse(b, f)?;
+            let mut fu = crate::topology::face::p2::outer_faceuse(b, f)?;
             if let (Some(x), true) = (fu, distance < 0.0) {
                 fu = b.faceuse(x)?.mate;
             }
@@ -887,6 +888,10 @@ impl OffsetFacesExecutive {
         // The local operation takes the surfaces over, also when it fails.
         local_operation_simple(k, b, &faces, surfaces)?;
 
+        if k.fixes.local_operation_closes_walls_to_nothing {
+            return self.join_across_closed_walls(k, b, &targets, tol);
+        }
+
         // Some face must lie on one of the surfaces, or the operation moved none.
         let mut moved_any = false;
         for f in crate::topology::brep::p1::faces(b, None)? {
@@ -903,6 +908,77 @@ impl OffsetFacesExecutive {
             ));
         }
         Ok(())
+    }
+
+    /// The end of step 4 with `Kernel::fixes.local_operation_closes_walls_to_nothing`
+    /// (fork 9504880, WR-566 addendum): the faces on the new surfaces collected, and the
+    /// edges between such a face and one that stayed, which `SmEdge::IsTopological`
+    /// finds removable, removed (`RemoveTopologicalEdgesAndVertices`), with the vertices
+    /// at their ends where those join two edges on one curve. A face the move closed to
+    /// nothing (a step wall) leaves the faces either side meeting on one surface; every
+    /// other edge and vertex is kept. A face is on a new surface when it is a moved face
+    /// ([`MARK_MOVED`]) lying on one ([`on_target`]): the fork's surface mark is on the
+    /// moved faces' surfaces only, and a face that stayed may lie on the same plane. The
+    /// "moved no face" refusal is unchanged (any face on a new surface).
+    fn join_across_closed_walls(
+        &mut self,
+        k: &mut Kernel,
+        b: &mut Brep,
+        targets: &[Surface],
+        tol: f64,
+    ) -> Result<()> {
+        let mut moved_any = false;
+        let mut is_target = Vec::new();
+        for f in crate::topology::brep::p1::faces(b, None)? {
+            if on_target(k, b, f, targets, tol)? {
+                moved_any = true;
+                if FollowedBlendMark::has(b, Some(EntityRef::Face(f)), MARK_MOVED) {
+                    is_target.push(f);
+                }
+            }
+        }
+        let mut joins: Vec<EdgeId> = Vec::new();
+        for &f in &is_target {
+            for e in face_edges(b, f)? {
+                let beside = edge::faces(b, e, None)?;
+                let to_stayed = beside.iter().any(|&g| g != f && !is_target.contains(&g));
+                if to_stayed
+                    && edge::is_topological(k, b, e, 1.0)?.is_topological
+                    && !joins.contains(&e)
+                {
+                    joins.push(e);
+                }
+            }
+        }
+        if !moved_any {
+            return Err(self.refuse(
+                OffsetFacesRefusal::NoEffect,
+                "the local operation reported success but moved no face onto its new surface",
+                None,
+            ));
+        }
+        if joins.is_empty() {
+            return Ok(());
+        }
+        let mut keep_edges = crate::topology::brep::p1::edges(b, None)?;
+        let all_vertices = crate::topology::brep::p1::vertices(b, None)?;
+        let mut join_ends = Vec::new();
+        for &e in &joins {
+            if let Some(at) = keep_edges.iter().position(|&x| x == e) {
+                keep_edges.remove(at);
+            }
+            let (s, t) = edge::start_end_vertices(b, e)?;
+            for v in [s, t] {
+                if !join_ends.contains(&v) {
+                    join_ends.push(v);
+                }
+            }
+        }
+        let keep_vertices: Vec<_> = all_vertices
+            .into_iter()
+            .filter(|&v| !join_ends.contains(&Some(v)))
+            .collect();
+        remove_topological_edges_and_vertices(k, b, Some(&keep_edges), Some(&keep_vertices))
     }
 
     /// `OffsetFaces` step 5: the sharp edges each followed blend became ([`MARK_SHARP`]),
@@ -968,7 +1044,7 @@ impl OffsetFacesExecutive {
             (status, info.code, info.comment.clone())
         };
         if let Err(e) = status {
-            if e.is_unported() {
+            if e.is_unported_or_cancelled() {
                 return Err(e);
             }
             if code == FilletErrorType::NoRoom as i32 {
@@ -980,9 +1056,13 @@ impl OffsetFacesExecutive {
             }
             // (the fork's SM_FILERR_NOT_EXACT has no counterpart here: see the module
             // deviations)
-            if !comment.is_empty() {
-                self.reason = format!("putting back a blend that follows a moved face: {comment}");
-            }
+            // (not in the fork: a typed refusal, the fillet's status kept)
+            self.refusal = OffsetFacesRefusal::NotPutBack;
+            self.reason = if comment.is_empty() {
+                "putting back a blend that follows a moved face failed".to_string()
+            } else {
+                format!("putting back a blend that follows a moved face: {comment}")
+            };
             return Err(e);
         }
         stitch_and_orient(k, b, &StitchAndOrientOptions::default())
@@ -995,15 +1075,18 @@ impl OffsetFacesExecutive {
     /// `OffsetFaces` step 3: each followed blend taken off, its faces met at the sharp
     /// edge it replaced (`SmRingFilletRemoval` for a ring, `SmFilletRemoval` exact only
     /// otherwise), in rounds while any comes off; the sharp edge marked [`MARK_SHARP`].
-    /// Blends that meet each other at their ends (mitred rounds) are left for the
-    /// group removal the fork makes with `SmFeatureExecutive`, which is not ported
-    /// (see the module deviations).
+    /// Blends that meet each other at their ends (mitred rounds) come off afterwards,
+    /// each connected group at once, through [`FeatureExecutive`] (the faces round the
+    /// group extended until they meet), where every face round the group is a plane; the
+    /// extended faces are joined again across the group's edges, and each blend's sharp
+    /// edge is found where its two faces meet.
     ///
     /// # Errors
     ///
     /// `SM_ERR` with [`OffsetFacesRefusal::NotExact`] or
     /// [`OffsetFacesRefusal::Unsupported`] for a blend that could not be taken off (and
-    /// for a mitred group, whose removal is not ported); `SM_ERR` with
+    /// for a mitred group that could not come off, that left no valid solid or that lost
+    /// the edges it rounded); `SM_ERR` with
     /// [`OffsetFacesRefusal::Unsupported`] when the removals leave no closed solid; those
     /// of the topology queries and marks.
     #[allow(clippy::too_many_lines)] // one fork routine
@@ -1030,7 +1113,7 @@ impl OffsetFacesExecutive {
                     b.refresh_cached_topology();
                     match r {
                         Ok(()) => Some(removal.sharp_edge()),
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => {
                             not_exact = not_exact || removal.not_exact();
                             None
@@ -1043,7 +1126,7 @@ impl OffsetFacesExecutive {
                     b.refresh_cached_topology();
                     match r {
                         Ok(()) => Some(removal.sharp_edge()),
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => {
                             not_exact = not_exact || removal.not_exact();
                             None
@@ -1065,8 +1148,9 @@ impl OffsetFacesExecutive {
 
         // Blends that meet each other at their ends (mitred rounds along the edges of a
         // face) cannot come off one by one exactly: each one's end lies on the next one's
-        // surface. The fork takes each connected group of them off at once
-        // (SmFeatureExecutive), where every face round it is a plane.
+        // surface. Each connected group of them comes off at once (SmFeatureExecutive: the
+        // faces round the group extended until they meet), where every face round it is a
+        // plane, which continues exactly.
         let left: Vec<usize> = (0..blends.len())
             .filter(|&i| blends.get(i).is_some_and(|x| !x.taken_off))
             .collect();
@@ -1131,12 +1215,122 @@ impl OffsetFacesExecutive {
                 not_exact = true;
                 continue;
             }
-            // not ported: SmFeatureExecutive (SM_RB_EXTEND_SURFACE)
-            return Err(self.refuse(
-                OffsetFacesRefusal::Unsupported,
-                "mitred blends on a moved face come off together through SmFeatureExecutive (SM_RB_EXTEND_SURFACE), which is not ported",
-                None,
-            ));
+            // the edges there before, but the group's own, keep their topology (faces split
+            // on purpose stay apart; the faces round the group, extended, are joined across
+            // its edges)
+            {
+                let all = crate::topology::brep::p1::edges(b, None)?;
+                let mut group_edges = Vec::new();
+                for &f in &faces {
+                    group_edges.extend(face_edges(b, f)?);
+                }
+                for e in all {
+                    if !group_edges.contains(&e) {
+                        FollowedBlendMark::add(b, Some(EntityRef::Edge(e)), MARK_BEFORE)?;
+                    }
+                }
+            }
+            let applied = {
+                let mut defeature = FeatureExecutive::new(k, b)?;
+                let Some(feature) = defeature.add_feature(
+                    k,
+                    &faces,
+                    RebuildBrepType::ExtendSurface,
+                    RebuildBrepType::FromOtherBrep,
+                )?
+                else {
+                    continue;
+                };
+                // (DoDefeature always succeeds and hands back the base B-rep itself; with
+                // `fixes.defeature_refuses_open_base`, not upstream, it refuses a base it
+                // could not patch, put back, which is the refusal below)
+                match defeature.do_defeature(k) {
+                    Err(e) if is_open_base_refusal(&e) => false,
+                    r => {
+                        r?;
+                        defeature
+                            .features()
+                            .get(feature)
+                            .is_some_and(|f| f.base_was_applied)
+                    }
+                }
+            };
+            // (not upstream: the port's cached topology fields)
+            b.refresh_cached_topology();
+            if !applied {
+                return Err(self.refuse(
+                    OffsetFacesRefusal::Unsupported,
+                    "mitred blends on a moved face could not be taken off together",
+                    None,
+                ));
+            }
+            // the extended faces were split where the blends had been: join them again
+            let mut keep = Vec::new();
+            for e in crate::topology::brep::p1::edges(b, None)? {
+                if FollowedBlendMark::has(b, Some(EntityRef::Edge(e)), MARK_BEFORE) {
+                    keep.push(e);
+                }
+            }
+            remove_topological_edges_and_vertices(k, b, Some(&keep), None)?;
+            b.refresh_cached_topology();
+            // as SmApiRemoveFillet's defeature: the rebuilt body valid, and taken in afresh
+            let valid = {
+                let naming = b.naming();
+                let recorded = b.geometry_owner_keys().clone();
+                let keys = |e: EntityRef| {
+                    crate::topology::owner_identity_of(naming, recorded.get(&e).copied(), e)
+                };
+                assert_valid(k, b, None, 2, true, &keys)?
+            };
+            if !valid || !crate::topology::brep::p2::is_manifold_solid(b)? {
+                return Err(self.refuse(
+                    OffsetFacesRefusal::Unsupported,
+                    "mitred blends on a moved face came off leaving no valid solid",
+                    None,
+                ));
+            }
+            {
+                // (SmBrep copy constructor, RemoveAllTopology, MergeBrep: the marks go with
+                // the copy, SM_AB_COPY)
+                let work = crate::boolean::merge::p3::copy_brep(k, b, None, None, true, true)?;
+                crate::topology::brep::p10::remove_all_topology(k, b)?;
+                b.refresh_cached_topology();
+                crate::boolean::merge::p3::combine_brep(k, b, &work, None, None, true)?;
+                b.refresh_cached_topology();
+            }
+            // each blend's sharp edge: where its two faces meet now
+            let now = crate::topology::brep::p1::edges(b, None)?;
+            for &lb in &group {
+                let base = i64::try_from(lb).map_err(|_| sm_err())? * MARK_STRIDE;
+                let mut found = false;
+                for &e in &now {
+                    let on = edge::faces(b, e, None)?;
+                    if let [f0, f1] = on.as_slice() {
+                        let (f0, f1) = (Some(EntityRef::Face(*f0)), Some(EntityRef::Face(*f1)));
+                        let s0 = base + MARK_SUPPORT;
+                        let s1 = base + MARK_SUPPORT + 1;
+                        if (FollowedBlendMark::has(b, f0, s0) && FollowedBlendMark::has(b, f1, s1))
+                            || (FollowedBlendMark::has(b, f1, s0)
+                                && FollowedBlendMark::has(b, f0, s1))
+                        {
+                            FollowedBlendMark::add(b, Some(EntityRef::Edge(e)), base + MARK_SHARP)?;
+                            found = true;
+                        }
+                    }
+                }
+                if !found {
+                    return Err(self.refuse(
+                        OffsetFacesRefusal::Unsupported,
+                        "mitred blends on a moved face came off without the edges they rounded",
+                        None,
+                    ));
+                }
+                if let Some(rb) = blends.get_mut(lb) {
+                    rb.blend = None; // deleted
+                    rb.rails = [None, None];
+                    rb.taken_off = true;
+                }
+            }
         }
         if blends.iter().any(|x| !x.taken_off) {
             return Err(if not_exact {

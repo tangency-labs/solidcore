@@ -250,7 +250,7 @@ impl<'a> TangentTracer<'a> {
         };
         let d = match srf.evaluate(k, uv, 2, 2, flags) {
             Ok(d) => d,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Ok(None),
         };
         let g = |i: usize, j: usize| -> Result<Vec3> {
@@ -269,7 +269,7 @@ impl<'a> TangentTracer<'a> {
             // degenerate point (pole, collapsed or folded edge): the limit normal
             let sn = match srf.evaluate_normal(k, uv, Side::Left, Side::Left) {
                 Ok(n) => n,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => return Ok(None),
             };
             let n = unit(sn);
@@ -775,6 +775,7 @@ impl<'a> TangentTracer<'a> {
         pts: &mut Vec<TcPt>,
         mut nodes: Option<&mut Vec<TcPt>>,
     ) -> Result<bool> {
+        crate::profile::profile_scope!(k, "intersect::ssi::tangent_march");
         let h0 = 2e-3 * self.size;
         let h_max = 0.05 * self.size;
         let h_min = smax(1e-7 * self.size, 10.0 * self.tol);
@@ -787,6 +788,7 @@ impl<'a> TangentTracer<'a> {
         let mut iter = 0;
         while iter < 20000 && pts.len() < 5000 {
             iter += 1;
+            crate::profile::profile_count!(k, MarchSteps, 1);
             let (res, nxt) = self.step(k, &cur, t, h)?;
             if res == 3 {
                 return Ok(false);

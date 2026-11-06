@@ -13,9 +13,9 @@
 //! | [`SolutionRequested`]                        | `SmSolutionRequestedType`                        |
 //! | [`SolutionPairType`], [`PreferredSolution`]  | `SmSolutionPairType`, `IdenticalSolutions`' `pPreferredSol` |
 //! | [`Branch`]                                   | `SmTreeNode* apBranch[SM_GS_MAX_TREES]`          |
-//! | [`GlobalSolver`], [`GlobalSolver::new`]      | `SmGlobalSolver`, `SmGlobalSolver()`             |
-//! | [`GlobalSolver::with_tree`]                  | `SmGlobalSolver(SmTree*, ULONG)`                 |
-//! | [`GlobalSolver::with_trees`]                 | `SmGlobalSolver(SmTree*, SmTree*, ULONG)`        |
+//! | [`GlobalSolver`], [`GlobalSolver::new`], [`GlobalSolver::new_with_kernel`] | `SmGlobalSolver`, `SmGlobalSolver()` |
+//! | [`GlobalSolver::with_tree`], [`GlobalSolver::with_tree_and_kernel`] | `SmGlobalSolver(SmTree*, ULONG)` |
+//! | [`GlobalSolver::with_trees`], [`GlobalSolver::with_trees_and_kernel`] | `SmGlobalSolver(SmTree*, SmTree*, ULONG)` |
 //! | `Drop` (implicit)                            | `~SmGlobalSolver`                                |
 //! | [`GlobalSolver::solver_operation`]           | `GetSolverOperationType`                         |
 //! | [`GlobalSolver::opt_vector`]                 | `GetOptVector`                                   |
@@ -35,6 +35,11 @@
 //! | [`GlobalSolver::identical_solutions_in`]     | `SmGlobalSolver::IdenticalSolutions` (object domains read through a caller's resolver) |
 //!
 //! Deviations:
+//! - WR-21 (#2155): `fixes.global_solver_identical_prefers_larger_when_maximizing`
+//!   opts into preferring the larger `start.solution_value` in
+//!   [`GlobalSolver::identical_solutions_in`] when [`GlobalSolver::operation`] is
+//!   `SM_SO_MAXIMIZE`, `SM_SO_DIRECTED_MAXIMIZE` or `SM_SO_PROJECTED_MAXIMIZE`;
+//!   default uses pinned C++ (`<`).
 //! - WR-608 (#525): `fixes.perspective_sphere_offsets` opts into projecting each
 //!   sphere's own radius vectors about its own center; default uses pinned C++.
 //! - **Virtual methods.** Derived solvers (curve/curve, surface/surface, ...)
@@ -448,6 +453,8 @@ pub fn resolve_object_zone_tol_3d<O>(
 pub struct GlobalSolver<'t, O> {
     /// Opt-in upstream corrections, copied from the operation's kernel.
     pub fixes: crate::kernel::UpstreamFixes,
+    /// Cooperative cancellation token copied from the operation's kernel.
+    pub cancel: Option<crate::kernel::CancelToken>,
     /// `m_eSolverOperation`: behaviour of the local solves.
     pub operation: SolverOperation,
     /// `m_eOperationCategory`: summary of [`GlobalSolver::operation`], set by
@@ -562,6 +569,7 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
     pub fn new() -> Self {
         Self {
             fixes: crate::kernel::UpstreamFixes::default(),
+            cancel: None,
             operation: SolverOperation::Intersect,
             category: OperationCategory::Other,
             projected_operation: false,
@@ -602,6 +610,41 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
         s.trees[0] = Some(tree1);
         s.trees[1] = Some(tree2);
         s.tolerance_3d = 0.0;
+        s
+    }
+
+    /// [`GlobalSolver::new`] with [`GlobalSolver::fixes`] and [`GlobalSolver::cancel`]
+    /// copied from `k`.
+    #[must_use]
+    pub fn new_with_kernel(k: &Kernel) -> Self {
+        let mut s = Self::new();
+        s.fixes = k.fixes;
+        s.cancel.clone_from(&k.cancel);
+        s
+    }
+
+    /// [`GlobalSolver::with_tree`] with [`GlobalSolver::fixes`] and
+    /// [`GlobalSolver::cancel`] copied from `k`.
+    #[must_use]
+    pub fn with_tree_and_kernel(k: &Kernel, tree: &'t Tree<O>, num_variables: usize) -> Self {
+        let mut s = Self::with_tree(tree, num_variables);
+        s.fixes = k.fixes;
+        s.cancel.clone_from(&k.cancel);
+        s
+    }
+
+    /// [`GlobalSolver::with_trees`] with [`GlobalSolver::fixes`] and
+    /// [`GlobalSolver::cancel`] copied from `k`.
+    #[must_use]
+    pub fn with_trees_and_kernel(
+        k: &Kernel,
+        tree1: &'t Tree<O>,
+        tree2: &'t Tree<O>,
+        num_variables: usize,
+    ) -> Self {
+        let mut s = Self::with_trees(tree1, tree2, num_variables);
+        s.fixes = k.fixes;
+        s.cancel.clone_from(&k.cancel);
         s
     }
 
@@ -718,7 +761,7 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
             .get(index)
             .copied()
             .flatten()
-            .ok_or(null_node("geom::global_solver::GlobalSolver::tree"))
+            .ok_or_else(|| null_node("geom::global_solver::GlobalSolver::tree"))
     }
 
     /// The node of `branch` in tree `index` (`apBranch[index]`).
@@ -729,7 +772,11 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
     /// tree does not hold.
     pub fn branch_node(&self, branch: &Branch, index: usize) -> Result<&'t TreeNode<O>> {
         const OP: &str = "geom::global_solver::GlobalSolver::branch_node";
-        let id = branch.get(index).copied().flatten().ok_or(null_node(OP))?;
+        let id = branch
+            .get(index)
+            .copied()
+            .flatten()
+            .ok_or_else(|| null_node(OP))?;
         self.tree(index)?.node(id)
     }
 
@@ -744,7 +791,7 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
         const OP: &str = "geom::global_solver::GlobalSolver::child";
         let node = self.branch_node(branch, index)?;
         let id = if second { node.child2 } else { node.child1 };
-        self.tree(index)?.node(id.ok_or(null_node(OP))?)
+        self.tree(index)?.node(id.ok_or_else(|| null_node(OP))?)
     }
 
     /// `SmGlobalSolver::BranchMayContainAnswers`: false when the node boxes of
@@ -1161,7 +1208,11 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
         // along the normal by both the min and max distances,
         // then we will catch any case that could 'intersect'.
         // But we have to sample the surface curve.
-        let node2 = branch.get(1).copied().flatten().ok_or(null_node(OP))?;
+        let node2 = branch
+            .get(1)
+            .copied()
+            .flatten()
+            .ok_or_else(|| null_node(OP))?;
         if self.tree(1)?.node_owner_object(node2)?.is_none() {
             return Ok(false);
         }
@@ -1199,12 +1250,12 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
             let t = ivl2.evaluate(frac);
             match cos.evaluate_point(k, t) {
                 Ok(p) => srf_pt = Some(p),
-                Err(e) if e.is_unported() || srf_pt.is_none() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() || srf_pt.is_none() => return Err(e),
                 Err(_) => {}
             }
             match cos.evaluate_surface_normal(k, t, false) {
                 Ok(eval) => norm = Some(eval.normal),
-                Err(e) if e.is_unported() || norm.is_none() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() || norm.is_none() => return Err(e),
                 Err(_) => {}
             }
             let (Some(pt), Some(n)) = (srf_pt, norm.as_mut()) else {
@@ -1393,8 +1444,12 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
     /// `SmGlobalSolver::IdenticalSolutions`: whether two solutions are the
     /// same (same counts, type, objects, solution values within
     /// `SM_EFF_ZERO_SQRT` and parameters within a scaled zero or `1e-4` of the
-    /// parameter interval), and for identical ones the one with the smaller
-    /// solution value.
+    /// parameter interval), and for identical ones the preferred solution:
+    /// the smaller solution value by default, or the larger solution value for
+    /// [`SolverOperation::Maximize`], [`SolverOperation::DirectedMaximize`] and
+    /// [`SolverOperation::ProjectedMaximize`] when
+    /// [`UpstreamFixes::global_solver_identical_prefers_larger_when_maximizing`](crate::kernel::UpstreamFixes::global_solver_identical_prefers_larger_when_maximizing)
+    /// is enabled.
     ///
     /// # Errors
     ///
@@ -1465,8 +1520,17 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
 
         // All tests passed - identical Solutions
 
-        // prefer the solution with the tighter solution
-        let preferred = if sol1.start.solution_value < sol2.start.solution_value {
+        // prefer the solution with the tighter solution (or larger value when maximising, WR-21)
+        let prefer_first = if self
+            .fixes
+            .global_solver_identical_prefers_larger_when_maximizing
+            && self.operation.is_plain_maximize()
+        {
+            sol1.start.solution_value > sol2.start.solution_value
+        } else {
+            sol1.start.solution_value < sol2.start.solution_value
+        };
+        let preferred = if prefer_first {
             PreferredSolution::First
         } else {
             PreferredSolution::Second
@@ -1708,6 +1772,11 @@ where
     // (not upstream) bound the work: see MAX_SOLVE_BRANCHES
     let s = solver.solver_mut();
     s.branches_visited += 1;
+    if (s.branches_visited & 31) == 1 {
+        if let Some(token) = &s.cancel {
+            token.check("geom::global_solver::solve_branch")?;
+        }
+    }
     if s.branches_visited > MAX_SOLVE_BRANCHES {
         return Err(SolidError::invalid_input(
             "geom::global_solver::solve_branch",
@@ -1885,7 +1954,7 @@ pub trait GlobalSolve<'t, O: SolutionObject + 't> {
         s.check_num_trees(OP)?;
         let mut start_branch: Branch = [None; MAX_SOLVER_TREES];
         for (i, slot) in start_branch.iter_mut().enumerate().take(s.num_trees) {
-            *slot = Some(s.tree(i)?.top_node().ok_or(null_node(OP))?);
+            *slot = Some(s.tree(i)?.top_node().ok_or_else(|| null_node(OP))?);
         }
 
         // bound the SolveBranch recursion (not upstream: see MAX_SOLVE_DEPTH)
@@ -2247,8 +2316,10 @@ impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for GlobalSolver<'t, O> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::extent1d::Extent1d;
     use crate::geom::solution_array::ObjectKind;
     use crate::geom::tree::TreeNode;
+    use crate::kernel::UpstreamFixes;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct Obj;
@@ -2591,5 +2662,289 @@ mod tests {
             .identical_solutions(&single(0.0, 1.0), &single(0.0, 1.1))
             .unwrap();
         assert_eq!(pair, SolutionPairType::DiffParameters);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct UnitCurve;
+
+    impl SolutionObject for UnitCurve {
+        fn kind(&self) -> ObjectKind {
+            ObjectKind::Curve
+        }
+
+        fn natural_interval(&self) -> Option<Extent1d> {
+            Some(Extent1d::from_min_max(0.0, 1.0))
+        }
+    }
+
+    fn curve_single(value: f64, t: f64) -> Solution<UnitCurve> {
+        let mut s = Solution::new();
+        s.solution_type = SolutionType::SingleValue;
+        s.num_objects = 1;
+        s.objects[0] = Some(UnitCurve);
+        s.num_variables = 1;
+        s.start.solution_value = value;
+        s.start.parameters[0] = t;
+        s
+    }
+
+    fn curve_leaf(min: [f64; 3], max: [f64; 3]) -> TreeNode<UnitCurve> {
+        let mut n = TreeNode::new();
+        n.bbox = Extent3d::from_points(Vec3::from_array(min), Vec3::from_array(max));
+        n
+    }
+
+    #[test]
+    fn wr21_identical_solutions_default_vs_opt_in_maximize() {
+        let sol_hi = curve_single(0.42578125, 0.50001);
+        let sol_lo = curve_single(0.425781245, 0.5);
+
+        for op in [
+            SolverOperation::Maximize,
+            SolverOperation::DirectedMaximize,
+            SolverOperation::ProjectedMaximize,
+        ] {
+            let mut k_default = Kernel::default();
+            assert!(
+                !k_default
+                    .fixes
+                    .global_solver_identical_prefers_larger_when_maximizing
+            );
+            let mut solver_default: GlobalSolver<'_, UnitCurve> =
+                GlobalSolver::new_with_kernel(&k_default);
+            solver_default.set_solver_operation(op);
+
+            // Default (pinned C++): prefers `<` (smaller value `sol_lo`) in both argument orders.
+            assert_eq!(
+                solver_default
+                    .identical_solutions(&sol_hi, &sol_lo)
+                    .unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::Second)),
+            );
+            assert_eq!(
+                solver_default
+                    .identical_solutions(&sol_lo, &sol_hi)
+                    .unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::First)),
+            );
+
+            // Opt-in (WR-21): prefers `>` (larger value `sol_hi`) in both argument orders.
+            k_default
+                .fixes
+                .global_solver_identical_prefers_larger_when_maximizing = true;
+            let mut solver_fixed: GlobalSolver<'_, UnitCurve> =
+                GlobalSolver::new_with_kernel(&k_default);
+            solver_fixed.set_solver_operation(op);
+
+            assert_eq!(
+                solver_fixed.identical_solutions(&sol_hi, &sol_lo).unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::First)),
+            );
+            assert_eq!(
+                solver_fixed.identical_solutions(&sol_lo, &sol_hi).unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::Second)),
+            );
+
+            // Exact value ties prefer `Second` (retaining an existing stored solution) in both modes.
+            let sol_tie = curve_single(0.42578125, 0.50002);
+            assert_eq!(
+                solver_default
+                    .identical_solutions(&sol_hi, &sol_tie)
+                    .unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::Second)),
+            );
+            assert_eq!(
+                solver_fixed.identical_solutions(&sol_hi, &sol_tie).unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::Second)),
+            );
+
+            // Solutions separated by more than `EFF_ZERO_SQRT` remain distinct (`DiffCounts`).
+            let sol_far_val = curve_single(0.42578125 - 2.0 * EFF_ZERO_SQRT, 0.50001);
+            assert_eq!(
+                solver_fixed
+                    .identical_solutions(&sol_hi, &sol_far_val)
+                    .unwrap(),
+                (SolutionPairType::DiffCounts, None),
+            );
+        }
+    }
+
+    #[test]
+    fn wr21_add_sorted_solution_keeps_true_interior_maximum() {
+        struct TwoLeafMaxSolver<'t> {
+            base: GlobalSolver<'t, UnitCurve>,
+            leaf_solutions: [(NodeId, Solution<UnitCurve>); 2],
+        }
+
+        impl<'t> GlobalSolve<'t, UnitCurve> for TwoLeafMaxSolver<'t> {
+            fn solver(&self) -> &GlobalSolver<'t, UnitCurve> {
+                &self.base
+            }
+
+            fn solver_mut(&mut self) -> &mut GlobalSolver<'t, UnitCurve> {
+                &mut self.base
+            }
+
+            fn local_solve(&mut self, branch: &Branch) -> Result<bool> {
+                let leaf_id = branch[1].unwrap();
+                let leaf_solutions = self.leaf_solutions;
+                for (id, sol) in &leaf_solutions {
+                    if *id == leaf_id {
+                        self.add_sorted_solution(sol, SortKey::BySolutionValue, true)?;
+                    }
+                }
+                Ok(false)
+            }
+        }
+
+        let sol_interior = curve_single(0.42578125, 0.50001);
+        let sol_boundary = curve_single(0.425781242, 0.5);
+
+        // Direct `add_sorted_solution` in both arrival orders.
+        for candidates in [[sol_interior, sol_boundary], [sol_boundary, sol_interior]] {
+            for fixed in [false, true] {
+                let mut k = Kernel::default();
+                k.fixes
+                    .global_solver_identical_prefers_larger_when_maximizing = fixed;
+                let mut solver: GlobalSolver<'_, UnitCurve> = GlobalSolver::new_with_kernel(&k);
+                solver.set_solver_operation(SolverOperation::Maximize);
+                solver.set_operation_category(OperationCategory::Maximize);
+                solver.set_solution_requested(SolutionRequested::All);
+                solver.set_3d_tolerance(1.0e-5);
+                solver.set_best_answer_so_far_sq(0.0);
+
+                for c in &candidates {
+                    solver
+                        .add_sorted_solution(c, SortKey::BySolutionValue, true)
+                        .unwrap();
+                }
+
+                assert_eq!(solver.solutions.len(), 1);
+                let kept = solver.solutions.get(0).unwrap();
+                if fixed {
+                    assert_eq!(kept.start.solution_value, 0.42578125);
+                    assert_eq!(kept.start.parameters[0], 0.50001);
+                } else {
+                    assert_eq!(kept.start.solution_value, 0.425781242);
+                    assert_eq!(kept.start.parameters[0], 0.5);
+                }
+                assert_eq!(solver.best_answer_so_far_sq, 0.42578125 * 0.42578125);
+            }
+        }
+
+        // Full two-tree `solve_it` across two adjacent curve-span leaves in both leaf assignments.
+        let mut pt_tree = Tree::new(None);
+        let pt_top = pt_tree.add_node(curve_leaf([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]));
+        pt_tree.set_top_node(Some(pt_top));
+
+        let mut crv_tree = Tree::new(None);
+        let top = crv_tree.add_node(curve_leaf([0.0, 0.0, 0.0], [1.0, 1.0, 0.0]));
+        let c1 = crv_tree.add_node(curve_leaf([0.0, 0.0, 0.0], [0.5, 1.0, 0.0]));
+        let c2 = crv_tree.add_node(curve_leaf([0.5, 0.0, 0.0], [1.0, 1.0, 0.0]));
+        if let Ok(n) = crv_tree.node_mut(top) {
+            n.child1 = Some(c1);
+            n.child2 = Some(c2);
+        }
+        for c in [c1, c2] {
+            if let Ok(n) = crv_tree.node_mut(c) {
+                n.parent = Some(top);
+            }
+        }
+        crv_tree.set_top_node(Some(top));
+
+        for leaf_solutions in [
+            [(c1, sol_boundary), (c2, sol_interior)],
+            [(c1, sol_interior), (c2, sol_boundary)],
+        ] {
+            for fixed in [false, true] {
+                let mut k = Kernel::default();
+                k.fixes
+                    .global_solver_identical_prefers_larger_when_maximizing = fixed;
+                let mut solver = TwoLeafMaxSolver {
+                    base: GlobalSolver::with_trees_and_kernel(&k, &pt_tree, &crv_tree, 1),
+                    leaf_solutions,
+                };
+                let mut out = SolutionArray::new();
+                solver
+                    .solve_it(
+                        &SolveRequest {
+                            operation: SolverOperation::Maximize,
+                            solution_requested: SolutionRequested::All,
+                            tolerance_3d: 1.0e-5,
+                            best_answer_so_far_sq: BIG_DOUBLE,
+                            opt_vectors: &[],
+                        },
+                        &mut out,
+                    )
+                    .unwrap();
+
+                assert_eq!(out.len(), 1);
+                let kept = out.get(0).unwrap();
+                if fixed {
+                    assert_eq!(kept.start.solution_value, 0.42578125);
+                    assert_eq!(kept.start.parameters[0], 0.50001);
+                } else {
+                    assert_eq!(kept.start.solution_value, 0.425781242);
+                    assert_eq!(kept.start.parameters[0], 0.5);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wr21_minimize_and_intersect_unchanged_and_flag_lookup() {
+        let mut k = Kernel::default();
+        assert!(
+            !k.fixes
+                .global_solver_identical_prefers_larger_when_maximizing
+        );
+        assert!(UpstreamFixes::NAMES
+            .contains(&"global_solver_identical_prefers_larger_when_maximizing"));
+        *k.fixes
+            .flag_mut("global_solver_identical_prefers_larger_when_maximizing")
+            .unwrap() = true;
+        assert!(
+            k.fixes
+                .global_solver_identical_prefers_larger_when_maximizing
+        );
+
+        let mut one_tree = Tree::new(None);
+        let top = one_tree.add_node(curve_leaf([0.0, 0.0, 0.0], [1.0, 1.0, 0.0]));
+        one_tree.set_top_node(Some(top));
+        let mut solver = GlobalSolver::with_tree_and_kernel(&k, &one_tree, 1);
+        assert!(
+            solver
+                .fixes
+                .global_solver_identical_prefers_larger_when_maximizing
+        );
+
+        let sol_hi = curve_single(2.0e-7, 0.50001);
+        let sol_lo = curve_single(1.0e-7, 0.5);
+
+        for op in [
+            SolverOperation::Minimize,
+            SolverOperation::DirectedMinimize,
+            SolverOperation::ProjectedMinimize,
+            SolverOperation::Intersect,
+            SolverOperation::AtDistance,
+            SolverOperation::Rayfire,
+            SolverOperation::Normalize,
+            SolverOperation::Find,
+            SolverOperation::Signed3dDirectedMinimize,
+            SolverOperation::Signed3dDirectedMaximize,
+            SolverOperation::SignedDirectedMinimize,
+            SolverOperation::SignedAngleMinimize,
+            SolverOperation::SignedPivotMinimize,
+        ] {
+            solver.set_solver_operation(op);
+            assert_eq!(
+                solver.identical_solutions(&sol_hi, &sol_lo).unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::Second)),
+            );
+            assert_eq!(
+                solver.identical_solutions(&sol_lo, &sol_hi).unwrap(),
+                (SolutionPairType::Identical, Some(PreferredSolution::First)),
+            );
+        }
     }
 }

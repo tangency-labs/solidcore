@@ -23,7 +23,7 @@
 //! | [`FilletBrep::set_up_rail_point`]            | `SmFilletGeom::SetUpRailPoint`            |
 //! | [`move_tsp`]                                 | `sm_MoveTSP`                              |
 //! | [`FilletBrep::rail_edgeuse_intersect`]       | `SmFilletGeom::RailEdgeuseIntersect`      |
-//! | [`FilletBrep::trim_original_surfaces`]       | `SmFilletGeom::TrimOriginalSurfaces`      |
+//! | [`FilletBrep::trim_original_surfaces_with_solver`] | `SmFilletGeom::TrimOriginalSurfaces` |
 //! | [`FilletBrep::record_fillet_error`], [`FilletBrep::record_fillet_error_in`] | `SmFilletGeom::RecordFilletError` |
 //! | [`FilletBrep::new`](super::p1::FilletBrep::new) (in part 1) | `SmFilletBrep::SmFilletBrep` (CO-PORTED in `blend.fillet_geom_p1`) |
 //!
@@ -118,7 +118,7 @@ use crate::topology::edge;
 use crate::topology::edgeuse::p1::{self as eu1, primary_edgeuse};
 use crate::topology::edgeuse::p3::{evaluate_binormal, BinormalOptions};
 use crate::topology::face::p2 as face2;
-use crate::topology::topology_traverser::{collect_faces, Entity, FaceTraversalMarks, Marks};
+use crate::topology::topology_traverser::{collect_faces, Entity, FaceTraversalMarks};
 use crate::topology::{Brep, EdgeId, EdgeuseId, FaceId, VertexId, VertexuseId};
 
 use super::p1::{
@@ -142,7 +142,7 @@ const OP_RAIL_V: &str = "blend::fillet_geom::p6::FilletBrep::rail_vertex";
 const OP_SETUP: &str = "blend::fillet_geom::p6::FilletBrep::set_up_rail_point";
 const OP_MOVE: &str = "blend::fillet_geom::p6::move_tsp";
 const OP_RAIL_EU: &str = "blend::fillet_geom::p6::FilletBrep::rail_edgeuse_intersect";
-const OP_TRIM: &str = "blend::fillet_geom::p6::FilletBrep::trim_original_surfaces";
+const OP_TRIM: &str = "blend::fillet_geom::p6::FilletBrep::trim_original_surfaces_with_solver";
 const OP_ERROR: &str = "blend::fillet_geom::p6::FilletBrep::record_fillet_error";
 
 /// Object handle recorded by [`FilletBrep::record_fillet_error_in`] into the
@@ -176,9 +176,26 @@ pub(crate) fn corner_of<'c>(
 }
 
 /// `SM_CAST_PTR(SmBSplineCurve, pCopy)` after an ignored `Copy`: the copy when it is a
-/// B-spline curve, else `NULL`.
+/// B-spline curve, else `NULL`. Every caller's `Copy` is one fork 9b7cd48 passes on
+/// (SER): with `fillet_statuses_pass_on` its error is returned.
 fn copy_as_b_spline(k: &Kernel, curve: &Curve) -> Result<Option<Curve>> {
-    Ok(ignored(curve.copy(k))?.filter(|c| c.is_kind_of(BSPLINE_CURVE_TYPE)))
+    // fork 9b7cd48 passes this on (SER)
+    let copy = crate::error::passed_on(curve.copy(k), k.fixes.fillet_statuses_pass_on)?;
+    Ok(ignored(copy)?.filter(|c| c.is_kind_of(BSPLINE_CURVE_TYPE)))
+}
+
+/// The `SmBSplineCurve` a curve of a B-spline class is (`SM_CAST_PTR(SmBSplineCurve, ..)`):
+/// a B-spline, a line's NURB, or a conic's B-spline; `SM_ERR` for any other kind.
+fn b_spline_of_piece(c: &Curve) -> Result<BSplineCurve> {
+    use crate::curve::curve::CurveKind;
+    Ok(match c.kind() {
+        CurveKind::BSpline(b) => b.clone(),
+        CurveKind::Line(l) => l.base_with_nurb()?.into_owned(),
+        CurveKind::Ellipse(e) => e.base().clone(),
+        CurveKind::Hyperbola(h) => h.base().clone(),
+        CurveKind::Parabola(p) => p.base().clone(),
+        _ => return Err(SolidError::sm_err(OP_ON_EDGE)),
+    })
 }
 
 /// `SmCurve::Evaluate(t, 1, TRUE, aPV)`: the position and first derivative.
@@ -222,15 +239,20 @@ fn drop_param(
 ) -> Result<Option<f64>> {
     match curve.drop_point(k, ivl, pnt, None, tol, None, SolverOperation::Minimize) {
         Ok(d) if d.success => Ok(Some(d.parameter)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         _ => Ok(None),
     }
 }
 
 /// `SM_CAST_PTR(SmBSplineSurface, pCopy)` after an ignored `Copy`: the copy when it
-/// `IsKindOf(SmBSplineSurface_TYPE)`, else `NULL`.
+/// `IsKindOf(SmBSplineSurface_TYPE)`, else `NULL`. Its one caller's `Copy` is one fork
+/// 9b7cd48 passes on (SER): with `fillet_statuses_pass_on` its error is returned.
 fn copy_as_b_spline_surface(k: &Kernel, surface: &Surface) -> Result<Option<Surface>> {
-    match ignored(surface.copy(k))? {
+    // fork 9b7cd48 passes this on (SER)
+    match ignored(crate::error::passed_on(
+        surface.copy(k),
+        k.fixes.fillet_statuses_pass_on,
+    )?)? {
         Some(s) if s.is_kind_of(B_SPLINE_SURFACE_TYPE)? => Ok(Some(s)),
         _ => Ok(None),
     }
@@ -283,8 +305,8 @@ pub fn move_tsp<T>(
     Ok(())
 }
 
-/// The inputs of [`FilletBrep::trim_original_surfaces`] that upstream reaches through
-/// the solver's executive and the B-reps' contexts.
+/// The inputs of [`FilletBrep::trim_original_surfaces_with_solver`] that upstream reaches
+/// through the solver's executive and the B-reps' contexts.
 pub struct TrimOriginalSurfacesEnv<'a> {
     /// `GetFilletExecutive()->GetTopologyIntersector().GetBrepMate(pFBEdge)`: the
     /// target B-rep edge mated to a fillet B-rep edge.
@@ -336,33 +358,6 @@ impl<M: TrimOriginalSurfacesMarks> FaceTraversalMarks for TrimTraversalMarks<'_,
 
     fn mark(&mut self, k: &Kernel, entity: Entity, mark: MarkType) {
         self.marks.mark(k, self.body, entity, mark);
-    }
-}
-
-struct IndexedTrimMarks<'a> {
-    fillet: &'a mut Marks,
-    target: &'a mut Marks,
-}
-
-impl TrimOriginalSurfacesMarks for IndexedTrimMarks<'_> {
-    fn is_marked(
-        &self,
-        k: &Kernel,
-        body: TrimOriginalBody,
-        entity: Entity,
-        mark: MarkType,
-    ) -> bool {
-        match body {
-            TrimOriginalBody::Fillet => self.fillet.is_marked(k, entity, mark),
-            TrimOriginalBody::Target => self.target.is_marked(k, entity, mark),
-        }
-    }
-
-    fn mark(&mut self, k: &Kernel, body: TrimOriginalBody, entity: Entity, mark: MarkType) {
-        match body {
-            TrimOriginalBody::Fillet => self.fillet.mark(k, entity, mark),
-            TrimOriginalBody::Target => self.target.mark(k, entity, mark),
-        }
     }
 }
 
@@ -894,16 +889,141 @@ impl FilletBrep {
     /// end point does not drop; those of `Trim` and `ReverseParameterization`.
     pub fn calc_edge_on_edge(&mut self, k: &Kernel, e: EdgeId, target: &Brep) -> Result<()> {
         let nul = || SolidError::null_pointer(OP_ON_EDGE);
+        let orig_edge = self.fillet_edge(e)?.original_edge().ok_or_else(nul)?;
+        // GWC: Stop Fillets from switching SmCurve objects to SmBSplineCurve objs
+        let orig_curve = target.edge(orig_edge)?.curve.as_ref().ok_or_else(nul)?;
+        let new_3d_curve = copy_as_b_spline(k, orig_curve)?.ok_or_else(nul)?;
+        self.finish_edge_on_edge(k, e, target, new_3d_curve, false)
+    }
+
+    /// [`Self::calc_edge_on_edge`] of an edge of a corner at `corner_vertex` (the fork's
+    /// `m_cpCorner`, 63c7962): a rail's end found on the side
+    /// edge continued across a seam's vertex (`CalcRailIntEdgeuse`,
+    /// [`crate::blend::blend_corner::end::side_edgeuse_across_seam_vertex`]) lies on a
+    /// later edge of that chain, so the edge runs from the corner's vertex along the chain
+    /// to it, the chain's edges (each trimmed to its interval) joined end to end
+    /// (`CreateByJoining`), and is trimmed on the joined curve's natural interval. The walk
+    /// takes at most [`crate::blend::blend_corner::end::SIDE_EDGE_CHAIN_STEPS`] edges, as
+    /// the fork's.
+    ///
+    /// # Errors
+    /// As [`Self::calc_edge_on_edge`]; `SM_ERR_NULL_POINTER` without the edge's use on the
+    /// rail's faceuse; `SM_ERR` for an original edge away from the corner's vertex, a
+    /// piece that is not a B-spline, or a chain that does not reach the rail's end's edge;
+    /// those of the continuation, `Trim` and `CreateByJoining`.
+    pub fn calc_edge_on_edge_at_corner(
+        &mut self,
+        k: &Kernel,
+        e: EdgeId,
+        target: &mut Brep,
+        corner_vertex: Option<VertexId>,
+        tangency_tol_radians: f64,
+    ) -> Result<()> {
+        let nul = || SolidError::null_pointer(OP_ON_EDGE);
+        let (start_fv, end_fv) = self.edge_end_vertices(e, OP_ON_EDGE)?;
+        let orig_edge = self.fillet_edge(e)?.original_edge().ok_or_else(nul)?;
+        let orig_curve = target.edge(orig_edge)?.curve.as_ref().ok_or_else(nul)?;
+        let mut new_3d_curve = copy_as_b_spline(k, orig_curve)?.ok_or_else(nul)?;
+        let mut joined = false;
+        let tol_deg = crate::math::rad_to_deg(tangency_tol_radians);
+        for fv in [start_fv, end_fv] {
+            let Some(corner_vertex) = corner_vertex else {
+                break;
+            };
+            let record = self.fillet_vertex(fv)?;
+            let (PointClassType::Edgeuse, Some(EntityRef::Edgeuse(fv_eu))) =
+                (record.point_class(), record.point_class_object())
+            else {
+                continue;
+            };
+            let fv_edge = eu1::edge(target, fv_eu)?;
+            if fv_edge == Some(orig_edge) || edge::is_closed(target, orig_edge)? {
+                continue;
+            }
+            // this edge's edgeuse on the rail's faceuse, and the chain from the corner's vertex
+            let fv_faceuse = eu1::faceuse(target, fv_eu)?;
+            let mut curr = None;
+            for eu in edge::edgeuses(target, orig_edge, None, None)? {
+                if curr.is_none() && eu1::faceuse(target, eu)? == fv_faceuse {
+                    curr = Some(eu);
+                }
+            }
+            let mut curr = Some(curr.ok_or_else(nul)?);
+            if edge::start_vertex(target, orig_edge)? != Some(corner_vertex)
+                && edge::end_vertex(target, orig_edge)? != Some(corner_vertex)
+            {
+                return Err(SolidError::sm_err(OP_ON_EDGE));
+            }
+            let mut pieces: Vec<BSplineCurve> = Vec::new();
+            let mut senses: Vec<bool> = Vec::new();
+            let mut from = Some(corner_vertex);
+            let mut reached = false;
+            for _ in 0..crate::blend::blend_corner::end::SIDE_EDGE_CHAIN_STEPS {
+                let Some(eu) = curr else {
+                    break;
+                };
+                let piece_edge = eu1::edge(target, eu)?.ok_or_else(nul)?;
+                let piece_curve = target.edge(piece_edge)?.curve.as_ref().ok_or_else(nul)?;
+                // SM_CAST_PTR(SmBSplineCurve, copy): a conic or a line is one too; its
+                // Trim is its own (virtual), the join reads its B-spline
+                let Some(mut piece) = copy_as_b_spline(k, piece_curve)? else {
+                    return Err(SolidError::sm_err(OP_ON_EDGE));
+                };
+                let mut piece_ivl = edge::interval(target, piece_edge)?;
+                piece.trim(k, &mut piece_ivl, TrimMode::Notify)?;
+                pieces.push(b_spline_of_piece(&piece)?);
+                let start = edge::start_vertex(target, piece_edge)?;
+                senses.push(start == from);
+                let to = if start == from {
+                    edge::end_vertex(target, piece_edge)?
+                } else {
+                    start
+                };
+                if Some(piece_edge) == fv_edge {
+                    reached = true;
+                    break;
+                }
+                curr = match to {
+                    Some(to) => crate::blend::blend_corner::end::side_edgeuse_across_seam_vertex(
+                        k, target, eu, to, tol_deg,
+                    )?,
+                    None => None,
+                };
+                from = to;
+            }
+            if !reached {
+                return Err(SolidError::sm_err(OP_ON_EDGE));
+            }
+            let joined_curve = BSplineCurve::create_by_joining(&mut pieces, Some(&senses))?;
+            new_3d_curve = Curve::from(joined_curve);
+            joined = true;
+            break;
+        }
+        self.finish_edge_on_edge(k, e, target, new_3d_curve, joined)
+    }
+
+    /// The rest of `CalcEdgeOnEdge` after the curve's copy: the trim between the end
+    /// points' drops (on the joined curve's natural interval when `joined`, else on the
+    /// original edge's interval), the reversal and the curve's setting.
+    fn finish_edge_on_edge(
+        &mut self,
+        k: &Kernel,
+        e: EdgeId,
+        target: &Brep,
+        mut new_3d_curve: Curve,
+        joined: bool,
+    ) -> Result<()> {
+        let nul = || SolidError::null_pointer(OP_ON_EDGE);
         // get filletEdge vertices
         let (start_fv, end_fv) = self.edge_end_vertices(e, OP_ON_EDGE)?;
         let orig_edge = self.fillet_edge(e)?.original_edge().ok_or_else(nul)?;
 
-        // GWC: Stop Fillets from switching SmCurve objects to SmBSplineCurve objs
-        let orig_curve = target.edge(orig_edge)?.curve.as_ref().ok_or_else(nul)?;
-        let mut new_3d_curve = copy_as_b_spline(k, orig_curve)?.ok_or_else(nul)?;
-
         // Trim ThisFilletEdge->OrigCurveCopy by Start and End FilletPoints
-        let mut trim_ivl = edge::interval(target, orig_edge)?;
+        let mut trim_ivl = if joined {
+            new_3d_curve.natural_interval() // the chain joined
+        } else {
+            edge::interval(target, orig_edge)?
+        };
         let tol = edge::tolerance(target, orig_edge)?;
 
         // drop startVertex to thisFilletEdge->OrigCurveCopy
@@ -1559,8 +1679,12 @@ impl FilletBrep {
 
             // when given an OffsetSurface to copy - copy it
             if let Some(off) = other_off_surf {
-                // SmOffsetSurface::Copy(); a failed copy leaves the slot unchanged
-                if let Some(surface) = ignored(off.surface.copy(k))? {
+                // SmOffsetSurface::Copy(); a failed copy leaves the slot unchanged; fork
+                // 9b7cd48 passes this on (SER)
+                if let Some(surface) = ignored(crate::error::passed_on(
+                    off.surface.copy(k),
+                    k.fixes.fillet_statuses_pass_on,
+                )?)? {
                     let new_off = OffsetSurface {
                         surface,
                         base_id: off.base_id,
@@ -2072,7 +2196,11 @@ impl FilletBrep {
     /// the target faces reachable from its face without crossing marked edges (marked
     /// with the target context's mark). Unless one of those faces is the use's
     /// radial face (the trim leaked), they are added to `deleted`. Faces are added
-    /// once each.
+    /// once each. The geometry's solver is the retained `solver`, whose id is
+    /// `solver_id`; the marks are body-qualified (`marks`).
+    /// Returns whether the trim leaked (`bBadTrim`: a collected face is the rail's
+    /// face on its other side; nothing was accumulated into `deleted` then), which
+    /// the fork (smlib d657afa) makes an error the caller notes.
     ///
     /// # Errors
     ///
@@ -2080,47 +2208,8 @@ impl FilletBrep {
     /// `SM_ERR_NULL_POINTER` without the target edge's curve;
     /// [`SolidError::InvalidInput`] without solver, rails, mark locks, the target
     /// context's mark lock, or a fillet edge without primary edge use or curve
-    /// (upstream dereferences `NULL`); those of the traversals, binormal evaluations
-    /// and `DropPoint`.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-    pub fn trim_original_surfaces(
-        &self,
-        k: &Kernel,
-        g: FilletGeomId,
-        fillet_brep: &mut Brep,
-        fillet_marks: &mut Marks,
-        target: &mut Brep,
-        target_marks: &mut Marks,
-        kept: &mut Vec<FaceId>,
-        deleted: &mut Vec<FaceId>,
-        mark_locks: &[MarkLock],
-        env: &TrimOriginalSurfacesEnv<'_>,
-        solvers: &[FilletSolver],
-    ) -> Result<()> {
-        let mut marks = IndexedTrimMarks {
-            fillet: fillet_marks,
-            target: target_marks,
-        };
-        self.trim_original_surfaces_resolved(
-            k,
-            g,
-            fillet_brep,
-            target,
-            &mut marks,
-            kept,
-            deleted,
-            mark_locks,
-            env,
-            |id| solver_of(solvers, id, OP_TRIM),
-        )
-    }
-
-    /// Trim original surfaces using one retained solver and body-qualified marks.
-    /// The solver is checked at the same point as the indexed entrypoint's lookup.
-    ///
-    /// # Errors
-    ///
-    /// Those of [`Self::trim_original_surfaces`], including a mismatched solver id.
+    /// (upstream dereferences `NULL`), or when the geometry's solver id is not
+    /// `solver_id`; those of the traversals, binormal evaluations and `DropPoint`.
     #[allow(clippy::too_many_arguments)]
     pub fn trim_original_surfaces_with_solver(
         &self,
@@ -2135,7 +2224,7 @@ impl FilletBrep {
         env: &TrimOriginalSurfacesEnv<'_>,
         solver_id: FilletSolverId,
         solver: &FilletSolver,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.trim_original_surfaces_resolved(
             k,
             g,
@@ -2172,7 +2261,7 @@ impl FilletBrep {
         mark_locks: &[MarkLock],
         env: &TrimOriginalSurfacesEnv<'_>,
         solver: impl FnOnce(FilletSolverId) -> Result<&'s FilletSolver>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // locals
         let geom = self.geom(g)?;
         let solver_id = geom
@@ -2245,8 +2334,33 @@ impl FilletBrep {
                     continue;
                 };
 
-                let prim_eu = primary_edgeuse(fillet_brep, fb_edge)?
+                let mut prim_eu = primary_edgeuse(fillet_brep, fb_edge)?
                     .ok_or_else(|| invalid(OP_TRIM, "fillet B-rep edge without edge use"))?;
+                // The fork's (WR-697, 794946e): the edge use on this fillet's own face
+                // (its surface). Where two blends' contact lines meet, their rails are
+                // one edge of the fillet B-rep between both fillets' faces, and its primary
+                // edge use can be the other's: this fillet's face was then never collected
+                // to be kept. A rail edge on one face only has the one.
+                let prim_face = eu1::face(fillet_brep, prim_eu)?;
+                let own = own_fillet_face(geom, fillet_brep);
+                let mut own_eu = None;
+                let mut two_faces = false;
+                for eu in edge::edgeuses(fillet_brep, fb_edge, None, None)? {
+                    let face = eu1::face(fillet_brep, eu)?;
+                    if face != prim_face {
+                        two_faces = true;
+                    }
+                    if own_eu.is_none() && same_surface(fillet_brep, face, own)? {
+                        own_eu = Some(eu);
+                    }
+                }
+                if let Some(eu) = own_eu {
+                    prim_eu = eu;
+                } else if two_faces {
+                    // SER_MSG: a rail's edge lies between two faces, neither the
+                    // fillet's own
+                    return Err(SolidError::sm_err(OP_TRIM));
+                }
                 let fb_face = eu1::face(fillet_brep, prim_eu)?;
 
                 // Collect all faces reachable from pFBFace in m_pFilletBrep -- all new
@@ -2458,7 +2572,10 @@ impl FilletBrep {
                 }
             }
         }
-        Ok(())
+        // The fork's (smlib d657afa) leaking trim is
+        // an error noted by the caller, which holds the executive's error info; the
+        // faces are not accumulated then either (the fork returns before).
+        Ok(bad_trim)
     }
 
     /// `SmFilletGeom::RecordFilletError(eType, pFilletedEdge, pTargetFace, pRail,
@@ -2535,6 +2652,41 @@ impl FilletBrep {
         }
         Ok(())
     }
+}
+
+/// The fillet B-rep face that holds geometry `geom`'s fillet surface (`GetFilletSurface()`
+/// once `MakeFaceBrep` transferred it to `fillet_brep`), if any.
+fn own_fillet_face(geom: &super::p1::FilletGeom, fillet_brep: &Brep) -> Option<FaceId> {
+    let Some(super::p1::FilletSurfaceStorage::ManagedFace { body, face }) = geom.fillet_surface
+    else {
+        return None;
+    };
+    let serial = fillet_brep.notify_serial()?;
+    let identity = crate::topology::brep::p3::topology_ref(
+        serial,
+        EntityRef::Brep(crate::topology::BrepId::from_index(0)),
+    );
+    (identity == body).then_some(face)
+}
+
+/// `pFace->GetSurface() == GetFilletSurface()`: pointer identity of `face`'s surface and
+/// the fillet surface on face `own` (the same face's, or one carrying the same owner, as
+/// every record standing for one upstream surface object does). No fillet face: `false`.
+fn same_surface(brep: &Brep, face: Option<FaceId>, own: Option<FaceId>) -> Result<bool> {
+    let (Some(face), Some(own)) = (face, own) else {
+        return Ok(false);
+    };
+    if face == own {
+        return Ok(true);
+    }
+    let (a, b) = (
+        brep.face(face)?.surface.as_ref(),
+        brep.face(own)?.surface.as_ref(),
+    );
+    Ok(match (a, b) {
+        (Some(x), Some(y)) => x.owner().is_some_and(|o| Some(o) == y.owner()),
+        _ => false,
+    })
 }
 
 #[cfg(test)]
@@ -3111,33 +3263,34 @@ mod tests {
         assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
     }
 
+    /// Body-qualified trim marks kept in one store, as the session's retained marks are.
+    #[derive(Default)]
+    struct RetainedMarks(
+        std::collections::BTreeMap<(bool, Entity), crate::topology::topology::Topology>,
+    );
+
+    impl TrimOriginalSurfacesMarks for RetainedMarks {
+        fn is_marked(
+            &self,
+            k: &Kernel,
+            body: TrimOriginalBody,
+            entity: Entity,
+            mark: MarkType,
+        ) -> bool {
+            self.0
+                .get(&(body == TrimOriginalBody::Target, entity))
+                .is_some_and(|record| record.is_marked(&k.context, mark))
+        }
+        fn mark(&mut self, k: &Kernel, body: TrimOriginalBody, entity: Entity, mark: MarkType) {
+            self.0
+                .entry((body == TrimOriginalBody::Target, entity))
+                .or_default()
+                .mark(Some(&k.context), mark);
+        }
+    }
+
     #[test]
     fn retained_trim_keeps_body_marks_and_successful_prefix_on_error() {
-        use crate::topology::topology::Topology;
-        use std::collections::BTreeMap;
-
-        #[derive(Default)]
-        struct RetainedMarks(BTreeMap<(bool, Entity), Topology>);
-        impl TrimOriginalSurfacesMarks for RetainedMarks {
-            fn is_marked(
-                &self,
-                k: &Kernel,
-                body: TrimOriginalBody,
-                entity: Entity,
-                mark: MarkType,
-            ) -> bool {
-                self.0
-                    .get(&(body == TrimOriginalBody::Target, entity))
-                    .is_some_and(|record| record.is_marked(&k.context, mark))
-            }
-            fn mark(&mut self, k: &Kernel, body: TrimOriginalBody, entity: Entity, mark: MarkType) {
-                self.0
-                    .entry((body == TrimOriginalBody::Target, entity))
-                    .or_default()
-                    .mark(Some(&k.context), mark);
-            }
-        }
-
         let mut k = Kernel::default();
         let mut fillet =
             crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 10.0, 20.0, 30.0)
@@ -3152,6 +3305,18 @@ mod tests {
         let fs = solver(false);
         let edge = fillet.edge_list()[0];
         pseudo.fillet_edge_mut(rails[0]).unwrap().fillet_brep_edge1 = Some(edge);
+        // the geometry's surface is the fillet B-rep's face on the rail's edge: the rail's
+        // edge use on the fillet's own face is the one the trim follows (the fork's 794946e)
+        let own = edge::faces(&fillet, edge, None).unwrap()[0];
+        pseudo.geom_mut(g).unwrap().fillet_surface = Some(
+            crate::blend::fillet_geom::p1::FilletSurfaceStorage::ManagedFace {
+                body: crate::topology::brep::p3::topology_ref(
+                    fillet.notify_serial().unwrap(),
+                    EntityRef::Brep(crate::topology::BrepId::from_index(0)),
+                ),
+                face: own,
+            },
+        );
         let lock = MarkLock::new(core::slice::from_mut(&mut k.context), 0, ALL_MARKS).unwrap();
         let mark = lock.mark_type();
         let locks = [lock];
@@ -3226,11 +3391,12 @@ mod tests {
     }
 
     #[test]
-    fn trim_original_surfaces_skips_rails_without_mated_edges() {
+    fn trim_original_surfaces_with_solver_skips_rails_without_mated_edges() {
         let mut k = Kernel::default();
         let mut fb = FilletBrep::new();
         let (g, rails) = two_rail_geom(&mut fb, &k);
-        let solvers = [solver(false)];
+        let id = FilletSolverId(0);
+        let fs = solver(false);
         let lock = MarkLock::new(core::slice::from_mut(&mut k.context), 0, ALL_MARKS).unwrap();
         let locks = [lock];
 
@@ -3255,7 +3421,7 @@ mod tests {
         fb.fillet_edge_mut(rails[0]).unwrap().fillet_brep_edge1 = Some(fe);
 
         let mut target = Brep::new();
-        let (mut fm, mut tm) = (Marks::default(), Marks::default());
+        let mut marks = RetainedMarks::default();
         let (mut kept, mut deleted) = (Vec::new(), Vec::new());
         let unmated = |_: EdgeId| None;
         let env = TrimOriginalSurfacesEnv {
@@ -3263,20 +3429,22 @@ mod tests {
             fillet_edge_key: &key,
             target_context: Some(0),
         };
-        fb.trim_original_surfaces(
-            &k,
-            g,
-            &mut fillet,
-            &mut fm,
-            &mut target,
-            &mut tm,
-            &mut kept,
-            &mut deleted,
-            &locks,
-            &env,
-            &solvers,
-        )
-        .unwrap();
+        let leaked = fb
+            .trim_original_surfaces_with_solver(
+                &k,
+                g,
+                &mut fillet,
+                &mut target,
+                &mut marks,
+                &mut kept,
+                &mut deleted,
+                &locks,
+                &env,
+                id,
+                &fs,
+            )
+            .unwrap();
+        assert!(!leaked);
         assert!(kept.is_empty() && deleted.is_empty());
 
         // mated to a target edge without faces: the (empty) fillet faces are collected,
@@ -3291,56 +3459,83 @@ mod tests {
             target_context: Some(0),
         };
         let err = fb
-            .trim_original_surfaces(
+            .trim_original_surfaces_with_solver(
                 &k,
                 g,
                 &mut fillet,
-                &mut fm,
                 &mut target,
-                &mut tm,
+                &mut marks,
                 &mut kept,
                 &mut deleted,
                 &locks,
                 &env,
-                &solvers,
+                id,
+                &fs,
             )
             .unwrap_err();
         // the fillet B-rep edge has no edge use (upstream dereferences NULL)
-        assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                SolidError::InvalidInput {
+                    reason: "fillet B-rep edge without edge use",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
 
-        // no solver, no mark locks
+        // no mark locks, no solver
         let err = fb
-            .trim_original_surfaces(
+            .trim_original_surfaces_with_solver(
                 &k,
                 g,
                 &mut fillet,
-                &mut fm,
                 &mut target,
-                &mut tm,
+                &mut marks,
                 &mut kept,
                 &mut deleted,
                 &[],
                 &env,
-                &solvers,
+                id,
+                &fs,
             )
             .unwrap_err();
-        assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                SolidError::InvalidInput {
+                    reason: "no mark locks",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
         fb.geom_mut(g).unwrap().solver = None;
         let err = fb
-            .trim_original_surfaces(
+            .trim_original_surfaces_with_solver(
                 &k,
                 g,
                 &mut fillet,
-                &mut fm,
                 &mut target,
-                &mut tm,
+                &mut marks,
                 &mut kept,
                 &mut deleted,
                 &locks,
                 &env,
-                &solvers,
+                id,
+                &fs,
             )
             .unwrap_err();
-        assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                SolidError::InvalidInput {
+                    reason: "fillet geometry without solver",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 }

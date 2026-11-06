@@ -32,7 +32,7 @@ use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::p3::{local_curve_intersect, PointSolveOptions};
 use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::iso_curve::IsoCurve;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignored, ignored_or_pass_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::geom_utility::p2::ContinuityType;
@@ -57,6 +57,14 @@ const MAX_SPLITS: usize = 1_000_000;
 fn bss<'a>(k: &Kernel, surface: &'a Surface) -> Result<Cow<'a, BSplineSurface>> {
     match surface.kind() {
         SurfaceKind::BSpline(s) => Ok(Cow::Borrowed(s)),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let s = pb.net();
+            Ok(Cow::Borrowed(s))
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let s = bp.net();
+            Ok(Cow::Borrowed(s))
+        }
         SurfaceKind::Plane(p) => Ok(p.base_for_query()),
         SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_) => {
             // (unreachable: iso curves of these kinds dispatch to the kinds' own
@@ -164,6 +172,7 @@ pub(super) fn implicit_iso(
     | SurfaceKind::Cone(_)
     | SurfaceKind::Sphere(_)
     | SurfaceKind::Torus(_)
+    | SurfaceKind::ProceduralBlend(_)
     | SurfaceKind::CurveBounded(_)
     | SurfaceKind::Step(_)
     | SurfaceKind::OffsetSurface(_)
@@ -197,11 +206,13 @@ fn tessellate(
     angle: f64,
     max_side: f64,
 ) -> Result<Vec<f64>> {
-    Ok(
-        ignored(curve.tessellate_by_bisection(k, interval, chord, angle, max_side))?
-            .map(|t| t.parameters)
-            .unwrap_or_default(),
-    )
+    // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+    Ok(ignored_or_pass_on(
+        curve.tessellate_by_bisection(k, interval, chord, angle, max_side),
+        k.fixes.query_statuses_pass_on,
+    )?
+    .map(|t| t.parameters)
+    .unwrap_or_default())
 }
 
 fn check_count(n: usize) -> Result<()> {
@@ -401,7 +412,7 @@ impl Surface {
             if !fallback_needed {
                 match curve.tessellate_by_bisection(k, &interval, chord, angle, max_side) {
                     Ok(result) => splits = result.parameters,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => fallback_needed = true,
                 }
             }
@@ -418,7 +429,7 @@ impl Surface {
                 if !final_linear {
                     match curve.tessellate_by_bisection(k, &interval, chord, angle, max_side) {
                         Ok(result) => splits = result.parameters,
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => failures += 1,
                     }
                 }
@@ -562,8 +573,9 @@ fn filter_solution<O: SolutionObject>(
 }
 /// The tolerance of the edge owning `curve` (`pCurveOwner->GetTolerance()` in
 /// `sm_ClassifyCurveSurfaceXSectPoint`), through a face-aware caller's `queries` and
-/// the curve's `handle`; `None` for a curve no edge owns, or when the caller cannot
-/// resolve it.
+/// the curve's `handle`, or else the edge's tolerance recorded on the curve
+/// (`topology::edge::evaluation_curve`'s copy carries it); `None` for a curve no edge
+/// owns, or when neither resolves it.
 ///
 /// # Errors
 ///
@@ -581,7 +593,7 @@ pub(super) fn curve_edge_tolerance<O>(
     }
     match (queries, handle) {
         (Some(queries), Some(handle)) => queries.curve_edge_tolerance(handle).transpose(),
-        _ => Ok(None),
+        _ => Ok(curve.owner_zone_tol_3d()),
     }
 }
 
@@ -823,8 +835,15 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
         if self.uv_domain.max().y <= domain.max().y {
             v_conts[1] = ContinuityType::Discontinuous;
         }
+        // with the opt-in fix a branch outside the domain or interval of interest has no
+        // answers (WR-663, tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
         if !domain.is_contained_by(&self.uv_domain, EFF_ZERO) {
-            domain = domain.intersect(&self.uv_domain)?;
+            domain = match domain.intersect(&self.uv_domain) {
+                Ok(d) => d,
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
+                Err(e) => return Err(e),
+            };
             if crate::geom::tol::are_same(domain.max().x, domain.min().x)
                 || crate::geom::tol::are_same(domain.max().y, domain.min().y)
             {
@@ -838,7 +857,11 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
             t_conts[1] = ContinuityType::Discontinuous;
         }
         if !interval.is_contained_by(&self.interval, EFF_ZERO) {
-            interval = interval.intersect(&self.interval)?;
+            interval = match interval.intersect(&self.interval) {
+                Ok(i) => i,
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
+                Err(e) => return Err(e),
+            };
             if crate::geom::tol::are_same(interval.max(), interval.min()) {
                 return Ok(false);
             }
@@ -856,16 +879,19 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 .ok_or(SolidError::null_pointer(OP))?
                 .is_closed(k, &natural, 0.0)?
         {
-            let continuity = ignored(crate::curve::curve::p2::evaluate_continuity(
-                k,
-                self.curve.ok_or(SolidError::null_pointer(OP))?,
-                natural.min(),
-                false,
-                self.curve.ok_or(SolidError::null_pointer(OP))?,
-                natural.max(),
-                true,
-                0.5,
-            ))?
+            let continuity = ignored_or_pass_on(
+                crate::curve::curve::p2::evaluate_continuity(
+                    k,
+                    self.curve.ok_or(SolidError::null_pointer(OP))?,
+                    natural.min(),
+                    false,
+                    self.curve.ok_or(SolidError::null_pointer(OP))?,
+                    natural.max(),
+                    true,
+                    0.5,
+                ),
+                pass,
+            )?
             .map_or(ContinuityType::Discontinuous, |c| c.continuity);
             if crate::geom::tol::is_zero(interval.min() - natural.min()) {
                 t_conts[0] = continuity;

@@ -39,11 +39,15 @@
 //!   `NormalizedEvaluate` may build missing UV trim curves; the port takes `&mut Brep`.
 //! - **Null pointers.** A loop edge or primary edge use upstream dereferences while
 //!   `NULL` is [`SolidError::InvalidInput`].
+//! - **Failed solver guesses.** The 1-D solve of `FindFilletMinMaxRadii` takes no value
+//!   from a failed guess (WR-253, #2574), as every 1-D solve does.
 //! - No recursion.
 
 use crate::curve::curve::p2::FindCurveDistanceExtrema;
 use crate::curve::curve::Curve;
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{
+    ignore_or_pass_on, ignore_status, ignored, ignored_or_pass_on, Result, SolidError,
+};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::global_solver::SolverOperation;
@@ -591,7 +595,8 @@ pub fn calculate_fillet_radius(
 }
 
 /// The radius of [`calculate_fillet_radius`] as its ignoring callers see it: the `0`
-/// it starts with when it fails.
+/// it starts with when it fails (passed on with the opt-in
+/// `Kernel::fixes.query_statuses_pass_on`, WR-663; tangency-labs/smlib 21dcf69).
 fn fillet_radius_or_zero(
     k: &Kernel,
     s: &Surface,
@@ -599,22 +604,22 @@ fn fillet_radius_or_zero(
     param: f64,
     want_circular: bool,
 ) -> Result<f64> {
-    Ok(ignored(calculate_fillet_radius(
-        k,
-        s,
-        rail_dir,
-        param,
-        want_circular,
-        None,
-    ))?
+    Ok(ignored_or_pass_on(
+        calculate_fillet_radius(k, s, rail_dir, param, want_circular, None),
+        k.fixes.query_statuses_pass_on,
+    )?
     .map_or(0.0, |(r, _)| r))
 }
 
 /// The extrema function at `t` with its status ignored: a failed evaluation leaves the
-/// zeros it starts with.
-fn sample(efo: &mut FindCurveDistanceExtrema<'_>, t: f64) -> Result<FunctionValue> {
+/// zeros it starts with (passed on with the opt-in
+/// `Kernel::fixes.query_statuses_pass_on`, WR-663; tangency-labs/smlib 21dcf69).
+fn sample(k: &Kernel, efo: &mut FindCurveDistanceExtrema<'_>, t: f64) -> Result<FunctionValue> {
     let mut v = FunctionValue::default();
-    ignore_status(efo.evaluate(t, &mut v, true))?;
+    ignore_or_pass_on(
+        efo.evaluate(t, &mut v, true),
+        k.fixes.query_statuses_pass_on,
+    )?;
     Ok(v)
 }
 
@@ -649,19 +654,19 @@ pub fn find_fillet_min_max_radii(
 
     let mut efo = FindCurveDistanceExtrema::new(k, &rail1, &rail2, domain, tol);
 
-    let mut ls = LocalSolve1d::with_interval(domain, false);
+    let mut ls = radii_solver(domain);
 
     let num_steps: u32 = 30;
     let denom = f64::from(num_steps);
 
     let mut prev_t = domain.min();
-    let mut prev_f = sample(&mut efo, prev_t)?.f;
+    let mut prev_f = sample(k, &mut efo, prev_t)?.f;
 
     for i in 1..=num_steps {
         let frac = f64::from(i) / denom;
         param = domain.evaluate(frac);
 
-        let v = sample(&mut efo, param)?;
+        let v = sample(k, &mut efo, param)?;
         let f = v.f;
         if v.found_answer {
             radii.add_value(fillet_radius_or_zero(k, s, rail_dir, param, true)?);
@@ -671,7 +676,7 @@ pub fn find_fillet_min_max_radii(
                 Ok(o) => {
                     radii.add_value(fillet_radius_or_zero(k, s, rail_dir, o.t, true)?);
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {}
             }
         } // end else
@@ -681,6 +686,15 @@ pub fn find_fillet_min_max_radii(
     } // end stepping along curve
 
     Ok(())
+}
+
+/// The 1-D solve `FindFilletMinMaxRadii` refines a distance extremum with
+/// (`SmLocalSolve1d sLS( sEFO, sDomain, FALSE )`). Not upstream (WR-253,
+/// tangency-labs/solidcore#481 and #2574): a failed guess is no sign change in
+/// `SolveOscillating`, as for every other 1-D solve (the fork's
+/// tangency-labs/smlib@d2757e1 makes the change in the solver, so it applies here too).
+fn radii_solver(domain: Extent1d) -> LocalSolve1d {
+    LocalSolve1d::with_interval(domain, false)
 }
 
 // ---- SmFace::IdentifyFillet / IdentifyFilletUOrV --------------------------------------
@@ -835,7 +849,7 @@ pub fn identify_fillet_u_or_v(
         );
         match drop {
             Ok(d) if d.success && d.distance < tol3d => return Ok(out),
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => {}
         }
     }
@@ -1018,4 +1032,64 @@ pub fn identify_fillet(
 
     // all done
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::float_cmp)]
+    use super::*;
+
+    /// `F(t) = t^3 - 2t + 2`: Newton from 0 cycles between two values, with no root
+    /// between them, so `SolveIt` falls back on `SolveOscillating`.
+    struct Cycle;
+    impl EvalFunction for Cycle {
+        fn evaluate(&mut self, t: f64, out: &mut FunctionValue, _: bool) -> Result<()> {
+            out.f = (t * t - 2.0) * t + 2.0;
+            out.f_prime = 3.0 * t * t - 2.0;
+            out.found_answer = false;
+            Ok(())
+        }
+    }
+
+    /// The two values `Cycle` settles between from 0 within [-3, 3] and
+    /// `SolveOscillating`'s last interior guess between them, 0.99 of the way (as in
+    /// `geom::local_solve1d`'s tests).
+    const CYCLE_PREV: f64 = 0.475_200_000_000_989_94;
+    const CYCLE_CURR: f64 = 0.950_400_000_001_979_9;
+    const LAST_GUESS: f64 = CYCLE_PREV + 0.99 * (CYCLE_CURR - CYCLE_PREV);
+
+    /// `Cycle`, failing at `LAST_GUESS` after zeroing its outputs (an injected failure,
+    /// as `SmCurvePropertyEFO::Evaluate` fails).
+    struct CycleFailingAtLastGuess;
+    impl EvalFunction for CycleFailingAtLastGuess {
+        fn evaluate(&mut self, t: f64, out: &mut FunctionValue, s: bool) -> Result<()> {
+            if t.to_bits() == LAST_GUESS.to_bits() {
+                *out = FunctionValue::default();
+                return Err(SolidError::sm_err("test: no value here"));
+            }
+            Cycle.evaluate(t, out, s)
+        }
+    }
+
+    /// WR-253 / tangency-labs/solidcore#2009 (the fork's tangency-labs/smlib@d2757e1,
+    /// #2574): `FindFilletMinMaxRadii`'s solve takes no value from a failed guess, so the
+    /// failed last guess is no sign change and the solve finds nothing, as on the clean
+    /// function. Upstream brackets the zeroed `F` there and reports it as a root.
+    #[test]
+    fn issue_2009_radii_solve_takes_no_value_from_a_failed_guess() {
+        let domain = Extent1d::from_min_max(-3.0, 3.0);
+        let r = radii_solver(domain)
+            .solve_it(&mut CycleFailingAtLastGuess, 0.0, 1e-9)
+            .unwrap();
+        assert!(!r.found, "{r:?}");
+        assert_ne!(r.t.to_bits(), LAST_GUESS.to_bits());
+
+        // the clean function has no root either
+        assert!(
+            !radii_solver(domain)
+                .solve_it(&mut Cycle, 0.0, 1e-9)
+                .unwrap()
+                .found
+        );
+    }
 }

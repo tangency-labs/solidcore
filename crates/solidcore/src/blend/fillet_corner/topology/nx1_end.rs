@@ -16,7 +16,8 @@
 //! geometry, extended-surface coincidence), the last statements of
 //! `MakeCornerTopology`, are returned as an [`Nx1GapCheck`] for the caller, which
 //! holds the corner table and solver store they need, to run before anything else.
-//! There is no recursion.
+//! The end face at a tangent side is extended `CInfinity` and that side's cap edge is
+//! `OnExtendEdge` (WR-600, the fork's tangency-labs/smlib@856b54e). There is no recursion.
 
 use std::collections::BTreeMap;
 
@@ -27,7 +28,6 @@ use crate::blend::fillet_geom::p1::{
     FilletBrep, FilletCornerId, FilletEdgeType, FilletGeomId, FilletVertex, FilletVertexType,
 };
 use crate::error::{EntityRef, Result, SolidError, SM_ERR, SM_ERR_INVALID_INPUT};
-use crate::geom::geom_utility::p2::ContinuityType;
 use crate::intersect::point_class::PointClassType;
 use crate::kernel::Kernel;
 use crate::math::{Point3, EFF_ZERO};
@@ -108,7 +108,7 @@ pub fn find_surface_extension_dist_at_corner(
             // failed law evaluation yields the status code as the radius.
             ext_dist = match vr.law.evaluate(parameter, &interval, orientation) {
                 Ok(values) => values[0],
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(e) => f64::from(status_of(&e)),
             };
         }
@@ -137,6 +137,9 @@ pub(crate) struct Nx1End<'a> {
     pub total: usize,
     pub mixed: bool,
     pub same: [bool; 2],
+    /// `bTangentSide` (the fork's tangency-labs/smlib@856b54e): each side edge that is a
+    /// tangent seam the rail on its side crosses; `false` without WR-600's fix.
+    pub tangent_side: [bool; 2],
     pub sides: [EdgeuseId; 2],
     pub end_face: Option<FaceId>,
     pub extend_edge: Option<EdgeId>,
@@ -187,6 +190,7 @@ impl FilletCorner {
             total,
             mixed,
             same,
+            tangent_side,
             sides,
             mut end_face,
             mut extend_edge,
@@ -259,7 +263,17 @@ impl FilletCorner {
                 "end face without surface",
             )?;
             // create an extended surface large enough to fill in the endCap requirements
-            let new_surface = surface.create_extended_surface(k, ext_dist, ContinuityType::G1)?;
+            // At a tangent end the end face is continued as itself: the end rib's shape
+            // there depends on how its curvature differs from the rail's face across the
+            // seam, which a linear (G1) extension would not keep (tangency-labs/smlib@856b54e).
+            let extension = if mixed && (tangent_side[0] || tangent_side[1]) {
+                crate::surface::extend::Continuity::Natural
+            } else {
+                crate::surface::extend::Continuity::Tangent
+            };
+            let new_surface = surface
+                .extended_sides(k, &crate::surface::side::BoxSide::ALL, extension, ext_dist)?
+                .surface;
             // Copy pNewSurface, when possible as an analytic surface
             let new_extend_surface = new_surface.copy_and_add_analytics(k)?;
             // If AddExtendedOriginalSurface() deleted pNewExtendSurface, then
@@ -301,6 +315,7 @@ impl FilletCorner {
             let edge2 = pseudo.make_fillet_edge(Some(v1), Some(v2), Some(corner))?;
             if pseudo.fillet_vertex(v1)?.fillet_vertex_type()
                 == FilletVertexType::RailXExtendedEdgeuse
+                || tangent_side[1]
             {
                 let fe = pseudo.fillet_edge_mut(edge2)?;
                 fe.set_fillet_edge_type(FilletEdgeType::OnExtendEdge);
@@ -325,6 +340,7 @@ impl FilletCorner {
             let edge1 = pseudo.make_fillet_edge(Some(v2), Some(v0), Some(corner))?;
             if pseudo.fillet_vertex(v0)?.fillet_vertex_type()
                 == FilletVertexType::RailXExtendedEdgeuse
+                || tangent_side[0]
             {
                 let fe = pseudo.fillet_edge_mut(edge1)?;
                 fe.set_fillet_edge_type(FilletEdgeType::OnExtendEdge);
