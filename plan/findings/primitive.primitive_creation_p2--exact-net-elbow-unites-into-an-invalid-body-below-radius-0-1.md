@@ -38,6 +38,6 @@ at a profile this small (50 times the kernel's 2e-5 and less). Not traced; the f
 reference offsets in the mitre trim (`planar_path.rs`, `before[0] + (-before[1] * 0.1)`, upstream's)
 are not the cause alone, since a leg of 1 fails the same.
 
-Neither side is right: the C++ refuses, solidcore returns an invalid body. Not a `cpp_defect`.
-Both cases are known mismatches until the small-profile mitre is fixed (the correct answer for
+Solidcore returns an invalid body where the C++ refused.
+Both cases are listed in `crates/goldens/expected/known_failing.json` (no golden line) until the small-profile mitre is fixed (the correct answer for
 radius 1e-3 is the valid body of volume pi r^2 2 leg = 6.2832e-8, or a refusal).
