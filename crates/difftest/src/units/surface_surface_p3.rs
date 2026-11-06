@@ -6,7 +6,8 @@
 //! by the unit, were co-ported and are compared by the runner of unit `surface.surface_p4`).
 //!
 //! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden.
-//! Rust: `solidcore::surface::surface::p3`.
+//! Rust: `solidcore::surface::surface::p3`. Generated inputs outside the C++ reference
+//! wrapper's input contract ([`keeps_contract`]) are redrawn.
 //!
 //! A case is one `op` on a `surface` (the input forms of unit `surface.surface_p7`). The
 //! Rust side produces a flat record (status first); the runner reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
@@ -35,8 +36,10 @@ use solidcore::surface::surface::p3::check_shape_match;
 use solidcore::surface::surface::Surface;
 
 use super::surface_surface_p7::{
-    b, dom_of, gen_boundary_uv, gen_dom, gen_plane, gen_point_near, gen_surface, gen_uv, harness,
-    p2, pv, side, sop_of, st, surface_of, v3, Fail, SrfIn,
+    b, dom_of, domain_ok, fins, gen_boundary_uv, gen_dom, gen_plane, gen_point_near, gen_surface,
+    gen_uv, harness, p2, positive, pv, resolve, side, sop_of, sop_ok, st, surface_kind, surface_of,
+    uv_bounds, uv_ok, v3, vecs_ok, within, Domain, Fail, SrfIn, SO_MAXIMIZE, SO_MINIMIZE,
+    SO_NORMALIZE, SO_SIGNED_MIN,
 };
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -426,6 +429,135 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     }
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The most points of an equation-set call.
+const MAX_POINTS: usize = 32;
+
+/// A surface that keeps the contract (`surface_p7`'s, which only this unit's wrapper
+/// extends to surfaces of revolution), as surface kind `4` (knots kept as given) when
+/// `raw`, which needs an inline B-spline.
+fn surface_ok(s: &SrfIn, raw: bool) -> Option<(Domain, bool)> {
+    if raw && !matches!(resolve(s).ok()?, SrfIn::Bspline(_)) {
+        return None;
+    }
+    surface_kind(s, false, true)
+}
+
+/// The [`Domain`] of a further surface that keeps the contract.
+fn domain_of(s: &SrfIn) -> Option<Domain> {
+    surface_ok(s, false).map(|(d, _)| d)
+}
+
+/// Whether there are 1 to [`MAX_POINTS`] parameter vectors, each of one coordinate per
+/// bound and every coordinate within its bound.
+fn points_ok(pts: &[Vec<f64>], bounds: &[(f64, f64)]) -> bool {
+    (1..=MAX_POINTS).contains(&pts.len())
+        && pts.iter().all(|p| {
+            p.len() == bounds.len() && p.iter().zip(bounds).all(|(&x, &b)| within(x, b))
+        })
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_p3.rs`, `validate`): surfaces as
+/// [`surface_ok`] (raw knots for the further surfaces only in `local_sss`), parameters
+/// and guesses within one domain length of their surface's domain, ordered domains inside
+/// it, positive tolerances, a B-spline surface to cover, signed directed solves with a
+/// vector, and 1 to [`MAX_POINTS`] points per equation-set call.
+fn keeps_contract(i: &Inputs) -> bool {
+    let [r1, r2, r3] = i.raw_knots;
+    let Some((dom, is_bspline)) = surface_ok(&i.surface, r1) else {
+        return false;
+    };
+    if (r2 || r3) && !matches!(i.op, OpIn::LocalSss { .. }) {
+        return false;
+    }
+    match &i.op {
+        OpIn::EvalGeometric { uv, .. } => uv_ok(*uv, dom),
+        OpIn::NormalSection { uv, dir, .. } => uv_ok(*uv, dom) && fins(dir),
+        OpIn::Singularities { .. } => true,
+        OpIn::Cover { other, tol, dom: d } => {
+            is_bspline
+                && domain_of(other).is_some_and(|d2| d.is_none_or(|d| domain_ok(d, d2)))
+                && positive(*tol)
+        }
+        OpIn::ShapeMatch {
+            other,
+            uv0,
+            uv1,
+            tol,
+            ang,
+        } => {
+            domain_of(other).is_some_and(|d2| uv_ok(*uv0, dom) && uv_ok(*uv1, d2))
+                && positive(*tol)
+                && positive(*ang)
+        }
+        OpIn::FindPsNormal { p, sq_tol, pts } => {
+            fins(p) && positive(*sq_tol) && points_ok(pts, &uv_bounds(dom))
+        }
+        OpIn::SssIntersect { s2, s3, pts } => match (domain_of(s2), domain_of(s3)) {
+            (Some(d2), Some(d3)) => {
+                let b: Vec<_> = [dom, d2, d3].into_iter().flat_map(uv_bounds).collect();
+                points_ok(pts, &b)
+            }
+            _ => false,
+        },
+        OpIn::LocalPlane {
+            other,
+            dom1,
+            dom2,
+            tol,
+            g1,
+            g2,
+            po,
+            pn,
+        } => domain_of(other).is_some_and(|d2| {
+            domain_ok(*dom1, dom)
+                && domain_ok(*dom2, d2)
+                && positive(*tol)
+                && uv_ok(*g1, dom)
+                && uv_ok(*g2, d2)
+                && fins(po)
+                && fins(pn)
+        }),
+        OpIn::LocalSolve {
+            other,
+            dom1,
+            dom2,
+            sop,
+            vecs,
+            g1,
+            g2,
+        } => domain_of(other).is_some_and(|d2| {
+            let ops = [SO_MINIMIZE, SO_MAXIMIZE, SO_NORMALIZE, SO_SIGNED_MIN];
+            domain_ok(*dom1, dom)
+                && domain_ok(*dom2, d2)
+                && sop_ok(*sop, &ops, vecs)
+                && vecs_ok(vecs)
+                && uv_ok(*g1, dom)
+                && uv_ok(*g2, d2)
+        }),
+        OpIn::LocalSss {
+            s2,
+            s3,
+            doms: [d1, d2_, d3_],
+            g1,
+            g2,
+            g3,
+        } => match (surface_ok(s2, r2), surface_ok(s3, r3)) {
+            (Some((d2, _)), Some((d3, _))) => {
+                domain_ok(*d1, dom)
+                    && domain_ok(*d2_, d2)
+                    && domain_ok(*d3_, d3)
+                    && uv_ok(*g1, dom)
+                    && uv_ok(*g2, d2)
+                    && uv_ok(*g3, d3)
+            }
+            _ => false,
+        },
+    }
+}
+
 // ---- generators ---------------------------------------------------------------------
 
 /// A surface of revolution of a line about an axis: the line's first end lies on the axis
@@ -676,6 +808,9 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             if let Err(Fail::Harness(_)) = rust_run(k, &i) {
                 continue;
             }
