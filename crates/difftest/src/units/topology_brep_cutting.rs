@@ -1,17 +1,13 @@
-//! Differential coverage for `topology.brep_cutting` (`SmApiCut`: `SmBrepCutting::DoCut`
-//! with an `SmPlaneCutter`).
+//! Runner for unit `topology.brep_cutting` (`SmApiCut`: `SmBrepCutting::DoCut` with an
+//! `SmPlaneCutter`). Ported from upstream `SmBrepCutting`; checked against its golden.
 //!
-//! Each side builds the body itself: an upstream `.smb` solid (the native
-//! `SmBrep::ReadFromFile`, the Rust reader `own_reader::read_file`) or a box
-//! (`SmApiCreateBox` / `create_box`), optionally filleted on every edge
-//! (`SmApiCircularFillet` / `circular_fillet`). No C++-built geometry reaches the Rust
-//! side. The case cuts the body by the plane through `point` with normal `normal`
-//! (`SmApiCut` / `topology::brep::cutting::cut`) and compares the status, samples of
-//! every edge curve and face surface in list order (type code, natural domain, evaluated
-//! points; as `topology.brep_local_operation`'s) and the whole B-rep graph after the call
-//! (topology, vertex points, tolerances, intervals, UV domains). The native side runs in a
-//! fresh child process. Inputs the native build or the FFI guard refuse are `rejected`,
-//! not failed.
+//! The case builds the body: an upstream `.smb` solid (the Rust reader
+//! `own_reader::read_file`) or a box (`create_box`), optionally filleted on every edge
+//! (`circular_fillet`), then cuts it by the plane through `point` with normal `normal`
+//! (`topology::brep::cutting::cut`). The output is the status, samples of every edge curve
+//! and face surface in list order (type code, natural domain, evaluated points; as
+//! `topology.brep_local_operation`'s) and the whole B-rep graph after the call (topology,
+//! vertex points, tolerances, intervals, UV domains).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,12 +16,9 @@ use solidcore::math::Vec3;
 use solidcore::topology::brep::cutting::cut;
 use solidcore::topology::Brep;
 use solidcore::Result as SolidResult;
-use solidcore_ffi::units::topology_brep_cutting::{self as ffi, NARGS};
-use solidcore_ffi::FfiError;
 
 use super::boolean_merge_p1::{graph_owned, Canon, OwnerSource};
 use super::topology_brep_mirror::{geometry, herr, normalize_face_shells, status};
-use super::topology_vertexuse::import_raw_with_owners;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// The runner of `SmApiCut`.
@@ -92,41 +85,6 @@ fn path(i: &Inputs) -> Result<String, HarnessError> {
     }
 }
 
-fn args(i: &Inputs) -> [f64; NARGS] {
-    let (kind, size, fillet) = match &i.body {
-        Body::File { .. } => (0.0, [0.0; 3], 0.0),
-        Body::Box { size, fillet } => (1.0, *size, *fillet),
-    };
-    [
-        kind,
-        size[0],
-        size[1],
-        size[2],
-        fillet,
-        i.point[0],
-        i.point[1],
-        i.point[2],
-        i.normal[0],
-        i.normal[1],
-        i.normal[2],
-    ]
-}
-
-/// The native output, or `Err(output)` when the body or the arguments are refused.
-fn native(i: &Inputs) -> Result<Result<Vec<f64>, Output>, HarnessError> {
-    match ffi::eval(&path(i)?, &args(i)) {
-        Ok(raw) if raw.first() == Some(&-999.) => Ok(Err(Output::rejected(format!(
-            "body build status {}",
-            raw.get(1).copied().unwrap_or(-1.)
-        )))),
-        Ok(raw) => Ok(Ok(raw)),
-        Err(e @ FfiError::InvalidArgument(_)) => {
-            Ok(Err(Output::rejected(format!("ffi guard: {e}"))))
-        }
-        Err(e) => Err(herr(e)),
-    }
-}
-
 /// The Rust body of `i`.
 fn build(k: &mut Kernel, i: &Inputs) -> Result<SolidResult<Brep>, HarnessError> {
     match &i.body {
@@ -150,22 +108,6 @@ fn build(k: &mut Kernel, i: &Inputs) -> Result<SolidResult<Brep>, HarnessError> 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_cutting"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let raw = match native(&i)? {
-            Ok(raw) => raw,
-            Err(refused) => return Ok(refused),
-        };
-        let n = *raw.first().ok_or_else(|| herr("short record"))? as usize;
-        let record = raw.get(1..=n).ok_or_else(|| herr("short record"))?.to_vec();
-        let (mut b, owners) =
-            import_raw_with_owners(raw.get(n + 1..).ok_or_else(|| herr("short graph"))?)?;
-        strip_unrecorded(&mut b).map_err(herr)?;
-        normalize_face_shells(&mut b).map_err(herr)?;
-        drop_unreached_shell_faces(&mut b).map_err(herr)?;
-        graph_owned(&b, record, OwnerSource::Native(&owners))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
