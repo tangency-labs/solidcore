@@ -37,8 +37,10 @@
 //!   (was: only at a 2D curve's top, so a 2D trimmed curve whose basis chain cycles recursed
 //!   without bound).
 //! - The depth bound is also checked on a cache hit, against the height stored with the cached
-//!   curve (SolidCraft returned a cached curve unchecked, so a chain read link by link in
-//!   ascending id order had no bound).
+//!   curve or surface (SolidCraft returned a cached entity unchecked, so a chain read link by
+//!   link in ascending id order had no bound). The parameter kinds a trimmed curve or surface
+//!   takes from its basis are stored with each cached entity too (SolidCraft walked the basis
+//!   chain again on every read).
 //! - A malformed value is refused, never a default (was: a placement direction that is not a
 //!   reference read as omitted, an unknown enumeration as `UNSPECIFIED`, a bad logical as
 //!   `UNKNOWN`). B-splines hold to ISO 10303-42 `constraints_param_b_spline`: at least
@@ -70,8 +72,10 @@ pub type R<T> = Result<T, String>;
 /// Geometry nesting we follow (a trimmed curve of a surface curve of …). Every curve and
 /// surface read checks it, so a reference cycle ends here.
 pub const MAX_GEOM_DEPTH: usize = 12;
-/// The refusal of a read past [`MAX_GEOM_DEPTH`].
+/// The refusal of a curve read past [`MAX_GEOM_DEPTH`].
 const TOO_DEEP: &str = "curve definitions nested too deeply";
+/// The refusal of a surface read past [`MAX_GEOM_DEPTH`].
+const TOO_DEEP_SURFACE: &str = "surface definitions nested too deeply";
 /// Most control points in one B-spline (the whole net for a surface).
 pub const MAX_CTRL: usize = 1_000_000;
 /// Largest coordinate or length, in file units.
@@ -123,14 +127,26 @@ impl Space {
     }
 }
 
-/// A curve as read, with its height: how many curve references its deepest chain follows
-/// (0 for a curve that refers to no other curve). A read that reaches a cached curve at depth
-/// `d` refuses it when `d + height` passes [`MAX_GEOM_DEPTH`], as reading it afresh at `d`
-/// would, so a chain read link by link through the cache is bounded as one read at once.
+/// A curve as read, with its height: how many geometry references its deepest chain follows
+/// (0 for a curve that refers to no other curve or surface). A read that reaches a cached curve
+/// at depth `d` refuses it when `d + height` passes [`MAX_GEOM_DEPTH`], as reading it afresh at
+/// `d` would, so a chain read link by link through the cache is bounded as one read at once.
+/// `kind` is how its parameter scales, kept so that a curve built on it (a trimmed curve, a
+/// surface swept from it) takes it from here instead of walking the chain again.
 #[derive(Clone)]
 struct CurveEntry {
     curve: Arc<Curve>,
     height: usize,
+    kind: ParamKind,
+}
+
+/// A surface as read, with its height (as for [`CurveEntry`]) and how its (u, v) parameters
+/// scale from file units.
+#[derive(Clone)]
+struct SurfaceEntry {
+    surface: Arc<Surface>,
+    height: usize,
+    kinds: (ParamKind, ParamKind),
 }
 
 /// Reads geometry from one exchange structure, in one context's units.
@@ -139,7 +155,7 @@ pub struct Reader<'a> {
     units: Units,
     curves: BTreeMap<u64, CurveEntry>,
     curves_2d: BTreeMap<(u64, [u64; 2]), CurveEntry>,
-    surfaces: BTreeMap<u64, Arc<Surface>>,
+    surfaces: BTreeMap<u64, SurfaceEntry>,
 }
 
 fn entity(ex: &Exchange, id: u64) -> R<&Entity> {
@@ -629,11 +645,7 @@ impl<'a> Reader<'a> {
             }
             return Ok(c.clone());
         }
-        let (curve, height) = self.read_curve(id, Space::model(self.units.len, 3), depth)?;
-        let c = CurveEntry {
-            curve: Arc::new(curve),
-            height,
-        };
+        let c = self.read_curve(id, Space::model(self.units.len, 3), depth)?;
         self.curves.insert(id, c.clone());
         Ok(c)
     }
@@ -648,11 +660,7 @@ impl<'a> Reader<'a> {
             }
             return Ok(c.clone());
         }
-        let (curve, height) = self.read_curve(id, Space::parameters(s), depth)?;
-        let c = CurveEntry {
-            curve: Arc::new(curve),
-            height,
-        };
+        let c = self.read_curve(id, Space::parameters(s), depth)?;
         self.curves_2d.insert(key, c.clone());
         Ok(c)
     }
@@ -676,14 +684,26 @@ impl<'a> Reader<'a> {
         Ok(sx)
     }
 
-    /// The curve `id` in `sp` at `depth`, and its height (see [`CurveEntry`]).
-    fn read_curve(&mut self, id: u64, sp: Space, depth: usize) -> R<(Curve, usize)> {
+    /// The curve `id` in `sp` at `depth`, with its height and parameter kind.
+    fn read_curve(&mut self, id: u64, sp: Space, depth: usize) -> R<CurveEntry> {
         if depth > MAX_GEOM_DEPTH {
             return Err(TOO_DEEP.into());
         }
+        // A curve that refers to no other: height 0, angles on a conic, plain numbers otherwise.
+        let leaf = |c: Curve| {
+            let kind = match c {
+                Curve::Circle { .. } | Curve::Ellipse { .. } => ParamKind::Angle,
+                _ => ParamKind::Plain,
+            };
+            CurveEntry {
+                curve: Arc::new(c),
+                height: 0,
+                kind,
+            }
+        };
         let e = entity(self.ex, id)?;
         if e.is_complex() {
-            return Ok((self.bspline_curve(e, sp)?, 0));
+            return Ok(leaf(self.bspline_curve(e, sp)?));
         }
         let p = e.params();
         let c = match e.name() {
@@ -754,21 +774,17 @@ impl<'a> Reader<'a> {
             }
             "TRIMMED_CURVE" => {
                 let b = reference(p.get(1), "trimmed curve basis")?;
+                // A trimmed curve's parameters are its basis's: angles on a conic, also through
+                // an offset, trimmed or surface curve of one; plain numbers otherwise.
                 let CurveEntry {
                     curve: basis,
                     height,
+                    kind,
                 } = if sp.dim == 3 {
                     self.curve_in(b, depth + 1)?
                 } else {
-                    let (curve, height) = self.read_curve(b, sp, depth + 1)?;
-                    CurveEntry {
-                        curve: Arc::new(curve),
-                        height,
-                    }
+                    self.read_curve(b, sp, depth + 1)?
                 };
-                // A trimmed curve's parameters are its basis's: angles on a conic, also through
-                // an offset, trimmed or surface curve of one; plain numbers otherwise.
-                let kind = Self::curve_param_kind(&basis);
                 let trim_1 = self.trims(p.get(2), kind, sp)?;
                 let trim_2 = self.trims(p.get(3), kind, sp)?;
                 let sense = boolean(p.get(4), "trimmed curve sense")?;
@@ -781,16 +797,17 @@ impl<'a> Reader<'a> {
                         ("UNSPECIFIED", TrimPreference::Unspecified),
                     ],
                 )?;
-                return Ok((
-                    Curve::Trimmed {
+                return Ok(CurveEntry {
+                    curve: Arc::new(Curve::Trimmed {
                         basis,
                         trim_1,
                         trim_2,
                         sense,
                         preference,
-                    },
-                    height + 1,
-                ));
+                    }),
+                    height: height + 1,
+                    kind,
+                });
             }
             "SURFACE_CURVE" | "SEAM_CURVE" | "INTERSECTION_CURVE" | "BOUNDED_SURFACE_CURVE"
                 if sp.dim == 3 =>
@@ -803,7 +820,8 @@ impl<'a> Reader<'a> {
                 };
                 let CurveEntry {
                     curve: curve_3d,
-                    height,
+                    mut height,
+                    kind: param,
                 } = self.curve_in(reference(p.get(1), "surface curve 3D curve")?, depth + 1)?;
                 let items = p
                     .get(2)
@@ -814,43 +832,47 @@ impl<'a> Reader<'a> {
                 }
                 let mut associated = Vec::new();
                 for item in items {
-                    associated.push(
-                        self.associated(reference(Some(item), "associated geometry")?, depth + 1)?,
-                    );
+                    let (a, h) =
+                        self.associated(reference(Some(item), "associated geometry")?, depth + 1)?;
+                    height = height.max(h);
+                    associated.push(a);
                 }
                 let master = match p.get(3).and_then(Param::as_enum) {
                     Some("PCURVE_S1") => PreferredRep::PcurveS1,
                     Some("PCURVE_S2") => PreferredRep::PcurveS2,
                     _ => PreferredRep::Curve3d,
                 };
-                return Ok((
-                    Curve::SurfaceCurve {
+                return Ok(CurveEntry {
+                    curve: Arc::new(Curve::SurfaceCurve {
                         kind,
                         curve_3d,
                         associated,
                         master,
-                    },
-                    height + 1,
-                ));
+                    }),
+                    height: height + 1,
+                    kind: param,
+                });
             }
             "OFFSET_CURVE_3D" if sp.dim == 3 => {
                 let CurveEntry {
                     curve: basis,
                     height,
+                    kind,
                 } = self.curve_in(reference(p.get(1), "offset curve basis")?, depth + 1)?;
                 let distance = self.length(p.get(2), "offset distance")?;
                 let self_intersect = logical(p.get(3), "offset curve self_intersect")?;
                 let ref_direction =
                     self.direction(reference(p.get(4), "offset curve direction")?)?;
-                return Ok((
-                    Curve::OffsetCurve3d {
+                return Ok(CurveEntry {
+                    curve: Arc::new(Curve::OffsetCurve3d {
                         basis,
                         distance,
                         self_intersect,
                         ref_direction,
-                    },
-                    height + 1,
-                ));
+                    }),
+                    height: height + 1,
+                    kind,
+                });
             }
             n => Err(format!(
                 "not supported yet: curve {n}{}",
@@ -861,7 +883,7 @@ impl<'a> Reader<'a> {
                 }
             )),
         };
-        Ok((c?, 0))
+        Ok(leaf(c?))
     }
 
     fn trims(&self, p: Option<&Param>, kind: ParamKind, sp: Space) -> R<Vec<Trim>> {
@@ -889,16 +911,21 @@ impl<'a> Reader<'a> {
     /// A `PCURVE`: its surface, and the one 2D curve of its `DEFINITIONAL_REPRESENTATION` in
     /// the surface's parameter units.
     pub fn pcurve(&mut self, id: u64) -> R<Pcurve> {
-        self.pcurve_in(id, 0)
+        Ok(self.pcurve_in(id, 0)?.0)
     }
 
-    fn pcurve_in(&mut self, id: u64, depth: usize) -> R<Pcurve> {
+    /// A `PCURVE` at `depth`, and its height: its surface's or its curve's, whichever is more.
+    fn pcurve_in(&mut self, id: u64, depth: usize) -> R<(Pcurve, usize)> {
         let e = entity(self.ex, id)?;
         if e.name() != "PCURVE" {
             return Err(format!("#{id}: expected PCURVE, found {}", e.name()));
         }
         let p = e.params();
-        let surface = self.surface_in(reference(p.get(1), "pcurve surface")?, depth)?;
+        let SurfaceEntry {
+            surface,
+            height,
+            kinds,
+        } = self.surface_in(reference(p.get(1), "pcurve surface")?, depth)?;
         let rep = entity(self.ex, reference(p.get(2), "pcurve representation")?)?;
         if rep.name() != "DEFINITIONAL_REPRESENTATION" {
             return Err(format!("pcurve representation is {}", rep.name()));
@@ -911,49 +938,24 @@ impl<'a> Reader<'a> {
         let [item] = items else {
             return Err("pcurve representation must hold one curve".into());
         };
-        let kinds = Self::param_kinds(&surface);
-        let curve = self
-            .curve_2d(reference(Some(item), "pcurve curve")?, kinds, depth)?
-            .curve;
-        Ok(Pcurve { surface, curve })
+        let c = self.curve_2d(reference(Some(item), "pcurve curve")?, kinds, depth)?;
+        Ok((
+            Pcurve {
+                surface,
+                curve: c.curve,
+            },
+            height.max(c.height),
+        ))
     }
 
-    fn associated(&mut self, id: u64, depth: usize) -> R<Associated> {
+    /// An item of a surface curve's `associated_geometry`, and its height.
+    fn associated(&mut self, id: u64, depth: usize) -> R<(Associated, usize)> {
         if entity(self.ex, id)?.name() == "PCURVE" {
-            Ok(Associated::Pcurve(self.pcurve_in(id, depth)?))
+            let (p, h) = self.pcurve_in(id, depth)?;
+            Ok((Associated::Pcurve(p), h))
         } else {
-            Ok(Associated::Surface(self.surface_in(id, depth)?))
-        }
-    }
-
-    /// How a surface's (u, v) parameters scale from file units. Recursion follows the
-    /// surface's own basis and profile links, which reading bounded by [`MAX_GEOM_DEPTH`].
-    fn param_kinds(s: &Surface) -> (ParamKind, ParamKind) {
-        use ParamKind::{Angle, Length, Plain};
-        match s {
-            Surface::Plane { .. } => (Length, Length),
-            Surface::Cylinder { .. } | Surface::Cone { .. } => (Angle, Length),
-            Surface::Sphere { .. } | Surface::Torus { .. } | Surface::DegenerateTorus { .. } => {
-                (Angle, Angle)
-            }
-            Surface::Revolution { profile, .. } => (Angle, Self::curve_param_kind(profile)),
-            Surface::Extrusion { profile, .. } => (Self::curve_param_kind(profile), Plain),
-            Surface::BSpline(_) => (Plain, Plain),
-            Surface::Offset { basis, .. } | Surface::RectangularTrimmed { basis, .. } => {
-                Self::param_kinds(basis)
-            }
-        }
-    }
-
-    /// How a curve's parameter scales from file units (bounded like [`Self::param_kinds`]).
-    fn curve_param_kind(c: &Curve) -> ParamKind {
-        match c {
-            Curve::Circle { .. } | Curve::Ellipse { .. } => ParamKind::Angle,
-            Curve::Trimmed { basis, .. } | Curve::OffsetCurve3d { basis, .. } => {
-                Self::curve_param_kind(basis)
-            }
-            Curve::SurfaceCurve { curve_3d, .. } => Self::curve_param_kind(curve_3d),
-            _ => ParamKind::Plain,
+            let s = self.surface_in(id, depth)?;
+            Ok((Associated::Surface(s.surface), s.height))
         }
     }
 
@@ -998,29 +1000,58 @@ impl<'a> Reader<'a> {
 
     /// A surface entity.
     pub fn surface(&mut self, id: u64) -> R<Arc<Surface>> {
-        self.surface_in(id, 0)
+        Ok(self.surface_in(id, 0)?.surface)
     }
 
-    fn surface_in(&mut self, id: u64, depth: usize) -> R<Arc<Surface>> {
+    /// The surface `id` reached at `depth`: from the cache when its height still fits under
+    /// [`MAX_GEOM_DEPTH`] (checked before the cache, it let a chain read link by link pass
+    /// without bound), else read (and cached when it can be read).
+    fn surface_in(&mut self, id: u64, depth: usize) -> R<SurfaceEntry> {
         if let Some(s) = self.surfaces.get(&id) {
+            if depth.saturating_add(s.height) > MAX_GEOM_DEPTH {
+                return Err(TOO_DEEP_SURFACE.into());
+            }
             return Ok(s.clone());
         }
         if depth > MAX_GEOM_DEPTH {
-            return Err("surface definitions nested too deeply".into());
+            return Err(TOO_DEEP_SURFACE.into());
         }
-        let s = Arc::new(self.read_surface(id, depth)?);
+        let s = self.read_surface(id, depth)?;
         self.surfaces.insert(id, s.clone());
         Ok(s)
     }
 
-    fn read_surface(&mut self, id: u64, depth: usize) -> R<Surface> {
+    /// The surface `id` at `depth`, with its height and the kinds of its parameters.
+    fn read_surface(&mut self, id: u64, depth: usize) -> R<SurfaceEntry> {
+        use ParamKind::{Angle, Length, Plain};
+        // A surface that refers to no other curve or surface: height 0, its parameters by kind.
+        let leaf = |s: Surface| {
+            let kinds = match s {
+                Surface::Plane { .. } => (Length, Length),
+                Surface::Cylinder { .. } | Surface::Cone { .. } => (Angle, Length),
+                Surface::Sphere { .. }
+                | Surface::Torus { .. }
+                | Surface::DegenerateTorus { .. } => (Angle, Angle),
+                _ => (Plain, Plain),
+            };
+            SurfaceEntry {
+                surface: Arc::new(s),
+                height: 0,
+                kinds,
+            }
+        };
+        let built_on = |s: Surface, height: usize, kinds| SurfaceEntry {
+            surface: Arc::new(s),
+            height: height + 1,
+            kinds,
+        };
         let e = entity(self.ex, id)?;
         if e.is_complex() {
-            return self.bspline_surface(e);
+            return Ok(leaf(self.bspline_surface(e)?));
         }
         let p = e.params();
         let position = |r: &Self| r.placement(reference(p.get(1), "surface placement")?);
-        match e.name() {
+        let s = match e.name() {
             "PLANE" => Ok(Surface::Plane {
                 position: position(self)?,
             }),
@@ -1079,49 +1110,55 @@ impl<'a> Reader<'a> {
             | "UNIFORM_SURFACE"
             | "QUASI_UNIFORM_SURFACE" => self.bspline_surface(e),
             "SURFACE_OF_REVOLUTION" => {
-                let profile = self
-                    .curve_in(reference(p.get(1), "revolution profile")?, depth + 1)?
-                    .curve;
+                let c = self.curve_in(reference(p.get(1), "revolution profile")?, depth + 1)?;
                 let axis = self.axis1(reference(p.get(2), "revolution axis")?)?;
-                Ok(Surface::Revolution { profile, axis })
+                let s = Surface::Revolution {
+                    profile: c.curve,
+                    axis,
+                };
+                return Ok(built_on(s, c.height, (Angle, c.kind)));
             }
             "SURFACE_OF_LINEAR_EXTRUSION" => {
-                let profile = self
-                    .curve_in(reference(p.get(1), "extrusion profile")?, depth + 1)?
-                    .curve;
+                let c = self.curve_in(reference(p.get(1), "extrusion profile")?, depth + 1)?;
                 let vector = self.vector_in(
                     reference(p.get(2), "extrusion vector")?,
                     Space::model(self.units.len, 3),
                 )?;
-                Ok(Surface::Extrusion { profile, vector })
+                let s = Surface::Extrusion {
+                    profile: c.curve,
+                    vector,
+                };
+                return Ok(built_on(s, c.height, (c.kind, Plain)));
             }
             "OFFSET_SURFACE" => {
-                let basis = self.surface_in(reference(p.get(1), "offset basis")?, depth + 1)?;
+                let b = self.surface_in(reference(p.get(1), "offset basis")?, depth + 1)?;
                 let distance = self.length(p.get(2), "offset distance")?;
                 let self_intersect = logical(p.get(3), "offset self_intersect")?;
-                Ok(Surface::Offset {
-                    basis,
+                let s = Surface::Offset {
+                    basis: b.surface,
                     distance,
                     self_intersect,
-                })
+                };
+                return Ok(built_on(s, b.height, b.kinds));
             }
             "RECTANGULAR_TRIMMED_SURFACE" => {
-                let basis =
+                let b =
                     self.surface_in(reference(p.get(1), "trimmed surface basis")?, depth + 1)?;
-                let (ku, kv) = Self::param_kinds(&basis);
-                let (fu, fv) = (self.factor(ku), self.factor(kv));
-                Ok(Surface::RectangularTrimmed {
+                let (fu, fv) = (self.factor(b.kinds.0), self.factor(b.kinds.1));
+                let s = Surface::RectangularTrimmed {
                     u1: num(p.get(2), "u1")? * fu,
                     u2: num(p.get(3), "u2")? * fu,
                     v1: num(p.get(4), "v1")? * fv,
                     v2: num(p.get(5), "v2")? * fv,
                     u_sense: boolean(p.get(6), "usense")?,
                     v_sense: boolean(p.get(7), "vsense")?,
-                    basis,
-                })
+                    basis: b.surface,
+                };
+                return Ok(built_on(s, b.height, b.kinds));
             }
             n => Err(format!("not supported yet: surface {n}")),
-        }
+        };
+        Ok(leaf(s?))
     }
 
     fn bspline_surface(&mut self, e: &Entity) -> R<Surface> {
