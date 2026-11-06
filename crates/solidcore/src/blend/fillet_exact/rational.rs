@@ -28,7 +28,7 @@
 //! Deviations:
 //! - **A chamfer's two offsets (not the fork, #2950).** `round_rows` takes the spine's offset
 //!   from each face: the fork takes one, so an unequal chamfer's rail missed its face.
-//! - **Out-params.** `sm_NodalQuartic` returns its coefficients and branch tangents.
+//! - **Out-params.** `sm_NodalQuartic` returns its construction and branch tangents.
 //!   The polynomial helpers return their results; `sm_RoundRows` returns
 //!   its rows.
 //! - **Storing.** The surface, rails and spine are built first and stored together; the

@@ -102,3 +102,14 @@ Scope boundary: #3020's unequal-chamfer `round_rows` changes and #2791's N-D
 solver changes are independent. No C++ is built or run, and no merged finding is
 edited. The current definition ledger contains only the independent offset kind;
 it has no nodal-quartic entry to delete.
+
+## Compatibility with the corrected N-D solver
+
+In a separate detached checkout of #2791 at
+`f642c4eedef1736a42ddcfc3d65728b83d736ed4`, applying only this change's two
+production files makes its previously failing exact-nodal ball test pass. Its
+four-test integration target passes completely when its obsolete definition
+exclusion assertion is replaced by the expected one retained exact definition;
+that assertion runs the existing zero-bound and JSON round-trip checks too.
+The corrected traced-round geometry test is preserved and passes. No solver
+source or published #2791 branch is changed by this compatibility check.
