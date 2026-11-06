@@ -131,6 +131,11 @@ pub struct SetbackCorner {
     /// Not the fork (#2488, with `fillet_round_as_definition`): the fill's definition, which
     /// its patches keep.
     pub definition: Option<Arc<SetbackFill>>,
+    /// Not the fork (solidcore#2933): the Setback asked by its vertex's mark
+    /// ([`classify_setback`]'s `marked`), its setback and ease the made corner's
+    /// ([`FilletCorner::set_back_dist`], [`FilletCorner::ease_dist`]): the N x N corner
+    /// the mark made the Setback, built instead where no setback is set on it.
+    pub by_mark: Option<Box<FilletCorner>>,
 }
 
 impl Default for SetbackCorner {
@@ -146,8 +151,46 @@ impl Default for SetbackCorner {
             fill: None,
             open: false,
             definition: None,
+            by_mark: None,
         }
     }
+}
+
+/// Not the fork (solidcore#2933): a corner the mark made the Setback
+/// ([`SetbackCorner::by_mark`]) as the setback and ease set on it after the corners were
+/// made ask it. With a setback, the fill it asks (unless one is asked at its vertex already),
+/// its order raised to G2 for an ease, as [`classify_setback`] orders an asked ease. Without
+/// one it is the N x N corner again, as the mark alone builds it (the fork's 3x3 corner).
+pub fn settle_marked_corner(
+    corner: &mut FilletCorner,
+    fills: &[SetBackFill],
+) -> Option<SetBackFill> {
+    let vertex = corner.vertex?;
+    let setback = corner.set_back_dist;
+    let ease = corner.ease_dist;
+    let sb = corner.setback.as_mut().filter(|sb| sb.by_mark.is_some())?;
+    if setback.is_nan() || setback <= 0.0 {
+        let nxn = sb.by_mark.take()?;
+        *corner = *nxn;
+        corner.set_back_dist = setback;
+        corner.ease_dist = ease;
+        return None;
+    }
+    if set_back_fill_of(fills, vertex).is_some() {
+        return None;
+    }
+    let ease = if ease > 0.0 {
+        sb.fill_order = 2;
+        ease
+    } else {
+        0.0
+    };
+    Some(SetBackFill {
+        vertex,
+        setback,
+        ease,
+        open: false,
+    })
 }
 
 impl FilletCorner {
@@ -190,8 +233,9 @@ pub struct SetBackFill {
 /// that no blend corner took (`SmFilletConvexNxNCorner`'s setback corner, to which
 /// `SmFilletConcaveNxNCorner` hands its own). The fork's dc757a6 deletes the N x N setback
 /// paths; solidcore keeps them (WR-697 addendum `setback-asked-not-built-refused`), as the
-/// Setback does not build every corner they do (three equal rounds at a box corner, which a
-/// set-back vertex keeps from the Ball; a corner beside a curved face; a concave notch).
+/// Setback does not build every corner they do (a corner beside a curved face; a concave
+/// notch). Three equal rounds at a box corner, which a set-back vertex keeps from the Ball,
+/// are the Setback since solidcore#2933 ([`classify_setback`]'s `marked`).
 #[must_use]
 pub fn builds_setback(corner: &FilletCorner) -> bool {
     match corner.blend {
@@ -896,6 +940,14 @@ fn set_backs(
 /// ([`BlendCornerEvent::None`]). The fill's order with it: 2 for curvature-continuous
 /// sections or a setback with an ease, else 1.
 ///
+/// Not the fork (solidcore#2933): a vertex between planes `marked` set back
+/// (`AddSetBackVertex`, its distance set on the made corner with `SetSetBackDist`) is asked
+/// too, so three equal rounds there are the Setback with its certified fill, not the N x N
+/// corner's `N_FillNSidedHole` patch. The third value says the mark asked it: the session
+/// then reads the made corner's setback and ease as the fill asked
+/// ([`SetbackCorner::by_mark`]). Beside a curved face the mark is not read here: such a
+/// corner stays the N x N corner, as before.
+///
 /// # Errors
 ///
 /// [`SolidError::null_pointer`] where a ring edge use has no solver or one no offset surface
@@ -910,9 +962,10 @@ pub fn classify_setback(
     solvers: &dyn BallSolvers,
     tangency_tol_deg: f64,
     fills: &[SetBackFill],
-) -> Result<(BlendCornerEvent, usize)> {
+    marked: bool,
+) -> Result<(BlendCornerEvent, usize, bool)> {
     let nul = || SolidError::null_pointer(OP_CLASSIFY);
-    let none = Ok((BlendCornerEvent::None, 1));
+    let none = Ok((BlendCornerEvent::None, 1, false));
     let n = all_eus.len();
     if n < 3 || solver_eus.len() != n {
         return none;
@@ -1002,7 +1055,8 @@ pub fn classify_setback(
     }
 
     let asked = set_back_fill_of(fills, vtx);
-    if asked.is_none() && !one_kind {
+    let by_mark = marked && !curved && asked.is_none();
+    if asked.is_none() && !by_mark && !one_kind {
         return none;
     }
     // a corner left open (`open`) is the Setback's hole: its fill is built uncertified and
@@ -1016,20 +1070,20 @@ pub fn classify_setback(
     // three rounds of one radius meet a common ball (the Ball): not a setback unless asked.
     // Four or more meet one only where every face's offset passes through one point
     // (ClassifyBall, first); elsewhere they are set back (smlib#125 278bf77).
-    if asked.is_none() && !g2 && max_r - min_r <= tol && n == 3 {
+    if asked.is_none() && !by_mark && !g2 && max_r - min_r <= tol && n == 3 {
         return none;
     }
     // (setbacks that do not fit are the Setback's to refuse, or the overflow's:
-    // MakeSetBackTopology)
+    // MakeSetBackTopology; a marked corner's ease, set later, raises its order there)
     let order = if g2 || asked.is_some_and(|a| a.ease > 0.0) {
         2
     } else {
         1
     };
     if curved && order != 1 {
-        return Ok((BlendCornerEvent::None, order));
+        return Ok((BlendCornerEvent::None, order, false));
     }
-    Ok((BlendCornerEvent::Setback, order))
+    Ok((BlendCornerEvent::Setback, order, by_mark))
 }
 
 /// What the Setback's topology operates on besides the corner itself.

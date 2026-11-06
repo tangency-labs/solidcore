@@ -47,7 +47,7 @@ fn build() -> (Kernel, Brep) {
         let mut s = FilletSession::new(&mut k, &mut b).unwrap();
         s.prepare_constant_radius_edges(&mut k, &edges, 5.0, 1, 1, 1.0)
             .unwrap();
-        // set back (`AddSetBackVertex`), so the corner is the N x N corner, not the Ball
+        // set back (`AddSetBackVertex`), so the corner is the Setback, not the Ball
         s.add_set_back_vertex(v);
         s.create_corners(&k, None).unwrap();
         let corners: Vec<_> = s
