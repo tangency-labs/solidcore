@@ -827,6 +827,10 @@ impl<'a> Reader<'a> {
                     .get(2)
                     .and_then(Param::as_list)
                     .ok_or("surface curve without associated geometry")?;
+                // LIST [1:2] OF pcurve_or_surface (ISO 10303-42).
+                if items.is_empty() {
+                    return Err("surface curve without associated geometry".into());
+                }
                 if items.len() > 2 {
                     return Err("surface curve with more than two associated items".into());
                 }
