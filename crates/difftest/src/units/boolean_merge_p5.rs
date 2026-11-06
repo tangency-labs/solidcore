@@ -1,13 +1,11 @@
-//! Wire/shell-vertex boolean stage on identical raw input topology. The C++ side builds
-//! each operand with the shared real-B-rep fixture builder (`sc_merge_fixture.h`
-//! `operand`). The Rust side builds the same operand itself ([`own_operand`]): an
-//! `.smb` file read by the Rust reader, a wire, face or network built by the Rust
-//! kernel ([`crate::own_builder`]), an isolated shell vertex (`make_shell_vertex`) or
-//! an empty B-rep. Each is renumbered into the shim's `native_graph` order
-//! ([`crate::own_builder::renumber_native`]: the edge and vertex lists, then the walk),
-//! so the mark and mate selectors name the same edges and vertices. Nothing of the shim's
-//! export reaches the Rust side: its record counts, vertex use lists and geometry are
-//! its own.
+//! Wire/shell-vertex boolean stage (`SmMerge::ProcessWiresAndShellVertices`), ported
+//! from upstream and checked against the unit's golden. Each operand is built by the Rust
+//! kernel ([`own_operand`]): an `.smb` file read by the Rust reader, a wire, face or
+//! network built by the Rust kernel ([`crate::own_builder`]), an isolated shell vertex
+//! (`make_shell_vertex`) or an empty B-rep, renumbered into the reference fixture's
+//! `native_graph` order ([`crate::own_builder::renumber_native`]: the edge and vertex
+//! lists, then the walk), so the mark and mate selectors name the edges and vertices the
+//! reference fixture's did.
 use super::boolean_merge_p1::Canon;
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -25,10 +23,68 @@ use solidcore::kernel::Kernel;
 use solidcore::topology::topology::Topology;
 use solidcore::topology::topology_traverser::{Entity, Marks};
 use solidcore::topology::{edge, vertex, vertexuse, Brep, EdgeId};
-use solidcore_ffi::units::boolean_merge_p5::{self as ffi, Operand, Request};
 
-/// Differential runner for `SmMerge::ProcessWiresAndShellVertices`.
+/// Runner for `SmMerge::ProcessWiresAndShellVertices`.
 pub struct Runner;
+
+/// Refuses mates that are not one entry per other edge, each `-1` or a distinct primary
+/// edge.
+fn validate_mates(mates: &[i64], primary_edges: usize, other_edges: usize) -> Result<(), HarnessError> {
+    let mut seen = std::collections::BTreeSet::new();
+    if mates.len() != other_edges
+        || mates
+            .iter()
+            .any(|&m| m < -1 || (m >= 0 && (m as usize >= primary_edges || !seen.insert(m))))
+    {
+        return Err(err("invalid argument"));
+    }
+    Ok(())
+}
+
+/// Whether operand `s` keeps the reference fixture's input contract: a shell vertex at a
+/// finite point within `1e300`, or a B-rep block the `topology.vertexuse` fixture accepts
+/// ([`crate::cases::contract::vertexuse_block`]).
+fn operand_contract(s: &Spec) -> Result<bool, HarnessError> {
+    Ok(match s {
+        Spec::Empty => true,
+        Spec::Vertex { point } => point.iter().all(|c| c.is_finite() && c.abs() <= 1.0e300),
+        Spec::Graph { brep } => {
+            let mut block = Vec::new();
+            match brep {
+                BrepIn::File { rebuild, .. } => block.extend([0.0, f64::from(*rebuild)]),
+                BrepIn::Wire { curve, t0, t1 } => {
+                    block.push(1.0);
+                    shared::push_curve(&mut block, curve)?;
+                    block.extend([t0, t1]);
+                }
+                BrepIn::Face { surface, dom } => {
+                    block.push(2.0);
+                    shared::push_surface(&mut block, surface)?;
+                    block.extend(dom);
+                }
+                BrepIn::Network => block.push(3.0),
+            }
+            block.extend([0.0, 0.0]);
+            crate::cases::contract::vertexuse_block::holds(&shared::path_of(brep)?, &block)
+        }
+    })
+}
+
+/// The entity counts ([`crate::own_builder::counts`]) of operand `spec` as the Rust kernel
+/// builds it ([`own_operand`]), or `None` when it is outside the contract
+/// ([`operand_contract`]) or does not build. The generators draw mates and selectors
+/// within these.
+pub(crate) fn own_counts(spec: &Value) -> Option<[usize; 10]> {
+    let spec: Spec = serde_json::from_value(spec.clone()).ok()?;
+    if !operand_contract(&spec).ok()? {
+        return None;
+    }
+    let mut k = Kernel::default();
+    own_operand(&mut k, &spec)
+        .ok()?
+        .ok()
+        .map(|b| crate::own_builder::counts(&b))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -71,45 +127,6 @@ fn err(e: &(impl ToString + ?Sized)) -> HarnessError {
     HarnessError::new(e.to_string())
 }
 
-pub(crate) fn program(s: &Spec) -> Result<(String, Vec<f64>), HarnessError> {
-    let mut block = Vec::new();
-    let path = match s {
-        Spec::Empty => {
-            block.push(5.0);
-            String::new()
-        }
-        Spec::Vertex { point } => {
-            block.push(4.0);
-            block.extend(point);
-            String::new()
-        }
-        Spec::Graph { brep } => {
-            match brep {
-                BrepIn::File { rebuild, .. } => block.extend([0.0, f64::from(*rebuild)]),
-                BrepIn::Wire { curve, t0, t1 } => {
-                    block.push(1.0);
-                    shared::push_curve(&mut block, curve)?;
-                    block.extend([t0, t1]);
-                }
-                BrepIn::Face { surface, dom } => {
-                    block.push(2.0);
-                    shared::push_surface(&mut block, surface)?;
-                    block.extend(dom);
-                }
-                BrepIn::Network => block.push(3.0),
-            }
-            block.extend([0.0, 0.0]);
-            shared::path_of(brep)?
-        }
-    };
-    Ok((path, block))
-}
-pub(crate) fn operand(p: &(String, Vec<f64>)) -> Operand<'_> {
-    Operand {
-        path: &p.0,
-        block: &p.1,
-    }
-}
 fn flags(c: [usize; 10], pre: u8, unmark: &[usize]) -> Vec<i64> {
     (0..c[7] + c[9])
         .map(|i| i64::from(pre & if i < c[7] { 1 } else { 2 } != 0 && !unmark.contains(&i)))
@@ -354,52 +371,10 @@ fn snapshot_ordered(
     }
     Ok(())
 }
-fn output(raw: &[f64]) -> Result<Output, HarnessError> {
-    let n = *raw.first().ok_or_else(|| err("empty result"))? as usize;
-    let end = n.checked_add(1).ok_or_else(|| err("output overflow"))?;
-    let ints: Vec<i64> = raw
-        .get(1..end)
-        .ok_or_else(|| err("truncated topology"))?
-        .iter()
-        .map(|&x| x as i64)
-        .collect();
-    let values = raw
-        .get(end..)
-        .ok_or_else(|| err("truncated values"))?
-        .to_vec();
-    Ok(Output::new()
-        .ints("topology", ints)
-        .values("geometry", values))
-}
 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "boolean.merge_p5"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let a = program(&i.primary)?;
-        let b = program(&i.other)?;
-        let aa = ffi::export(operand(&a)).map_err(|e| err(&e))?;
-        let bb = ffi::export(operand(&b)).map_err(|e| err(&e))?;
-        let ac = solidcore_ffi::units::topology_vertexuse::counts(&aa.graph)
-            .ok_or_else(|| err("primary graph"))?;
-        let bc = solidcore_ffi::units::topology_vertexuse::counts(&bb.graph)
-            .ok_or_else(|| err("other graph"))?;
-        let am = flags(ac, i.primary_pre, &i.primary_unmark);
-        let bm = flags(bc, i.other_pre, &i.other_unmark);
-        let mates = mapping(&i, ac, bc);
-        ffi::validate_mates(&mates, ac[7], bc[7]).map_err(|e| err(&e))?;
-        let r = Request {
-            operation: i.operation,
-            marks: i.marks,
-            primary_marked: &am,
-            other_marked: &bm,
-            mates: &mates,
-            prefill: i.prefill,
-            repeat: i.repeat,
-        };
-        output(&ffi::eval(operand(&a), operand(&b), r).map_err(|e| err(&e))?)
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
@@ -416,7 +391,7 @@ impl UnitDiff for Runner {
         let ac = crate::own_builder::counts(&a);
         let bc = crate::own_builder::counts(&b);
         let edge_mates = mapping(&i, ac, bc);
-        ffi::validate_mates(&edge_mates, ac[7], bc[7]).map_err(|e| err(&e))?;
+        validate_mates(&edge_mates, ac[7], bc[7])?;
         // the shim's caller state: editing on for both B-reps (SmMerge.cpp:2645-2646)
         a.set_editing_enabled(true);
         b.set_editing_enabled(true);
@@ -565,12 +540,7 @@ impl UnitDiff for Runner {
         let (other, other_wire) = generated_operand(rng, scale);
         // Topology comes from construction only, before the operation. Count
         // actual edges because tiny face domains can collapse during setup.
-        let edge_count = |v: &Value| {
-            let spec: Spec = serde_json::from_value(v.clone()).ok()?;
-            let p = program(&spec).ok()?;
-            let f = ffi::export(operand(&p)).ok()?;
-            solidcore_ffi::units::topology_vertexuse::counts(&f.graph).map(|c| c[7])
-        };
+        let edge_count = |v: &Value| own_counts(v).map(|c| c[7]);
         let primary_edges = edge_count(&primary)?;
         let other_edges = edge_count(&other)?;
         let operation = rng.below(11);
@@ -636,7 +606,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn duplicate_mates_are_rejected_by_both_engines() {
+    fn duplicate_mates_are_rejected() {
         let case = Case {
             unit: "boolean.merge_p5".into(),
             name: "conflicting_relate".into(),
@@ -645,7 +615,6 @@ mod tests {
                 "other":{"kind":"graph","brep":{"kind":"network"}},"operation":5,
                 "primary_pre":3,"other_pre":3,"mates":[0,0,1,2,3]}),
         };
-        assert!(Runner.run_cpp(&case).is_err());
         assert!(Runner.run_rust(&case).is_err());
     }
 }

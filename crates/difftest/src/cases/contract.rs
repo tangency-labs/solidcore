@@ -386,4 +386,326 @@ pub fn planar_curve_block(
         return None;
     }
     clamped(u, p)
+/// The B-rep blocks of the `topology.vertexuse` fixture (`.smb` file, wire edge, face,
+/// network, shell vertices and edges, face list, exact ellipse face, edge-loop face; the
+/// layout is documented with that runner's `brep_block`), as the reference wrapper
+/// accepts them before it builds the B-rep: an existing `.smb` file, B-spline curves and
+/// surfaces of at most 33 control points per direction and degree 5 with one rationality,
+/// weights in `[1e-3, 1e3]`, finite values within `1e300` and clamped knots, plane
+/// normals of non-zero length, wire intervals inside the curve's, ordered face domains
+/// inside a B-spline surface's or within `1e4` on a plane, the analytic, ellipse and
+/// edge-loop face ranges, network points within `1e6` and edges between two distinct
+/// points, and no value of the block above `1e150` other than `±f64::MAX` (HANG-29:
+/// building such a face never returns upstream). `block` must be exactly one block.
+pub mod vertexuse_block {
+    use std::path::Path;
+
+    use solidcore::nurbs::math::{NOW, NOZ};
+
+    /// Largest control point index.
+    const MAX_INDEX: usize = 32;
+    /// Largest degree.
+    const MAX_DEGREE: usize = 5;
+    /// Largest coordinate magnitude.
+    const MAX_COORD: f64 = 1.0e300;
+    /// Largest block value before HANG-29.
+    const MAX_BLOCK_MAGNITUDE: f64 = 1.0e150;
+    /// Most faces of a face list.
+    const MAX_FACES: usize = 4;
+    /// Most points of a network block.
+    const MAX_NETWORK_POINTS: usize = 64;
+    /// Most edges of a network block.
+    const MAX_NETWORK_EDGES: usize = 128;
+    /// Most edges of an edge-loop face.
+    const MAX_EDGE_LOOP_EDGES: usize = 64;
+
+    /// Whether `block` (of an `.smb` file at `path` for kind 0) keeps the contract.
+    #[must_use]
+    pub fn holds(path: &str, block: &[f64]) -> bool {
+        let mut rd = Reader {
+            input: block,
+            at: 0,
+        };
+        brep(&mut rd, path).is_some()
+            && rd.at == block.len()
+            && !block.iter().any(|v| {
+                let a = v.abs();
+                a > MAX_BLOCK_MAGNITUDE && a < f64::MAX
+            })
+    }
+
+    struct Reader<'a> {
+        input: &'a [f64],
+        at: usize,
+    }
+
+    impl Reader<'_> {
+        fn num(&mut self) -> Option<f64> {
+            let v = *self.input.get(self.at)?;
+            self.at += 1;
+            Some(v)
+        }
+        fn finite(&mut self) -> Option<f64> {
+            let v = self.num()?;
+            (v.is_finite() && v.abs() <= MAX_COORD).then_some(v)
+        }
+        fn finites(&mut self, k: usize) -> Option<Vec<f64>> {
+            (0..k).map(|_| self.finite()).collect()
+        }
+        fn vec3(&mut self) -> Option<[f64; 3]> {
+            Some([self.finite()?, self.finite()?, self.finite()?])
+        }
+        fn nonzero3(&mut self) -> Option<[f64; 3]> {
+            let v = self.vec3()?;
+            (v.iter().map(|c| c * c).sum::<f64>() >= 1e-12).then_some(v)
+        }
+        fn index(&mut self, max: usize) -> Option<usize> {
+            let v = self.num()?;
+            (v.fract() == 0.0 && v >= 0.0 && v <= max as f64).then_some(v as usize)
+        }
+        fn flag(&mut self) -> Option<bool> {
+            Some(self.index(1)? == 1)
+        }
+    }
+
+    /// `k` control points of one rationality (`z = NOZ` only when `planar`).
+    fn points(rd: &mut Reader<'_>, k: usize, planar: bool) -> Option<()> {
+        let mut w0 = None;
+        for _ in 0..k {
+            let (x, y, z, w) = (rd.num()?, rd.num()?, rd.num()?, rd.num()?);
+            if z == NOZ && !planar {
+                return None;
+            }
+            let rational = w != NOW;
+            if *w0.get_or_insert(rational) != rational {
+                return None;
+            }
+            if rational && !(1e-3..=1e3).contains(&w) {
+                return None;
+            }
+            let z = if z == NOZ { 0.0 } else { z };
+            if [x, y, z]
+                .iter()
+                .any(|c| !c.is_finite() || c.abs() > MAX_COORD)
+            {
+                return None;
+            }
+        }
+        Some(())
+    }
+
+    /// The parameter domain of a surface block.
+    enum Domain {
+        /// A plane (unbounded).
+        Plane,
+        /// A B-spline surface's `[u0, v0, u1, v1]`.
+        BSpline([f64; 4]),
+    }
+
+    /// A surface block; its domain.
+    fn surface(rd: &mut Reader<'_>) -> Option<Domain> {
+        if rd.index(1)? == 1 {
+            rd.vec3()?;
+            rd.nonzero3()?;
+            return Some(Domain::Plane);
+        }
+        rd.flag()?;
+        rd.index(11)?;
+        let n = rd.index(MAX_INDEX)?;
+        let m = rd.index(MAX_INDEX)?;
+        let p = rd.index(MAX_DEGREE)?;
+        let q = rd.index(MAX_DEGREE)?;
+        let r = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+        let s = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+        if p == 0 || p > n || q == 0 || q > m || r != n + p + 1 || s != m + q + 1 {
+            return None;
+        }
+        points(rd, (n + 1) * (m + 1), false)?;
+        let u = rd.finites(r + 1)?;
+        let v = rd.finites(s + 1)?;
+        let (u0, u1) = super::clamped(&u, p)?;
+        let (v0, v1) = super::clamped(&v, q)?;
+        Some(Domain::BSpline([u0, v0, u1, v1]))
+    }
+
+    /// A B-spline curve block; its parameter range.
+    fn curve(rd: &mut Reader<'_>) -> Option<(f64, f64)> {
+        let dim = rd.index(3)?;
+        if dim < 2 {
+            return None;
+        }
+        let n = rd.index(MAX_INDEX)?;
+        let p = rd.index(MAX_DEGREE)?;
+        let m = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+        if p == 0 || p > n || m != n + p + 1 {
+            return None;
+        }
+        points(rd, n + 1, dim == 2)?;
+        let knots = rd.finites(m + 1)?;
+        super::clamped(&knots, p)
+    }
+
+    /// The `surface u0 v0 u1 v1` face of a face block.
+    fn face(rd: &mut Reader<'_>) -> Option<()> {
+        let dom = surface(rd)?;
+        let d = rd.finites(4)?;
+        let [a, b, c, e] = <[f64; 4]>::try_from(d.as_slice()).ok()?;
+        if a >= c || b >= e {
+            return None;
+        }
+        match dom {
+            Domain::BSpline([u0, v0, u1, v1]) => {
+                (a >= u0 && c <= u1 && b >= v0 && e <= v1).then_some(())
+            }
+            Domain::Plane => d.iter().all(|x| x.abs() <= 1e4).then_some(()),
+        }
+    }
+
+    /// A canonical analytic face of a face list (kinds 10 to 13).
+    fn analytic_face(rd: &mut Reader<'_>) -> Option<()> {
+        let kind = rd.index(13)?;
+        let (scale, a, b, c) = (rd.finite()?, rd.finite()?, rd.finite()?, rd.finite()?);
+        if !(1e-3..=1e3).contains(&scale) || !(1e-3..=1e2).contains(&a) || !(0.0..=1e2).contains(&c)
+        {
+            return None;
+        }
+        let shape = match kind {
+            10 | 11 => true,
+            12 => b > 0.0 && b < a,
+            13 => b > 0.0 && b < 90.0,
+            _ => false,
+        };
+        if !shape || rd.vec3()?.iter().any(|x| x.abs() > 1e4) {
+            return None;
+        }
+        rd.index(2)?;
+        let f = rd.finites(4)?;
+        let [f0u, f0v, f1u, f1v] = <[f64; 4]>::try_from(f.as_slice()).ok()?;
+        (f.iter().all(|t| (0.0..=1.0).contains(t)) && f0u < f1u && f0v < f1v).then_some(())
+    }
+
+    /// The exact ellipse face (kind 9).
+    fn ellipse_face(rd: &mut Reader<'_>) -> Option<()> {
+        let circle = rd.flag()?;
+        for _ in 0..3 {
+            if rd.finite()?.abs() > 1e4 {
+                return None;
+            }
+        }
+        rd.index(2)?;
+        let (rx, ry) = (rd.finite()?, rd.finite()?);
+        if !(1e-3..=1e4).contains(&rx) || !(1e-3..=1e4).contains(&ry) || (circle && rx != ry) {
+            return None;
+        }
+        let (a, b) = (rd.finite()?, rd.finite()?);
+        if a.abs() > 360.0 || b.abs() > 720.0 || !(1.0..=360.0).contains(&(b - a)) {
+            return None;
+        }
+        let (a, b) = (rd.finite()?, rd.finite()?);
+        if a.abs() > 1e4 || b.abs() > 1e4 || b - a < 1e-3 {
+            return None;
+        }
+        rd.flag()?;
+        rd.flag()?;
+        Some(())
+    }
+
+    /// The edge-loop face (kind 14).
+    fn edge_loop_face(rd: &mut Reader<'_>) -> Option<()> {
+        rd.vec3()?;
+        rd.nonzero3()?;
+        let d = rd.finites(4)?;
+        let [u0, v0, u1, v1] = <[f64; 4]>::try_from(d.as_slice()).ok()?;
+        if u0 >= u1 || v0 >= v1 {
+            return None;
+        }
+        rd.finite()?;
+        let n = rd.index(MAX_EDGE_LOOP_EDGES)?;
+        if n == 0 {
+            return None;
+        }
+        for _ in 0..n {
+            let vectors = match rd.index(3)? {
+                1 => 2,
+                3 => 4,
+                _ => return None,
+            };
+            for _ in 0..vectors {
+                rd.vec3()?;
+            }
+            let (t0, t1) = (rd.finite()?, rd.finite()?);
+            if t0 >= t1 {
+                return None;
+            }
+            rd.finite()?;
+        }
+        Some(())
+    }
+
+    fn brep(rd: &mut Reader<'_>, path: &str) -> Option<()> {
+        match rd.index(14)? {
+            0 => {
+                let p = Path::new(path);
+                if p.extension().and_then(|e| e.to_str()) != Some("smb") || !p.is_file() {
+                    return None;
+                }
+                rd.flag()?;
+            }
+            1 => {
+                let (a, b) = curve(rd)?;
+                let (t0, t1) = (rd.finite()?, rd.finite()?);
+                if !(a <= t0 && t0 < t1 && t1 <= b) {
+                    return None;
+                }
+            }
+            kind @ (2 | 4) => {
+                face(rd)?;
+                if kind == 4 {
+                    for _ in 0..2 {
+                        if !(0.0..=1.0).contains(&rd.finite()?) {
+                            return None;
+                        }
+                    }
+                }
+            }
+            10 => {
+                let nf = rd.index(MAX_FACES)?;
+                if nf == 0 {
+                    return None;
+                }
+                for _ in 0..nf {
+                    if rd.input.get(rd.at).is_some_and(|&k| k >= 10.0) {
+                        analytic_face(rd)?;
+                    } else {
+                        face(rd)?;
+                    }
+                }
+            }
+            5 => {
+                let np = rd.index(MAX_NETWORK_POINTS)?;
+                for _ in 0..np {
+                    if rd.vec3()?.iter().any(|c| c.abs() > 1e6) {
+                        return None;
+                    }
+                }
+                for _ in 0..rd.index(MAX_NETWORK_EDGES)? {
+                    let a = rd.index(np.saturating_sub(1))?;
+                    let b = rd.index(np.saturating_sub(1))?;
+                    if np == 0 || a == b {
+                        return None;
+                    }
+                    if rd.flag()? {
+                        curve(rd)?;
+                    }
+                }
+            }
+            9 => ellipse_face(rd)?,
+            14 => edge_loop_face(rd)?,
+            3 => {}
+            _ => return None,
+        }
+        rd.flag()?;
+        rd.flag()?;
+        Some(())
+    }
 }

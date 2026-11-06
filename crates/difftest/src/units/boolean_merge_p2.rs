@@ -1,20 +1,18 @@
 //! Runner for unit `boolean.merge_p2`: the `SmMerge` B-rep constructor, `MergeEdge`,
 //! `MakeFaceuse`, `MergeAddedFace` and `MergeAddedTopology` on identical raw input
-//! topology. C++: `solidcore_ffi::units::boolean_merge_p2`. Rust:
-//! `solidcore::boolean::merge::p2`.
+//! topology. Ported from upstream `SmMerge` into `solidcore::boolean::merge::p2`; checked
+//! against the unit's golden.
 //!
-//! Operands are built on each side by its own kernel: the C++ by the shared real-B-rep
-//! fixture builder of `boolean.merge_p5`'s shim, the Rust by the Rust kernel
-//! ([`p5::own_operand`], in the shim's native order); no C++ export reaches the Rust
-//! side. The fixture's mates are established on both sides with `Relate` (edges,
-//! vertices, faces), the default by-index mates from each side's own counts. Outputs
-//! are the request's results followed by snapshots of the operands, as `merge_p5`'s.
+//! Operands are built by the Rust kernel ([`p5::own_operand`], in the reference fixture's
+//! native order). The fixture's mates are established with `Relate` (edges, vertices,
+//! faces), the default by-index mates from the operands' counts. Outputs are the
+//! request's results followed by snapshots of the operands, as `merge_p5`'s.
 //! `MergeAddedTopology` runs on the Rust side through the intersector runner's
 //! two-B-rep adapter (`Two`), which implements [`MergeBrep`] here.
 //!
 //! Tolerances may be the strings `"NaN"`, `"inf"`, `"-inf"` (JSON has no non-finite
 //! numbers). Failures are `status_<SmStatus>`-style integers in the first output slot
-//! on both sides.
+//! as upstream reports them.
 
 use super::boolean_merge_p5::{self as p5, Spec};
 use super::boolean_topology_intersector_p1::{brep_h, hd, Two, H, K_EDGE, K_FACE, K_VERTEX};
@@ -42,9 +40,8 @@ use solidcore::topology::{
     VertexId,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::boolean_merge_p2::{self as ffi, Mates, Request};
 
-/// Differential runner for `boolean.merge_p2`.
+/// Runner for `boolean.merge_p2`.
 pub struct Runner;
 
 /// Handle kinds of the Rust-only face use, shell and region handles of [`MergeBrep`].
@@ -170,89 +167,6 @@ fn mates_of(m: &MatesIn, a: [usize; 10], b: [usize; 10]) -> [Vec<i64>; 3] {
         m.vertices.clone().unwrap_or_else(|| by_index(a[9], b[9])),
         m.faces.clone().unwrap_or_else(|| vec![-1; b[3]]),
     ]
-}
-
-/// Everything the C++ engine needs: construction programs, counts and the mates.
-struct Prepared {
-    a: (String, Vec<f64>),
-    b: Option<(String, Vec<f64>)>,
-    mates: [Vec<i64>; 3],
-    tol: f64,
-    ang: f64,
-}
-
-fn prepare(i: &Inputs) -> Result<Prepared, HarnessError> {
-    let a = p5::program(&i.primary)?;
-    let b = i.other.as_ref().map(p5::program).transpose()?;
-    let ac = ffi::counts(p5::operand(&a)).map_err(|e| err(&e))?;
-    let bc = match &b {
-        Some(b) => ffi::counts(p5::operand(b)).map_err(|e| err(&e))?,
-        None => [0; 10],
-    };
-    let mates = mates_of(&i.mates, ac, bc);
-    Ok(Prepared {
-        a,
-        b,
-        mates,
-        tol: float(&i.tol)?,
-        ang: float(&i.ang)?,
-    })
-}
-
-fn request<'a>(op: &'a Op, mates: &'a [Vec<i64>; 3]) -> Request<'a> {
-    let m = Mates {
-        edges: &mates[0],
-        vertices: &mates[1],
-        faces: &mates[2],
-    };
-    match op {
-        Op::Construct => Request::Construct,
-        Op::MergeEdge { edgeuse, region } => Request::MergeEdge {
-            mates: m,
-            edgeuse: *edgeuse,
-            region: *region,
-        },
-        Op::MakeFaceuse {
-            faceuse,
-            region,
-            new_faces,
-        } => Request::MakeFaceuse {
-            mates: m,
-            faceuse: *faceuse,
-            region: *region,
-            want_new_faces: *new_faces,
-        },
-        Op::MergeAddedTopology {
-            faces,
-            edges,
-            vertices,
-            flags,
-        } => Request::MergeAddedTopology {
-            faces: faces.as_deref(),
-            edges: edges.as_deref(),
-            vertices: vertices.as_deref(),
-            flags: *flags,
-        },
-        Op::MergeAddedFace { face } => Request::MergeAddedFace { face: *face },
-    }
-}
-
-fn output(raw: &[f64]) -> Result<Output, HarnessError> {
-    let n = *raw.first().ok_or_else(|| err("empty result"))? as usize;
-    let end = n.checked_add(1).ok_or_else(|| err("output overflow"))?;
-    let ints: Vec<i64> = raw
-        .get(1..end)
-        .ok_or_else(|| err("truncated integers"))?
-        .iter()
-        .map(|&x| x as i64)
-        .collect();
-    let values = raw
-        .get(end..)
-        .ok_or_else(|| err("truncated values"))?
-        .to_vec();
-    Ok(Output::new()
-        .ints("topology", ints)
-        .values("geometry", values))
 }
 
 /// The upstream status of a Rust error (`SM_ERR_INVALID_INPUT` for
@@ -800,20 +714,6 @@ impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "boolean.merge_p2"
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let p = prepare(&i)?;
-        let raw = ffi::eval(
-            p5::operand(&p.a),
-            p.b.as_ref().map(p5::operand),
-            p.tol,
-            p.ang,
-            i.options,
-            request(&i.op, &p.mates),
-        )
-        .map_err(|e| err(&e))?;
-        output(&raw)
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
         run_rust(&i)
@@ -821,12 +721,6 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         generate(rng)
     }
-}
-
-fn counts_of(spec: &Value) -> Option<[usize; 10]> {
-    let spec: Spec = serde_json::from_value(spec.clone()).ok()?;
-    let p = p5::program(&spec).ok()?;
-    ffi::counts(p5::operand(&p)).ok()
 }
 
 /// Operands with faces: planar faces at several scales and B-rep files.
@@ -933,7 +827,7 @@ fn generate_one(rng: &mut Rng, which: u64) -> Option<Value> {
             } else {
                 primary.clone()
             };
-            let (a, b) = (counts_of(&primary)?, counts_of(&other)?);
+            let (a, b) = (p5::own_counts(&primary)?, p5::own_counts(&other)?);
             let shuffle = rng.below(4) == 0;
             let edges = mates(rng, a[7], b[7], &[0, 2, 8], shuffle);
             let vertices = mates(rng, a[9], b[9], &[0, 1, 8], shuffle);
@@ -945,7 +839,7 @@ fn generate_one(rng: &mut Rng, which: u64) -> Option<Value> {
         5..=7 => {
             let primary = face_operand(rng)?;
             let other = primary.clone();
-            let (a, b) = (counts_of(&primary)?, counts_of(&other)?);
+            let (a, b) = (p5::own_counts(&primary)?, p5::own_counts(&other)?);
             if b[2] == 0 {
                 return None;
             }
@@ -965,7 +859,7 @@ fn generate_one(rng: &mut Rng, which: u64) -> Option<Value> {
             } else {
                 p5::generated_operand(rng, 1.0).0
             };
-            let a = counts_of(&primary)?;
+            let a = p5::own_counts(&primary)?;
             let tol = *rng.choose(&[1.0e-12, 1.0e-6, 1.0e-3, 0.1])?;
             if a[3] > 0 && rng.below(3) == 0 {
                 return Some(json!({"op":"merge_added_face","primary":primary,"tol":tol,
