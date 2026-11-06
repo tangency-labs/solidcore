@@ -9,7 +9,7 @@
 //! kept (`pbOptCrvOnSurf`). Then the face is shrunk. Where the trim keeps the map
 //! (a B-spline patch; a cylinder trimmed along its axis), the trim curves stay as given and
 //! lie on their edges to 1e-12. Everywhere else (a cylinder trimmed in its angle, a
-//! torus along its generator, a plane), and with the flag off, they're removed.
+//! torus along its generator, a plane), they're removed. Upstream removed them all.
 
 #![allow(
     clippy::unwrap_used,
@@ -217,12 +217,6 @@ fn shrunk_face_trims(k: &mut Kernel, srf: Surface, d: &Extent2d) -> Shrunk {
     out
 }
 
-fn kernel(on: bool) -> Kernel {
-    let mut k = Kernel::default();
-    k.fixes.face_trim_curves_kept_where_exact = on;
-    k
-}
-
 /// A bicubic B-spline of two spans each way, a hill (the fork's `shrink_bspline_patch`).
 fn bspline_patch() -> Surface {
     let mut net = Vec::new();
@@ -288,8 +282,6 @@ fn bspline_patch_keeps_its_trims() {
     let on = shrunk_face_trims(&mut Kernel::default(), bspline_patch(), &d);
     assert_eq!((on.kept, on.removed), (8, 0));
     assert!(on.off <= 1e-12, "off {}", on.off);
-    let off = shrunk_face_trims(&mut kernel(false), bspline_patch(), &d);
-    assert_eq!(off.removed, 8, "upstream removes every trim curve");
 }
 
 #[test]
@@ -301,16 +293,12 @@ fn cylinder_trimmed_along_its_axis_keeps_its_trims() {
     let on = shrunk_face_trims(&mut k, s, &d);
     assert_eq!((on.kept, on.removed), (8, 0));
     assert!(on.off <= 1e-12, "off {}", on.off);
-
-    let mut k = kernel(false);
-    let s = quarter_cylinder(&k);
-    assert_eq!(shrunk_face_trims(&mut k, s, &d).removed, 8);
 }
 
 #[test]
 fn reparameterizing_trims_remove_the_trim_curves() {
     // the cylinder trimmed in its angle: its arc is rebuilt over the smaller angle
-    let mut k = kernel(true);
+    let mut k = Kernel::default();
     let s = quarter_cylinder(&k);
     let n = s.natural_uv_domain_with_nurb(&k).unwrap();
     let d = sub(&n, (0.2, 0.7), (0.0, 1.0));
@@ -334,15 +322,11 @@ fn reparameterizing_trims_remove_the_trim_curves() {
 #[test]
 fn bound_a_rounding_step_past_a_knot_ends_on_the_knot() {
     // the hill's patch whose bound in u sits one rounding step past its knot at 0.5 (the
-    // fork's `shrink_bound_a_rounding_step_past_a_knot`): with WR-702 the bound is 0.5 and
-    // the patch has the one span [0.2, 0.5] along u
+    // fork's `shrink_bound_a_rounding_step_past_a_knot`): the bound is 0.5 and the patch
+    // has the one span [0.2, 0.5] along u (upstream kept a sliver span past 0.5)
     let d = Extent2d::from_points(Point2::new(0.2, 0.3), Point2::new(0.5_f64.next_up(), 0.9));
     let mut k = Kernel::default();
     let on = shrunk_face_trims(&mut k, bspline_patch(), &d);
     assert_eq!((on.kept, on.removed, on.spans_u), (8, 0, 1));
     assert!(on.off <= 1e-12, "off {}", on.off);
-
-    // without it the surface keeps a sliver span past 0.5
-    let off = shrunk_face_trims(&mut kernel(true), bspline_patch(), &d);
-    assert_eq!(off.spans_u, 2, "upstream keeps the sliver span");
 }

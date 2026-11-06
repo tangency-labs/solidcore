@@ -99,12 +99,6 @@ const CASES: &[Case] = &[
         let cylinder = create_cylinder(k, p(0.0, 0.0, 0.0), 10.0, 10.0).unwrap();
         boolean_union(k, cylinder, crescent).unwrap()
     }),
-    ("filleted box bottom", |k| {
-        let mut tray = create_box(k, p(0.0, 0.0, 0.0), 25.0, 25.0, 10.0).unwrap();
-        let bottom = edges_where(k, &tray, |m| m.z.abs() < 1e-6);
-        fillet_edges(k, &mut tray, &bottom, 2.0, 1, 1, 1.0).unwrap();
-        tray
-    }),
     ("filleted cylinder rim", |k| {
         let mut c = create_cylinder(k, p(0.0, 0.0, 0.0), 5.0, 8.0).unwrap();
         let rim = edges_where(k, &c, |m| (m.z - 8.0).abs() < 1e-6);
@@ -131,14 +125,25 @@ const CASES: &[Case] = &[
 ];
 
 /// Cases with another producer left: the old chamfer's faces (`fillet_edges` with
-/// cross-section 0) end an ulp past `v = 1` with the fix too. That code is being replaced
-/// by the generic blend (AGENTS.md §4b), so it is surveyed, not asserted.
-const SURVEY_ONLY: &[Case] = &[("chamfered box top", |k| {
-    let mut plate = create_box(k, p(0.0, 0.0, 0.0), 30.0, 20.0, 10.0).unwrap();
-    let top = edges_where(k, &plate, |m| (m.z - 10.0).abs() < 1e-6);
-    fillet_edges(k, &mut plate, &top, 1.5, 0, 1, 1.0).unwrap();
-    plate
-})];
+/// cross-section 0) end an ulp past `v = 1` with the fix too, and so does one trim of the
+/// box bottom's rounds (cross-section 1) at `u = 1`, which the face shrink keeps since it
+/// keeps trims on a trim that keeps the surface's map (WR-700; it removed and projected
+/// them again before). That code is being replaced by the generic blend (AGENTS.md §4b),
+/// so they are surveyed, not asserted.
+const SURVEY_ONLY: &[Case] = &[
+    ("chamfered box top", |k| {
+        let mut plate = create_box(k, p(0.0, 0.0, 0.0), 30.0, 20.0, 10.0).unwrap();
+        let top = edges_where(k, &plate, |m| (m.z - 10.0).abs() < 1e-6);
+        fillet_edges(k, &mut plate, &top, 1.5, 0, 1, 1.0).unwrap();
+        plate
+    }),
+    ("filleted box bottom", |k| {
+        let mut tray = create_box(k, p(0.0, 0.0, 0.0), 25.0, 25.0, 10.0).unwrap();
+        let bottom = edges_where(k, &tray, |m| m.z.abs() < 1e-6);
+        fillet_edges(k, &mut tray, &bottom, 2.0, 1, 1, 1.0).unwrap();
+        tray
+    }),
+];
 
 /// The out-of-domain ends of every case of `cases`, built with or without the fix.
 fn scan(cases: &[Case], fix: bool) -> Vec<(&'static str, Vec<String>)> {
