@@ -210,16 +210,44 @@ fn f64s<const N: usize>(v: &Value) -> Option<[f64; N]> {
     (a.len() == N).then_some(out)
 }
 
-/// A pick's record indices.
-fn picked(p: &Value) -> Result<Vec<usize>, Stop> {
-    let mut out = Vec::new();
-    for x in p["picked"].as_array().into_iter().flatten() {
-        match x["index"].as_u64() {
-            Some(i) => out.push(usize::try_from(i).unwrap()),
-            None => return Err(Stop::Unsupported(format!("a pick missed: {x}"))),
-        }
+/// A pick's record indices, optionally bounded by its record order's length.
+fn picked(op: &str, selection: &Value, length: Option<usize>) -> Result<Vec<usize>, Stop> {
+    let bad = |what: &str| Stop::Fail(format!("{op}: parameter {what}"));
+    selection["picked"]
+        .as_array()
+        .ok_or_else(|| bad("picked"))?
+        .iter()
+        .map(|pick| {
+            if let Some(miss) = pick.get("miss") {
+                let why = miss.as_str().ok_or_else(|| bad("miss"))?;
+                if pick.get("index").is_some() {
+                    return Err(bad("pick must hit or miss"));
+                }
+                return Err(Stop::Unsupported(format!("{op}: pick missed: {why}")));
+            }
+            let index = pick["index"]
+                .as_u64()
+                .and_then(|i| usize::try_from(i).ok())
+                .ok_or_else(|| bad("index"))?;
+            if length.is_some_and(|length| index >= length) {
+                return Err(bad("pick outside record order"));
+            }
+            Ok(index)
+        })
+        .collect()
+}
+
+/// Parses typed record picks without reordering them: misses are unsupported; bad data fails.
+fn record_picks(
+    op: &str,
+    selection: &Value,
+    kind: &str,
+    length: usize,
+) -> Result<Vec<usize>, Stop> {
+    if selection["kind"].as_str() != Some(kind) {
+        return Err(Stop::Fail(format!("{op}: parameter pick kind")));
     }
-    Ok(out)
+    picked(op, selection, Some(length))
 }
 
 /// Looks up the record order once; an unrepresentable result is unsupported, not a refusal.
@@ -250,7 +278,7 @@ fn ensure_order_with(
 /// The picked faces' record indices, and the record order they are taken through: an operation
 /// takes record indices with the body's [`Order`].
 fn faces(slot: &mut Slot, pick: &Value) -> Result<(Vec<usize>, Order), Stop> {
-    let record = picked(pick)?;
+    let record = picked("pick", pick, None)?;
     Ok((record, ensure_order(slot, "pick")?))
 }
 
@@ -671,36 +699,12 @@ fn call_with_copy(
                 return Err(bad("one input"));
             }
             let mut s = copy_for_edit(&first()?)?;
-            let selection = &p["keep"];
-            if selection["kind"].as_str() != Some("edge") {
-                return Err(bad("keep must select edges"));
-            }
-            let keep = selection["picked"]
-                .as_array()
-                .ok_or_else(|| bad("keep picked"))?
-                .iter()
-                .map(|pick| {
-                    pick["index"]
-                        .as_u64()
-                        .and_then(|i| usize::try_from(i).ok())
-                        .ok_or_else(|| bad("keep edge index"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            if s.order.is_none() {
-                let (_, order) = s
-                    .body
-                    .to_record()
-                    .map_err(|e| Stop::Fail(format!("order before merge_faces: {e}")))?;
-                s.order = Some(order);
-            }
-            let order = s.order.as_ref().unwrap();
-            if keep.iter().any(|&i| order.edges.get(i).is_none()) {
-                return Err(bad("keep edge outside record order"));
-            }
+            let order = ensure_order(&mut s, "merge_faces")?;
+            let keep = record_picks("merge_faces", &p["keep"], "edge", order.edges.len())?;
             let body = Arc::try_unwrap(s.body).map_err(|_| {
                 Stop::Fail("copy before merge_faces: the copy is shared".to_owned())
             })?;
-            made(merge_faces(body, order, &keep))
+            made(merge_faces(body, &order, &keep))
         }
         "stitch" => {
             let s = copy_for_edit(&first()?)?;
@@ -2261,6 +2265,8 @@ fn split_body_and_merge_faces_metadata_do_not_masquerade_as_refusals() {
         serde_json::json!({"kind":"edge"}),
         serde_json::json!({"kind":"edge","picked":[{}]}),
         serde_json::json!({"kind":"edge","picked":[{"index":100000}]}),
+        serde_json::json!({"kind":"edge","picked":[{"miss":false}]}),
+        serde_json::json!({"kind":"edge","picked":[{"miss":"missed","index":0}]}),
     ] {
         let step = serde_json::json!({"op":"merge_faces","params":{"keep":keep}});
         assert!(matches!(
@@ -2268,6 +2274,13 @@ fn split_body_and_merge_faces_metadata_do_not_masquerade_as_refusals() {
             Err(Stop::Fail(_))
         ));
     }
+    let missed = serde_json::json!({"op":"merge_faces","params":{
+        "keep":{"kind":"edge","picked":[{"miss":"no edge at traced point"}]}
+    }});
+    assert!(matches!(
+        call(&missed, &mut [input.clone()]),
+        Err(Stop::Unsupported(_))
+    ));
     for tool in [serde_json::json!(null), serde_json::json!({"plane":{}})] {
         let step = serde_json::json!({"op":"split_body","params":{"tool":tool}});
         assert!(matches!(
@@ -2279,6 +2292,22 @@ fn split_body_and_merge_faces_metadata_do_not_masquerade_as_refusals() {
         "origin":[3,0,0],"xaxis":[0,0,0],"yaxis":[0,0,1],"u":[-1,11],"v":[-1,11]
     }}}});
     assert!(matches!(call_outputs(&step, &mut [input]), Ok(Err(_))));
+}
+
+#[test]
+fn record_picks_preserve_order_and_duplicate_parameter_alignment() {
+    let picks = serde_json::json!({"kind":"edge","picked":[
+        {"index":1},{"index":1},{"index":0}
+    ]});
+    assert_eq!(record_picks("blend", &picks, "edge", 2).unwrap(), [1, 1, 0]);
+    assert!(matches!(
+        record_picks("blend", &picks, "edge", 1),
+        Err(Stop::Fail(_))
+    ));
+    assert!(matches!(
+        record_picks("blend", &picks, "vertex", 2),
+        Err(Stop::Fail(_))
+    ));
 }
 
 /// Captured split followed by merging its redundant faces, with the original grading.
