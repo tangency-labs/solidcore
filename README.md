@@ -62,7 +62,7 @@ schematics. Start with the first; each ends with "If you're stuck".
 |-------------------------|--------------------------------------------------------------|
 | `crates/solidcore`      | The kernel library                                           |
 | `crates/solidcore-ffi`  | `extern "C"` bindings to the upstream C++ (feature `cpp`)    |
-| `crates/difftest`       | Runs Rust and C++ side by side on the same inputs           |
+| `crates/goldens`       | Runs Rust and C++ side by side on the same inputs           |
 | `crates/diagnostics`    | `solidcore-diag`: a shaded picture and a tolerance report of one `.smb` body |
 | `harness/cpp`           | Builds the upstream C++ reference into `bin/cpp`; FFI shims  |
 | `plan/`                 | Unit list, port order, status, findings                      |
@@ -120,8 +120,8 @@ Rust-only builds do not need these C++ build tools.
 git clone https://github.com/NVIDIA-Omniverse/usd-brep upstream
 git -C upstream checkout 3fd5b95   # v1.0.1; the pin is in scripts/upstream-pin.env
 scripts/fetch-cpp.sh                                  # C++ reference -> bin/cpp (prebuilt, or built)
-cargo run --profile difftest -p difftest --features cpp -- --green   # all green and partial units
-cargo run --profile difftest -p difftest --features cpp -- --unit <unit id>   # one unit
+cargo run --profile goldens -p goldens --features cpp -- --green   # all green and partial units
+cargo run --profile goldens -p goldens --features cpp -- --unit <unit id>   # one unit
 ```
 
 `solidcore-ffi` and `difftest` compile without the C++ build; only the `cpp` feature

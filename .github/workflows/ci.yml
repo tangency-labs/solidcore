@@ -93,8 +93,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> bin"
-      # Every test runs once, optimised, in the difftest profile (Cargo.toml
-      # [profile.difftest]: opt-level 3 with overflow-checks and debug-assertions still
+      # Every test runs once, optimised, in the goldens profile (Cargo.toml
+      # [profile.goldens]: opt-level 3 with overflow-checks and debug-assertions still
       # on; Rust floating point does not change with opt-level, and this is the build the
       # goldens are checked with). Unoptimised, the suite took ~30 of
       # this job's ~40 minutes; optimised it takes a few. Its solidcore is the one the
@@ -107,19 +107,19 @@ jobs:
         if: needs.changes.outputs.full == 'true'
         with:
           tool: cargo-nextest@0.9.150
-      - name: Workspace tests (difftest profile)
+      - name: Workspace tests (goldens profile)
         if: needs.changes.outputs.full == 'true'
-        run: cargo nextest run --workspace --cargo-profile difftest --no-fail-fast
-      - name: Doctests (difftest profile)
+        run: cargo nextest run --workspace --cargo-profile goldens --no-fail-fast
+      - name: Doctests (goldens profile)
         if: needs.changes.outputs.full == 'true'
-        run: cargo test --workspace --profile difftest --doc
+        run: cargo test --workspace --profile goldens --doc
       # Solids: the primitives example's per-shape results (built, blocker, checks) for
-      # the site's Solids page. It reuses the difftest-profile build above and exits 1
+      # the site's Solids page. It reuses the goldens-profile build above and exits 1
       # while any primitive fails, so only a crash (or a missing JSON) fails the job.
       - name: Solids report (primitives example)
         run: |
           set +e
-          cargo run --profile difftest -p solidcore --example primitives -- --json reports/solids/solids.json
+          cargo run --profile goldens -p solidcore --example primitives -- --json reports/solids/solids.json
           rc=$?
           set -e
           [ "$rc" -le 1 ] && test -s reports/solids/solids.json
@@ -156,7 +156,7 @@ jobs:
           KERNEL_CASES_REPORT: ${{ github.workspace }}/reports/kernel-rig/table.md
         run: |
           mkdir -p reports/kernel-rig
-          cargo test --profile difftest -p solidcore-ops --test kernel_cases -- --ignored --nocapture
+          cargo test --profile goldens -p solidcore-ops --test kernel_cases -- --ignored --nocapture
       - name: Upload the table
         if: always()
         uses: actions/upload-artifact@v4
@@ -201,7 +201,7 @@ jobs:
           command: check licenses bans sources
 
   # Every unit's cases, run on solidcore and checked against the unit's golden
-  # (crates/difftest/goldens/<unit>.jsonl): a case whose output changed (beyond the 1e-9
+  # (crates/goldens/expected/<unit>.jsonl): a case whose output changed (beyond the 1e-9
   # relative rule and the unit's documented floors), a case added or missing, and a case
   # that breaks (harness error or panic) all fail, each printed with its first
   # differences. A golden changes only with `--bless`, justified in the pull request.
@@ -220,9 +220,9 @@ jobs:
           workspaces: ". -> bin"
           key: goldens
       - name: Build
-        run: cargo build --profile difftest -p difftest
+        run: cargo build --profile goldens -p goldens
       - name: Every unit against its golden
-        run: bin/difftest/difftest --all --goldens --jobs 0 --no-report
+        run: bin/goldens/goldens --all --goldens --jobs 0 --no-report
 
   # Exists only for the required-check name `difftest` (the branch ruleset requires that
   # check until an admin renames it): it succeeds exactly when `goldens` did, or when the run

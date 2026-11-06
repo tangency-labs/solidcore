@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Runs the Rust side of difftest units natively and on wasm32-wasip1 (wasmtime) and
-# compares the per-case output digests (`difftest --digest-dir`): equal digests mean
+# Runs the Rust side of the goldens units natively and on wasm32-wasip1 (wasmtime) and
+# compares the per-case output digests (`goldens --digest-dir`): equal digests mean
 # bit-identical Rust outputs on both targets.
 #
-#   scripts/wasm-digest.sh [--jobs N] [--out DIR] [difftest selection...]   # default --all
+#   scripts/wasm-digest.sh [--jobs N] [--out DIR] [goldens selection...]   # default --all
 #
 # Needs `rustup target add wasm32-wasip1` and `wasmtime` on PATH. Writes DIR/{native,wasm}/<unit>.digest and
 # DIR/mismatches.txt (default DIR: bin/wasm-digest); exits 1 on any mismatch.
@@ -27,12 +27,12 @@ rm -rf "$out/native" "$out/wasm" "$out/log"
 mkdir -p "$out/native" "$out/wasm" "$out/log"
 
 cd "$root"
-cargo build --profile difftest -p difftest
-cargo build --profile difftest -p difftest --target wasm32-wasip1
-wasm=$target/wasm32-wasip1/difftest/difftest.wasm
-wasmtime compile "$wasm" -o "$out/difftest.cwasm"
+cargo build --profile goldens -p goldens
+cargo build --profile goldens -p goldens --target wasm32-wasip1
+wasm=$target/wasm32-wasip1/goldens/goldens.wasm
+wasmtime compile "$wasm" -o "$out/goldens.cwasm"
 
-"$target/difftest/difftest" "${sel[@]}" --jobs "$jobs" --digest-dir "$out/native" >"$out/log/native.txt"
+"$target/goldens/goldens" "${sel[@]}" --jobs "$jobs" --digest-dir "$out/native" >"$out/log/native.txt"
 # one wasmtime process per unit: a trap or abort (panic = abort on wasm32) loses one unit
 ls "$out/native" | sed -n 's/\.digest$//p' >"$out/units.txt"
 # WASI does not follow a symlink out of a preopened dir: map a linked upstream/ itself
@@ -40,7 +40,7 @@ up=$(readlink -f "$root/upstream")
 export out root up
 xargs -P "$jobs" -I{} sh -c '
   wasmtime run --allow-precompiled --dir "$root::$root" --dir "$up::$root/upstream" \
-    --dir "$out::$out" "$out/difftest.cwasm" \
+    --dir "$out::$out" "$out/goldens.cwasm" \
     --unit {} --digest-dir "$out/wasm" >"$out/log/{}.txt" 2>&1 || echo "wasm exit $? {}" >>"$out/log/{}.txt"
 ' <"$out/units.txt"
 

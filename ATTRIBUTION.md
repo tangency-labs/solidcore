@@ -22,8 +22,8 @@ Only these upstream paths are read, ported or exercised:
 |--------------------------------|--------------------------------------------------------|
 | `source/SMLib/`                | Kernel being ported (geometry, topology, algorithms)   |
 | `source/SM_API/`               | High-level API being ported; reference for public ops  |
-| `tests/SM_API_test/`           | Reference tests; source of difftest cases              |
-| `tests/prog_test/`             | Reference tests; source of difftest cases              |
+| `tests/SM_API_test/`           | Reference tests; source of unit cases                 |
+| `tests/prog_test/`             | Reference tests; source of unit cases                 |
 | `TestFiles/pt_TestFiles/`      | Test fixtures                                          |
 | `AGENTS.md`, `.agents/`        | Upstream developer documentation (OCCT/USD files excluded) |
 | `LICENSE`, `THIRD_PARTY_NOTICES.md` | Licence text and notices                          |
@@ -53,8 +53,8 @@ derives from and a table mapping its Rust items to upstream names (see
 
 ## Test corpora
 
-These are fetched at run time (never committed) and used only by difftest's
-`--ssi-corpus` correctness report (`crates/difftest/README.md`).
+These are fetched at run time (never committed) and used only by the goldens crate's
+`--ssi-corpus` correctness report (`crates/goldens/README.md`).
 
 ### ssi-corpus
 
@@ -66,8 +66,8 @@ These are fetched at run time (never committed) and used only by difftest's
 - Licence: MIT OR Apache-2.0
 - Copyright: (c) 2026 SolidCraft contributors
 - Use: 119 surface/surface intersection cases with exact ground truth. The scorer in
-  `crates/difftest/src/ssi/` (`score.rs`, `polyset.rs`, `geom.rs`) is ported from the
-  corpus' `scoring/score.py` and `scoring/ssi_geom.py`, and `crates/difftest/src/ssi/kernel.rs`
+  `crates/goldens/src/ssi/` (`score.rs`, `polyset.rs`, `geom.rs`) is ported from the
+  corpus' `scoring/score.py` and `scoring/ssi_geom.py`, and `crates/goldens/src/ssi/kernel.rs`
   samples intersections as its `runner/ssi_runner.cpp` does; each of those files says so in
   its header. The truth generators are not ported.
 

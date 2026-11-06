@@ -38,11 +38,11 @@ claims that. Points come from Newton roots, and regions are dropped only by proo
 
 In Solidcore's workspace (`crates/ssi`) the crate sits beside the port, not in it: it is a method of its
 own, written without reading upstream SMLib, so it is no port unit and changes no unit's parity.
-`difftest --ssi-corpus` runs it as an engine, `ssi`, graded by the same scorer as the port.
+`goldens --ssi-corpus` runs it as an engine, `ssi`, graded by the same scorer as the port.
 
 ```sh
 scripts/fetch-ssi-corpus.sh
-cargo run --profile difftest -p difftest -- --ssi-corpus   # rust, ssi and solidcore-ssi
+cargo run --profile goldens -p goldens -- --ssi-corpus   # rust, ssi and solidcore-ssi
 ```
 
 ## Score on the corpus

@@ -664,7 +664,7 @@ A reviewer can check each of these on a change to SSI.
 **The SSI corpus.** `difftest --ssi-corpus` scores the engines on jyviko's corpus
 ([ssi-corpus](https://github.com/jyviko/ssi-corpus), commit `b04c8a6`): 119 cases (planes,
 quadrics, tori, B-spline and NURBS pairs, 25 from Yang, Jia and Yan [16]), each with the dense exact
-intersection and its topology, at approximation tolerance 1e-6 (`crates/difftest/README.md`).
+intersection and its topology, at approximation tolerance 1e-6 (`crates/goldens/README.md`).
 
 | engine | pass (of 119) | not passing | source |
 |---|---|---|---|

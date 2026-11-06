@@ -69,7 +69,7 @@ into `upstream/` (see README), then run `scripts/fetch-cpp.sh`, or
    `harness/callgraph/units.json`) into its `rust_module`, plus the C++ shim
    (`harness/cpp/shim/<unit_id_with_underscores>.cpp`, functions `sc_<unit>_<fn>`, plain
    C data only), its `solidcore-ffi` binding, and its difftest runner and fixtures,
-   following `crates/difftest/README.md`. Inputs: the unit's upstream `tests`, plus
+   following `crates/goldens/README.md`. Inputs: the unit's upstream `tests`, plus
    fixed-seed generated and edge cases (degenerate, boundary, tolerance limits).
 3. **Wire back-edges** (section 4a): replace `UNPORTED(<unit id>)` stubs elsewhere with
    real calls and re-run the difftest of every unit you touched.
@@ -80,14 +80,14 @@ into `upstream/` (see README), then run `scripts/fetch-cpp.sh`, or
    cargo clippy --workspace --all-targets -- -D warnings
    cargo test -p solidcore
    cargo check -p solidcore --target wasm32-unknown-unknown
-   cargo run --profile difftest -p difftest --features cpp -- --unit <unit id>   # and every unit you touched
-   cargo run --profile difftest -p difftest --features cpp -- --green --jobs 4   # what CI runs (with --jobs 0)
+   cargo run --profile goldens -p goldens --features cpp -- --unit <unit id>   # and every unit you touched
+   cargo run --profile goldens -p goldens --features cpp -- --green --jobs 4   # what CI runs (with --jobs 0)
    ```
    `--jobs N` runs N units at a time, each in its own process (`0` = every core; the
    output and reports are the same as a serial run). On a shared machine stay within the
    section 2 budget: `--jobs 4` at most, fewer when the load is high.
    CI also enforces the 75% value-share floor and exact-base artifact ratchet
-   (`crates/difftest/README.md`, Regression gate). Missing/expired baseline artifacts
+   (`crates/goldens/README.md`, Regression gate). Missing/expired baseline artifacts
    fail closed; do not extract historical committed reports or waive lost coverage
    to make a run pass. Local `--baseline` runs must use matching seeds and no filter.
 5. **Before you mark a PR ready**, check each item. Earlier PRs passed CI yet still
@@ -139,8 +139,8 @@ into `upstream/` (see README), then run `scripts/fetch-cpp.sh`, or
   an update is an addendum file. The old shared `plan/findings.md` and
   `plan/upstream-issues.md` were split into those directories; CI fails if either comes
   back. Two PRs that each add a file never conflict.
-  Known difftest mismatches likewise live in `crates/difftest/known_mismatches/<unit id>.toml`
-  (one file per unit; see `crates/difftest/src/known.rs`), and SolidCraft cases in
+  Known difftest mismatches likewise live in `crates/goldens/known_mismatches/<unit id>.toml`
+  (one file per unit; see `crates/goldens/src/known.rs`), and SolidCraft cases in
   `fixtures/solidcraft/<issue>-<slug>.json` (one file per issue).
   The same goes for anything new you design: a registry or log is a directory of
   per-entry files that tools read in sorted order, never one file everybody appends to.

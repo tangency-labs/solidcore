@@ -12,7 +12,7 @@ design wherever that is more correct than upstream's (§4b). People: [CONTRIBUTI
 ```
 crates/solidcore       the kernel (pure Rust, no unsafe, wasm-ok)        owner: unit porters
 crates/solidcore-ffi   extern "C" bindings to the C++ kernel (feature cpp)
-crates/difftest        side-by-side Rust vs C++ runner
+crates/goldens        side-by-side Rust vs C++ runner
 harness/cpp            C++ reference build (build.sh -> bin/cpp) + shim/<unit>.cpp
 plan/                  units/<id>.toml, findings/<slug>.md, upstream-issues/<slug>.md (one file each), STATUS.md, order.md
 ```
@@ -136,12 +136,12 @@ case, recorded as below. The rules for a port: a unit is **green** only when dif
 the Rust and the C++
 (via FFI) on the same inputs and topology is identical and every value agrees within
 `1e-9` relative (`|a-b| <= 1e-9 * max(|a|,|b|)`; an absolute floor only where a unit
-documents one per key in `abs_floors()`, recorded in its report). Never loosen a tolerance to get green. The harness never feeds C++ outputs or C++ process state into the Rust side (`crates/difftest/README.md`, No C++ state reaches the Rust side). A disagreement you cannot fix
+documents one per key in `abs_floors()`, recorded in its report). Never loosen a tolerance to get green. The harness never feeds C++ outputs or C++ process state into the Rust side (`crates/goldens/README.md`, No C++ state reaches the Rust side). A disagreement you cannot fix
 goes in a new `plan/findings/<slug>.md` (unit, inputs, both values, suspected cause) and the unit
 stays `blocked`. Sole exception: a case where the C++ reference is verified wrong (a confirmed
 `plan/upstream-issues/` entry) is listed with `cpp_defect = "<id>"` in its known-mismatch entry
 and is parked: not run in the gate, not counted as a pass, and does not block green; removing
-the marker runs it again (`crates/difftest/README.md`); never use it for a Rust divergence.
+the marker runs it again (`crates/goldens/README.md`); never use it for a Rust divergence.
 
 **Git.** Work happens through pull requests to github.com/tangency-labs/solidcore. Never
 push to `main` directly, never force-push shared branches, never rewrite `main`'s
@@ -187,7 +187,7 @@ draft and say where the WIP is.
 **Verify** (under `nice -n 10`): `cargo fmt --all --check`; `cargo clippy --workspace
 --all-targets -- -D warnings`; `cargo test -p solidcore`; `cargo check -p solidcore --target
 wasm32-unknown-unknown`; and, for kernel changes, the difftest of every unit you touched
-(`cargo run --profile difftest -p difftest --features cpp -- --unit <id>`). Every case your
+(`cargo run --profile goldens -p goldens --features cpp -- --unit <id>`). Every case your
 change moves is fixed or recorded with evidence that names it (§1, §4b).
 
 **Finish:** rebase onto the latest `origin/main` (never merge `main` in), re-verify, put the
@@ -196,7 +196,7 @@ difftest summary lines in the description, and mark the PR ready. CI is the merg
 **Records are files, never appended.** Every finding and upstream issue is its own new file
 (`plan/findings/<slug>.md`, `plan/upstream-issues/<slug>.md`); a merged record is never edited,
 an update is an addendum file. Known mismatches live in
-`crates/difftest/known_mismatches/<unit id>.toml`. Never commit `reports/difftest/`.
+`crates/goldens/known_mismatches/<unit id>.toml`. Never commit `reports/difftest/`.
 
 **No new document without the maintainers.** `docs/` holds the reference pages listed in §1 and
 what the maintainers have agreed to. Never add a file to `docs/` that hasn't been discussed with
@@ -299,7 +299,7 @@ own constructions. The policy (owner, 2026-11-04; supersedes 2026-11-02 and #101
 - `crates/solidcore/tests/kernel_cases/<area>/<case>.json`: a kernel-operation case (an entry, its operand records and exact expected values), one file per case; new ones come here, not to SolidCraft's rig (its README, "Adding a case").
 - `plan/units/<id>.toml`: one unit's plan entry (status, claims, notes). Edit only
   your unit's file. Every tool reads them through `harness/plan/units.py` (Rust:
-  `crates/difftest/src/plan.rs`).
+  `crates/goldens/src/plan.rs`).
 - `plan/findings/<slug>.md`, one file per finding: Rust-vs-C++ disagreements, upstream
   bugs, nondeterminism (e.g. upstream `srand(time(NULL))`), anything a later agent must
   know. A reference to `plan/findings.md: <heading>` (older code comments): grep the

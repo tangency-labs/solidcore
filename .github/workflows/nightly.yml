@@ -31,7 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> bin"
-          key: difftest
+          key: goldens
 
       # Owner-approved (2026-10-26): a regression too slow for every PR (~3 min): the
       # tiny-scale torus booleans finish under MAX_SOLVE_BRANCHES (geom::global_solver).
@@ -45,6 +45,6 @@ jobs:
       - name: SolidCraft corpus harness checks
         if: ${{ !cancelled() }}
         run: >-
-          cargo test --profile difftest -p difftest --lib -- --ignored --exact
+          cargo test --profile goldens -p goldens --lib -- --ignored --exact
           solidcraft::tests::every_case_reaches_a_verdict_without_a_harness_error
           solidcraft::tests::deferrals_name_a_plan_unit

@@ -2,14 +2,14 @@
 # Two-tier mutation testing for the solidcore kernel.
 #
 # Tier 1 runs cargo-mutants against the package's unit tests. Tier 2 replays each
-# unit-test survivor against one difftest unit's golden (`--goldens`), because the
+# unit-test survivor against one unit's golden (`--goldens`), because the
 # goldens record far more of the kernel's results than the unit tests check. A mutant
 # that passes both tiers is behavior no check constrains: the useful output.
 #
 # Usage:
 #   scripts/mutants.sh --module crates/solidcore/src/geom/vector2d.rs --unit geom.vector2d
 #   scripts/mutants.sh --in-diff-base origin/main --unit <id>   # the PR's changed lines
-#   scripts/mutants.sh --module ... --shard 1/20 --no-difftest  # tier 1 only
+#   scripts/mutants.sh --module ... --shard 1/20 --no-goldens  # tier 1 only
 #   scripts/mutants.sh --module ... --re 'is_small_topology' --unit ...  # one mutant
 #
 # Output: reports/mutants/<utc-stamp>/ with cargo-mutants' mutants.out, its log, the
@@ -32,7 +32,7 @@ timeout=180
 max_replay=
 mutant_re=
 out=
-run_difftest=1
+run_goldens=1
 fail_on_both=0
 list_only=0
 
@@ -48,7 +48,7 @@ while [ $# -gt 0 ]; do
     --max-replay) max_replay=$2; shift 2 ;;
     --re) mutant_re=$2; shift 2 ;;
     -o|--out) out=$2; shift 2 ;;
-    --no-difftest) run_difftest=0; shift ;;
+    --no-goldens) run_goldens=0; shift ;;
     --fail-on-both-tier) fail_on_both=1; shift ;;
     --list-only) list_only=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -60,8 +60,8 @@ if [ -z "$module" ] && [ -z "$in_diff_base" ]; then
   echo "mutants: give --module FILE or --in-diff-base REF" >&2
   exit 2
 fi
-if [ "$list_only" = 0 ] && [ "$run_difftest" = 1 ] && [ -z "$unit" ]; then
-  echo "mutants: --unit is required for tier 2 (or pass --no-difftest)" >&2
+if [ "$list_only" = 0 ] && [ "$run_goldens" = 1 ] && [ -z "$unit" ]; then
+  echo "mutants: --unit is required for tier 2 (or pass --no-goldens)" >&2
   exit 2
 fi
 command -v cargo-mutants >/dev/null 2>&1 || {
@@ -136,7 +136,7 @@ unviable=$(count unviable)
 echo "mutants: tier 1: caught=$caught missed=$missed timeout=$timeout unviable=$unviable"
 
 both=0
-if [ "$run_difftest" = 1 ] && [ "$missed" -gt 0 ]; then
+if [ "$run_goldens" = 1 ] && [ "$missed" -gt 0 ]; then
   # Mutated files must be clean: tier 2 patches the working tree.
   while IFS= read -r line; do
     [ -n "$line" ] || continue
@@ -157,7 +157,7 @@ if [ "$run_difftest" = 1 ] && [ "$missed" -gt 0 ]; then
   run_unit() {
     # shellcheck disable=SC2086 # NICE is an optional "nice -n 10" prefix.
     CARGO_BUILD_JOBS=2 $NICE \
-      cargo run --profile difftest -p difftest -- --unit "$unit" --goldens
+      cargo run --profile goldens -p goldens -- --unit "$unit" --goldens
   }
 
   tier2=$out/tier2.tsv
@@ -185,7 +185,7 @@ if [ "$run_difftest" = 1 ] && [ "$missed" -gt 0 ]; then
     summary=$(run_unit 2>&1 | grep -E '^(PASS|FAIL) ' | head -1)
     case "$summary" in
       PASS*) verdict=both-tier-missed; both=$((both + 1)) ;;
-      FAIL*) verdict=caught-by-difftest ;;
+      FAIL*) verdict=caught-by-goldens ;;
       *) verdict=unknown ;;
     esac
     printf '%s\t%s\t%s\n' "$line" "$verdict" "${summary:-no-summary}" >>"$tier2"
@@ -198,7 +198,7 @@ fi
 {
   echo "unit=$unit module=$module shard=$shard in_diff=$in_diff_base max_replay=${max_replay:-all}"
   echo "caught=$caught missed=$missed timeout=$timeout unviable=$unviable both-tier=$both"
-  if [ "$run_difftest" = 1 ]; then echo "tier2=run"; else echo "tier2=skipped"; fi
+  if [ "$run_goldens" = 1 ]; then echo "tier2=run"; else echo "tier2=skipped"; fi
 } >"$out/summary.txt"
 echo "mutants: both tiers missed $both mutant(s); report: ${out#"$root"/}"
 
