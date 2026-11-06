@@ -82,4 +82,8 @@ sweep is 282/283: its sole difference, `curve.conic` / `gen2235` / `values.r[4]`
 is reproduced unchanged on pristine main (3.776586443654626e-14 expected,
 3.552713678800501e-14 actual). It is an intersection distance with requested
 tolerance 1e-9, tracked in the discussion on #487. No golden or floor changes.
-Validation details are in the PR. This fixes only the Vase action, not all eleven #2905 actions.
+After merging main `1483513fe` (the curve-ownership fix), the two changed
+ownership test suites and this regression pass (14 tests). Updated Clippy,
+wasm and all five affected golden units pass; the full sweep is still 282/283
+with exactly the same pre-existing conic difference. Validation details are
+in the PR. This fixes only the Vase action, not all eleven #2905 actions.
