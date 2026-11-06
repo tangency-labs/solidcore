@@ -1,20 +1,5 @@
 [
   {
-    "case": "fillets/1080-fillet-equal-slope-basin-1-mm-rim-loop-4",
-    "issue": "tangency-labs/solidcore#2947",
-    "reason": "continuity_order: got {'body': 'Slab', 'edges': 'blend', 'order': 'g0',  want >= g1 at every blend seam"
-  },
-  {
-    "case": "fillets/1080-fillet-sloped-basin-1-mm-rim-r4-2-edges",
-    "issue": "tangency-labs/solidcore#2947",
-    "reason": "continuity_order: got {'body': 'Slab', 'edges': 'blend', 'order': 'g0',  want >= g1 at every blend seam"
-  },
-  {
-    "case": "fillets/1080-fillet-sloped-basin-1-mm-rim-r4-4-edges",
-    "issue": "tangency-labs/solidcore#2947",
-    "reason": "continuity_order: got {'body': 'Slab', 'edges': 'blend', 'order': 'g0',  want >= g1 at every blend seam"
-  },
-  {
     "case": "fillets/11991-round-cylinder-edge-ending-on-a-round-tangent-line",
     "issue": "solidcore#2843",
     "reason": "round status 1001 where the cylinder's end lies on the round's tangent line; builds at x = 5.001"
