@@ -12,6 +12,7 @@ pub mod baseline;
 pub mod case;
 /// Input contracts shared by several unit runners' generators.
 pub mod cases {
+    pub mod blend;
     pub mod contract;
 }
 pub mod compare;
