@@ -1105,7 +1105,8 @@ fn pcurve_on(surface: &str, curve: &str) -> String {
 #[test]
 fn conics_in_parameter_space() {
     // A circle in a plane's parameter space: both parameters lengths, so the radius is too, and
-    // a 2D placement's direction ratios take the parameters' units.
+    // a 2D placement's direction ratios stay as written: one form of direction in every space,
+    // the ratios the file gives (jyviko on #2612; they were multiplied by the parameters' units).
     let circle = "#20=CARTESIAN_POINT('',(1.,2.));#21=DIRECTION('',(1.,1.));\
                   #22=AXIS2_PLACEMENT_2D('',#20,#21);#23=CIRCLE('',#22,3.);";
     let ex = file(&format!("{BASE}{}", pcurve_on("#10=PLANE('',#4);", circle)));
@@ -1116,9 +1117,24 @@ fn conics_in_parameter_space() {
             position: Placement {
                 origin: [25.4, 2.0 * 25.4, 0.0],
                 axis: None,
-                ref_direction: Some([25.4, 25.4, 0.0]),
+                ref_direction: Some([1.0, 1.0, 0.0]),
             },
             radius: 3.0 * 25.4,
+        }
+    );
+    // A line's vector there, from the same DIRECTION: the same ratios, its factors in `scale`.
+    let line = "#20=CARTESIAN_POINT('',(1.,2.));#21=DIRECTION('',(1.,1.));\
+                #22=VECTOR('',#21,2.);#23=LINE('',#20,#22);";
+    let ex = file(&format!("{BASE}{}", pcurve_on("#10=PLANE('',#4);", line)));
+    assert_eq!(
+        *Reader::new(&ex, INCH_DEG).pcurve(26).unwrap().curve,
+        Curve::Line {
+            origin: [25.4, 2.0 * 25.4, 0.0],
+            vector: Vector {
+                orientation: [1.0, 1.0, 0.0],
+                magnitude: 2.0,
+                scale: [25.4, 25.4, 1.0],
+            },
         }
     );
     // On a cylinder in degrees, u is an angle and v a length: not a conic in mm and rad.
