@@ -13,6 +13,7 @@ pub mod case;
 /// Input contracts shared by several unit runners' generators.
 pub mod cases {
     pub mod blend;
+    pub mod brep_stream;
     pub mod contract;
     pub mod topology_entities;
 }
