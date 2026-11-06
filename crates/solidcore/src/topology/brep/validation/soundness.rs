@@ -2,8 +2,9 @@
 //! whether it is a manifold solid of positive volume. The local operation measures its
 //! input's [`standing`] (the check with the body's own owner naming, and the manifold
 //! test) and its result's, and the result's [`volume`] only to test it is positive
-//! ([`crate::topology::brep::local_operation::local_operation`]); difftest's soundness
-//! probe measures result bodies with [`soundness`] (the geometry's recorded owners).
+//! ([`crate::topology::brep::local_operation::local_operation`]); the goldens soundness
+//! probe (`goldens::soundness`) measures result bodies with [`soundness`] (the geometry's
+//! recorded owners).
 
 use std::collections::BTreeMap;
 
