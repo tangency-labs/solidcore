@@ -1,8 +1,11 @@
 """Emit a Rust audit of changed analytic-face records from two digest-debug files.
 
 Run from the repository root, passing before.debug and after.debug. Compile the
-emitted Rust against solidcore. It checks scalar/returned-point consistency,
-not completeness, stationarity, trimming membership, or global optimality.
+emitted Rust against solidcore. CSV columns are case, before/after, scalar error,
+UVs in natural rectangular domains, line parameter in [0,1], and the directed
+query's transverse residual (zero for nondirected queries). Domain checks
+use zero padding. They do not certify arbitrary trim loops, completeness,
+stationarity, or global optimality.
 """
 
 import json
@@ -70,6 +73,9 @@ print("""
 use solidcore::{kernel::Kernel, math::Vec3};
 use solidcore::geom::{axis2_placement::Axis2Placement, extent2d::Extent2d, vector2d::Vec2};
 use solidcore::surface::{cone::Cone, sphere::{Sphere, SphereOptions}, torus::{Torus, TorusOptions}, surface::Surface};
+fn in_domain(k: &Kernel, surface: &Surface, uv: Vec2) -> solidcore::Result<bool> {
+    Ok(surface.natural_uv_domain_with_nurb(k)?.contains_point(uv, 0.0))
+}
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 let k = Kernel::default();
 """)
@@ -89,15 +95,22 @@ for name in sorted(before.keys() & after.keys()):
             print("let a = " + vector(case["first"][0]) + ";")
             u, v = map(number, params)
             print(f"let b = first.evaluate_point(&k, Vec2::new({u},{v}))?;")
+            print(f"let uv_inside = in_domain(&k, &first, Vec2::new({u},{v}))?; let line_inside = true;")
         elif case["entry"] in (6, 7):
             t, u, v = map(number, params)
             print(f"let a = Vec3::new(-1.0+2.0*{t},0.0,0.0); let b = first.evaluate_point(&k, Vec2::new({u},{v}))?;")
+            print(f"let uv_inside = in_domain(&k, &first, Vec2::new({u},{v}))?; let line_inside = (0.0..=1.0).contains(&({t}_f64));")
         elif case["entry"] == 8:
             print("let second = " + surface(case["faces"][1]) + ";")
             u, v, r, s = map(number, params)
             print(f"let a = first.evaluate_point(&k,Vec2::new({u},{v}))?; let b = second.evaluate_point(&k,Vec2::new({r},{s}))?;")
+            print(f"let uv_inside = in_domain(&k, &first, Vec2::new({u},{v}))? && in_domain(&k, &second, Vec2::new({r},{s}))?; let line_inside = true;")
         else:
             raise ValueError("unsupported entry")
         print(f"let measured = ((a.x-b.x).powi(2)+(a.y-b.y).powi(2)).sqrt(); let error = (({scalar}_f64).abs()-measured).abs();")
-        print(f'println!("{name},{label},{{error:.17e}}"); }}')
+        # The static runner projects along Z and directs along X, so its
+        # directed candidates must have equal projected y coordinates.
+        directed = case["operation"] in (11, 12, 13)
+        print("let transverse = " + ("(a.y-b.y).abs()" if directed else "0.0_f64") + ";")
+        print(f'println!("{name},{label},{{error:.17e}},{{uv_inside}},{{line_inside}},{{transverse:.17e}}"); }}')
 print("Ok(()) }")
