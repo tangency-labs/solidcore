@@ -2,13 +2,14 @@
 //! `TransferChildrenTo` (incl. face-use and wire shells in one B-rep), shell type members,
 //! `RayFire` (through the B-rep's own `query::brep::BrepQuery` world), degeneracy,
 //! region ordering and filtering.
-//! Native fixtures reuse the edge-use fixture protocol: the Rust side builds a
-//! shim-built source itself ([`crate::own_builder`]) and reads an `.smb` file with the
-//! Rust reader, both in the shim's traversal order ([`crate::own_reader::brep_in_order`]);
-//! no C++ export reaches the Rust side.
-//! Setup failures fail the harness; topology and native integer flags compare exactly.
+//! Ported from upstream `SmShell.cpp` and `SmRegion.cpp` (the shims
+//! `harness/cpp/shim/topology_shell*.cpp` were the reference); checked against its golden.
+//! Fixtures reuse the edge-use fixture sources: the runner builds a shim-built source
+//! itself ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader, both in
+//! the shim's traversal order ([`crate::own_reader::brep_in_order`]). Setup failures fail
+//! the harness.
 
-use super::topology_edgeuse_p1::{fixture_input, BrepIn};
+use super::topology_edgeuse_p1::{source_sizes_ok, BrepIn};
 
 #[path = "topology_shell/inner.rs"]
 mod inner;
@@ -19,7 +20,6 @@ use solidcore::query::brep::BrepQuery;
 use solidcore::topology::brep_cache::CacheObject;
 use solidcore::topology::shell::{shell_brep, shell_region, wire_edges};
 use solidcore::topology::{FaceuseId, Region, Shell, ShellId};
-use solidcore_ffi::units::{topology_edgeuse_p1 as graph, topology_shell as ffi};
 
 /// The shell/region unit runner.
 pub struct Runner;
@@ -562,8 +562,7 @@ fn rust_transfer_records(
         let extra = ShellId::from_index(u32::try_from(extra_index).map_err(failure)?);
         let members = match &mut brep.shell_mut(original).map_err(failure)?.members {
             ShellMembers::Faceuses(members) if members.len() >= 2 => members,
-            // the shim refuses this fixture (`SC_ERR_ARG`), which the C++ side reports
-            // as `rejected_input`
+            // the reference shim refused this fixture (`SC_ERR_ARG`): `rejected_input`
             _ => return Ok(Output::err("rejected_input")),
         };
         let moved = members.remove(0);
@@ -613,9 +612,9 @@ fn rust_transfer_records(
             ));
         }
     }
-    // The native shim rejects exactly the inputs that crash C++ (null dereferences in
-    // `GetWireEdges` and in the candidate filter); mirror its predicates so a rejected
-    // input compares as `rejected_input` on both sides.
+    // The inputs on which upstream dereferences null (in `GetWireEdges` and in the
+    // candidate filter) are recorded as `rejected_input`, as the reference shim refused
+    // them.
     let mut kernel = solidcore::kernel::Kernel::default();
     let rejected = || Output::err("rejected_input");
     let crashes_wire_edges =
@@ -786,160 +785,6 @@ impl UnitDiff for Runner {
         "topology.shell"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        if inner::is_inner(case) {
-            return inner::run_cpp(case);
-        }
-        let inputs: Inputs = case.parse()?;
-        let (path, block) = fixture_input(inputs.brep)?;
-        if let Some(filter) = inputs.region_filter {
-            if filter.pattern > 2
-                || inputs.region_order.is_some()
-                || inputs.transfer.is_some()
-                || inputs.type_probe.is_some()
-                || inputs.degenerate.is_some()
-                || inputs.ray.is_some()
-                || inputs.wires
-                || inputs.void_state.is_some()
-            {
-                return Err(failure("invalid region filtering operation"));
-            }
-            return integer_records(
-                ffi::region_filter(
-                    &path,
-                    &block,
-                    filter.attribute_id,
-                    filter.enabled,
-                    filter.pattern,
-                )
-                .map_err(failure)?,
-            );
-        }
-        if let Some(order) = inputs.region_order {
-            let prefix = order.prefix_empty;
-            if prefix > 8
-                || inputs.transfer.is_some()
-                || inputs.type_probe.is_some()
-                || inputs.degenerate.is_some()
-                || inputs.ray.is_some()
-                || inputs.wires
-                || inputs.void_state.is_some()
-            {
-                return Err(failure("invalid region ordering operation"));
-            }
-            return integer_records(
-                ffi::region_order(&path, &block, prefix, order.gather_faces).map_err(failure)?,
-            );
-        }
-        if inputs.transfer.is_some() && (inputs.wires || inputs.void_state.is_some()) {
-            return Err(failure("transfer cannot be combined with query mutations"));
-        }
-        if let Some(ray) = inputs.ray {
-            if inputs.degenerate.is_some()
-                || inputs.type_probe.is_some()
-                || inputs.transfer.is_some()
-                || inputs.wires
-                || inputs.void_state.is_some()
-            {
-                return Err(failure("ray cannot be combined with another operation"));
-            }
-            let values = match ffi::ray_fire(
-                &path,
-                &block,
-                ray.start,
-                ray.direction,
-                ray.tolerance,
-                ray.radius,
-            ) {
-                // The shim's guard: non-finite ray values with boundary faces.
-                Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => {
-                    return Ok(Output::err("rejected_input"));
-                }
-                other => other.map_err(failure)?,
-            };
-            return ray_output(&values);
-        }
-        if let Some(degenerate) = inputs.degenerate {
-            if inputs.type_probe.is_some()
-                || inputs.transfer.is_some()
-                || inputs.wires
-                || inputs.void_state.is_some()
-            {
-                return Err(failure(
-                    "degeneracy cannot be combined with another operation",
-                ));
-            }
-            let values = ffi::degeneracy(&path, &block, degeneracy_tolerance(&degenerate)?)
-                .map_err(failure)?;
-            return Ok(Output::new().ints(
-                "records",
-                values
-                    .into_iter()
-                    .map(|value| value as i64)
-                    .collect::<Vec<_>>(),
-            ));
-        }
-        if let Some(probe) = inputs.type_probe {
-            if inputs.transfer.is_some() || inputs.wires || inputs.void_state.is_some() {
-                return Err(failure(
-                    "type probe cannot be combined with another operation",
-                ));
-            }
-            let export =
-                crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-                    graph::eval(graph::Op::Export, &path, &block)
-                })
-                .map_err(failure)?;
-            let counts = graph::counts(&export)
-                .ok_or_else(|| failure("native type fixture build failed"))?;
-            let values =
-                ffi::type_members(&path, &block, type_probe_index(&probe, counts)?, probe.code)
-                    .map_err(failure)?;
-            return Ok(Output::new().ints("records", values.to_vec()));
-        }
-        let native = if let Some(transfer) = inputs.transfer {
-            let export =
-                crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-                    graph::eval(graph::Op::Export, &path, &block)
-                })
-                .map_err(failure)?;
-            let counts = graph::counts(&export)
-                .ok_or_else(|| failure("native transfer fixture build failed"))?;
-            let options = resolve_transfer(&transfer, counts)?;
-            match ffi::transfer(
-                &path,
-                &block,
-                options.extra_empty,
-                options.source,
-                options.recipient,
-                options.candidates.as_deref(),
-                options.split_faceuse,
-                &options.pre,
-            ) {
-                // The shim's guard: the input would crash native code.
-                Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => {
-                    return Ok(Output::err("rejected_input"));
-                }
-                other => other,
-            }
-        } else if inputs.wires {
-            ffi::wire_edges(&path, &block)
-        } else {
-            ffi::query(&path, &block, inputs.void_state)
-        }
-        .map_err(failure)?;
-        if native
-            .iter()
-            .any(|v| !v.is_finite() || v.fract() != 0.0 || v.abs() > (1_u64 << 53) as f64)
-        {
-            return Err(failure("native topology query returned an invalid integer"));
-        }
-        Ok(Output::new().ints(
-            "records",
-            native.into_iter().map(|v| v as i64).collect::<Vec<_>>(),
-        ))
-    }
-
     fn cases(&self, ctx: &crate::CaseContext) -> Result<Vec<Case>, HarnessError> {
         let mut v = crate::runner::default_cases(self, ctx)?;
         v.extend(inner::cases(self.id()));
@@ -951,14 +796,13 @@ impl UnitDiff for Runner {
             return inner::run_rust(case);
         }
         let inputs: Inputs = case.parse()?;
-        // an input the FFI refuses is a harness error on both sides (PR #502's
-        // convention): the shim never builds it, so the Rust side must not either. Fuzz
-        // case fuzz00180 (`--fuzz 300 --seeds 5`) mutated a mixed fixture's `networks` to
-        // 2^32: every FFI entry point exports the block first and refuses more than 3
-        // networks, while this side's builder wired networks for minutes. The check sees
-        // the same block as `run_cpp`.
-        let (path, block) = fixture_input(inputs.brep.clone())?;
-        graph::validate_export(&path, &block).map_err(failure)?;
+        // the builders' size bounds (fuzz case fuzz00180, `--fuzz 300 --seeds 5`, mutated
+        // a mixed fixture's `networks` to 2^32, which the builder wired for minutes)
+        let source: BrepIn = serde_json::from_value(inputs.brep.clone())
+            .map_err(|e| failure(format!("topology fixture: {e}")))?;
+        if !source_sizes_ok(&source) {
+            return Err(failure("B-rep source above the size bounds"));
+        }
         let mut brep = match own_brep(&inputs.brep)? {
             Ok(b) => b,
             Err(o) => return Ok(o),
@@ -1237,8 +1081,8 @@ impl UnitDiff for Runner {
                 let mut ray = json!({"start": rng.point3(-2.0, 2.0).map(|v| v * scale),
                     "direction": direction, "tolerance": tolerance, "radius": radius});
                 if rng.chance(0.2) {
-                    // Non-finite ray inputs: C++ only crashes on them once boundary
-                    // faces reach the solver, so empty-shape runs compare them.
+                    // Non-finite ray inputs (upstream only crashes on them once
+                    // boundary faces reach the solver).
                     let special = ["nan", "inf", "-inf"].get(rng.below(3) as usize).copied()?;
                     let slot = match rng.below(4) {
                         0 => ray
@@ -1346,19 +1190,6 @@ fn text(output: &mut Vec<i64>, value: &str) {
     output.extend(value.bytes().map(i64::from));
 }
 
-fn integer_records(values: Vec<f64>) -> Result<Output, HarnessError> {
-    if values
-        .iter()
-        .any(|v| !v.is_finite() || v.fract() != 0.0 || v.abs() > (1_u64 << 53) as f64)
-    {
-        return Err(failure("invalid native ordering integer"));
-    }
-    Ok(Output::new().ints(
-        "records",
-        values.into_iter().map(|v| v as i64).collect::<Vec<_>>(),
-    ))
-}
-
 fn rust_region_order(
     brep: &mut solidcore::topology::Brep,
     prefix: usize,
@@ -1464,23 +1295,16 @@ mod tests {
     }
 
     /// Fuzz case `topology.shell/fuzz00180` (`--fuzz 300 --seeds 5`): a mixed fixture of
-    /// 2^32 wire networks. The FFI refuses more than 3 for the C++ side, and the Rust side
-    /// must be refused the same way instead of wiring networks for minutes.
+    /// 2^32 wire networks is refused instead of wiring networks for minutes.
     #[test]
-    fn huge_network_count_is_refused_on_both_sides() {
-        let case = wires_case(4_294_967_296);
-        let cpp = Runner.run_cpp(&case).unwrap_err().to_string();
-        let rust = Runner.run_rust(&case).unwrap_err().to_string();
-        assert_eq!(cpp, "invalid argument: bad index/count 4294967296 (max 3)");
-        assert_eq!(rust, cpp);
+    fn huge_network_count_is_refused() {
+        let rust = Runner.run_rust(&wires_case(4_294_967_296)).unwrap_err().to_string();
+        assert_eq!(rust, "B-rep source above the size bounds");
     }
 
-    /// The largest network count the FFI accepts still runs on both sides.
+    /// The largest network count accepted still runs.
     #[test]
-    fn max_network_count_runs_on_both_sides() {
-        let case = wires_case(3);
-        let cpp = Runner.run_cpp(&case).unwrap();
-        let rust = Runner.run_rust(&case).unwrap();
-        assert!(crate::compare(&cpp, &rust, &[]).mismatches.is_empty());
+    fn max_network_count_runs() {
+        assert!(Runner.run_rust(&wires_case(3)).is_ok());
     }
 }

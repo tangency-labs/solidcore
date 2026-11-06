@@ -1,13 +1,11 @@
 //! `SmShell::IsInnerShellOf` cases (#1419, #1473): every pair of shells of bodies with
-//! internal voids, built from boxes and spheres with Booleans on both sides
-//! (`SmApiCreateBox`/`SmApiCreateSphere`/`SmApiBoolean` in the shim
-//! `topology_shell_inner.cpp`, [`create_box`]/[`create_sphere`]/[`boolean`] in Rust).
+//! internal voids, built from boxes and spheres with Booleans ([`create_box`],
+//! [`create_sphere`], [`boolean`]; upstream `SmApiCreateBox`/`SmApiCreateSphere`/
+//! `SmApiBoolean` in the reference shim `topology_shell_inner.cpp`).
 //!
-//! A case is `{"inner_shell_of": [[op, kind, x, y, z, a, b, c], ...]}` (see
-//! [`ffi::inner_shell_of`]). The record is `n_regions (n_shells)*n_regions`, then per
+//! A case is `{"inner_shell_of": [[op, kind, x, y, z, a, b, c], ...]}`. The record is `n_regions (n_shells)*n_regions`, then per
 //! shell (region and shell list order) `IsInnerShellOf(NULL)` and `IsInnerShellOf(other)`
-//! for every other shell. No C++ state reaches the Rust side: the Rust kernel builds the
-//! same bodies itself.
+//! for every other shell.
 
 use serde_json::json;
 
@@ -20,7 +18,6 @@ use solidcore::topology::brep::p1;
 use solidcore::topology::shell::is_inner_shell_of;
 use solidcore::topology::Brep;
 use solidcore::SolidError;
-use solidcore_ffi::units::topology_shell as ffi;
 
 use crate::{Case, HarnessError, Output};
 
@@ -39,18 +36,6 @@ fn steps_of(case: &Case) -> Result<Vec<Step>, HarnessError> {
         .cloned()
         .ok_or_else(|| HarnessError::new("no inner_shell_of steps"))?;
     serde_json::from_value(v).map_err(|e| HarnessError::new(e.to_string()))
-}
-
-/// The C++ side.
-pub(super) fn run_cpp(case: &Case) -> Result<Output, HarnessError> {
-    let steps = steps_of(case)?;
-    let mut input = vec![steps.len() as f64];
-    for s in &steps {
-        input.extend(s);
-    }
-    let v = ffi::inner_shell_of(&input)
-        .map_err(|e| HarnessError::new(format!("c++ IsInnerShellOf: {e}")))?;
-    Ok(Output::new().values("out", v))
 }
 
 fn primitive(k: &mut Kernel, s: &Step) -> Result<Brep, SolidError> {

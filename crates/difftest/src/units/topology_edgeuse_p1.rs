@@ -181,6 +181,18 @@ pub(crate) enum BrepIn {
     },
 }
 
+/// Whether a B-rep source keeps the reference wrapper's size bounds: at most 64 vertices,
+/// 3 wire networks, 600 isolated points and 150 line segments. The builders take time in
+/// these sizes (fuzz case `topology.shell/fuzz00180`, 2^32 networks, wired for minutes).
+pub(crate) fn source_sizes_ok(b: &BrepIn) -> bool {
+    match b {
+        BrepIn::Vertices { points } => points.len() <= 64,
+        BrepIn::Mixed { networks, .. } => *networks <= 3,
+        BrepIn::Points { vertices, lines } => vertices.len() <= 600 && lines.len() <= 150,
+        _ => true,
+    }
+}
+
 /// The face of a [`BrepIn::Mixed`] B-rep (as [`BrepIn::Face`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct FaceIn {
