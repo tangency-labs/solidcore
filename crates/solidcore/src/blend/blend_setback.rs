@@ -91,8 +91,7 @@
 //! subtracts) the port returns `SM_ERR`, and a least-squares system with fewer rows than
 //! columns (where the fork would allocate a wrapped size) is not solvable (`FALSE`); the
 //! fork's cases never reach these. The moved ease's errors name this module as their
-//! operation; their statuses are unchanged. No recursion but `piece_bound`'s halving (not
-//! the fork's), at most [`graph::GRAPH_DEPTH`] levels deep.
+//! operation; their statuses are unchanged. No recursion.
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // the fork's NaN-safe tests
 
@@ -2838,8 +2837,8 @@ fn fill_hole_with(
 /// corner (positive: past it): out of the material for a convex corner (`convex`), into it
 /// for a concave one. A certified bound: every patch lies in the convex hull of its control
 /// points (weights positive). Not the fork (solidcore#2904): where that hull stands more than
-/// `tol` past a plane, the bound is tightened on the patch itself ([`plane_bound`]), so a
-/// fill on the material's side is not refused for its control net. Beside a curved face
+/// `tol` past a plane, the bound is tightened on the patch itself ([`plane_bound`], polling
+/// `k`'s cancel token), so a fill on the material's side is not refused for its control net. Beside a curved face
 /// (solidcore#2343): 0 where every patch is certified on the material's side of every face,
 /// by the faces' implicit forms, else `f64::INFINITY` (the fork's `HUGE_VAL`, 37c9e1d).
 ///
@@ -2847,7 +2846,7 @@ fn fill_hole_with(
 /// `SM_ERR_INVALID_INPUT` for an empty fill; `SM_ERR` for a patch with a weight not positive
 /// (beside a curved face also: of more than one span, or of degree below 2 across a face it
 /// lies on).
-pub fn containment(fill: &Fill, faces: &[Face], convex: bool, tol: f64) -> Result<f64> {
+pub fn containment(k: &Kernel, fill: &Fill, faces: &[Face], convex: bool, tol: f64) -> Result<f64> {
     if fill.patches.is_empty() {
         return Err(SolidError::invalid_input(
             OP,
@@ -2871,7 +2870,7 @@ pub fn containment(fill: &Fill, faces: &[Face], convex: bool, tol: f64) -> Resul
                 hull = smax(hull, side * (pt - face.point).dot(face.normal));
             }
             if hull > tol && one_span {
-                hull = plane_bound(&canonical, face, side, tol)?;
+                hull = plane_bound(k, &canonical, face, side, tol)?;
             }
             worst = smax(worst, hull);
         }
@@ -2885,9 +2884,19 @@ pub fn containment(fill: &Fill, faces: &[Face], convex: bool, tol: f64) -> Resul
 /// Each piece's coefficients bound it there (`f_k / w_k`, the weights positive); a piece
 /// bounded past `tol` is halved each way by de Casteljau, up to [`graph::GRAPH_DEPTH`] times,
 /// so the bound converges on the patch's own distance [48]. Past `tol` at that depth the bound
-/// stands, and the fill is refused by its caller. Each bound carries the rounding of computing
-/// the form and of the halvings.
+/// stands, and the fill is refused by its caller. The pieces are kept on a stack of at most
+/// `3 GRAPH_DEPTH + 1`, each polling the kernel's cancel token.
+///
+/// The bound carries its rounding. With `M` the largest `w_k sum_c |P_kc - X0_c| |N_c|` and
+/// `K = 8 + GRAPH_DEPTH (p + q)`: each coefficient of `f` is computed in 8 operations on
+/// terms of at most `M`, and a halving's de Casteljau takes `n` rounded sums of convex pairs
+/// along a direction of degree `n` (its products by 1/2 exact), so every piece's `f_k` is
+/// within `gamma_K M` of its exact value and its `w_k`, convex combinations of the positive
+/// weights, within a relative `gamma_K`, at least `w_min (1 - gamma_K)`. The ratio, its
+/// division and the final sum then move at most `3 gamma_(K + 2) M / (w_min (1 - gamma_K))`.
+/// A computed weight not positive refuses the bound (`f64::INFINITY`).
 fn plane_bound(
+    k: &Kernel,
     canonical: &crate::nurbs::b_spline_surface::p1::SurfaceCanonical,
     face: &Face,
     side: f64,
@@ -2897,43 +2906,53 @@ fn plane_bound(
     let rational = canonical.weights.len() == canonical.control_points.len();
     let mut f = certify::t_make(p, q);
     let mut w = certify::t_make(p, q);
-    for (k, &pt) in canonical.control_points.iter().enumerate() {
-        let wk = if rational {
-            el(&canonical.weights, k)?
+    let (mut most, mut w_min) = (0.0f64, f64::INFINITY);
+    for (i, &pt) in canonical.control_points.iter().enumerate() {
+        let wi = if rational {
+            el(&canonical.weights, i)?
         } else {
             1.0
         };
-        *el_mut(&mut w.c, k)? = wk;
-        *el_mut(&mut f.c, k)? = wk * side * (pt - face.point).dot(face.normal);
+        let d = pt - face.point;
+        let terms = d.x.abs() * face.normal.x.abs()
+            + d.y.abs() * face.normal.y.abs()
+            + d.z.abs() * face.normal.z.abs();
+        most = smax(most, wi * terms);
+        w_min = smin(w_min, wi);
+        *el_mut(&mut w.c, i)? = wi;
+        *el_mut(&mut f.c, i)? = wi * side * d.dot(face.normal);
     }
-    // the form's terms (three products and sums, a difference per coordinate, the weight) and
-    // each halving's (one sum and one product per level of de Casteljau, p + q per halving)
-    let rounding = crate::nurbs::math::gamma(12 + 2 * (p + q) * graph::GRAPH_DEPTH)
-        * certify::t_scale(&f)
-        / w.c.iter().copied().fold(f64::INFINITY, f64::min);
-    Ok(piece_bound(&f, &w, tol - rounding, graph::GRAPH_DEPTH)? + rounding)
-}
-
-/// [`plane_bound`] on one piece: the largest `f_k / w_k`, the piece halved each way while that
-/// passes `tol` and `depth` lasts, the pieces' largest.
-fn piece_bound(f: &Tensor, w: &Tensor, tol: f64, depth: usize) -> Result<f64> {
-    let mut hull = f64::NEG_INFINITY;
-    for (&fk, &wk) in f.c.iter().zip(&w.c) {
-        hull = smax(hull, fk / wk);
+    let ops = 8 + graph::GRAPH_DEPTH * (p + q);
+    let shrink = 1.0 - crate::nurbs::math::gamma(ops);
+    if !(w_min > 0.0 && shrink > 0.0) {
+        return Ok(f64::INFINITY);
     }
-    if !(hull > tol) || depth == 0 {
-        return Ok(hull);
-    }
-    let (fa, fb) = certify::t_split(f, 0)?;
-    let (wa, wb) = certify::t_split(w, 0)?;
+    let rounding = 3.0 * crate::nurbs::math::gamma(ops + 2) * most / (w_min * shrink);
     let mut worst = f64::NEG_INFINITY;
-    for (fh, wh) in [(&fa, &wa), (&fb, &wb)] {
-        let (f0, f1) = certify::t_split(fh, 1)?;
-        let (w0, w1) = certify::t_split(wh, 1)?;
-        worst = smax(worst, piece_bound(&f0, &w0, tol, depth - 1)?);
-        worst = smax(worst, piece_bound(&f1, &w1, tol, depth - 1)?);
+    let mut pieces = vec![(f, w, graph::GRAPH_DEPTH)];
+    while let Some((f, w, depth)) = pieces.pop() {
+        k.check_cancelled(OP)?;
+        let mut hull = f64::NEG_INFINITY;
+        for (&fi, &wi) in f.c.iter().zip(&w.c) {
+            if !(wi > 0.0) {
+                return Ok(f64::INFINITY);
+            }
+            hull = smax(hull, fi / wi);
+        }
+        if !(hull + rounding > tol) || depth == 0 {
+            worst = smax(worst, hull);
+            continue;
+        }
+        let (fa, fb) = certify::t_split(&f, 0)?;
+        let (wa, wb) = certify::t_split(&w, 0)?;
+        for (fh, wh) in [(&fb, &wb), (&fa, &wa)] {
+            let (f0, f1) = certify::t_split(fh, 1)?;
+            let (w0, w1) = certify::t_split(wh, 1)?;
+            pieces.push((f1, w1, depth - 1));
+            pieces.push((f0, w0, depth - 1));
+        }
     }
-    Ok(worst)
+    Ok(worst + rounding)
 }
 
 #[cfg(test)]
@@ -2996,17 +3015,28 @@ mod tests {
             reversed: Vec::new(),
             degree: 2,
         };
+        let k = Kernel::default();
         let n = Vec3::new(1.0, 1.0, 0.0) * 0.5f64.sqrt();
         let plane = [Face::plane(Point3::new(0.0, 0.0, 0.0), n)];
-        let net = containment(&fill, &plane, true, 2.0).unwrap();
+        let net = containment(&k, &fill, &plane, true, 2.0).unwrap();
         assert!((net - 2f64.sqrt()).abs() < 1e-15, "{net}");
-        let within = containment(&fill, &plane, true, 1.001).unwrap();
+        let within = containment(&k, &fill, &plane, true, 1.001).unwrap();
         assert!((1.0..=1.001).contains(&within), "{within}");
-        let past = containment(&fill, &plane, true, 0.9).unwrap();
+        let past = containment(&k, &fill, &plane, true, 0.9).unwrap();
         assert!(past >= 1.0 && past < 2f64.sqrt(), "{past}");
         // on a concave corner's side the net is within any tolerance: its ends, -1 / sqrt 2
-        let concave = containment(&fill, &plane, false, 1e-6).unwrap();
+        let concave = containment(&k, &fill, &plane, false, 1e-6).unwrap();
         assert!((concave + 0.5f64.sqrt()).abs() < 1e-15, "{concave}");
+        // the halving polls the kernel's cancel token; the net's bound needs none
+        let mut k = Kernel::default();
+        let token = crate::kernel::CancelToken::new();
+        k.set_cancel_token(token.clone());
+        token.cancel();
+        assert_eq!(
+            containment(&k, &fill, &plane, true, 0.9),
+            Err(SolidError::cancelled(OP))
+        );
+        assert!(containment(&k, &fill, &plane, true, 2.0).is_ok());
     }
 
     #[test]
