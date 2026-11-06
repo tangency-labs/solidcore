@@ -1,24 +1,19 @@
-//! Runner for unit `topology.brep_p2`. C++: `solidcore_ffi::units::topology_brep_p2`.
-//! Rust: `solidcore::topology::brep::p2`.
+//! Runner for unit `topology.brep_p2`: `solidcore::topology::brep::p2`, ported from
+//! upstream `SmBrep` (`SmBrep.cpp`); checked against its golden.
 //!
-//! The C++ side builds a real `SmBrep` per call with the shared topology fixture (an
-//! upstream `.smb` file, a wire edge, a one-face B-rep or the `my_test_topology` wire
-//! network) and runs one `SmBrep` member on it, analytic geometry as it is. The Rust
-//! side builds a wire edge, face or network source itself and reads an `.smb` file with
-//! the Rust reader, both renumbered into the shim's walk order
-//! ([`crate::own_reader::brep_in_order`] under this shim's conventions: lists registered
-//! first, its own owner identities; no C++ export reaches the Rust side), runs the port
-//! and writes the same output layout (`out`).
+//! The case builds a wire edge, face or network source itself and reads an `.smb` file
+//! with the Rust reader, both renumbered into the upstream test fixture's walk order
+//! ([`crate::own_reader::brep_in_order`] under this runner's conventions: lists
+//! registered first, its own owner identities), runs one `SmBrep` member on it and
+//! records its output (`out`).
 //!
 //! Entity selectors are taken modulo the matching entity count (`-1` selects null);
-//! an op that needs an entity the B-rep lacks is skipped on both sides
-//! (`no target`). The B-rep cache does not exist on either side (fresh B-reps), so
-//! `Notify` is compared without it. `DeleteStaleCaches` first seeds trimmed-surface
-//! caches by face-index masks on both sides (C++: `SmCacheMgr`; Rust: the caller-held
-//! map) and compares which survive. `SwapUV` runs under a topology change tracker on
-//! both sides (`harness/cpp/shim/sc_tracked.h`, `topology_brep_p3::run_tracked`), and
-//! its lists and events are compared as `tracker`, so each face's and surface's
-//! `SwapUV` notifications are.
+//! an op that needs an entity the B-rep lacks records `no target`. The B-rep cache does
+//! not exist (fresh B-reps), so `Notify` runs without it. `DeleteStaleCaches` first seeds
+//! trimmed-surface caches by face-index masks (the caller-held map) and records which
+//! survive. `SwapUV` runs under a topology change tracker
+//! (`topology_brep_p3::run_tracked`), and its lists and events are recorded as `tracker`,
+//! so each face's and surface's `SwapUV` notifications are.
 
 use std::collections::BTreeMap;
 
@@ -54,12 +49,10 @@ use solidcore::topology::{
     VertexId, VertexuseId,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_brep_p2::{self as ffi, Op};
-use solidcore_ffi::units::topology_vertexuse::counts;
 
 use super::topology_brep_p3 as p3;
 use super::topology_vertexuse::{
-    gen_brep, gen_curve, gen_surface, path_of, push_curve, push_surface, BrepIn, CrvIn,
+    gen_brep, gen_curve, gen_surface, push_curve, push_surface, BrepIn, CrvIn,
     SrfIn,
 };
 use crate::case::CaseContext;
@@ -68,6 +61,24 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// The difftest runner.
 pub struct Runner;
+
+/// The operations, as their arguments are laid out after the B-rep head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Query,
+    SetTol,
+    Rebuild,
+    Make,
+    Sector,
+    Merge,
+    Mate,
+    Notify,
+    Stale,
+    Swap,
+    Replace,
+    RayFire,
+    MergeSsi,
+}
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
@@ -188,28 +199,6 @@ const fn keep() -> i64 {
 
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
-}
-
-fn head(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    match &i.brep {
-        BrepIn::File { rebuild, .. } => v.extend([0.0, flag(*rebuild)]),
-        BrepIn::Wire { curve, t0, t1 } => {
-            v.push(1.0);
-            push_curve(&mut v, curve)?;
-            v.extend([*t0, *t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            v.push(2.0);
-            push_surface(&mut v, surface)?;
-            v.extend(dom);
-        }
-        BrepIn::Network => v.push(3.0),
-    }
-    v.push(flag(i.validate_only));
-    v.push(flag(i.init_gaps));
-    v.push(i.editing as f64);
-    Ok(v)
 }
 
 /// Selector `s` modulo `n`; `None` for a negative selector or an empty kind.
@@ -378,39 +367,6 @@ fn op_args(op: &OpIn, c: &[usize; 10]) -> Result<Option<(Op, Vec<f64>)>, Harness
             (Op::RayFire, a)
         }
     }))
-}
-
-fn ffi_err(e: &solidcore_ffi::FfiError) -> HarnessError {
-    harness(e.to_string())
-}
-
-/// `(path, head, counts)` of a built B-rep, or the build failure's output.
-type Prepared = Result<(String, Vec<f64>, [usize; 10]), Output>;
-
-fn prepare(i: &Inputs) -> Result<Prepared, HarnessError> {
-    let path = path_of(&i.brep)?;
-    let h = head(i)?;
-    let export = ffi::eval(Op::Export, &path, &h).map_err(|e| ffi_err(&e))?;
-    match counts(&export) {
-        Some(c) => Ok(Ok((path, h, c))),
-        None => Ok(Err(Output::new().values("out", export))),
-    }
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (path, mut input, c) = match prepare(i)? {
-        Ok(x) => x,
-        Err(o) => return Ok(o),
-    };
-    let Some((op, args)) = op_args(&i.op, &c)? else {
-        return Ok(Output::err("no target"));
-    };
-    input.extend(args);
-    let out = ffi::eval(op, &path, &input).map_err(|e| ffi_err(&e))?;
-    if op == Op::Swap {
-        return Ok(split_swap(out));
-    }
-    Ok(Output::new().values("out", out))
 }
 
 /// A `Swap` output (either side) from its trailer: `out` (built, status) and `tracker`
@@ -926,7 +882,6 @@ fn run_rust_op(k: &mut Kernel, b: &mut Brep, op: Op, a: &[f64]) -> Result<Vec<f6
                 f64::from(x.intersection.point_class() as i32)
             }));
         }
-        Op::Export | Op::Extras | Op::MateProbe => return Err(Fail::Harness(harness("not an op"))),
     }
     Ok(out)
 }
@@ -1390,10 +1345,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse()?)
     }
@@ -1421,161 +1372,5 @@ impl UnitDiff for Runner {
             op,
         })
         .ok()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A negative `MateLaminaEdgeToSurface` extension factor hangs the C++
-    /// (`N_SrfExtendByDist`, HANG-18): the FFI must reject it before calling in, and
-    /// still accept `0` and the upstream `1.5`.
-    #[test]
-    fn mate_rejects_a_negative_extension_factor() {
-        let case = |ext: f64| -> Inputs {
-            let v = serde_json::json!({
-                "brep": {"kind": "face", "surface": {"plane": {"o": [0, 0, 0], "n": [0, 0, 1]}},
-                         "dom": [0, 0, 10, 10]},
-                "editing": 1, "op": "mate", "edge": 0,
-                "surface": {"plane": {"o": [0, 0, 0.5], "n": [0, 0, 1]}},
-                "ext": ext, "uv_ext": 10.0
-            });
-            serde_json::from_value(v).unwrap()
-        };
-        let err = run_cpp(&case(-1.0)).unwrap_err().to_string();
-        assert!(err.contains("negative surface extension factor"), "{err}");
-        assert!(run_cpp(&case(-1e-300)).is_err());
-        for ext in [0.0, 1.5] {
-            assert!(run_cpp(&case(ext)).is_ok(), "ext {ext}");
-        }
-    }
-
-    /// The fixture's gap initialisation slows down from a corner at `1e155` and stops
-    /// returning around `1e156` on a u-degree-2, three-span face (HANG-28, `--fuzz` case
-    /// fuzz00497): the FFI refuses degree >= 2 faces with a corner past `1e154` under
-    /// `init_gaps`, and nothing else. The compared control at the bound returns in about
-    /// 0.01 s. A rational corner is bounded at `1e151`, stored and Cartesian (stored / w).
-    #[test]
-    fn gap_initialisation_refuses_a_huge_curved_corner() {
-        let now = -f64::MAX;
-        let case = |p: u8, z: f64, gaps: bool| -> Inputs {
-            let n: u32 = if p == 2 { 5 } else { 4 };
-            let u: Vec<f64> = if p == 2 {
-                vec![0.0, 0.0, 0.0, 0.33, 0.66, 1.0, 1.0, 1.0]
-            } else {
-                vec![0.0, 0.0, 0.33, 0.66, 1.0, 1.0]
-            };
-            let mut net: Vec<Vec<[f64; 4]>> = (0..n)
-                .map(|a| {
-                    (0..2)
-                        .map(|b| [f64::from(a), f64::from(b), 0.0, now])
-                        .collect()
-                })
-                .collect();
-            net.last_mut().unwrap()[1][2] = z;
-            let v = serde_json::json!({
-                "brep": {"kind": "face", "dom": [0, 0, 1, 1], "surface": {"bspline": {
-                    "form": 0, "oob": false, "p": p, "q": 1, "u": u, "v": [0, 0, 1, 1],
-                    "net": net}}},
-                "init_gaps": gaps, "op": "query", "which": 5
-            });
-            serde_json::from_value(v).unwrap()
-        };
-        for z in [2e154, 1e156, 5e156, 1e300] {
-            let err = run_cpp(&case(2, z, true)).unwrap_err().to_string();
-            assert!(
-                err.contains("face too large for the gap initialisation"),
-                "{z}: {err}"
-            );
-        }
-        for (p, z, gaps) in [(2, 1e154, true), (2, 1e300, false), (1, 1e300, true)] {
-            let c = run_cpp(&case(p, z, gaps)).unwrap();
-            let r = run_rust(&case(p, z, gaps)).unwrap();
-            assert_eq!(format!("{c:?}"), format!("{r:?}"), "{p} {z} {gaps}");
-        }
-        // a rational net is homogeneous (w x, w y, w z, w), bounded at 1e151 on both the
-        // stored and the Cartesian corner: the stored x of 1e154 with weight 1e-3 is a
-        // vertex at x = 1e157 (no return) and a stored 1e152 with weight 1e3 is past the
-        // stored bound, both refused; a stored 1e140 with weight 1e3 is compared
-        let rational = |x: f64, w: f64| -> Inputs {
-            let mut v = serde_json::to_value(case(2, 0.0, true)).unwrap();
-            let net = v["brep"]["surface"]["bspline"]["net"]
-                .as_array_mut()
-                .unwrap();
-            for row in net.iter_mut() {
-                for pt in row.as_array_mut().unwrap() {
-                    pt[3] = serde_json::json!(1.0);
-                }
-            }
-            let corner = &mut net.last_mut().unwrap()[1];
-            corner[0] = serde_json::json!(x);
-            // homogeneous: the stored y is w * 1, so the corner's Cartesian y stays 1
-            corner[1] = serde_json::json!(w);
-            corner[3] = serde_json::json!(w);
-            serde_json::from_value(v).unwrap()
-        };
-        for (x, w) in [(1e154, 1e-3), (1e152, 1e3), (2e151, 1.0)] {
-            let err = run_cpp(&rational(x, w)).unwrap_err().to_string();
-            assert!(
-                err.contains("face too large for the gap initialisation"),
-                "{x} {w}: {err}"
-            );
-        }
-        // compared inside the bound and exactly at it (inclusive): stored 1e151 with
-        // w = 1, stored 1e148 with w = 1e-3 (a vertex at 1e151)
-        for (x, w) in [(1e140, 1e3), (1e151, 1.0), (1e148, 1e-3)] {
-            let c = run_cpp(&rational(x, w)).unwrap();
-            let r = run_rust(&rational(x, w)).unwrap();
-            assert_eq!(format!("{c:?}"), format!("{r:?}"), "{x} {w}");
-        }
-    }
-
-    /// A mating surface so far from the lamina edge that the squared distance overflows
-    /// makes upstream's `dMaxDist` infinite, and `CreateExtendedSurface` then halves an
-    /// infinite distance forever (HANG-9; `--fuzz` cases fuzz00745 / 01418 / 01659): the
-    /// FFI's `MateProbe` refuses exactly the non-finite extension distances.
-    #[test]
-    fn mate_rejects_a_non_finite_extension_distance() {
-        let case_ed = |z: f64, ext: f64, editing: i64| -> Inputs {
-            let v = serde_json::json!({
-                "brep": {"kind": "face", "surface": {"plane": {"o": [0, 0, 0], "n": [0, 0, 1]}},
-                         "dom": [0, 0, 10, 10]},
-                "editing": editing, "op": "mate", "edge": 0,
-                "surface": {"plane": {"o": [0, 0, z], "n": [0, 0, 1]}},
-                "ext": ext, "uv_ext": 10.0
-            });
-            serde_json::from_value(v).unwrap()
-        };
-        let case = |z: f64, ext: f64| case_ed(z, ext, 1);
-        for (z, ext) in [
-            (1e300, 1.5),
-            (-1e300, 1.5),
-            (1e160, 1.5),
-            (1e160, 0.0),
-            (1e154, 1e300),
-        ] {
-            let err = run_cpp(&case(z, ext)).unwrap_err().to_string();
-            assert!(
-                err.contains("non-finite surface extension distance"),
-                "{z} {ext}: {err}"
-            );
-        }
-        for (z, ext) in [
-            (0.5, 1.5),
-            (1e10, 1.5),
-            (1e154, 1.5),
-            (1e154, 0.0),
-            (0.0, 1e300),
-        ] {
-            assert!(run_cpp(&case(z, ext)).is_ok(), "{z} {ext}");
-        }
-        // Mate returns before the extension when editing is off (SmBrep.cpp:22166):
-        // the guard must not refuse it, and the early status is compared.
-        for z in [1e300, -1e300, 1e160] {
-            let c = run_cpp(&case_ed(z, 1.5, 0)).unwrap();
-            let r = run_rust(&case_ed(z, 1.5, 0)).unwrap();
-            assert_eq!(format!("{c:?}"), format!("{r:?}"), "{z}");
-        }
     }
 }
