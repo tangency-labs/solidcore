@@ -921,6 +921,11 @@ pub(crate) fn fins(vs: &[f64]) -> bool {
     vs.iter().all(|&v| fin(v))
 }
 
+/// Whether `v` is finite within range and non-zero.
+pub(crate) fn nonzero(v: &[f64; 3]) -> bool {
+    contract::nonzero3(v, MAX_COORD)
+}
+
 /// Whether `v` is [`fin`] and positive.
 pub(crate) fn positive(v: f64) -> bool {
     fin(v) && v > 0.0
@@ -967,7 +972,7 @@ pub(crate) fn surface_kind(s: &SrfIn, nested: bool, revolution: bool) -> Option<
         SrfIn::Bspline(b) => Some((Some(bss_domain(&b)?), true)),
         SrfIn::Sms(_) => None,
         SrfIn::Plane { o, n } => {
-            (contract::vec3(&o, MAX_COORD) && contract::nonzero3(&n, MAX_COORD))
+            (fins(&o) && nonzero(&n))
                 .then_some((None, false))
         }
         SrfIn::Bounded { basis, .. } => {
@@ -979,7 +984,7 @@ pub(crate) fn surface_kind(s: &SrfIn, nested: bool, revolution: bool) -> Option<
         }
         SrfIn::Revolution { a, b, p, axis, .. } => (revolution
             && [a, b, p].iter().all(|v| contract::vec3(v, MAX_COORD))
-            && contract::nonzero3(&axis, MAX_COORD))
+            && nonzero(&axis))
         .then_some((None, true)),
     }
 }

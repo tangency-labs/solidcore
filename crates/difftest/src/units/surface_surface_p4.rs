@@ -6,7 +6,8 @@
 //! `smsurf_IsPointOnNormal` and `SmSurfaceEval::EvalNormal`.
 //!
 //! Ported from upstream `source/SMLib/src/SmSurface.cpp`; checked against its golden.
-//! Rust: `solidcore::surface::surface::p4`.
+//! Rust: `solidcore::surface::surface::p4`. Generated inputs outside the C++ reference
+//! wrapper's input contract ([`keeps_contract`]) are redrawn.
 //!
 //! A case is one `op` on a `surface` (the input forms of unit `surface.surface_p7`).
 //! The Rust side produces a flat record (status first); the runner reports it as the `out` values. A Rust error maps to its `SmStatus` (`1007` for
@@ -53,6 +54,11 @@ use super::surface_surface_p7::{
     b, curve_of, dom_of, gen_boundary_uv, gen_curve, gen_dom, gen_param, gen_plane, gen_point_near,
     gen_surface, gen_uv, harness, p2, param_of, pv,
     req_of, sop_of, st, surface_of, unit_scale, v3, BssIn, CrvIn, Fail, SrfIn,
+};
+use super::surface_surface_p7::{
+    curve_range, domain_ok, fin, fins, nonzero, positive, sop_ok, surface_domain, surface_kind,
+    target_ok, uv_bounds, uv_ok, vecs_ok, within, Domain, SO_AT_DISTANCE, SO_INTERSECT,
+    SO_MAXIMIZE, SO_MINIMIZE, SO_NORMALIZE, SO_SIGNED_MIN,
 };
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -429,6 +435,147 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(o)) => Ok(*o),
         Err(Fail::Harness(e)) => Err(e),
+    }
+}
+
+// ---- input contract -----------------------------------------------------------------
+
+/// The most points of an equation-set call.
+const MAX_POINTS: usize = 32;
+
+/// Whether there are 1 to [`MAX_POINTS`] parameter vectors of `dim` coordinates each,
+/// all [`fin`] and the first ones within their `bounds`.
+fn points_ok(pts: &[Vec<f64>], dim: usize, bounds: &[(f64, f64)]) -> bool {
+    (1..=MAX_POINTS).contains(&pts.len())
+        && pts.iter().all(|p| {
+            p.len() == dim
+                && p.iter()
+                    .enumerate()
+                    .all(|(k, &x)| bounds.get(k).map_or_else(|| fin(x), |&b| within(x, b)))
+        })
+}
+
+/// The bounds of a curve parameter (one range length around the range) and the `(u, v)`
+/// of the surfaces with domains `doms`.
+fn bounds(range: Option<(f64, f64)>, doms: &[Domain]) -> Vec<(f64, f64)> {
+    range
+        .map(|(a, b)| (a - (b - a), b + (b - a)))
+        .into_iter()
+        .chain(doms.iter().flat_map(|&d| uv_bounds(d)))
+        .collect()
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_p4.rs`, `validate`): surfaces as
+/// `surface_p7`'s contract takes them, parameters within one domain length of their
+/// surface's domain, ordered domains inside it, positive tolerances, a B-spline surface
+/// for the seam op and a plane for the inversion, the solver operations each function
+/// supports (signed directed with a vector, `AT_DISTANCE` with a target), non-zero plane
+/// and section normals, curve intervals and parameters within one range length of the
+/// curve's range, and 1 to [`MAX_POINTS`] points per equation-set call of the set's size.
+fn keeps_contract(i: &Inputs) -> bool {
+    let Some((dom, is_bspline)) = surface_kind(&i.surface, false, false) else {
+        return false;
+    };
+    let directed = [SO_MINIMIZE, SO_MAXIMIZE, SO_NORMALIZE, SO_SIGNED_MIN];
+    match &i.op {
+        OpIn::NormalEval { uv } => uv_ok(*uv, dom),
+        OpIn::SectionFn { uv, dir } | OpIn::SectionEval { uv, dir } => {
+            uv_ok(*uv, dom) && fins(dir)
+        }
+        OpIn::OnNormal {
+            dom: d,
+            uv,
+            p,
+            deriv,
+            tol,
+        } => {
+            d.is_none_or(|d| domain_ok(d, dom))
+                && uv_ok(*uv, dom)
+                && fins(p)
+                && deriv.is_none_or(|v| fins(&v))
+                && positive(*tol)
+        }
+        OpIn::PassSp { uv, p, tol } => uv_ok(*uv, dom) && fins(p) && positive(*tol),
+        OpIn::Seam { param, .. } => dom.is_some() && is_bspline && *param <= 1,
+        OpIn::IsOnSeam { uv, tol } => uv_ok(*uv, dom) && positive(tol.unwrap_or(1.0)),
+        OpIn::Gps {
+            dom: d,
+            sop,
+            p,
+            tol,
+            target,
+            req,
+        } => {
+            let ops = [SO_INTERSECT, SO_MINIMIZE, SO_MAXIMIZE, SO_NORMALIZE, SO_AT_DISTANCE];
+            domain_ok(*d, dom)
+                && ops.contains(sop)
+                && fins(p)
+                && positive(*tol)
+                && target_ok(*target)
+                && (target.is_some() || *sop != SO_AT_DISTANCE)
+                && *req <= 1
+        }
+        OpIn::CsIntersect { curve, pts } => {
+            curve_range(curve).is_some_and(|r| points_ok(pts, 3, &bounds(Some(r), &[dom])))
+        }
+        OpIn::CsNormalize {
+            curve,
+            sop,
+            vecs,
+            pts,
+        } => curve_range(curve).is_some_and(|r| {
+            let dim = if *sop == SO_SIGNED_MIN { 4 } else { 3 };
+            sop_ok(*sop, &directed, vecs)
+                && vecs_ok(vecs)
+                && points_ok(pts, dim, &bounds(Some(r), &[dom]))
+        }),
+        OpIn::SspIntersect {
+            other, plane, pts, ..
+        } => surface_domain(other).is_some_and(|d2| {
+            let (o, n) = plane.unwrap_or(([0.0; 3], [0.0, 0.0, 1.0]));
+            fins(&o) && nonzero(&n) && points_ok(pts, 4, &bounds(None, &[dom, d2]))
+        }),
+        OpIn::SsiNormalize { other, n, d, pts } => surface_domain(other).is_some_and(|d2| {
+            nonzero(n) && fin(*d) && points_ok(pts, 4, &bounds(None, &[dom, d2]))
+        }),
+        OpIn::SsNormalize {
+            other,
+            sop,
+            vecs,
+            pts,
+        } => surface_domain(other).is_some_and(|d2| {
+            let dim = if *sop == SO_SIGNED_MIN { 5 } else { 4 };
+            sop_ok(*sop, &directed, vecs)
+                && vecs_ok(vecs)
+                && points_ok(pts, dim, &bounds(None, &[dom, d2]))
+        }),
+        OpIn::StepInv {
+            dom: d,
+            p,
+            tol,
+            guess,
+        } => {
+            dom.is_none()
+                && domain_ok(*d, None)
+                && fins(p)
+                && positive(*tol)
+                && uv_ok(guess.unwrap_or([0.0, 0.0]), None)
+        }
+        OpIn::Classify {
+            dom: d,
+            curve,
+            ivl: [x, y],
+            uv,
+            t,
+        } => {
+            domain_ok(*d, dom)
+                && uv_ok(*uv, dom)
+                && curve_range(curve).is_some_and(|(a, b)| {
+                    let r = (a - (b - a), b + (b - a));
+                    within(*x, r) && within(*y, r) && x < y && within(*t, r)
+                })
+        }
     }
 }
 
@@ -890,6 +1037,9 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             if let Err(Fail::Harness(_)) = rust_run(k, &i) {
                 continue;
             }
@@ -911,9 +1061,9 @@ impl UnitDiff for Runner {
         for n in 0..THIN_GENERATED {
             let seed = CaseContext::seed_for("surface.surface_p4.thin", n);
             let mut rng = Rng::new(seed);
-            let Some(i) = (0..64).find_map(|_| {
-                gen_thin(k, &mut rng)
-            }) else {
+            let Some(i) =
+                (0..64).find_map(|_| gen_thin(k, &mut rng).filter(keeps_contract))
+            else {
                 continue;
             };
             let inputs = serde_json::to_value(i).map_err(|e| harness(format!("thin case: {e}")))?;
