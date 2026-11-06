@@ -2535,3 +2535,35 @@ fn a_far_cone_extends_round_its_axis_by_a_tolerance_as_at_the_origin() {
         }
     }
 }
+
+/// At a side's least step the solve accepts an extension that cannot be made shorter only
+/// when its length is proved to reach the distance: an enclosure that merely holds `d`
+/// (below it by more than the stop allowance) may be short and is not accepted; one whose
+/// lower end is at `d` is.
+#[test]
+fn least_step_accepts_only_a_length_proved_to_reach() {
+    let d = 1.0;
+    let across = |lower: f64, upper: f64| Across {
+        enclosure: crate::surface::side::Bracket { lower, upper },
+        truncation: 0.0,
+        rounding: 1e-12,
+        converged: true,
+        resolution: 0.0,
+    };
+    assert!(
+        !reaches(Some(&across(0.999, 1.001)), 0.0, d),
+        "holds d, may be short"
+    );
+    assert!(
+        reaches(Some(&across(1.0, 1.001)), 0.0, d),
+        "proved past or at d"
+    );
+    assert!(
+        reaches(Some(&across(1.0 - 5e-10, 1.0)), 0.0, d),
+        "within the stop"
+    );
+    assert!(!reaches(None, 0.0, d), "no measurement");
+    let mut unconverged = across(1.0, 1.001);
+    unconverged.converged = false;
+    assert!(!reaches(Some(&unconverged), 0.0, d), "not measured");
+}
