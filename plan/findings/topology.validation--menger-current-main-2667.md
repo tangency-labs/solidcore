@@ -26,36 +26,41 @@ cache histories from repeatedly checking the live result. The standalone
 coincidence duration is not a measured nested share of the Level2 call and must
 not be subtracted from it as an exact phase breakdown.
 
-## Retrieved run
+## Three retrieved runs
 
 All 27 results pass Level2 and have zero coincident pairs. The final body has
 414 faces, 984 edges and 488 vertices; integrated volume is
 `49999.99999999997`, within `1e-9` relative of the analytic volume.
 
-| Observation across 27 cuts | Value |
+| Observation across 27 cuts | Median of three runs |
 |---|---:|
-| Boolean duration | 0.475971991 s |
+| Boolean duration | 0.476993298 s |
 | Level2 validation duration | 3.118145969 s |
-| Standalone coincidence duration | 1.257896030 s |
+| Standalone coincidence duration | 1.281565248 s |
 | Boolean face pairs visited | 20,244 |
 | Boolean inner loops classified | 460 |
 
 The [numeric record](menger-validation-2667.json)
-contains every row. These are one-run observations, with no warmup or timing
-threshold. They show that validation remains worth investigating on this
+contains every row from all three runs. Geometry, validity, coincident-pair
+counts and recorded boolean work counts agree across all runs. Each final volume
+is `49999.99999999997`. These are observations with no warmup or timing threshold. They show that validation remains worth investigating on this
 reproduction, not that any particular algorithm is the cause.
 
 ## Validation and next step
 
-The example runs successfully on Linux; targeted clippy with warnings denied
-also exits successfully. Two further fresh-process executions completed, but
-their output is not yet archived in this evidence record. No medians or cross-run count agreement are claimed here.
-The example was formatted with rustfmt and `git diff --check` passes.
+The example runs successfully in three fresh Linux processes; targeted clippy
+with warnings denied also passes. The example was formatted with rustfmt and
+`git diff --check` passes. Totals by run (seconds):
+
+| Run | Boolean | Level2 validation | Standalone coincidence |
+|---|---:|---:|---:|
+| 1 | 0.475971991 | 3.118145969 | 1.257896030 |
+| 2 | 0.476993298 | 3.092468362 | 1.281565248 |
+| 3 | 0.480489875 | 3.164252900 | 1.284540602 |
 
 No kernel behavior, tolerance, unit status or known-mismatch classification is
 changed. Existing counters measure boolean face pairs and loop classifications;
 coincidence candidate/narrow-phase counts are explicitly null, not zero. The next
-step is to retrieve the repeats and coordinate narrowly scoped coincidence
-instrumentation before choosing any optimization. The previous curve-cache and
+step is to coordinate narrowly scoped coincidence instrumentation before choosing any optimization. The previous curve-cache and
 UV-hull changes are already present in this base; this evidence does not imply
 that they failed or that their earlier work should be duplicated.
