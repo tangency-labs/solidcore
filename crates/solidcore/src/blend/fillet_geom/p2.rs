@@ -1090,7 +1090,7 @@ pub fn srf_srf_intersection_with_context(
     // its domain does not end the curve. A flat surface meets the plane in a line, which the
     // analytic intersector gives exactly. Points off a surface, and an end where the surface
     // touches the plane, are met by the intersectors below.
-    if k.fixes.fillet_surface_plane_curve_on_plane_equation && curves_3d.is_empty() {
+    if curves_3d.is_empty() {
         let plane_first = matches!(surf1.kind(), SurfaceKind::Plane(_));
         if let (Some(start_pnt), Some(end_pnt), true) = (
             start,

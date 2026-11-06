@@ -120,8 +120,7 @@ impl FilletSession<'_> {
     /// its two offsets at the wedge between its faces at the edge's middle (the angle
     /// between the directions into them there, [`ChamferDefinition::offsets`]), then
     /// prepared as [`Self::prepare_per_edge_two_offsets`] with the linear section, and the
-    /// solver keeps the sizes: with `fixes.fillet_gn_section_generator` and
-    /// `fixes.fillet_round_as_definition` the chamfer's surface is its definition, the
+    /// solver keeps the sizes: with `fixes.fillet_round_as_definition` the chamfer's surface is its definition, the
     /// chord of order 0, and keeps them too. A distance is along the edge's blend edge
     /// use's face (support 1) or its radial mate's (support 2); an angle is to support 1.
     /// Between planes the sizes hold all along the edge; on a curved face, where the wedge
