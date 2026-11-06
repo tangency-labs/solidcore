@@ -688,17 +688,17 @@ fn on_definition(
         };
     };
     // each row's joint point and the points past it, as continued
-    let mut joint = Vec::with_capacity(rows);
-    let mut past = Vec::with_capacity(rows);
+    let mut joint = Vec::new();
+    let mut past = Vec::new();
     for r in 0..rows {
         joint.push(point(&slot(&mut cpts, index(0)?, r)?));
-        let mut row = Vec::with_capacity(deg);
+        let mut row = Vec::new();
         for k in 1..=deg {
             row.push(point(&slot(&mut cpts, index(k)?, r)?));
         }
         past.push(row);
     }
-    let mut rebuilt: Vec<Vec<(Vec3, f64)>> = Vec::with_capacity(rows);
+    let mut rebuilt: Vec<Vec<(Vec3, f64)>> = Vec::new();
     match (*implicit, iso) {
         // a plane: each point the plane's at its own coordinates in the plane
         (Implicit::Plane { origin, normal }, _) => {
