@@ -33,25 +33,11 @@ impl<'a> Reader<'a> {
         self.input.get(self.at.checked_add(k)?).copied()
     }
 
-    /// The values not read yet.
-    #[must_use]
-    pub fn rest(&self) -> &'a [f64] {
-        self.input.get(self.at..).unwrap_or_default()
-    }
-
     /// The next value.
     pub fn num(&mut self) -> Option<f64> {
         let v = self.input.get(self.at).copied()?;
         self.at += 1;
         Some(v)
-    }
-
-    /// The next `k` values, without checks.
-    pub fn take(&mut self, k: usize) -> Option<&'a [f64]> {
-        let end = self.at.checked_add(k)?;
-        let s = self.input.get(self.at..end)?;
-        self.at = end;
-        Some(s)
     }
 
     /// The next value, finite and of magnitude at most the reader's bound.
