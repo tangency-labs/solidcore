@@ -145,6 +145,29 @@ fn reference(p: Option<&Param>, what: &str) -> R<u64> {
         .ok_or_else(|| format!("{what}: expected a reference"))
 }
 
+/// An optional reference: `$` is omitted, a reference is read, and anything else (a number, a
+/// string, a missing attribute) is refused rather than taken as omitted.
+fn optional_reference(p: Option<&Param>, what: &str) -> R<Option<u64>> {
+    match p {
+        Some(Param::Null) => Ok(None),
+        Some(Param::Ref(r)) => Ok(Some(*r)),
+        _ => Err(format!("{what}: expected a reference or $")),
+    }
+}
+
+/// The value of an enumeration attribute among the `values` its type lists; any other value,
+/// or something that is not an enumeration, is refused.
+fn enumeration<T: Copy>(p: Option<&Param>, what: &str, values: &[(&str, T)]) -> R<T> {
+    let v = p
+        .and_then(Param::as_enum)
+        .ok_or_else(|| format!("{what}: expected an enumeration"))?;
+    values
+        .iter()
+        .find(|(name, _)| *name == v)
+        .map(|(_, t)| *t)
+        .ok_or_else(|| format!("{what}: unknown .{v}."))
+}
+
 fn num(p: Option<&Param>, what: &str) -> R<f64> {
     let x = p
         .and_then(Param::as_f64)
@@ -178,15 +201,19 @@ fn positive(x: f64, what: &str) -> R<f64> {
     }
 }
 
-fn curve_form(p: Option<&Param>) -> CurveForm {
-    match p.and_then(Param::as_enum) {
-        Some("POLYLINE_FORM") => CurveForm::PolylineForm,
-        Some("CIRCULAR_ARC") => CurveForm::CircularArc,
-        Some("ELLIPTIC_ARC") => CurveForm::EllipticArc,
-        Some("PARABOLIC_ARC") => CurveForm::ParabolicArc,
-        Some("HYPERBOLIC_ARC") => CurveForm::HyperbolicArc,
-        _ => CurveForm::Unspecified,
-    }
+fn curve_form(p: Option<&Param>) -> R<CurveForm> {
+    enumeration(
+        p,
+        "B-spline curve_form",
+        &[
+            ("POLYLINE_FORM", CurveForm::PolylineForm),
+            ("CIRCULAR_ARC", CurveForm::CircularArc),
+            ("ELLIPTIC_ARC", CurveForm::EllipticArc),
+            ("PARABOLIC_ARC", CurveForm::ParabolicArc),
+            ("HYPERBOLIC_ARC", CurveForm::HyperbolicArc),
+            ("UNSPECIFIED", CurveForm::Unspecified),
+        ],
+    )
 }
 
 fn surface_form(p: Option<&Param>) -> SurfaceForm {
@@ -205,13 +232,17 @@ fn surface_form(p: Option<&Param>) -> SurfaceForm {
     }
 }
 
-fn knot_spec(p: Option<&Param>) -> KnotSpec {
-    match p.and_then(Param::as_enum) {
-        Some("UNIFORM_KNOTS") => KnotSpec::UniformKnots,
-        Some("QUASI_UNIFORM_KNOTS") => KnotSpec::QuasiUniformKnots,
-        Some("PIECEWISE_BEZIER_KNOTS") => KnotSpec::PiecewiseBezierKnots,
-        _ => KnotSpec::Unspecified,
-    }
+fn knot_spec(p: Option<&Param>) -> R<KnotSpec> {
+    enumeration(
+        p,
+        "B-spline knot_spec",
+        &[
+            ("UNIFORM_KNOTS", KnotSpec::UniformKnots),
+            ("QUASI_UNIFORM_KNOTS", KnotSpec::QuasiUniformKnots),
+            ("PIECEWISE_BEZIER_KNOTS", KnotSpec::PiecewiseBezierKnots),
+            ("UNSPECIFIED", KnotSpec::Unspecified),
+        ],
+    )
 }
 
 /// Refuses fewer than `degree + 1` control points, and fewer than 2 (ISO 10303-42
@@ -486,13 +517,16 @@ impl<'a> Reader<'a> {
         let origin = self.point_in(reference(p.get(1), "placement location")?, sp)?;
         let (axis, rf) = match (e.name(), sp.dim) {
             ("AXIS2_PLACEMENT_3D", 3) => {
-                let z = match p.get(2).and_then(Param::as_ref_id) {
+                let z = match optional_reference(p.get(2), "placement axis")? {
                     Some(d) => Some(self.ratios(d, sp.dirs, sp.dim)?),
                     None => None,
                 };
-                (z, p.get(3).and_then(Param::as_ref_id))
+                (z, optional_reference(p.get(3), "placement ref_direction")?)
             }
-            ("AXIS2_PLACEMENT_2D", 2) => (None, p.get(2).and_then(Param::as_ref_id)),
+            ("AXIS2_PLACEMENT_2D", 2) => (
+                None,
+                optional_reference(p.get(2), "placement ref_direction")?,
+            ),
             (n, _) => return Err(format!("#{id}: unexpected placement {n} in {}D", sp.dim)),
         };
         let ref_direction = match rf {
@@ -721,11 +755,15 @@ impl<'a> Reader<'a> {
                 let trim_1 = self.trims(p.get(2), kind, sp)?;
                 let trim_2 = self.trims(p.get(3), kind, sp)?;
                 let sense = boolean(p.get(4), "trimmed curve sense")?;
-                let preference = match p.get(5).and_then(Param::as_enum) {
-                    Some("CARTESIAN") => TrimPreference::Cartesian,
-                    Some("PARAMETER") => TrimPreference::Parameter,
-                    _ => TrimPreference::Unspecified,
-                };
+                let preference = enumeration(
+                    p.get(5),
+                    "trimmed curve master_representation",
+                    &[
+                        ("CARTESIAN", TrimPreference::Cartesian),
+                        ("PARAMETER", TrimPreference::Parameter),
+                        ("UNSPECIFIED", TrimPreference::Unspecified),
+                    ],
+                )?;
                 return Ok((
                     Curve::Trimmed {
                         basis,
@@ -918,7 +956,7 @@ impl<'a> Reader<'a> {
             .collect::<R<_>>()?;
         let (knots, multiplicities, knot_spec) = if let Some(k) = &with_knots {
             let (kv, m) = knots(k.first(), k.get(1), points.len(), degree)?;
-            (kv, m, knot_spec(k.get(2)))
+            (kv, m, knot_spec(k.get(2))?)
         } else {
             let spec = spec_of_type(e);
             let (kv, m) = implied_knots(spec, points.len(), degree)?;
@@ -934,10 +972,9 @@ impl<'a> Reader<'a> {
             weights,
             knots,
             multiplicities,
-            form: curve_form(base.get(3)),
-            closed: logical(base.get(4), "B-spline closed_curve").unwrap_or(Logical::Unknown),
-            self_intersect: logical(base.get(5), "B-spline self_intersect")
-                .unwrap_or(Logical::Unknown),
+            form: curve_form(base.get(3))?,
+            closed: logical(base.get(4), "B-spline closed_curve")?,
+            self_intersect: logical(base.get(5), "B-spline self_intersect")?,
             knot_spec,
         })))
     }
@@ -1102,7 +1139,7 @@ impl<'a> Reader<'a> {
                 (
                     knots(k.first(), k.get(2), nu, u_degree)?,
                     knots(k.get(1), k.get(3), nv, v_degree)?,
-                    knot_spec(k.get(4)),
+                    knot_spec(k.get(4))?,
                 )
             } else {
                 let spec = spec_of_type(e);
