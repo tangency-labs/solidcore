@@ -1,6 +1,5 @@
 //! WR-685 (#2250), completed by the fork's b9d6a72 and 7102bc5 (smlib#79, #2273; the
-//! prerequisites of #2274): with `fixes.fillet_gn_section_generator` a G^n section's
-//! thumbweight is any w below 1 (the equal area default moves to 2), and the equal area
+//! prerequisites of #2274): a G^n section's thumbweight is any w below 1 (the equal area default moves to 2), and the equal area
 //! thumbweight is resolved at every station from that station's own wedge, not once per
 //! generator from the first blend's middle station. The surface then interpolates the
 //! section's homogeneous rows, each a cubic Hermite curve of its values and
@@ -26,7 +25,7 @@ use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::blend::fillet_section::section::GN_DEFAULT_THUMBWEIGHT;
 use solidcore::boolean::api_brep::boolean_union;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
-use solidcore::kernel::{KernelOptions, UpstreamFixes};
+use solidcore::kernel::KernelOptions;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::Point3;
 use solidcore::nurbs::b_spline_curve::ControlPointForm;
@@ -36,15 +35,6 @@ use solidcore::query::api_queries::edge_closest_point;
 use solidcore::surface::surface::SurfaceKind;
 use solidcore::topology::EdgeId;
 use solidcore::{Brep, Kernel};
-
-fn kernel(gn: bool) -> Kernel {
-    let mut fixes = UpstreamFixes::default();
-    fixes.fillet_gn_section_generator = gn;
-    fixes.fillet_surface_plane_curve_on_plane_equation = gn;
-    let mut k = Kernel::new(&KernelOptions::default());
-    k.fixes = fixes;
-    k
-}
 
 fn pick(k: &Kernel, b: &Brep, p: [f64; 3]) -> EdgeId {
     let q = Point3::new(p[0], p[1], p[2]);
@@ -301,7 +291,7 @@ fn box_edge_rounds_are_the_fork_s() {
     ];
     let circle = 24000.0 - 40.0 * 9.0 * (1.0 - core::f64::consts::FRAC_PI_4);
     for (n, w, want_v, net) in cases {
-        let mut k = kernel(true);
+        let mut k = Kernel::new(&KernelOptions::default());
         let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
         let e = pick(&k, &b, [20.0, 30.0, 20.0]);
         fillet_edges(&mut k, &mut b, &[e], 3.0, 2, n as u32, w).unwrap();
@@ -319,7 +309,7 @@ fn box_edge_rounds_are_the_fork_s() {
         }
     }
     // 1 and past are refused, before and after b9d6a72
-    let mut k = kernel(true);
+    let mut k = Kernel::new(&KernelOptions::default());
     let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
     let e = pick(&k, &b, [20.0, 30.0, 20.0]);
     assert!(fillet_edges(&mut k, &mut b, &[e], 3.0, 2, 2, 1.0).is_err());
@@ -375,7 +365,7 @@ fn equal_area_thumbweight_is_each_station_s_own() {
         (&[1], 23465.663708708671, vec![box_net]),
     ];
     for (order, want_v, nets) in cases {
-        let mut k = kernel(true);
+        let mut k = Kernel::new(&KernelOptions::default());
         let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
         let c = pick(&k, &b, [20.0, 30.0, 20.0]);
         fillet_edges(&mut k, &mut b, &[c], 5.0, 0, 2, 0.0).unwrap();
@@ -478,7 +468,7 @@ fn pipe_root_rounds_are_the_fork_s() {
         ),
     ];
     for (n, w, want_v, net) in cases {
-        let mut k = kernel(true);
+        let mut k = Kernel::new(&KernelOptions::default());
         let plate = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 60.0, 40.0, 10.0).unwrap();
         let mut pipe = create_cylinder(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 60.0).unwrap();
         let pl = Axis2Placement::new(
@@ -499,19 +489,6 @@ fn pipe_root_rounds_are_the_fork_s() {
             &[net],
             true,
         );
-    }
-}
-
-/// Without the flag the G^n generator is not used: no blend face of the order-2 section's
-/// degree 7 across, whatever the thumbweight (upstream's blend curve, or its refusal).
-#[test]
-fn flag_off_builds_no_gn_section() {
-    for w in [0.0, -3.0, GN_DEFAULT_THUMBWEIGHT] {
-        let mut k = kernel(false);
-        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
-        let e = pick(&k, &b, [20.0, 30.0, 20.0]);
-        let _ = fillet_edges(&mut k, &mut b, &[e], 3.0, 2, 2, w);
-        assert!(blend_nets(&b, 7).is_empty(), "w {w}");
     }
 }
 
@@ -568,7 +545,7 @@ fn equal_area_roots_and_sums_are_solved_once_each() {
         most_sums,
     } in cases
     {
-        let mut k = kernel(true);
+        let mut k = Kernel::new(&KernelOptions::default());
         let mut b = build(&mut k).unwrap();
         let e = pick(&k, &b, p);
         fillet_edges(&mut k, &mut b, &[e], r, 2, 2, GN_DEFAULT_THUMBWEIGHT).unwrap();
