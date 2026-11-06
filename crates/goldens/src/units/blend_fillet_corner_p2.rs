@@ -54,7 +54,10 @@
 //! each solver and a foreign one queried, and with only the first edge use registered;
 //! closed Nx1 on a line (its end tangents are parallel: G1) or a quadratic whose end
 //! tangents are 90 degrees apart, its solver and a foreign one queried, and with the
-//! solver registered on another edge use.
+//! solver registered on another edge use. A closed edge that meets itself G1 is the
+//! blend corner's Join (an Nx2 corner), so the kernel makes a closed Nx1 corner only
+//! where the edge is not G1 at the vertex; it has no continuing solver, and every closed
+//! Nx1 variant returns `NULL`.
 //!
 //! **Cases.** `find_concave` on a real B-rep (unit `topology.edgeuse_p1`'s B-rep block:
 //! the box-like fillet test files of `TestFiles/pt_TestFiles/Fillet` that unit
@@ -1014,8 +1017,9 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
-    /// The targeted variants reach every return of both overrides: the solver's
-    /// registration index, `-1` for NULL.
+    /// The targeted variants reach every return of the Nx2 override: the solver's
+    /// registration index, `-1` for NULL. A closed Nx1 corner has no override: a
+    /// closed edge meeting itself G1 is the Join, so its variants all return NULL.
     #[test]
     fn tangent_variants_return_solvers() {
         let (_, base) = tangent_cases();
@@ -1031,7 +1035,7 @@ mod tests {
             ("nx2_not_g1_query2", -1.0),
             ("nx2_not_g1_one_registered_query0", -1.0),
             ("nx2_not_g1_one_registered_query1", -1.0),
-            ("nx1_closed_g1_query0", 0.0),
+            ("nx1_closed_g1_query0", -1.0),
             ("nx1_closed_g1_query1", -1.0),
             ("nx1_closed_g1_other_registered", -1.0),
             ("nx1_closed_not_g1_query0", -1.0),
