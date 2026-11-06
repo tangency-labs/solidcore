@@ -157,16 +157,9 @@ impl SurfaceIntersection {
                 // each trim may snap the interval to a knot of its curve: the three are
                 // trimmed to the one interval none of them snaps, so the 3D piece and its
                 // UV curves end at the same parameters
-                let ivl = common_trim_interval(k, [&piece, &piece1, &piece2], ivl)?;
+                let ivl = common_trim_interval(k, [&piece, &piece1, &piece2], ivl, OP)?;
                 for c in [&mut piece, &mut piece1, &mut piece2] {
-                    let mut trimmed = ivl;
-                    c.trim(k, &mut trimmed, TrimMode::Notify)?;
-                    if trimmed != ivl {
-                        return Err(SolidError::port_invariant(
-                            OP,
-                            "a trim snapped the interval its snap left unchanged",
-                        ));
-                    }
+                    trim_unsnapped(k, c, ivl, OP)?;
                 }
                 for implicit in &implicits {
                     if !on_implicit(&piece, implicit)? {
@@ -195,13 +188,24 @@ const TRIM_SNAP_ROUNDS: usize = 4;
 
 /// `ivl` snapped by each of `curves`' trims in turn ([`TrimMode::IntervalOnly`]: each may
 /// move an end onto a knot of its own), round after round until no trim moves it: the one
-/// interval all of them trim to.
+/// interval all of them trim to. A 3D curve and its UV curves trimmed in turn with one
+/// interval passed on (`ivl` snapped by each trim given to the next) end at different
+/// parameters wherever a later trim snaps, so an edge's interval (its 3D curve's) is not
+/// its UV curves'; trimmed each to this interval ([`trim_unsnapped`]), they end together.
+/// Also used by `OffsetGeometryCreation::mate_edges`, whose intersection curves may be
+/// pieces of exact curves ([`SurfaceIntersection::clip_exact_curves`]): a conic's trim
+/// snaps onto its NURB's knots, its UV curves' onto theirs. `op` names the caller.
 ///
 /// # Errors
 ///
 /// Those of the trims; a port invariant when the snaps still move it after
 /// [`TRIM_SNAP_ROUNDS`] rounds (two curves pulling an end onto knots of their own).
-fn common_trim_interval(k: &Kernel, curves: [&Curve; 3], ivl: Extent1d) -> Result<Extent1d> {
+pub(crate) fn common_trim_interval(
+    k: &Kernel,
+    curves: [&Curve; 3],
+    ivl: Extent1d,
+    op: &'static str,
+) -> Result<Extent1d> {
     let mut ivl = ivl;
     for _ in 0..TRIM_SNAP_ROUNDS {
         let start = ivl;
@@ -213,9 +217,32 @@ fn common_trim_interval(k: &Kernel, curves: [&Curve; 3], ivl: Extent1d) -> Resul
         }
     }
     Err(SolidError::port_invariant(
-        OP,
+        op,
         "the trims of a piece and its UV curves snap its interval to different knots",
     ))
+}
+
+/// `curve` trimmed ([`TrimMode::Notify`]) to `ivl`, an interval [`common_trim_interval`]
+/// gave for it: its trim snaps nothing.
+///
+/// # Errors
+///
+/// Those of the trim; a port invariant when the trim snaps `ivl` all the same.
+pub(crate) fn trim_unsnapped(
+    k: &Kernel,
+    curve: &mut Curve,
+    ivl: Extent1d,
+    op: &'static str,
+) -> Result<()> {
+    let mut trimmed = ivl;
+    curve.trim(k, &mut trimmed, TrimMode::Notify)?;
+    if trimmed != ivl {
+        return Err(SolidError::port_invariant(
+            op,
+            "a trim snapped the interval its snap left unchanged",
+        ));
+    }
+    Ok(())
 }
 
 /// The two surfaces of [`SurfaceIntersection::clip_exact_curves`] over their domains.
@@ -810,7 +837,7 @@ mod tests {
         let uv1 = line(2, vec![0.0, 0.0, 1.0, 1.0], 2);
         let uv2 = line(2, vec![0.0, 0.0, knot, 1.0, 1.0], 3);
         let ivl = Extent1d::from_min_max(0.25, 0.5);
-        let common = common_trim_interval(&k, [&piece, &uv1, &uv2], ivl).unwrap();
+        let common = common_trim_interval(&k, [&piece, &uv1, &uv2], ivl, OP).unwrap();
         assert_eq!((common.min(), common.max()), (0.25, knot));
         let ends: Vec<f64> = [piece, uv1, uv2]
             .into_iter()
@@ -822,6 +849,67 @@ mod tests {
             })
             .collect();
         assert_eq!(ends, vec![knot; 3]);
+    }
+
+    /// `mate_edges`' order: the 3D curve trimmed first has no knot near the interval, one
+    /// UV curve a knot a rounding past its start, the other a rounding past its end. Each
+    /// trim snaps its own end, so trimmed in turn with one interval passed on the 3D curve
+    /// keeps both unsnapped ends and the first UV curve the unsnapped end: the edge's
+    /// interval would not be its UV curves'. Trimmed to the common interval
+    /// ([`trim_unsnapped`]) all three end together, and a trim to an interval its curve
+    /// still snaps is refused.
+    #[test]
+    fn a_3d_curve_and_its_uv_curves_trimmed_to_the_common_interval_end_together() {
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::crv_basic::Curve as NlCurve;
+        use crate::nurbs::math::{CPoint, NOW};
+        let k = Kernel::default();
+        let start = 0.25 + 2.0 * f64::EPSILON;
+        let end = 0.5 + 2.0 * f64::EPSILON;
+        let line = |dim: u64, knots: Vec<f64>, n: usize| {
+            let pts = (0..n)
+                .map(|i| CPoint::new(i as f64, 1.0, 0.0, NOW))
+                .collect();
+            Curve::from(BSplineCurve::from_nurb(
+                NlCurve::new(pts, 1, knots).unwrap(),
+                dim,
+                false,
+            ))
+        };
+        let c3 = line(3, vec![0.0, 0.0, 1.0, 1.0], 2);
+        let uv1 = line(2, vec![0.0, 0.0, start, 1.0, 1.0], 3);
+        let uv2 = line(2, vec![0.0, 0.0, end, 1.0, 1.0], 3);
+        let ivl = Extent1d::from_min_max(0.25, 0.5);
+
+        // in turn, one interval passed on: the 3D curve ends where no UV curve does
+        let mut passed = ivl;
+        let in_turn: Vec<Extent1d> = [&c3, &uv1, &uv2]
+            .into_iter()
+            .map(|c| {
+                let mut c = c.copy(&k).unwrap();
+                c.trim(&k, &mut passed, TrimMode::Notify).unwrap();
+                c.natural_interval()
+            })
+            .collect();
+        assert_eq!(
+            (in_turn[0].min(), in_turn[0].max()),
+            (0.25, 0.5),
+            "the 3D curve keeps the unsnapped ends"
+        );
+        assert_eq!((in_turn[2].min(), in_turn[2].max()), (start, end));
+
+        let common = common_trim_interval(&k, [&c3, &uv1, &uv2], ivl, OP).unwrap();
+        assert_eq!((common.min(), common.max()), (start, end));
+        for c in [&c3, &uv1, &uv2] {
+            let mut c = c.copy(&k).unwrap();
+            trim_unsnapped(&k, &mut c, common, OP).unwrap();
+            assert_eq!(c.natural_interval(), common);
+        }
+        let mut snapping = uv2.copy(&k).unwrap();
+        assert!(matches!(
+            trim_unsnapped(&k, &mut snapping, ivl, OP),
+            Err(SolidError::PortInvariant { .. })
+        ));
     }
     use crate::geom::axis2_placement::Axis2Placement;
     use crate::geom::vector2d::Vec2;

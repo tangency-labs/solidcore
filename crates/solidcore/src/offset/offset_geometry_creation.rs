@@ -4083,14 +4083,29 @@ impl OffsetGeometryCreation {
 
         // (the found curves are removed from the arrays upstream so that they are not deleted)
 
-        // Trim bound best XSectCurves to sTrimIvl (may snap sIvl by tol to existing knots:
-        // the snapped interval is what the next trim gets)
-        let mut ti = trim_ivl;
+        // Trim bound best XSectCurves to sTrimIvl (may snap sIvl by tol to existing knots).
+        // Not upstream: upstream trims them in turn, the interval snapped by each trim
+        // given to the next, so a curve trimmed before a later snap ends at the unsnapped
+        // parameter: the edge's interval (its 3D curve's, `replace_edge_curves`) is then
+        // not its UV curves'. Upstream's marched curves share their knots and snap alike;
+        // an exact curve's piece (`clip_exact_curves`, a conic snapping onto its NURB's
+        // knots) and its dropped UV curves do not. All three are trimmed to the one
+        // interval none of their trims snaps.
+        let ti = crate::surface::surface::exact_pieces::common_trim_interval(
+            k,
+            [
+                curve_of(brep, curve_3d_found)?,
+                curve_of(brep, uv_curve1_found)?,
+                curve_of(brep, uv_curve2_found)?,
+            ],
+            trim_ivl,
+            OP_MATE,
+        )?;
         for h in [curve_3d_found, uv_curve1_found, uv_curve2_found] {
             let c = brep
                 .curve_mut(h)
                 .ok_or(dangling("curve handle cannot be resolved"))?;
-            c.trim(k, &mut ti, TrimMode::Notify)?;
+            crate::surface::surface::exact_pieces::trim_unsnapped(k, c, ti, OP_MATE)?;
         }
 
         // Replace Curve of edge and set its new domain.
