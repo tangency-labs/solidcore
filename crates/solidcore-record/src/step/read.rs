@@ -214,6 +214,16 @@ fn knot_spec(p: Option<&Param>) -> KnotSpec {
     }
 }
 
+/// Refuses fewer than `degree + 1` control points, and fewer than 2 (ISO 10303-42
+/// `constraints_param_b_spline`: `up_cp >= degree`).
+fn enough_points(n_ctrl: usize, degree: usize) -> R<()> {
+    if n_ctrl < 2 || n_ctrl <= degree {
+        Err("too few control points".into())
+    } else {
+        Ok(())
+    }
+}
+
 /// Distinct knots and multiplicities, checked against `n_ctrl` points of `degree` before
 /// anything is expanded (a file can claim multiplicities that would need gigabytes).
 fn knots(
@@ -222,6 +232,7 @@ fn knots(
     n_ctrl: usize,
     degree: usize,
 ) -> R<(Vec<f64>, Vec<usize>)> {
+    enough_points(n_ctrl, degree)?;
     let m: Vec<usize> = mults
         .and_then(Param::as_list)
         .ok_or("B-spline without knot multiplicities")?
@@ -267,9 +278,7 @@ fn knots(
 /// the knot values are whole numbers and the multiplicities counts, laid out from the number of
 /// control points and the degree (integer arithmetic only).
 fn implied_knots(spec: KnotSpec, n_ctrl: usize, degree: usize) -> R<(Vec<f64>, Vec<usize>)> {
-    if n_ctrl <= degree {
-        return Err("too few control points".into());
-    }
+    enough_points(n_ctrl, degree)?;
     match spec {
         KnotSpec::PiecewiseBezierKnots => {
             // Segments of `degree`, full interior multiplicity.
