@@ -52,7 +52,7 @@ nice -n 10 cargo test -p goldens              # the harness's and the runners' o
 Output: one line per unit,
 
 ```
-PASS|FAIL|BLESSED <unit> cases=… changed=… added=… removed=… broken=… rust=<s>
+PASS|FAIL|BLESSED <unit> cases=… changed=… added=… removed=… broken=… known_failing=… rust=<s>
 ```
 
 then, for a unit that changed, its first ten changed, added, removed and broken cases,
@@ -76,6 +76,12 @@ blessed), `1` any failure, `2` usage or setup error.
   ones are right, and, for geometry, pictures before and after drawn from the same view.
   A golden change without that justification is not reviewed. A bless never hides a
   broken case: a unit with one is refused.
+* **Known failures.** A case whose result is wrong is never blessed. It is listed in
+  `expected/known_failing.json` (`{"<unit>": {"<case>": "<issue>: <what is wrong>"}}`)
+  and has no golden line. It still runs, so a harness error or panic still fails, and
+  each run prints it as known failing with its reason. The fix removes the entry and
+  blesses the correct result with its pictures. A listed case that has a golden line, or
+  that the unit no longer produces, fails.
 * **Status is recorded.** `Output::error` is the operation's status (`None` = success).
   A runner must never turn an `Err` into an empty or default output
   (`unwrap_or_default()`, `.ok()`, `Err(_) => vec![]`, ...): map it with

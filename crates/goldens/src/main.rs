@@ -344,7 +344,15 @@ fn goldens_main(
                 continue;
             }
         };
-        let res = golden::check_unit(unit.as_ref(), ctx, opts, &old, reverse);
+        let known = match golden::known_failing(dir, id) {
+            Ok(k) => k,
+            Err(e) => {
+                println!("FAIL {id} ({e})");
+                failed += 1;
+                continue;
+            }
+        };
+        let res = golden::check_unit(unit.as_ref(), ctx, opts, &old, &known, reverse);
         if let Some(e) = &res.harness_error {
             println!("FAIL {id} ({e})");
             failed += 1;
@@ -352,13 +360,17 @@ fn goldens_main(
         }
         let secs = start.elapsed().as_secs_f64();
         let counts = format!(
-            "cases={} changed={} added={} removed={} broken={} rust={secs:.3}s",
+            "cases={} changed={} added={} removed={} broken={} known_failing={} rust={secs:.3}s",
             res.cases(),
             res.changed.len(),
             res.added.len(),
             res.removed.len(),
-            res.broken.len()
+            res.broken.len(),
+            res.known.len()
         );
+        for (name, why) in known.iter().filter(|(n, _)| res.known.contains(n)) {
+            println!("  known failing {name}: {why}");
+        }
         if bless && !res.broken.is_empty() {
             println!("FAIL {id} {counts} (not blessed: a broken case is never blessed)");
             print_golden_changes(&res);

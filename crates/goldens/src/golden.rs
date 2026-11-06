@@ -23,6 +23,12 @@
 //! `BLOCK` for the weighted sum), plus the floor times the block length. Integers, topology,
 //! errors and deferrals agree exactly. A case in the golden that the run does not produce, or
 //! a case the run produces that the golden lacks, fails.
+//!
+//! Known failures: a case whose result is wrong today is listed in `known_failing.json` in the
+//! goldens directory, `{"<unit>": {"<case>": "<issue>: <what is wrong>"}}`, instead of being
+//! blessed. A listed case still runs (a harness error or panic still fails), has no golden
+//! line, and is counted as known failing. The fix removes its entry and blesses the correct
+//! result. A listed case that has a golden line, or that the run does not produce, fails.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -166,6 +172,25 @@ pub fn read(dir: &Path, unit: &str) -> Result<Golden, HarnessError> {
         }
     }
     Ok(golden)
+}
+
+/// Known failures of one unit: case name to the issue and what is wrong.
+pub type KnownFailing = BTreeMap<String, String>;
+
+/// The file in a goldens directory that lists the known failures.
+pub const KNOWN_FAILING: &str = "known_failing.json";
+
+/// Reads the known failures listed for `unit` in `dir`; a missing file lists none.
+pub fn known_failing(dir: &Path, unit: &str) -> Result<KnownFailing, HarnessError> {
+    let path = dir.join(KNOWN_FAILING);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(KnownFailing::new()),
+        Err(e) => return Err(HarnessError(format!("{}: {e}", path.display()))),
+    };
+    let all: BTreeMap<String, KnownFailing> = serde_json::from_str(&text)
+        .map_err(|e| HarnessError(format!("{}: {e}", path.display())))?;
+    Ok(all.get(unit).cloned().unwrap_or_default())
 }
 
 /// Writes `unit`'s golden to `dir`, one case per line, sorted.
@@ -313,6 +338,8 @@ pub struct GoldenResult {
     pub removed: Vec<String>,
     /// Cases whose Rust side failed as a harness error or panicked: never blessed.
     pub broken: Vec<(String, String)>,
+    /// Listed known failures the run produced: not compared, never blessed.
+    pub known: Vec<String>,
     /// Building the case list failed.
     pub harness_error: Option<String>,
     /// The run's goldens, for `--bless`.
@@ -322,7 +349,7 @@ pub struct GoldenResult {
 impl GoldenResult {
     /// Cases run.
     pub fn cases(&self) -> usize {
-        self.now.len() + self.broken.len()
+        self.now.len() + self.broken.len() + self.known.len()
     }
 
     /// Whether the run matches the golden exactly in its case set and to rounding in values.
@@ -336,12 +363,14 @@ impl GoldenResult {
 }
 
 /// Runs the Rust side of every case of `unit` (in reverse order with `reverse`, so a result
-/// that depends on what ran before shows as a change) and compares each output with `golden`.
+/// that depends on what ran before shows as a change) and compares each output with `golden`,
+/// except the cases listed in `known`.
 pub fn check_unit(
     unit: &dyn UnitDiff,
     ctx: &CaseContext,
     opts: &RunOptions,
     golden: &Golden,
+    known: &KnownFailing,
     reverse: bool,
 ) -> GoldenResult {
     let mut res = GoldenResult {
@@ -357,6 +386,16 @@ pub fn check_unit(
                 return;
             }
         };
+        if known.contains_key(&case.name) {
+            if golden.contains_key(&case.name) {
+                res.harness_error = Some(format!(
+                    "case `{}` is listed in {KNOWN_FAILING} and has a golden line",
+                    case.name
+                ));
+            }
+            res.known.push(case.name.clone());
+            return;
+        }
         match golden.get(&case.name) {
             Some(g) => {
                 if let Some(c) = diff(g, &line, floors) {
@@ -379,6 +418,11 @@ pub fn check_unit(
             .filter(|k| !res.now.contains_key(*k))
             .cloned()
             .collect();
+        if let Some(stale) = known.keys().find(|k| !res.known.contains(*k)) {
+            res.harness_error = Some(format!(
+                "case `{stale}` is listed in {KNOWN_FAILING} but the unit has no such case"
+            ));
+        }
     }
     res
 }
@@ -527,14 +571,43 @@ mod tests {
         for n in ["a", "b"] {
             g.insert(n.into(), encode(n, &out(&[1.0])));
         }
-        let same = check_unit(&Named(vec!["a", "b"]), &ctx, &opts, &g, true);
+        let none = KnownFailing::new();
+        let same = check_unit(&Named(vec!["a", "b"]), &ctx, &opts, &g, &none, true);
         assert!(same.passed(), "{same:?}");
         assert_eq!(same.cases(), 2);
-        let res = check_unit(&Named(vec!["a", "c"]), &ctx, &opts, &g, false);
+        let res = check_unit(&Named(vec!["a", "c"]), &ctx, &opts, &g, &none, false);
         assert!(!res.passed());
         assert_eq!(res.added, ["c"]);
         assert_eq!(res.removed, ["b"]);
         assert!(res.changed.is_empty() && res.broken.is_empty());
+    }
+
+    #[test]
+    fn a_known_failure_runs_without_a_golden_line_and_a_stale_entry_fails() {
+        let ctx = CaseContext {
+            root: std::env::temp_dir(),
+            seeds: 0,
+        };
+        let opts = RunOptions::default();
+        let mut g = Golden::new();
+        g.insert("a".into(), encode("a", &out(&[1.0])));
+        let known = KnownFailing::from([("c".to_string(), "issue: wrong".to_string())]);
+        let res = check_unit(&Named(vec!["a", "c"]), &ctx, &opts, &g, &known, false);
+        assert!(res.passed(), "{res:?}");
+        assert_eq!(res.known, ["c"]);
+        assert_eq!(res.cases(), 2);
+        assert!(
+            !res.now.contains_key("c"),
+            "a known failure is never blessed"
+        );
+
+        g.insert("c".into(), encode("c", &out(&[1.0])));
+        let both = check_unit(&Named(vec!["a", "c"]), &ctx, &opts, &g, &known, false);
+        assert!(both.harness_error.is_some(), "listed and blessed at once");
+
+        g.remove("c");
+        let stale = check_unit(&Named(vec!["a"]), &ctx, &opts, &g, &known, false);
+        assert!(stale.harness_error.is_some(), "listed but no such case");
     }
 
     #[test]
