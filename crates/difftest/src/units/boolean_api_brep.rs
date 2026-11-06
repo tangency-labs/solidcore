@@ -2,8 +2,8 @@
 //! non-manifold sweeps of a B-rep (`SmApiNonManifoldSweep`,
 //! `SmApiNonManifoldRotationalSweep`, Rust `solidcore::sweep::api_brep`).
 //!
-//! C++: `solidcore_ffi::units::boolean_api_brep` (upstream
-//! `source/SM_API/src/SmApiBrep.cpp`). Rust: `solidcore::boolean::api_brep`.
+//! Ported from upstream `source/SM_API/src/SmApiBrep.cpp` into
+//! `solidcore::boolean::api_brep`; checked against the unit's golden.
 //!
 //! A case is one API call (`api` plus its arguments). Operands are boxes
 //! (`SmApiCreateBox`) or spheres (`SmApiCreateSphere`); fixture cases also use sheets
@@ -115,9 +115,6 @@ use solidcore::topology::proto_topology::p1::api_transform::{
 use solidcore::topology::shell::shell_region;
 use solidcore::topology::{Brep, EdgeId, FaceId, FaceuseId, RegionId, VertexId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::boolean_api_brep::{
-    self as ffi, BrepSpec, Call, Flags, RegionArg, Selection,
-};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -125,6 +122,35 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 240;
+/// Deepest operand (a plain primitive is depth 1).
+const MAX_DEPTH: usize = 4;
+/// Most entries of one sweep selection array.
+const MAX_SELECTION: usize = 16;
+/// `dRelativeAccuracy` of the `measured` volume (`SmApiBrepComputeVolume`).
+const VOLUME_ACCURACY: f64 = 1e-6;
+/// `dDesiredAccuracy` of the `arc_lengths` edge curve lengths (`SmCurve::Length`).
+const ARC_LENGTH_ACCURACY: f64 = 1e-9;
+/// `dRelativeAccuracy` of the `measured` face areas (`SmApiFaceComputeArea`).
+const AREA_ACCURACY: f64 = 1e-4;
+/// `dDesiredAccuracy` of the `attributed` edge lengths (`SmApiEdgeComputeLength`).
+const LENGTH_ACCURACY: f64 = 1e-9;
+/// The first attribute id `attributed` tags operands with.
+const ATTRIBUTE_BASE: u64 = 10007;
+
+/// Sorts `attributed` rows (`measure n [id behavior value users]...`): by the attribute
+/// part, then by measure.
+fn sort_rows(rows: &mut [Vec<f64>]) {
+    rows.sort_by(|x, y| {
+        let (mx, ax) = x.split_first().map_or((0.0, &[][..]), |(m, a)| (*m, a));
+        let (my, ay) = y.split_first().map_or((0.0, &[][..]), |(m, a)| (*m, a));
+        ax.iter()
+            .zip(ay)
+            .map(|(p, q)| p.total_cmp(q))
+            .find(|o| o.is_ne())
+            .unwrap_or_else(|| ax.len().cmp(&ay.len()))
+            .then(mx.total_cmp(&my))
+    });
+}
 /// Generated cases of the later entry points (with curves, 2D, non-manifold, piecewise
 /// and the sweeps) per run, whatever `--seeds` says.
 pub const MIN_GENERATED_MORE: usize = 160;
@@ -201,16 +227,6 @@ enum RegionIn {
     Swept,
     /// A second B-rep, `SmApiCreateBox(origin, 1, 1, 1)`.
     Other,
-}
-
-impl RegionIn {
-    const fn ffi(self) -> RegionArg {
-        match self {
-            Self::Null => RegionArg::Null,
-            Self::Swept => RegionArg::Swept,
-            Self::Other => RegionArg::Other,
-        }
-    }
 }
 
 /// The selections of a non-manifold sweep: indices into the operand's `GetFaces`,
@@ -461,464 +477,7 @@ fn level_2() -> u8 {
     2
 }
 
-fn spec(b: &BrepIn) -> BrepSpec {
-    match b {
-        &BrepIn::Box { origin, size } => BrepSpec::Box { origin, size },
-        &BrepIn::Sphere { center, radius } => BrepSpec::Sphere { center, radius },
-        &BrepIn::Plane { origin, size } => BrepSpec::Plane { origin, size },
-        &BrepIn::Torus {
-            center,
-            major,
-            minor,
-        } => BrepSpec::Torus {
-            center,
-            major,
-            minor,
-        },
-        &BrepIn::Cylinder {
-            origin,
-            radius,
-            height,
-        } => BrepSpec::Cylinder {
-            origin,
-            radius,
-            height,
-        },
-        BrepIn::Moved { steps, brep } => BrepSpec::Moved {
-            steps: steps
-                .iter()
-                .map(|m| match *m {
-                    MoveIn::Rotate {
-                        point,
-                        axis,
-                        angle_deg,
-                    } => ffi::Move::Rotate {
-                        point,
-                        axis,
-                        angle_deg,
-                    },
-                    MoveIn::Translate { vector } => ffi::Move::Translate { vector },
-                })
-                .collect(),
-            brep: Box::new(spec(brep)),
-        },
-        BrepIn::Skin {
-            counts,
-            curves,
-            degree,
-            cap_ends,
-        } => BrepSpec::Skin {
-            counts: counts.clone(),
-            curves: curves
-                .iter()
-                .map(|c| ffi::SkinCurve {
-                    p: c.p,
-                    cpts: c.pw(),
-                    knots: c.knots.clone(),
-                })
-                .collect(),
-            degree: *degree,
-            cap: *cap_ends,
-        },
-        BrepIn::Boolean { operation, a, b } => BrepSpec::Boolean {
-            operation: *operation,
-            a: Box::new(spec(a)),
-            b: Box::new(spec(b)),
-        },
-        &BrepIn::Disk { origin, radius } => BrepSpec::Disk { origin, radius },
-        &BrepIn::Cone {
-            origin,
-            radius_base,
-            radius_top,
-            height,
-        } => BrepSpec::Cone {
-            origin,
-            radius_base,
-            radius_top,
-            height,
-        },
-    }
-}
-
-fn selection(s: &SelectionIn) -> Selection {
-    Selection {
-        faces: s.faces.clone(),
-        edges: s.edges.clone(),
-        vertices: s.vertices.clone(),
-    }
-}
-
-fn specs(l: &[BrepIn]) -> Vec<BrepSpec> {
-    l.iter().map(spec).collect()
-}
-
-fn to_call(i: &Inputs) -> Call {
-    match i {
-        Inputs::Boolean { a, b, operation } => Call::Boolean {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-        },
-        Inputs::Union { a, b } => Call::Union {
-            a: spec(a),
-            b: spec(b),
-        },
-        Inputs::Difference { a, b } => Call::Difference {
-            a: spec(a),
-            b: spec(b),
-        },
-        Inputs::Intersection { a, b } => Call::Intersection {
-            a: spec(a),
-            b: spec(b),
-        },
-        Inputs::Merge { a, b } => Call::Merge {
-            a: spec(a),
-            b: spec(b),
-        },
-        Inputs::WithOptions {
-            a,
-            b,
-            operation,
-            flags,
-        } => Call::WithOptions {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-            flags: Flags {
-                cookie_cutter: flags.cookie_cutter,
-                imprinting: flags.imprinting,
-                boolean_post_process: flags.boolean_post_process,
-                imprint_and_classify_faces: flags.imprint_and_classify_faces,
-                keep_other_brep: flags.keep_other_brep,
-            },
-        },
-        Inputs::MergeBreps { breps, operation } => Call::MergeBreps {
-            breps: specs(breps),
-            operation: *operation,
-        },
-        Inputs::Lists {
-            breps1,
-            breps2,
-            operation,
-        } => Call::Lists {
-            breps1: specs(breps1),
-            breps2: specs(breps2),
-            operation: *operation,
-        },
-        Inputs::Trees { breps, tree } => Call::Trees {
-            breps: specs(breps),
-            tree: tree.clone(),
-        },
-        Inputs::Measured {
-            a,
-            b,
-            operation,
-            post_process,
-        } => Call::Measured {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-            post_process: *post_process,
-        },
-        Inputs::ArcLengths {
-            a,
-            b,
-            operation,
-            fraction,
-        } => Call::ArcLengths {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-            fraction: *fraction,
-        },
-        Inputs::WithCurves { a, b, operation } => Call::WithCurves {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-        },
-        Inputs::Boolean2d {
-            a,
-            b,
-            operation,
-            attributed,
-        } => Call::Boolean2d {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-            attributed: *attributed,
-        },
-        Inputs::NonManifold { a, b, operation } => Call::NonManifold {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-        },
-        Inputs::PiecewiseMerge { a, b, create_new } => Call::Piecewise {
-            a: spec(a),
-            b: spec(b),
-            create_new: *create_new,
-        },
-        Inputs::Sweep {
-            brep,
-            dir,
-            dist,
-            stitch,
-            merge,
-            region,
-            selection: sel,
-            attributed,
-        } => Call::Sweep {
-            brep: spec(brep),
-            dir: *dir,
-            dist: *dist,
-            stitch: *stitch,
-            merge: *merge,
-            region: region.ffi(),
-            selection: selection(sel),
-            attributed: *attributed,
-        },
-        Inputs::RotationalSweep {
-            brep,
-            base,
-            axis,
-            angle_deg,
-            stitch,
-            merge,
-            region,
-            selection: sel,
-            attributed,
-        } => Call::RotationalSweep {
-            brep: spec(brep),
-            base: *base,
-            axis: *axis,
-            angle_deg: *angle_deg,
-            stitch: *stitch,
-            merge: *merge,
-            region: region.ffi(),
-            selection: selection(sel),
-            attributed: *attributed,
-        },
-        Inputs::Attributed {
-            a,
-            b,
-            operation,
-            behavior,
-            flags,
-            copy_first,
-        } => Call::Attributed {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-            behavior: *behavior,
-            options: flags.map(|f| {
-                (
-                    *copy_first,
-                    Flags {
-                        cookie_cutter: f.cookie_cutter,
-                        imprinting: f.imprinting,
-                        boolean_post_process: f.boolean_post_process,
-                        imprint_and_classify_faces: f.imprint_and_classify_faces,
-                        keep_other_brep: f.keep_other_brep,
-                    },
-                )
-            }),
-        },
-        Inputs::TessellateBoundaries {
-            brep,
-            angle_tol_deg,
-            drop_curves,
-        } => Call::TessellateBoundaries {
-            brep: spec(brep),
-            angle_tol_deg: *angle_tol_deg,
-            drop_curves: drop_curves.clone(),
-        },
-        Inputs::AttributedList { call, behavior } => Call::AttributedList {
-            call: Box::new(to_call(call)),
-            behavior: *behavior,
-        },
-        Inputs::Checked {
-            a,
-            b,
-            operation,
-            level,
-        } => Call::Checked {
-            a: spec(a),
-            b: spec(b),
-            operation: *operation,
-            level: *level,
-        },
-    }
-}
-
 // ---- outputs ------------------------------------------------------------------------
-
-fn to_output(o: &[f64]) -> Result<Output, HarnessError> {
-    let (&status, rest) = o.split_first().ok_or_else(|| harness("empty record"))?;
-    let ints = rest
-        .iter()
-        .map(|&x| {
-            if x.fract() == 0.0 && x.abs() < 1e15 {
-                Ok(x as i64)
-            } else {
-                Err(harness(format!("non-integer record entry {x}")))
-            }
-        })
-        .collect::<Result<Vec<i64>, _>>()?;
-    Ok(Output::new()
-        .int("status", status as i64)
-        .ints("record", ints))
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if ub_242(i)? {
-        return Ok(Output::rejected(
-            "UB-242: IntersectInsertRelate ignores a failed imprint that edited a B-rep \
-             and goes on with the half-edited B-reps; not run",
-        ));
-    }
-    match ffi::run(&to_call(i)) {
-        Ok(o) => match i {
-            Inputs::Measured { .. } => measured_output(&o, "measures"),
-            Inputs::ArcLengths { .. } => measured_output(&o, "arc_lengths"),
-            Inputs::Attributed { .. } => measured_output(&o, "attributes"),
-            Inputs::AttributedList { .. } if o.first() == Some(&0.0) => {
-                let (head, rows) = ffi::split_measures(&o)
-                    .ok_or_else(|| harness("cpp: attributed record too short"))?;
-                Ok(to_output(head)?.values("attributes", rows.to_vec()))
-            }
-            Inputs::Checked { .. } => checked_output(&o),
-            Inputs::Boolean2d {
-                attributed: Some(_),
-                ..
-            } if o.first() == Some(&0.0) && o.get(1) == Some(&1.0) => {
-                let (head, rows) = ffi::split_measures(&o)
-                    .ok_or_else(|| harness("cpp: attributed 2D record too short"))?;
-                Ok(areas_output(head, true)?.values("attributes", rows.to_vec()))
-            }
-            Inputs::Boolean2d { .. } => {
-                areas_output(&o, o.first() == Some(&0.0) && o.get(1) == Some(&1.0))
-            }
-            Inputs::Sweep {
-                attributed: Some(_),
-                ..
-            }
-            | Inputs::RotationalSweep {
-                attributed: Some(_),
-                ..
-            } if o.first() == Some(&0.0) => {
-                let (head, rows) = ffi::split_measures(&o)
-                    .ok_or_else(|| harness("cpp: attributed sweep record too short"))?;
-                Ok(areas_output(head, true)?.values("attributes", rows.to_vec()))
-            }
-            Inputs::Sweep { .. } | Inputs::RotationalSweep { .. } => {
-                areas_output(&o, o.first() == Some(&0.0))
-            }
-            Inputs::TessellateBoundaries { .. } => tessellate_output(&o),
-            _ => to_output(&o),
-        },
-        Err(e) => Err(harness(format!("cpp: {e}"))),
-    }
-}
-
-/// A `measured` (`attributed`) record: the integer record, then on success (`status` 0
-/// and a result) the measures (attribute rows) the shim appends under `key`
-/// ([`ffi::split_measures`]).
-fn measured_output(o: &[f64], key: &str) -> Result<Output, HarnessError> {
-    let succeeded = o.first() == Some(&0.0) && o.get(1) == Some(&1.0);
-    if !succeeded {
-        return to_output(o);
-    }
-    let (head, measures) =
-        ffi::split_measures(o).ok_or_else(|| harness("cpp: measured record too short"))?;
-    Ok(to_output(head)?.values(key, measures.to_vec()))
-}
-
-/// A `checked` record: the integer record, then on success (`status` 0 and a result) the
-/// check the shim appends, split off as the integers `check` ([`ffi::split_measures`]).
-fn checked_output(o: &[f64]) -> Result<Output, HarnessError> {
-    let succeeded = o.first() == Some(&0.0) && o.get(1) == Some(&1.0);
-    if !succeeded {
-        return to_output(o);
-    }
-    let (head, check) =
-        ffi::split_measures(o).ok_or_else(|| harness("cpp: checked record too short"))?;
-    let check = check
-        .iter()
-        .map(|&x| {
-            if x.fract() == 0.0 && x.abs() < 1e15 {
-                Ok(x as i64)
-            } else {
-                Err(harness(format!("non-integer check entry {x}")))
-            }
-        })
-        .collect::<Result<Vec<i64>, _>>()?;
-    Ok(to_output(head)?.ints("check", check))
-}
-
-/// A record that ends, when `has_areas`, with the shim's `put_areas` tail (split off as
-/// `areas`, the same way as [`measured_output`]).
-fn areas_output(o: &[f64], has_areas: bool) -> Result<Output, HarnessError> {
-    if !has_areas {
-        return to_output(o);
-    }
-    let (head, areas) =
-        ffi::split_measures(o).ok_or_else(|| harness("cpp: areas record too short"))?;
-    Ok(to_output(head)?.values("areas", areas.to_vec()))
-}
-
-/// A `tessellate_boundaries` record: `status ne edges.. nc counts.. np xyz..` (a failed
-/// torus operand: `status 2`).
-fn tessellate_output(o: &[f64]) -> Result<Output, HarnessError> {
-    if o.len() == 2 && o.get(1) == Some(&2.0) {
-        return to_output(o);
-    }
-    let short = || harness("cpp: tessellate record too short");
-    let (&status, rest) = o.split_first().ok_or_else(short)?;
-    let int = |x: f64| {
-        if x.fract() == 0.0 && x.abs() < 1e15 {
-            Ok(x as i64)
-        } else {
-            Err(harness(format!("non-integer record entry {x}")))
-        }
-    };
-    let mut ints = Vec::new();
-    let mut at = 0usize;
-    // the edge and count lists, each after its length
-    for _ in 0..2 {
-        let n = int(*rest.get(at).ok_or_else(short)?)?;
-        let len = usize::try_from(n).map_err(|_| short())?;
-        let list = rest.get(at..at + 1 + len).ok_or_else(short)?;
-        for &x in list {
-            ints.push(int(x)?);
-        }
-        at += 1 + len;
-    }
-    let np = usize::try_from(int(*rest.get(at).ok_or_else(short)?)?).map_err(|_| short())?;
-    let points = rest
-        .get(at + 1..at + 1 + 3 * np)
-        .ok_or_else(short)?
-        .to_vec();
-    Ok(Output::new()
-        .int("status", int(status)?)
-        .ints("record", ints)
-        .values("points", points))
-}
-
-/// Whether the Boolean reaches UB-242 (`plan/upstream-issues/`): an imprint in
-/// `IntersectInsertRelate` fails after it may have edited a B-rep, and upstream goes on
-/// with the half-edited B-reps, so the input is undefined in C++ (AGENTS.md section 4,
-/// step 5.6) and [`cpp`] rejects it. Decided from the inputs and the Rust side only: the
-/// port stops there (tangency-labs/smlib af8db37) and records `"UB-242"` on the kernel
-/// ([`Kernel::upstream_ub_passed`]). (Until the v1.0.1 pin this guard was UB-175's, the
-/// proto topology manager teardown, which v1.0.1 defines.)
-fn ub_242(i: &Inputs) -> Result<bool, HarnessError> {
-    let mut k = Kernel::default();
-    match rust_call_with(&mut k, i, &|_| {}) {
-        Ok(_) | Err(Stop::Deferred(_) | Stop::Torus(_)) => {
-            Ok(k.upstream_ub_passed.contains(&"UB-242"))
-        }
-        Err(Stop::Harness(e)) => Err(e),
-    }
-}
 
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> i64 {
@@ -971,13 +530,13 @@ fn p3(p: P3) -> Point3 {
 
 /// Builds an operand exactly as the shim does (`SmApiCreateBox`, `SmApiCreateSphere`,
 /// `SmApiCreatePlane`, `SmApiBoolean`). Nested
-/// operands are at most `ffi::MAX_DEPTH` deep (the FFI rejects deeper ones first).
+/// operands are at most `MAX_DEPTH` deep (the FFI rejects deeper ones first).
 fn build(k: &mut Kernel, b: &BrepIn) -> Result<Brep, Stop> {
     build_at(k, b, 0)
 }
 
 fn build_at(k: &mut Kernel, b: &BrepIn, depth: usize) -> Result<Brep, Stop> {
-    if depth >= ffi::MAX_DEPTH {
+    if depth >= MAX_DEPTH {
         return Err(Stop::Harness(harness("operand nested too deep")));
     }
     let r = match b {
@@ -1150,7 +709,7 @@ fn measures(k: &Kernel, b: &mut Brep) -> Result<Vec<f64>, Stop> {
             None => Ok(status(e) as f64),
         }
     };
-    let mut o = match brep_volume(k, b, ffi::VOLUME_ACCURACY, &attrs) {
+    let mut o = match brep_volume(k, b, VOLUME_ACCURACY, &attrs) {
         Ok(v) => vec![0.0, v],
         Err(e) => vec![fail(&e)?, 0.0],
     };
@@ -1158,7 +717,7 @@ fn measures(k: &Kernel, b: &mut Brep) -> Result<Vec<f64>, Stop> {
     o.push(faces.len() as f64);
     let mut areas = Vec::new();
     for f in faces {
-        areas.push(match face_area(k, b, f, ffi::AREA_ACCURACY) {
+        areas.push(match face_area(k, b, f, AREA_ACCURACY) {
             Ok(a) => a,
             Err(e) => -fail(&e)?,
         });
@@ -1226,7 +785,7 @@ fn arc_lengths(k: &Kernel, b: &Brep, fraction: f64) -> Result<Vec<f64>, Stop> {
             continue;
         };
         let ivl = edge::interval(b, e).map_err(|err| stop("GetInterval", &err))?;
-        match c.length(k, &ivl, ffi::ARC_LENGTH_ACCURACY) {
+        match c.length(k, &ivl, ARC_LENGTH_ACCURACY) {
             Err(err) => row[0] = fail(&err)?,
             Ok(length) => {
                 row[1] = length;
@@ -1273,7 +832,7 @@ fn tag_operand(b: &mut Brep, operand: u64, behavior: Behavior) -> Result<(), Sto
                 .map(|(i, e)| (EntityRef::Edge(e), 1, i)),
         );
     for (entity, kind, index) in tagged {
-        let id = ffi::ATTRIBUTE_BASE + 1000 * operand + 500 * kind + index as u64;
+        let id = ATTRIBUTE_BASE + 1000 * operand + 500 * kind + index as u64;
         let value = i64::try_from(id).map_err(|_| harness("attribute id overflow"))?;
         b.add_attribute(entity, Attribute::long(id, value, behavior))
             .map_err(|e| stop("AddAttribute", &e))?;
@@ -1319,25 +878,25 @@ fn put_attributes(k: &Kernel, o: &mut Vec<f64>, b: &mut Brep) -> Result<(), Stop
     let faces = brep_p1::faces(b, None).map_err(|e| stop("GetFaces", &e))?;
     let mut rows = Vec::new();
     for f in faces {
-        let area = match face_area(k, b, f, ffi::AREA_ACCURACY) {
+        let area = match face_area(k, b, f, AREA_ACCURACY) {
             Ok(a) => a,
             Err(e) => fail(&e)?,
         };
         rows.push(attribute_row(b, EntityRef::Face(f), area));
     }
-    ffi::sort_rows(&mut rows);
+    sort_rows(&mut rows);
     o.push(rows.len() as f64);
     o.extend(rows.into_iter().flatten());
     let edges = brep_p1::edges(b, None).map_err(|e| stop("GetEdges", &e))?;
     let mut rows = Vec::new();
     for e in edges {
-        let length = match edge_length(k, b, e, ffi::LENGTH_ACCURACY) {
+        let length = match edge_length(k, b, e, LENGTH_ACCURACY) {
             Ok(l) => l,
             Err(err) => fail(&err)?,
         };
         rows.push(attribute_row(b, EntityRef::Edge(e), length));
     }
-    ffi::sort_rows(&mut rows);
+    sort_rows(&mut rows);
     o.push(rows.len() as f64);
     o.extend(rows.into_iter().flatten());
     Ok(())
@@ -1446,7 +1005,7 @@ fn areas(k: &Kernel, b: &mut Brep) -> Result<Vec<f64>, Stop> {
     let mut o = vec![faces.len() as f64];
     let mut areas = Vec::new();
     for f in faces {
-        areas.push(match face_area(k, b, f, ffi::AREA_ACCURACY) {
+        areas.push(match face_area(k, b, f, AREA_ACCURACY) {
             Ok(a) => a,
             Err(e) => match Output::unported(&e) {
                 Some(d) => return Err(Stop::Deferred(Box::new(d))),
@@ -1478,7 +1037,7 @@ fn pick_ids<T: Copy>(
     all: &[T],
 ) -> Result<Option<Vec<Option<T>>>, Stop> {
     let Some(sel) = sel else { return Ok(None) };
-    if sel.len() > ffi::MAX_SELECTION {
+    if sel.len() > MAX_SELECTION {
         return Err(Stop::Harness(harness("selection too long")));
     }
     sel.iter()
@@ -2450,10 +2009,6 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
