@@ -1,10 +1,8 @@
-//! C++ parity for merge control, topology cleanup, face coincidence, vertex copies,
-//! region attributes and file-local region/translation helpers. Topology fixtures
-//! are constructed by each side's own kernel (the Rust side's by the Rust `.smb` reader
-//! and constructors, renumbered into the fixture's traversal order; no C++ export
-//! reaches it); the C++ side's post-op graph is imported to compare it. Deferred paths still run the native helper.
-use super::topology_edgeuse_p1::{self as spec, BrepIn};
-use super::topology_vertexuse::import_raw;
+//! Merge control, topology cleanup, face coincidence, vertex copies, region attributes and
+//! file-local region/translation helpers, ported from upstream `SmMerge` and checked
+//! against the unit's golden. Topology fixtures are built by the Rust kernel (the Rust
+//! `.smb` reader and constructors, renumbered into the fixture's traversal order).
+use super::topology_edgeuse_p1::BrepIn;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -24,52 +22,12 @@ use solidcore::topology::{
     LoopuseStart, RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::boolean_merge_p1 as ffi;
 use std::collections::BTreeMap;
 
 /// The op of `find_brep_region_of_other_face` (`SmMerge::FindBrepRegionOfOtherFace`).
 const OP_FIND_REGION: u8 = 5;
 /// The op of `SmMerge::FixFoundFaceCoincidence`, which can edit both operands.
 const OP_FACE_COINCIDENCE: u8 = 2;
-
-/// Takes the other operand's graph off the end of op 2's C++ record. The record is:
-/// changed flag; the count and faces of each side; the count and mates of the primary's
-/// edges and of the other's ([`face_coincidence_record`]); then the length of the other
-/// operand's raw export, and the export.
-fn split_other_graph(record: &mut Vec<f64>) -> Result<Brep, HarnessError> {
-    let short = || harness("short face coincidence record");
-    let at = |record: &[f64], i: usize| -> Result<usize, HarnessError> {
-        let v = *record.get(i).ok_or_else(short)?;
-        if v.is_finite() && v >= 0.0 && v.fract() == 0.0 {
-            Ok(v as usize)
-        } else {
-            Err(short())
-        }
-    };
-    // the position after a count at `i` and the values it counts
-    let skip = |record: &[f64], i: usize| -> Result<usize, HarnessError> {
-        at(record, i)?
-            .checked_add(i)
-            .and_then(|n| n.checked_add(1))
-            .ok_or_else(short)
-    };
-    let second = skip(record, 1)?; // the other side's face count
-    let primary_edges = skip(record, second)?;
-    let other_edges = skip(record, primary_edges)?;
-    let len_at = skip(record, other_edges)?;
-    let len = at(record, len_at)?;
-    let start = len_at.checked_add(1).ok_or_else(short)?;
-    let end = start.checked_add(len).ok_or_else(short)?;
-    if end != record.len() {
-        return Err(harness("face coincidence record has trailing values"));
-    }
-    let (mut other, _) = import_raw(record.get(start..end).ok_or_else(short)?)?;
-    // the face loop lists and loop edge lists the export does not carry, derived from
-    // the exported uses as the Rust B-rep holds them (as `topology.brep_p5`)
-    other.refresh_cached_topology();
-    record.truncate(len_at);
-    Ok(other)
-}
 
 /// The values of op 2's record that follow the changed flag: the faces of each side and
 /// the edge mates (the primary edges' other mates, then the other edges' B-rep mates, as
@@ -111,8 +69,23 @@ fn with_other_graph(mut out: Output, other: Option<&Brep>) -> Output {
     out
 }
 
-/// Differential runner for `boolean.merge_p1`.
+/// Runner for `boolean.merge_p1`.
 pub struct Runner;
+
+/// Whether the fixtures have what op `op` selects (`a`, `b`: the primary's and the other
+/// operand's [`crate::own_builder::counts`]); the selectors are taken modulo these counts,
+/// so an op whose entity is missing is refused before it runs.
+fn selection_valid(op: u8, a: &[usize; 10], b: &[usize; 10]) -> bool {
+    match op {
+        2 => a[3] > 0 && b[3] > 0,
+        3 => a[9] > 0 && b[9] > 0 && a[0] > 0,
+        4 => a[0] > 0 && b[0] > 0,
+        5 => b[2] > 0,
+        6 => a[7] > 0,
+        8 | 9 => a[6] > 0 && b[6] > 0,
+        _ => true,
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
     op: u8,
@@ -188,25 +161,6 @@ fn own_operand(k: &mut Kernel, src: &BrepIn) -> Result<Result<Brep, Output>, Har
             Ok(Ok(b))
         }
         Built::Failed(e) => Ok(Err(failed_output(&e))),
-    }
-}
-fn block(i: &Inputs) -> Result<(String, Vec<f64>), HarnessError> {
-    if i.op == 0 {
-        return Ok((String::new(), Vec::new()));
-    }
-    Ok((
-        spec::path_of(i.brep.as_ref())?,
-        spec::brep_block_of(i.brep.as_ref(), false, false)?,
-    ))
-}
-fn other_block(i: &Inputs) -> Result<(String, Vec<f64>), HarnessError> {
-    if let Some(other) = &i.other {
-        Ok((
-            spec::path_of(Some(other))?,
-            spec::brep_block_of(Some(other), false, false)?,
-        ))
-    } else {
-        block(i)
     }
 }
 fn obj(k: u64, t: i64) -> ObjectRef {
@@ -1262,54 +1216,6 @@ impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "boolean.merge_p1"
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let (path, block) = block(&i)?;
-        let (other_path, other_block) = other_block(&i)?;
-        let v = ffi::eval(ffi::Request {
-            op: i.op,
-            args: i.args,
-            primary: ffi::Operand {
-                path: &path,
-                block: &block,
-            },
-            other: ffi::Operand {
-                path: &other_path,
-                block: &other_block,
-            },
-            tolerances: i.tolerances,
-            parameter: i.parameter,
-        })
-        .map_err(|e| harness(e.to_string()))?;
-        if i.op == 0 {
-            return Ok(Output::new().values("record", v));
-        }
-        let [status, count, ..] = v.as_slice() else {
-            return Err(harness("short merge result"));
-        };
-        if *status != 0.0 {
-            return Ok(Output::err(format!("status_{}", *status as i64)));
-        }
-        let end = (*count as usize)
-            .checked_add(2)
-            .ok_or_else(|| harness("record count overflow"))?;
-        let raw = v.get(end..).ok_or_else(|| harness("short graph"))?;
-        let (mut b, _) = import_raw(raw)?;
-        // the face loop lists and loop edge lists the export does not carry, derived
-        // from the exported uses as the Rust B-rep holds them (the Rust side builds its
-        // input itself, so its faces and loops have them; as `topology.brep_p5`)
-        b.refresh_cached_topology();
-        let mut record = v
-            .get(2..end)
-            .ok_or_else(|| harness("short record"))?
-            .to_vec();
-        let other = if i.op == OP_FACE_COINCIDENCE {
-            Some(split_other_graph(&mut record)?)
-        } else {
-            None
-        };
-        Ok(with_other_graph(graph(&b, record), other.as_ref()))
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
         if i.op == 0 {
@@ -1328,9 +1234,9 @@ impl UnitDiff for Runner {
             Ok(b) => b,
             Err(o) => return Ok(o),
         };
-        // the FFI's selection guard: the selectors are taken modulo these counts
+        // the selection guard: the selectors are taken modulo these counts
         let counts = crate::own_builder::counts;
-        if !ffi::selection_valid(i.op, &counts(&b), &counts(&other)) {
+        if !selection_valid(i.op, &counts(&b), &counts(&other)) {
             return Err(harness("fixture lacks selected entity"));
         }
         match run_rust(&i, &mut b, &mut other) {
@@ -1448,8 +1354,7 @@ mod tests {
         assert!(g.diagnostics.is_none());
     }
 
-    /// Fuzz 30000 (fuzz03460): op 2 on a wire, which has no face to select. The FFI
-    /// rejects the fixture; the Rust side must refuse it too instead of taking the
+    /// Fuzz 30000 (fuzz03460): op 2 on a wire, which has no face to select. The Rust side must refuse it too instead of taking the
     /// selector modulo zero faces.
     #[test]
     fn op_without_selected_entity_is_refused_not_a_panic() {
