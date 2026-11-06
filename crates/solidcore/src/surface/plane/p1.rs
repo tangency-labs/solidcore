@@ -919,12 +919,22 @@ impl Plane {
     /// Rebuilds the analytic data from the NURB (`RebuildSTEPFromNURBParameters`): the
     /// domain becomes the natural domain, the scales and axes come from three
     /// corners of the NURB, and the origin is moved so that the domain minimum
-    /// evaluates to the first corner (using the old axes).
+    /// evaluates to the first corner, along the old axes (a rebuild that turns no axis
+    /// keeps them; see [`Plane::reverse`] for one that does).
     ///
     /// # Errors
     ///
     /// Those of the B-spline evaluation ([`BSplineSurface::evaluate_point`]).
     pub fn rebuild_step_from_nurb_parameters(&mut self) -> Result<()> {
+        self.rebuild_with_turned_axis(None)
+    }
+
+    /// [`Plane::rebuild_step_from_nurb_parameters`] after the NURB was reversed in
+    /// `turned` (`Some(V)` v, `Some(_)` u, as [`BSplineSurface::reverse`]): that
+    /// direction's old axis is taken turned about when the origin is placed. Not
+    /// upstream, which takes it unturned, so a reversed plane's origin moved by
+    /// `(lo + hi) * scale` along it and the plane no longer evaluated as its own NURB.
+    fn rebuild_with_turned_axis(&mut self, turned: Option<SurfParamType>) -> Result<()> {
         // Make our analytic data match the Nurbs shape.
         self.ensure_nurb();
         let nurb_domain = self.base.natural_uv_domain();
@@ -946,9 +956,16 @@ impl Plane {
         self.uv_scale.y = len_3d / nurb_domain.y_length();
         v_vec /= len_3d; // Unitize, for later.
 
-        // The origin is where (0,0) would evaluate to.
-        let start_vec = nurb_domain.min().x * self.uv_scale.x * self.position.x_axis()
-            + nurb_domain.min().y * self.uv_scale.y * self.position.y_axis();
+        // The origin is where (0,0) would evaluate to, along the old axes, the reversed
+        // one turned about.
+        let (mut x_axis, mut y_axis) = (self.position.x_axis(), self.position.y_axis());
+        match turned {
+            None => {}
+            Some(SurfParamType::V) => y_axis = -y_axis,
+            Some(_) => x_axis = -x_axis,
+        }
+        let start_vec = nurb_domain.min().x * self.uv_scale.x * x_axis
+            + nurb_domain.min().y * self.uv_scale.y * y_axis;
 
         // The new origin would be the start point minus that vector.
         let _ = self.position.set_canonical(pt00 - start_vec, u_vec, v_vec);
@@ -969,8 +986,9 @@ impl Plane {
         self.ensure_nurb();
         self.base.reverse(param)?;
 
-        // give analytics a chance to update their nested STEP data
-        self.rebuild_step_from_nurb_parameters()
+        // give analytics a chance to update their nested STEP data, the reversed axis
+        // turned about
+        self.rebuild_with_turned_axis(Some(param))
     }
 
     /// `SmBSplineSurface::SwapUV` (inherited): records the swap
@@ -2555,6 +2573,41 @@ mod tests {
             Vec2::new(2.0, 3.0),
             &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
         )
+    }
+
+    /// A plane reversed in either direction evaluates as its own NURB, the point at
+    /// (u, v) the one the plane had at (lo + hi - u, v) (or in v): its origin is placed
+    /// along the reversed axis (upstream's old axis moved it by the domain's width).
+    #[test]
+    fn a_reversed_plane_evaluates_as_its_nurb() {
+        let original = Plane::new(
+            Point3::new(1.0, 2.0, 3.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(2.0, 3.0),
+            &Extent2d::from_bounds(-1.0, -2.0, 3.0, 5.0),
+        );
+        for param in [SurfParamType::U, SurfParamType::V] {
+            let mut p = original.clone();
+            p.reverse(param).unwrap();
+            let d = p.natural_uv_domain();
+            for (s, t) in [(0.0, 0.0), (0.5, 0.5), (1.0, 0.25), (0.3, 1.0)] {
+                let uv = d.evaluate(s, t);
+                let turned = match param {
+                    SurfParamType::U => d.evaluate(1.0 - s, t),
+                    _ => d.evaluate(s, 1.0 - t),
+                };
+                let (a, n, o) = (
+                    p.evaluate_point(uv),
+                    p.base.evaluate_point(uv).unwrap(),
+                    original.evaluate_point(turned),
+                );
+                assert!(
+                    a.distance(n) <= 1e-14 && a.distance(o) <= 1e-14,
+                    "{param:?} {a:?} {n:?} {o:?}"
+                );
+            }
+        }
     }
 
     /// `SER(SM_ERR_INVALID_INPUT)` for a zero line vector, the exact status.
