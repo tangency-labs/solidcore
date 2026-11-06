@@ -25,6 +25,9 @@ use solidcore::Kernel;
 const R: f64 = 3.0;
 const D: f64 = 0.473;
 
+/// A refusal: its reason, and the size that builds and on which edge.
+type Refused = (Option<NoRoomReason>, Option<f64>, Option<EdgeId>);
+
 fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
@@ -73,7 +76,7 @@ fn chamfer(
     b: &mut Brep,
     chain: &[EdgeId; 3],
     offsets: [f64; 3],
-) -> Result<(), (Option<NoRoomReason>, Option<f64>, Option<EdgeId>)> {
+) -> Result<(), Refused> {
     blend(k, b, chain, offsets, FilletSurfaceGeneratorType::Linear)
 }
 
@@ -83,7 +86,7 @@ fn blend(
     chain: &[EdgeId; 3],
     offsets: [f64; 3],
     section: FilletSurfaceGeneratorType,
-) -> Result<(), (Option<NoRoomReason>, Option<f64>, Option<EdgeId>)> {
+) -> Result<(), Refused> {
     let mut s = FilletSession::new(k, b).unwrap();
     s.prepare_per_edge_constant_radius_with_second(
         k,
@@ -101,17 +104,15 @@ fn blend(
             s.set_corner_bevel(id, true).unwrap();
         }
     }
-    match s.do_filleting(k, None) {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            let fit = s.fit_size();
-            Err((
-                s.error_info().no_room_reason(),
-                fit.as_ref().map(|f| f.size),
-                fit.and_then(|f| f.edge),
-            ))
-        }
+    if s.do_filleting(k, None).is_ok() {
+        return Ok(());
     }
+    let fit = s.fit_size();
+    Err((
+        s.error_info().no_room_reason(),
+        fit.as_ref().map(|f| f.size),
+        fit.and_then(|f| f.edge),
+    ))
 }
 
 /// One offset on the chain: two prisms of the section `D^2 / 2`, along 27 and 17, and the
