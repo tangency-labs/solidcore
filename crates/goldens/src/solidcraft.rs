@@ -2324,9 +2324,10 @@ mod tests {
                 l.id.starts_with("a52-")
                     || l.id.starts_with("catics-")
                     || (l.file.issue.contains("/issues/")
-                        && l.file.pr.as_ref().is_none_or(|pr| {
-                            pr.contains("/pull/") || pr.contains("/commit/")
-                        })),
+                        && l.file
+                            .pr
+                            .as_ref()
+                            .is_none_or(|pr| { pr.contains("/pull/") || pr.contains("/commit/") })),
                 "{}",
                 l.id
             );
