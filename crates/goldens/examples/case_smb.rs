@@ -53,7 +53,10 @@ const UNITS: [(&str, ResultBreps); 6] = [
         "intersect.surface_drop_lib_p1",
         intersect_surface_drop_lib_p1::result_breps,
     ),
-    ("blend.fillet_corner_p2", blend_fillet_corner_p2::result_breps),
+    (
+        "blend.fillet_corner_p2",
+        blend_fillet_corner_p2::result_breps,
+    ),
 ];
 
 /// A distinct key per topology object (the reader's scheme, as `topology.brep_p7` keys

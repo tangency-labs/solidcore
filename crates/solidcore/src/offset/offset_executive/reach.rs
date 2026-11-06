@@ -1453,8 +1453,8 @@ fn edge_interval_maximum(
                 });
             }
             PieceBound::Unknown => {
-                let tm = halves(t0, t1, depth)
-                    .filter(|_| seen + undecided.len() + 2 <= MAX_INTERVALS);
+                let tm =
+                    halves(t0, t1, depth).filter(|_| seen + undecided.len() + 2 <= MAX_INTERVALS);
                 let Some(tm) = tm else {
                     return Ok(None);
                 };
@@ -2309,9 +2309,8 @@ mod tests {
         let Some(Exact::Quadric(q)) = exact_class(&k, &wider).unwrap() else {
             panic!("the cylinder r 2 is a quadric");
         };
-        let piece = |over: (Dv, Dv), mid: (Dv, Dv), dt: Ivl| {
-            quadric_distance_piece(over.0, mid.0, dt, &q)
-        };
+        let piece =
+            |over: (Dv, Dv), mid: (Dv, Dv), dt: Ivl| quadric_distance_piece(over.0, mid.0, dt, &q);
         let (at_seam, apart) = edge_interval_maximum(&b, seam, &piece, b.tolerance())
             .unwrap()
             .unwrap();
@@ -2445,7 +2444,10 @@ mod tests {
         };
         assert!((r - 1.0).abs() < 1e-12, "{r}");
         assert_eq!(at(cut(1.1)), CornerMeeting::Nowhere);
-        assert_eq!(at(plane(Vec3::new(0.0, 0.0, 1.0), Vec3::Z)), CornerMeeting::Nowhere);
+        assert_eq!(
+            at(plane(Vec3::new(0.0, 0.0, 1.0), Vec3::Z)),
+            CornerMeeting::Nowhere
+        );
     }
 
     /// A 60 x 40 x 20 block whose top is imprinted along x = 30, the piece x < 30 raised
