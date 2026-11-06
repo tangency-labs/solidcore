@@ -1,4 +1,7 @@
 {
+  "blend.fillet_corner_p2": {
+    "corner_adjust_concave_face_67": "tangency-labs/solidcore#3021: the concave corner's topology adjustment stops at a null pointer (1006) in its mates loop, the corner half made"
+  },
   "blend.fillet_executive_p3": {
     "real-box-high-corner-setback-eight": "tangency-labs/solidcore#2933: the N x N corner patch meets the three rounds up to 4.35 degrees off tangent; edge tolerance 5.17e-5"
   },
