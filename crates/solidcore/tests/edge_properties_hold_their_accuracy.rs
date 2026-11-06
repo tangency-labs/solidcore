@@ -81,9 +81,9 @@ fn quarter_integrals(center: Vec3, radius: f64, origin: Vec3) -> LineIntegrals {
     ]
 }
 
-/// [`LineIntegrals`] of [`segment`]: `p(t) = p0 + t d`, `ds = |d| dt`, and
-/// `int_0^1 (p0_i + t d_i)(p0_j + t d_j) dt = p0_i p0_j + (p0_i d_j + d_i p0_j) / 2
-/// + d_i d_j / 3`.
+/// [`LineIntegrals`] of [`segment`]: `p(t) = p0 + t d`, `ds = |d| dt`, and the
+/// integral over `[0, 1]` of `(p0_i + t d_i)(p0_j + t d_j)` is
+/// `p0_i p0_j + (p0_i d_j + d_i p0_j) / 2 + d_i d_j / 3`.
 fn segment_integrals(a: Vec3, b: Vec3, origin: Vec3) -> LineIntegrals {
     let p = [a.x - origin.x, a.y - origin.y, a.z - origin.z];
     let d = [b.x - a.x, b.y - a.y, b.z - a.z];
