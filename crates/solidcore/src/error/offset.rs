@@ -135,9 +135,10 @@ pub enum OffsetFailure {
         face: FaceId,
     },
     /// In a local operation, a surface beside an edge or at a vertex of `face` moves, and
-    /// the surfaces there are not all of kinds whose meetings have a certified bound
-    /// (exact planes, `local_extension_reach`): how far the surfaces must be extended is
-    /// not known. Refused before anything changes.
+    /// how far the surfaces there must be extended to meet has no certified bound
+    /// ([`crate::offset::offset_executive::reach::local_extension_reach`]): a pair or corner
+    /// of kinds it does not bound, or an edge piece left undecided. Refused before anything
+    /// changes.
     ReachUncertified {
         /// The face, of the operation's input.
         face: FaceId,
@@ -421,9 +422,8 @@ impl core::fmt::Display for OffsetFailure {
             ),
             Self::ReachUncertified { face } => write!(
                 f,
-                "the new surfaces of face {} and of a neighbour are tangent and apart at \
-                 their edge, and how far they must be extended to meet is not bounded for \
-                 their kinds",
+                "a surface beside an edge or at a vertex of face {} moves, and how far the \
+                 surfaces there must be extended to meet has no certified bound",
                 face.index()
             ),
             Self::Unsound { what } => match what {
