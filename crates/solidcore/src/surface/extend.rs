@@ -516,6 +516,15 @@ enum Says {
     Unproved,
 }
 
+/// How near `d` an across length `b` counts as at `d`: the stop, or the enclosure's parts and
+/// the stored net's own resolution of the length (no net of floats is nearer to a length than
+/// that, [`Across::resolution`]) where wider. Stopping tighter than one ulp of the net can move
+/// the length is not resolvable; the certificate (the enclosure, `exact`, the 1e-6 d rounding
+/// criterion) is unchanged.
+fn stop_allowance(b: &Across, d: f64) -> f64 {
+    (STOP * d).max(b.truncation + b.rounding + b.resolution)
+}
+
 /// What the across length `b` (none: no measurement) of an extension whose bound is
 /// `extension` proves of the distance `d`.
 fn says(b: Option<&Across>, extension: f64, d: f64) -> Says {
@@ -526,12 +535,7 @@ fn says(b: Option<&Across>, extension: f64, d: f64) -> Says {
         return Says::Unproved;
     }
     let (lower, upper) = (b.enclosure.lower, b.enclosure.upper);
-    // the stop, or the enclosure's parts and the stored net's own resolution of the length
-    // (no net of floats is nearer to a length than that, [`Across::resolution`]) where wider:
-    // a stop allowance, as stopping tighter than one ulp of the net can move the length is
-    // not resolvable; the certificate (the enclosure, `exact`, the 1e-6 d rounding
-    // criterion) is unchanged
-    let tol = (STOP * d).max(b.truncation + b.rounding + b.resolution);
+    let tol = stop_allowance(b, d);
     if exact(b, extension, d) && lower >= d - tol && upper <= d + tol {
         Says::Met
     } else if upper < d {
@@ -770,7 +774,7 @@ fn solve(
         ask = made_ask;
         let f = match says(b.as_ref(), s.1, d) {
             Says::Met => return finish(s, b),
-            Says::Past(_) | Says::Unproved if ask <= least && not_short(b.as_ref(), s.1, d) => {
+            Says::Past(_) | Says::Unproved if ask <= least && reaches(b.as_ref(), s.1, d) => {
                 return finish(s, b)
             }
             Says::Short(f) => {
@@ -863,10 +867,14 @@ fn solve(
 }
 
 /// Whether the across length `b` of an extension whose bound is `extension` is measured
-/// (every leaf converged, the bound finite) and not proved short of `d` (its enclosure
-/// reaches it).
-fn not_short(b: Option<&Across>, extension: f64, d: f64) -> bool {
-    b.is_some_and(|b| b.converged && extension.is_finite() && b.enclosure.upper >= d)
+/// (every leaf converged, the bound finite) and proved to reach `d`: its enclosure's lower
+/// end at `d` within its [`stop_allowance`]. At the side's least step a length
+/// that reaches `d` is the shortest the side carries; one whose enclosure merely holds `d`
+/// may be short of it, and is not accepted there.
+fn reaches(b: Option<&Across>, extension: f64, d: f64) -> bool {
+    b.is_some_and(|b| {
+        b.converged && extension.is_finite() && b.enclosure.lower >= d - stop_allowance(b, d)
+    })
 }
 
 /// A met ask's extension and its length (met implies a length).
