@@ -41,6 +41,7 @@ use crate::math::{Point2, EFF_ZERO};
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use crate::nurbs::knots::Side;
 use crate::surface::extend::{ExtendedSides, SideExtension};
 use crate::surface::side::BoxSide;
 use crate::surface::surface::{Surface, SurfaceKind};
@@ -48,6 +49,7 @@ use crate::topology::edgeuse::{p1 as eu, p3 as eu3};
 use crate::topology::{edge, loopuse, Brep, EdgeuseId, FaceId, FaceuseId};
 
 const OP: &str = "offset::offset_executive::reach::extension_reach";
+const LOCAL_OP: &str = "offset::offset_executive::reach::local_extension_reach";
 
 /// The number of intervals each edge is sampled at for its sector angle.
 const EDGE_SAMPLES: u32 = 8;
@@ -299,6 +301,218 @@ pub(super) fn shortest_across(
     Ok((shortest.is_finite() && shortest > 0.0).then_some(shortest))
 }
 
+/// A face's surface near a point, as a plane: a point on it and its unit normal.
+#[derive(Debug, Clone, Copy)]
+struct Tangent {
+    point: Vec3,
+    normal: Vec3,
+    /// Whether the face moves to this surface (else it is the face's own, at the point).
+    moved: bool,
+}
+
+/// The tangent plane of `surface` at its point nearest `p`: an infinite plane's own (no
+/// solve), any other surface's at its closest point.
+fn tangent_near(k: &Kernel, surface: &Surface, p: Vec3) -> Result<Tangent> {
+    if let SurfaceKind::Plane(plane) = surface.kind() {
+        let normal = plane.position().z_axis().unitize()?;
+        let origin = plane.position().origin();
+        return Ok(Tangent {
+            point: p - normal * (p - origin).dot(normal),
+            normal,
+            moved: true,
+        });
+    }
+    let closest = crate::query::api_queries::surface_closest_point(k, surface, p)?;
+    let uv = closest
+        .uvs
+        .first()
+        .copied()
+        .ok_or_else(|| SolidError::sm_err(LOCAL_OP))?;
+    let normal = surface
+        .evaluate_normal(k, uv, Side::Left, Side::Left)?
+        .unitize()?;
+    Ok(Tangent {
+        point: closest.closest.point,
+        normal,
+        moved: true,
+    })
+}
+
+/// The point nearest `p` where the planes `a` and `b` meet: on their line of meeting, the
+/// point `p + α a.n + β b.n` (`α + β c = h_a`, `α c + β = h_b`, `c = a.n·b.n`, `h` each
+/// plane's height over `p`). Planes within `tangent_sine` of parallel meet only where they
+/// are one plane (within `tolerance` apart; then at `p`'s foot on it), else not at all.
+fn meeting_near(
+    p: Vec3,
+    a: Tangent,
+    b: Tangent,
+    tangent_sine: f64,
+    tolerance: f64,
+) -> Option<Vec3> {
+    let c = a.normal.dot(b.normal);
+    let h_a = (a.point - p).dot(a.normal);
+    let h_b = (b.point - p).dot(b.normal);
+    let det = 1.0 - c * c;
+    if det <= (tangent_sine * tangent_sine).max(EFF_ZERO) {
+        // one plane where the other's point lies on it, else apart
+        return ((b.point - a.point).dot(a.normal).abs() <= tolerance).then(|| p + a.normal * h_a);
+    }
+    let alpha = (h_a - c * h_b) / det;
+    let beta = (h_b - c * h_a) / det;
+    Some(p + a.normal * alpha + b.normal * beta)
+}
+
+/// The point where the planes `a`, `b` and `c` meet, `None` where they meet in no one point
+/// (two of them within `tangent_sine` of parallel: their triple product is below it).
+fn corner_of(a: Tangent, b: Tangent, c: Tangent, tangent_sine: f64) -> Option<Vec3> {
+    let bc = b.normal.cross(c.normal);
+    let det = a.normal.dot(bc);
+    if det.abs() <= tangent_sine.max(EFF_ZERO) {
+        return None;
+    }
+    let (ha, hb, hc) = (
+        a.point.dot(a.normal),
+        b.point.dot(b.normal),
+        c.point.dot(c.normal),
+    );
+    Some((bc * ha + c.normal.cross(a.normal) * hb + a.normal.cross(b.normal) * hc) * (1.0 / det))
+}
+
+/// One sample of an edge use for [`local_extension_reach`]: the edge point, the face's and
+/// the neighbour's planes there.
+#[derive(Debug, Clone, Copy)]
+struct LocalEnd {
+    point: Vec3,
+    own: Tangent,
+    other: Option<Tangent>,
+}
+
+/// The surface a face takes in a local operation: its own (the face stays) or the one it
+/// moves to.
+fn local_tangent(
+    k: &Kernel,
+    face: Option<FaceId>,
+    moved: &[(FaceId, &Surface)],
+    p: Vec3,
+    normal: Vec3,
+) -> Result<Tangent> {
+    match face.and_then(|f| moved.iter().find(|(m, _)| *m == f)) {
+        Some((_, surface)) => tangent_near(k, surface, p),
+        None => Ok(Tangent {
+            point: p,
+            normal: normal.unitize()?,
+            moved: false,
+        }),
+    }
+}
+
+/// How far past its face the surface of `faceuse` must be extended in a local operation for
+/// the surfaces of its neighbours to meet its own, and how far the surfaces moved there
+/// (module docs of [`extension_reach`], with each face's offset replaced by the surface it
+/// takes): the faces in `moved` take the surface given with them, every other keeps its
+/// own. At each sample of each edge (the sector varies along it) the face and its
+/// neighbour are taken as their tangent planes there (a moved face's at its surface's point
+/// nearest the edge), and the reach is the distance from the edge point of the point nearest
+/// it where the planes meet; at each corner, of the point where the face's plane and its two
+/// neighbours' meet (where they meet in no one point, the two edges' meetings stand). The
+/// move is the largest distance from an edge point of a moved plane's point. Where every
+/// surface stays, both are zero. `None` for a face with no neighbour (every edge a lamina
+/// edge or a seam). Faces whose planes are parallel and apart add nothing: no extension
+/// makes them meet. `tolerance` is the B-rep's: planes closer than it are one.
+///
+/// The planes are the surfaces to first order: a surface bending away from its tangent plane
+/// meets its neighbour off the planes' meeting by the bend over the reach, as the offset's
+/// reach is ([`extension_reach`]).
+///
+/// # Errors
+///
+/// [`SolidError::InvalidInput`] for a vanishing face normal; those of
+/// [`eu3::evaluate_binormal`] and of a moved surface's closest point and normal;
+/// [`SolidError::NotFound`] for a dangling id.
+pub fn local_extension_reach(
+    k: &Kernel,
+    b: &mut Brep,
+    faceuse: FaceuseId,
+    moved: &[(FaceId, &Surface)],
+    tangency_tol_radians: f64,
+) -> Result<Option<(f64, f64)>> {
+    let tangent_sine = tangency_tol_radians.abs().min(crate::math::PI / 2.0).sin();
+    let tolerance = b.tolerance();
+    let options = eu3::BinormalOptions::default();
+    let (mut reach, mut shift) = (0.0_f64, 0.0_f64);
+    let mut met = false;
+    for lu in eu::faceuse_loopuses(b, faceuse, false, None)? {
+        let mut ends: Vec<(LocalEnd, LocalEnd)> = Vec::new();
+        for edgeuse in loopuse::edgeuses(b, lu, None, None)? {
+            let Some(e) = eu::edge(b, edgeuse)? else {
+                continue;
+            };
+            let interval = edge::interval(b, e)?;
+            let (lo, hi) = (interval.min(), interval.max());
+            let own_face = eu::face(b, edgeuse)?;
+            let radial = match eu::radial(b, edgeuse)? {
+                Some(r) if r != edgeuse && eu::face(b, r)? != own_face => Some(r),
+                _ => None,
+            };
+            let mut first = None;
+            let mut last = None;
+            for i in 0..=EDGE_SAMPLES {
+                let parameter = lo + (hi - lo) * f64::from(i) / f64::from(EDGE_SAMPLES);
+                let at = eu3::evaluate_binormal(k, b, edgeuse, parameter, false, &options)?;
+                let own = local_tangent(k, own_face, moved, at.point, at.face_normal)?;
+                shift = shift.max((own.point - at.point).length());
+                let other = match radial {
+                    Some(r) => {
+                        let theirs = eu3::evaluate_binormal(k, b, r, parameter, false, &options)?;
+                        let face = eu::face(b, r)?;
+                        let other = local_tangent(k, face, moved, at.point, theirs.face_normal)?;
+                        shift = shift.max((other.point - at.point).length());
+                        met = true;
+                        if let Some(x) = meeting_near(at.point, own, other, tangent_sine, tolerance)
+                        {
+                            reach = reach.max((x - at.point).length());
+                        }
+                        Some(other)
+                    }
+                    None => None,
+                };
+                let end = LocalEnd {
+                    point: at.point,
+                    own,
+                    other,
+                };
+                if i == 0 {
+                    first = Some(end);
+                }
+                last = Some(end);
+            }
+            let (Some(first), Some(last)) = (first, last) else {
+                continue;
+            };
+            ends.push(match eu::orientation(b, edgeuse)? {
+                OrientType::Opposite => (last, first),
+                _ => (first, last),
+            });
+        }
+        // Each edge use's end meets the next one's start (the loop closes).
+        let next = ends.iter().cycle().skip(1);
+        for (&(_, into), &(out, _)) in ends.iter().zip(next) {
+            let (Some(a), Some(c)) = (into.other, out.other) else {
+                continue;
+            };
+            // a corner of faces that all stay stays: it adds nothing (its planes' meeting
+            // computed again would differ from the vertex by rounding only)
+            if !(into.own.moved || a.moved || c.moved) {
+                continue;
+            }
+            if let Some(x) = corner_of(into.own, a, c, tangent_sine) {
+                reach = reach.max((x - into.point).length());
+            }
+        }
+    }
+    Ok(met.then_some((reach, shift)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,5 +663,96 @@ mod tests {
         let mut k = Kernel::default();
         let (mut brep, faceuses) = box_faceuses(&mut k, false);
         assert!(extension_reach(&k, &mut brep, faceuses[0].1, f64::NAN, &[], 1e-3).is_err());
+    }
+
+    /// The box's face whose plane has unit normal `n` (outward), with its upward face use.
+    fn box_face(brep: &Brep, n: Vec3) -> (FaceId, FaceuseId) {
+        for f in bp1::faces(brep, None).unwrap() {
+            let surface = brep.face(f).unwrap().surface.as_ref().unwrap();
+            let SurfaceKind::Plane(plane) = surface.kind() else {
+                continue;
+            };
+            let z = plane.position().z_axis();
+            let fu = super::super::p2::select_offset_faceuse(brep, f, false, false, OP).unwrap();
+            let up = brep.faceuse(fu).unwrap().orientation != OrientType::Opposite;
+            let outward = if up { z } else { -z };
+            if (outward - n).length() < 1e-12 {
+                return (f, fu);
+            }
+        }
+        panic!("no face of normal {n:?}");
+    }
+
+    /// The box [0, 1] x [0, 2] x [0, 3] with its top (z = 3) moved to `top`: each face's
+    /// (reach, move).
+    fn moved_top(top: Surface) -> [(f64, f64); 4] {
+        let k = Kernel::default();
+        let mut kk = Kernel::default();
+        let (mut brep, _) = box_faceuses(&mut kk, false);
+        let (top_face, top_fu) = box_face(&brep, Vec3::Z);
+        let moved = [(top_face, &top)];
+        let mut at = |n: Vec3| {
+            let fu = if n == Vec3::Z {
+                top_fu
+            } else {
+                box_face(&brep, n).1
+            };
+            local_extension_reach(&k, &mut brep, fu, &moved, 1e-3)
+                .unwrap()
+                .unwrap()
+        };
+        [at(Vec3::Z), at(-Vec3::Y), at(-Vec3::X), at(-Vec3::Z)]
+    }
+
+    /// The top raised by `h`: the sides meet it `h` above their top edges (and corners), the
+    /// top meets the sides `h` above its old edges, both moved `h`; the bottom meets
+    /// sides that stay: nothing to reach, nothing moved.
+    #[test]
+    fn a_raised_top_is_met_as_far_as_it_rose() {
+        let h = 0.5;
+        let top = Surface::from(crate::surface::plane::Plane::from_normal(
+            Point3::new(0.0, 0.0, 3.0 + h),
+            Vec3::Z,
+        ));
+        let [top, front, left, bottom] = moved_top(top);
+        for (reach, shift) in [top, front, left] {
+            assert!((reach - h).abs() < 1e-12, "{reach}");
+            assert!((shift - h).abs() < 1e-12, "{shift}");
+        }
+        assert_eq!(bottom, (0.0, 0.0));
+    }
+
+    /// The top tilted by `θ` about the line `y = 1, z = 3`: `z = 3 + (y - 1) tan θ`. The
+    /// front (y = 0) meets it `tan θ` below its top edge, and moves `sin θ` there (the
+    /// edge's distance from the tilted plane); the left side (x = 0) meets it at its
+    /// corners `tan θ` off (along its top edge only `|y - 1| sin θ`); the top's own meetings
+    /// are `tan θ` from its old edges at the front and back.
+    #[test]
+    fn a_tilted_top_is_met_by_its_tangent_at_the_corners() {
+        let theta: f64 = 0.3;
+        let (s, c) = (theta.sin(), theta.cos());
+        let top = Surface::from(crate::surface::plane::Plane::from_normal(
+            Point3::new(0.5, 1.0, 3.0),
+            Vec3::new(0.0, -s, c),
+        ));
+        let [top, front, left, bottom] = moved_top(top);
+        let t = theta.tan();
+        for (name, (reach, shift)) in [("top", top), ("front", front), ("left", left)] {
+            assert!((reach - t).abs() < 1e-12, "{name} reach {reach}");
+            assert!((shift - s).abs() < 1e-12, "{name} move {shift}");
+        }
+        assert_eq!(bottom, (0.0, 0.0));
+    }
+
+    /// Nothing moved: every face meets its neighbours at its edges.
+    #[test]
+    fn a_body_nothing_moves_in_needs_no_extension() {
+        let k = Kernel::default();
+        let mut kk = Kernel::default();
+        let (mut brep, faceuses) = box_faceuses(&mut kk, false);
+        for (_, fu) in faceuses {
+            let found = local_extension_reach(&k, &mut brep, fu, &[], 1e-3).unwrap();
+            assert_eq!(found, Some((0.0, 0.0)));
+        }
     }
 }
