@@ -108,8 +108,9 @@ pub enum OffsetFailure {
         tolerance: f64,
     },
     /// A local operation gives `face`, which meets itself across edges (seams of its
-    /// closed surface) in some directions of its surface, a surface closed in fewer
-    /// directions. Each moved edge is found again where the new surfaces on its two sides
+    /// closed surface), a surface on which a seam's two UV lines (the face's loops are
+    /// copied onto it) do not lift to one curve: it is not closed in the seam's direction,
+    /// or the lines are not its seam, one period apart. Each moved edge is found again where the new surfaces on its two sides
     /// meet; across a seam both sides are the face's own new surface, which a surface open
     /// across it cannot close onto itself, so the face has no edge there (the topology the
     /// operation keeps cannot be built).
@@ -410,8 +411,9 @@ impl core::fmt::Display for OffsetFailure {
             ),
             Self::SeamOpened { face } => write!(
                 f,
-                "face {} meets itself across seams in more directions than the surface it \
-                 is given is closed in: a seam has no edge on a surface open across it",
+                "face {} meets itself across a seam whose two UV lines do not lift to one \
+                 curve on the surface it is given (not closed that way, or the lines not on \
+                 its seam one period apart): the seam would have no edge",
                 face.index()
             ),
             Self::FacesApart { face } => write!(
