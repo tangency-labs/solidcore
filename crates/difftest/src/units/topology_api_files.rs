@@ -1,31 +1,23 @@
-//! Differential coverage for `topology.api_files`: the `SM_API` wrappers
-//! `SmApiReadBrepFromFile`, `SmApiReadPartFromFile` and `SmApiTurnToNurbs`
-//! (`SmApiAddCurveOutputSlots` is file static: no shim can call it, see the unit notes).
+//! Runner for unit `topology.api_files`: the `SM_API` wrappers `SmApiReadBrepFromFile`,
+//! `SmApiReadPartFromFile` and `SmApiTurnToNurbs` (`SmApiAddCurveOutputSlots` is file
+//! static, see the unit notes). Ported from upstream's `SmApi` file wrappers; checked
+//! against its golden.
 //!
-//! Each side reads its own input: an upstream test file (the Rust side reads the same
-//! bytes with its own reader), or a box (`SmApiCreateBox` / `create_box`), optionally
-//! filleted on every edge (`SmApiCircularFillet` / `circular_fillet`). The round trip
-//! (upstream `TestSmImportExport`) writes each side's own box to a file of its own
-//! (`SmApiWriteBrepToFile` / `BrepData::from_brep` and `write_to_file_with_nurbs`) and
-//! reads it back, ASCII or binary. Foreign-naming fixtures use `write_brep_to_file`
-//! with caller keys independent of the box's geometry owners (PR #1832). C++ owns
-//! geometry by object address and needs no alternate naming. No C++-built geometry
-//! reaches the Rust side. Compared:
-//! the status (`status`) and the record (`record`, layout in
-//! `solidcore_ffi::units::topology_api_files`). The native side runs in a fresh child
-//! process. Inputs the native build or the FFI guard refuse are `rejected`.
+//! The case reads its input: an upstream test file (with the Rust reader), or a box
+//! (`create_box`), optionally filleted on every edge (`circular_fillet`). The round trip
+//! (upstream `TestSmImportExport`) writes the box to a file (`BrepData::from_brep` and
+//! `write_to_file_with_nurbs`) and reads it back, ASCII or binary. Foreign-naming
+//! fixtures use `write_brep_to_file` with caller keys independent of the box's geometry
+//! owners (PR #1832). Recorded: the status (`status`) and the record (`record`).
 //!
 //! A `write_bytes` case (`SmApiWriteBrepToFile`) writes one B-rep, ASCII or binary, and
-//! compares the file byte for byte (`rec`: the source's status, then on success the
+//! records the file byte for byte (`rec`: the source's status, then on success the
 //! write's status, then on success the file's length and bytes): an upstream B-rep test
-//! file read with `SmBrep::ReadFromFile` (the Rust side reads it with its own reader,
-//! under per-object identities, as `corpus.parity`) or a B-rep made by an `SM_API`
-//! primitive constructor (the Rust side's `primitive::api_primitives`, its records read
-//! under the kernel's identities). The C++ side writes into a directory of its own and
-//! runs in this process. Primitive arguments the constructor guards of
-//! `primitive.api_primitives` fence off are rejected on both sides. Besides the
-//! fixtures, [`WRITE_GENERATED`] such cases are generated from their own seeds (the
-//! other generated cases do not move).
+//! file read with the Rust reader, under per-object identities, as `corpus.parity`, or a
+//! B-rep made by `primitive::api_primitives`, its records read under the kernel's
+//! identities. Primitive arguments outside the constructors' input contract
+//! ([`write_rejection`]) are rejected. Besides the fixtures, [`WRITE_GENERATED`] such
+//! cases are generated from their own seeds (the other generated cases do not move).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,11 +44,7 @@ use solidcore::topology::part_file::{Part, PartEnv};
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::topology::{edge, Brep, EdgeId, EdgeuseId, FaceId};
 use solidcore::{EntityRef, Result as SolidResult, SolidError};
-use solidcore_ffi::units::primitive_api_primitives::{guard, Op as PrimOp};
-use solidcore_ffi::units::topology_api_files::{self as ffi, Source, NARGS};
-use solidcore_ffi::FfiError;
 
-use super::corpus_parity::PrivateDir;
 use super::topology_brep_mirror::FILES as WRITE_FILES;
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
@@ -168,10 +156,6 @@ fn herr(e: impl std::fmt::Display) -> HarnessError {
     HarnessError::new(e.to_string())
 }
 
-fn flag(b: bool) -> f64 {
-    f64::from(u8::from(b))
-}
-
 fn upstream_path(file: &str) -> Result<String, HarnessError> {
     let p = crate::fixtures::upstream_test_file(&crate::case::repo_root(), file)?;
     Ok(p.to_string_lossy().into_owned())
@@ -180,97 +164,6 @@ fn upstream_path(file: &str) -> Result<String, HarnessError> {
 fn read_bytes(file: &str) -> Result<Vec<u8>, HarnessError> {
     let p = upstream_path(file)?;
     std::fs::read(&p).map_err(|e| herr(format!("{p}: {e}")))
-}
-
-/// A new file in the temporary directory for the native round trip of `case`.
-fn temp_path(case: &str) -> String {
-    let name: String = case
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    std::env::temp_dir()
-        .join(format!("sc_api_files_{}_{name}.smb", std::process::id()))
-        .to_string_lossy()
-        .into_owned()
-}
-
-/// The shim's path and arguments of `op`.
-fn native_args(op: &Op, case: &str) -> Result<(u8, String, [f64; NARGS]), HarnessError> {
-    let mut a = [0.0; NARGS];
-    let (code, path) = match op {
-        Op::ReadBrep {
-            file,
-            rebuild,
-            ascii,
-        } => {
-            a[0] = flag(file.is_some());
-            a[1] = flag(*ascii);
-            a[2] = flag(*rebuild);
-            let path = file.as_deref().map(upstream_path).transpose()?;
-            (1, path.unwrap_or_default())
-        }
-        Op::ReadPart { file, prefill } => {
-            a[0] = flag(file.is_some());
-            a[1] = 1.0;
-            a[3] = f64::from(*prefill);
-            let path = file.as_deref().map(upstream_path).transpose()?;
-            (2, path.unwrap_or_default())
-        }
-        Op::TurnToNurbs { body } => match body {
-            Body::Null => (3, String::new()),
-            Body::File { file } => {
-                a[4] = 1.0;
-                (3, upstream_path(file)?)
-            }
-            Body::Box { size, fillet } => {
-                a[4] = 2.0;
-                a[5] = size[0];
-                a[6] = size[1];
-                a[7] = size[2];
-                a[8] = *fillet;
-                (3, String::new())
-            }
-            Body::Cylinder { radius, height } => {
-                (a[4], a[5], a[6]) = (3.0, *radius, *height);
-                (3, String::new())
-            }
-            Body::Cone {
-                radius_base,
-                radius_top,
-                height,
-            } => {
-                (a[4], a[5], a[6], a[7]) = (4.0, *radius_base, *radius_top, *height);
-                (3, String::new())
-            }
-            Body::Sphere { radius } => {
-                (a[4], a[5]) = (5.0, *radius);
-                (3, String::new())
-            }
-            Body::Torus { major, minor } => {
-                (a[4], a[5], a[6]) = (6.0, *major, *minor);
-                (3, String::new())
-            }
-            Body::MixedBox { size } => {
-                (a[4], a[5], a[6], a[7]) = (7.0, size[0], size[1], size[2]);
-                (3, String::new())
-            }
-        },
-        Op::RoundTrip {
-            size,
-            ascii,
-            rebuild,
-            ..
-        } => {
-            a[1] = flag(*ascii);
-            a[2] = flag(*rebuild);
-            a[5] = size[0];
-            a[6] = size[1];
-            a[7] = size[2];
-            (4, temp_path(case))
-        }
-        Op::WriteBytes { .. } => return Err(herr("write_bytes has its own entry point")),
-    };
-    Ok((code, path, a))
 }
 
 fn output(raw: &[f64]) -> Result<Output, HarnessError> {
@@ -731,108 +624,61 @@ enum WriteSrc {
     },
 }
 
-/// The FFI source of `s`.
-fn write_source(s: &WriteSrc) -> Result<Source, HarnessError> {
-    Ok(match s {
-        WriteSrc::File { file, rebuild } => Source::File {
-            path: upstream_path(file)?,
-            rebuild: *rebuild,
-        },
-        WriteSrc::Box { origin, size } => Source::Box {
-            origin: *origin,
-            size: *size,
-        },
-        WriteSrc::Sphere { center, radius } => Source::Sphere {
-            center: *center,
-            radius: *radius,
-        },
-        WriteSrc::Cylinder {
-            origin,
-            radius,
-            height,
-        } => Source::Cylinder {
-            origin: *origin,
-            radius: *radius,
-            height: *height,
-        },
-        WriteSrc::Cone {
-            origin,
-            radius_base,
-            radius_top,
-            height,
-        } => Source::Cone {
-            origin: *origin,
-            radius_base: *radius_base,
-            radius_top: *radius_top,
-            height: *height,
-        },
-        WriteSrc::Torus {
-            center,
-            major,
-            minor,
-        } => Source::Torus {
-            center: *center,
-            major: *major,
-            minor: *minor,
-        },
-        WriteSrc::Plane { origin, size } => Source::Plane {
-            origin: *origin,
-            size: *size,
-        },
-    })
-}
+/// `SM_EFF_ZERO`.
+const EFF_ZERO: f64 = 1.0e-12;
 
-/// Why both sides reject `s` (the FFI's checks): a non-finite or guarded primitive
-/// argument.
+/// The largest sphere radius magnitude `SmApiCreateSphere` builds (above it upstream's
+/// `SmPrimitiveCreation::CreateSphere` crashes).
+const MAX_SPHERE_RADIUS: f64 = 6.0e9;
+
+/// The largest coordinate or dimension magnitude of the entry points upstream does not
+/// validate (`SmApiCreateTorus`, `SmApiCreatePlaneBrep`).
+const MAX_KERNEL_COORD: f64 = 1.0e6;
+
+/// Why `s` is rejected (the input contract of `primitive.api_primitives`'s constructors):
+/// a non-finite argument, a valid sphere radius above [`MAX_SPHERE_RADIUS`], or a torus or
+/// plane argument above [`MAX_KERNEL_COORD`].
 fn write_rejection(s: &WriteSrc) -> Option<String> {
-    let (op, args): (PrimOp, Vec<f64>) = match s {
+    let args: Vec<f64> = match s {
         WriteSrc::File { .. } => return None,
-        WriteSrc::Box { origin, size } => (PrimOp::Box, [&origin[..], &size[..]].concat()),
-        WriteSrc::Sphere { center, radius } => {
-            (PrimOp::Sphere, [&center[..], &[*radius]].concat())
-        }
+        WriteSrc::Box { origin, size } => [&origin[..], &size[..]].concat(),
+        WriteSrc::Sphere { center, radius } => [&center[..], &[*radius]].concat(),
         WriteSrc::Cylinder {
             origin,
             radius,
             height,
-        } => (PrimOp::Cylinder, [&origin[..], &[*radius, *height]].concat()),
+        } => [&origin[..], &[*radius, *height]].concat(),
         WriteSrc::Cone {
             origin,
             radius_base,
             radius_top,
             height,
-        } => (
-            PrimOp::Cone,
-            [&origin[..], &[*radius_base, *radius_top, *height]].concat(),
-        ),
+        } => [&origin[..], &[*radius_base, *radius_top, *height]].concat(),
         WriteSrc::Torus {
             center,
             major,
             minor,
-        } => (PrimOp::Torus, [&center[..], &[*major, *minor]].concat()),
-        WriteSrc::Plane { origin, size } => (PrimOp::PlaneBrep, [&origin[..], &size[..]].concat()),
+        } => [&center[..], &[*major, *minor]].concat(),
+        WriteSrc::Plane { origin, size } => [&origin[..], &size[..]].concat(),
     };
     if !args.iter().all(|a| a.is_finite()) {
-        return Some("ffi guard: invalid argument: non-finite primitive argument".into());
+        return Some("non-finite primitive argument".into());
     }
-    guard(op, &args, None).err().map(|e| format!("ffi guard: {e}"))
-}
-
-fn cpp_write(s: &WriteSrc, ascii: bool) -> Result<Output, HarnessError> {
-    if let Some(why) = write_rejection(s) {
-        return Ok(Output::rejected(why));
-    }
-    let src = write_source(s)?;
-    // (the shim writes and reads the file by name: only inside a directory of our own)
-    let dir = PrivateDir::new().map_err(herr)?;
-    let tmp = dir.0.join("written.smb");
-    match ffi::write(&src, &tmp.to_string_lossy(), ascii) {
-        Ok(v) => Ok(Output::new().ints(
-            "rec",
-            v.iter().map(|&x| x as i64).collect::<Vec<_>>(),
-        )),
-        Err(e @ FfiError::InvalidArgument(_)) => Ok(Output::rejected(format!("ffi guard: {e}"))),
-        Err(e) => Err(herr(e)),
+    match s {
+        // (`SM_IS_VALID_DOUBLE`: within `SM_BIG_DOUBLE / 100`)
+        WriteSrc::Sphere { radius, .. }
+            if radius.abs() <= 1.0e18
+                && radius.abs() > EFF_ZERO
+                && radius.abs() > MAX_SPHERE_RADIUS =>
+        {
+            Some("sphere: radius above the kernel's domain".into())
+        }
+        WriteSrc::Torus { .. } | WriteSrc::Plane { .. }
+            if args.iter().any(|x| x.abs() > MAX_KERNEL_COORD) =>
+        {
+            Some("argument out of bounds".into())
+        }
+        _ => None,
     }
 }
 
@@ -1077,25 +923,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let op: Op = case.parse()?;
-        if let Op::WriteBytes { brep, ascii } = &op {
-            return cpp_write(brep, *ascii);
-        }
-        let (code, path, args) = native_args(&op, &case.name)?;
-        match ffi::eval(code, &path, &args) {
-            Ok(raw) if raw.first() == Some(&-999.) => Ok(Output::rejected(format!(
-                "native build status {}",
-                raw.get(1).copied().unwrap_or(-1.)
-            ))),
-            Ok(raw) => output(&raw),
-            Err(e @ FfiError::InvalidArgument(_)) => {
-                Ok(Output::rejected(format!("ffi guard: {e}")))
-            }
-            Err(e) => Err(herr(e)),
-        }
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
