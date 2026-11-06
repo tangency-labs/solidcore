@@ -1,33 +1,34 @@
 //! ISO 10303-21 ("Part 21") exchange structure parser: the HEADER and the DATA section's entity
-//! instances, simple (`#1=NAME(...)`) and complex (`#2=(A(...) B(...))`), with the string
-//! escapes decoded (`\X\hh`, `\X2\…\X0\`, `\X4\…\X0\`, `\S\c`, `\\`). Written from the public
-//! ISO 10303-21 specification.
+//! instances, simple (`#1=NAME(...)`) and complex (`#2=(A(...) B(...))`), with the string escapes
+//! decoded (`\X\hh`, `\X2\…\X0\`, `\X4\…\X0\`, `\S\c`, `\\`). Written from the public ISO 10303-21
+//! specification.
 //!
-//! Input is hostile: the text size ([`MAX_BYTES`]), the entity count ([`MAX_ENTITIES`]), the
-//! parameter count ([`MAX_PARAMS`]), the parameter nesting depth (`MAX_DEPTH`, private) and
-//! the parts of a complex instance (`MAX_COMPLEX_PARTS`, private) are capped, nothing is
-//! allocated from a count read out of the file (lists grow as their items are read), and every
-//! refusal is an [`Error`], never a panic.
+//! Input is hostile: the text size ([`MAX_BYTES`]), the entity count ([`MAX_ENTITIES`]), the record
+//! count ([`MAX_RECORDS`]), the parameter count ([`MAX_PARAMS`]), the parameter nesting depth
+//! (`MAX_DEPTH`, private) and the parts of a complex instance (`MAX_COMPLEX_PARTS`, private) are
+//! capped, nothing is allocated from a count read out of the file (lists grow as their items are
+//! read), and every refusal is an [`Error`], never a panic.
 //!
-//! Origin: SolidCraft's `crates/step/src/p21.rs` at `a5b71ca2` (MIT OR Apache-2.0). With the STEP merge (#2577) this becomes solidcore's one
-//! Part 21 implementation; `step-import`'s `part21.rs` goes with #2585.
+//! Origin: SolidCraft's `crates/step/src/p21.rs` at `a5b71ca2` (MIT OR Apache-2.0). With the STEP
+//! merge (#2577) this becomes solidcore's one Part 21 implementation; `step-import`'s `part21.rs`
+//! goes with #2585.
 //!
 //! Deviations from SolidCraft: [`Exchange::entities`] is a `BTreeMap` (was a `HashMap`), so
 //! iterating it is in id order on every platform; what is stored and which definition wins a
-//! duplicate id are unchanged. The complex-instance part limit is the named
-//! `MAX_COMPLEX_PARTS` (was the literal 64). Otherwise only lint-driven rewrites that keep the
-//! same result (`map_or`, `u32::from`, or-patterns, the error line number counted as the
-//! newline-split pieces) and doc comments on every public item.
+//! duplicate id are unchanged. The complex-instance part limit is the named `MAX_COMPLEX_PARTS`
+//! (was the literal 64). Otherwise only lint-driven rewrites that keep the same result (`map_or`,
+//! `u32::from`, or-patterns, the error line number counted as the newline-split pieces) and doc
+//! comments on every public item.
 //!
 //! Changed in review (#2591): a parse refuses with a typed [`Error`] (the messages are
 //! SolidCraft's); unterminated `\X2\`/`\X4\` runs decode in linear time; the parameter count is
-//! capped ([`MAX_PARAMS`]) and a repeated id counts against [`MAX_ENTITIES`]; a number with no
-//! digit and an integer beyond i64 are refused; a leading byte order mark is skipped; `\S\`
-//! before a UTF-8 character is kept as written.
+//! capped ([`MAX_PARAMS`]), so is the record count ([`MAX_RECORDS`]), and a repeated id counts
+//! against [`MAX_ENTITIES`]; a number with no digit and an integer beyond i64 are refused; a
+//! leading byte order mark is skipped; `\S\` before a UTF-8 character is kept as written.
 //!
-//! Limit: an ANCHOR, REFERENCE or SIGNATURE section (edition 3) is skipped to the first
-//! `ENDSEC;` in the raw text, so one inside a string in such a section ends the skip early and
-//! the rest is read as sections. No corpus file has these sections.
+//! Limit: an ANCHOR, REFERENCE or SIGNATURE section (edition 3) is skipped to the first `ENDSEC;`
+//! in the raw text, so one inside a string in such a section ends the skip early and the rest is
+//! read as sections. No corpus file has these sections.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -43,6 +44,11 @@ const MAX_DEPTH: usize = 64;
 /// another follows.
 const MAX_COMPLEX_PARTS: usize = 64;
 /// Most records in one file's DATA sections, each part of a complex instance counted.
+///
+/// A record holds no parameter when its list is empty, so [`MAX_PARAMS`] does not bound them:
+/// `A()` is three bytes and its [`Record`] 48 (on a 64-bit target) plus its name, so a text at
+/// the size cap of empty complex-instance parts could ask for about 8 GB of record slots. This
+/// cap holds them to under 1 GB there; the whole corpus holds under a million instances.
 pub const MAX_RECORDS: usize = 20_000_000;
 /// Most parameters in one file, nested ones and the header's included.
 ///
@@ -222,6 +228,10 @@ struct Lexer<'a> {
     params: usize,
     /// The most parameters to read.
     max_params: usize,
+    /// DATA records read so far.
+    records: usize,
+    /// The most records to read.
+    max_records: usize,
 }
 
 /// Why a text was refused. Its message is the one `parse` returned as a string before it had
@@ -503,6 +513,12 @@ impl Lexer<'_> {
         }
     }
     fn record(&mut self) -> Result<Record, Error> {
+        if self.records >= self.max_records {
+            return Err(Error::TooManyRecords {
+                limit: self.max_records,
+            });
+        }
+        self.records += 1;
         let name = self.keyword()?;
         self.expect(b'(')?;
         Ok(Record {
@@ -644,6 +660,8 @@ fn parse_limited(
         i: 0,
         params: 0,
         max_params: limits.params,
+        records: 0,
+        max_records: limits.records,
     };
     let magic = lx.keyword()?;
     if magic != "ISO-10303-21" {
