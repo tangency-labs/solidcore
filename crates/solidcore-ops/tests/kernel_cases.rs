@@ -50,8 +50,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use solidcore_ops::blend::{
-    blend, chamfer_sides_ordered, edge_faces_along_ordered, fillet_variable_ordered, Blend,
-    ChamferSecond, Corners,
+    blend, blend_ordered, chamfer_sides_ordered, edge_faces_along_ordered, fillet_variable_ordered,
+    Blend, ChamferSecond, Corners, SetBack,
 };
 use solidcore_ops::boolean::{boolean, BooleanOp};
 use solidcore_ops::extend::{extend_sheet, Continuation};
@@ -90,6 +90,7 @@ const PORTED: &[&str] = &[
     "sweep",
     "screw_sweep",
     "blend_dropping",
+    "blend_setback",
     "fillet_variable",
     "chamfer_sides",
     "stitch",
@@ -803,6 +804,111 @@ fn call_with_copy(
                 along.push(if da >= db { a } else { b });
             }
             let r = chamfer_sides_ordered(&s.body, &order, &edges, &along, distance, second);
+            in_place(Slot { order: None, ..s }, r)
+        }
+        "blend_setback" => {
+            if ins.len() != 1 {
+                return Err(bad("one input"));
+            }
+            let mut source = first()?;
+            if source.order.is_none() {
+                let (_, order) = source
+                    .body
+                    .to_record()
+                    .map_err(|e| Stop::Fail(format!("order before blend_setback: {e}")))?;
+                source.order = Some(order);
+            }
+            let s = copy_for_edit(&source)?;
+            let order = s
+                .order
+                .as_ref()
+                .ok_or_else(|| Stop::Fail("blend_setback: missing copied order".to_owned()))?;
+            let kind = match p["kind"].as_str() {
+                Some("round") => Blend::Round,
+                Some("curvature") => Blend::Curvature,
+                Some("chord") => Blend::Chord,
+                Some("chamfer") => Blend::Chamfer,
+                _ => return Err(bad("kind")),
+            };
+            let picks = |key: &str, kind: &str, length: usize| {
+                if p[key]["kind"].as_str() != Some(kind) {
+                    return Err(bad(key));
+                }
+                p[key]["picked"]
+                    .as_array()
+                    .ok_or_else(|| bad(key))?
+                    .iter()
+                    .map(|pick| {
+                        if let Some(miss) = pick.get("miss") {
+                            let why = miss.as_str().ok_or_else(|| bad(key))?;
+                            if pick.get("index").is_some() {
+                                return Err(bad(key));
+                            }
+                            return Err(Stop::Unsupported(format!(
+                                "blend_setback: {key} pick missed: {why}"
+                            )));
+                        }
+                        let i = pick["index"]
+                            .as_u64()
+                            .and_then(|i| usize::try_from(i).ok())
+                            .ok_or_else(|| bad(key))?;
+                        if i >= length {
+                            return Err(bad("pick outside record order"));
+                        }
+                        Ok(i)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            let edges = picks("edges", "edge", order.edges.len())?;
+            let vertices = picks("corners", "vertex", order.vertices.len())?;
+            let numbers = |key: &str| {
+                p[key]
+                    .as_array()
+                    .and_then(|a| a.iter().map(Value::as_f64).collect::<Option<Vec<_>>>())
+                    .ok_or_else(|| bad(key))
+            };
+            let sizes = numbers("sizes")?;
+            let distances = numbers("setbacks")?;
+            if edges.is_empty()
+                || vertices.is_empty()
+                || sizes.len() != edges.len()
+                || distances.len() != vertices.len()
+            {
+                return Err(bad("sizes and setbacks must match their picks"));
+            }
+            // Validate every supplied value before retaining the first pick of each entity,
+            // as the traced wrapper does: a bad duplicate must not disappear.
+            if sizes
+                .iter()
+                .chain(&distances)
+                .any(|&x| !x.is_finite() || x <= 0.0 || x > solidcore_ops::blend::MAX_SIZE)
+            {
+                return Ok(Err(solidcore_ops::Error::Argument.to_string()));
+            }
+            let mut unique = Vec::new();
+            let mut each = Vec::new();
+            for (edge, size) in edges.into_iter().zip(sizes) {
+                if !unique.contains(&edge) {
+                    unique.push(edge);
+                    each.push(size);
+                }
+            }
+            let mut setbacks: Vec<SetBack> = Vec::new();
+            for (vertex, distance) in vertices.into_iter().zip(distances) {
+                if !setbacks.iter().any(|s| s.vertex == vertex) {
+                    setbacks.push(SetBack { vertex, distance });
+                }
+            }
+            let r = blend_ordered(
+                &s.body,
+                order,
+                kind,
+                &unique,
+                &each,
+                &setbacks,
+                Corners::Filled,
+            )
+            .map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
         "blend_dropping" => {
@@ -1628,6 +1734,181 @@ fn filled_setback_replays_the_captured_corner() {
     run_case(&entry, &e).unwrap();
 }
 
+fn filled_setback_input() -> (Value, Slot) {
+    let entry = corpus().join("ladder/07-fillets/013-corner-setback.json");
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    let record = serde_json::from_value(records(&entry, &e)["b2"].clone()).unwrap();
+    let (body, order) = Body::from_record(&record, true).unwrap();
+    let step = e["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["op"] == "blend_setback")
+        .unwrap()
+        .clone();
+    (
+        step,
+        Slot {
+            body: Arc::new(body),
+            order: Some(order),
+        },
+    )
+}
+
+#[test]
+fn filled_setback_maps_edges_and_vertices_independently_and_keeps_the_operand() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let (step, input) = filled_setback_input();
+    let (before, _) = input.body.to_record().unwrap();
+    let original = input.order.as_ref().unwrap();
+    for permuted in [false, true] {
+        let mut input = input.clone();
+        let mut step = step.clone();
+        if permuted {
+            let mut order = original.clone();
+            order.edges.rotate_left(5);
+            order.vertices.reverse();
+            for pick in step["params"]["edges"]["picked"].as_array_mut().unwrap() {
+                let selected = original.edges[pick["index"].as_u64().unwrap() as usize];
+                pick["index"] =
+                    serde_json::json!(order.edges.iter().position(|&e| e == selected).unwrap());
+            }
+            let selected = original.vertices[3];
+            step["params"]["corners"]["picked"][0]["index"] =
+                serde_json::json!(order.vertices.iter().position(|&v| v == selected).unwrap());
+            input.order = Some(order);
+        }
+        let output = call(&step, &mut [input.clone()]).unwrap().unwrap();
+        assert!(!Arc::ptr_eq(&output.body, &input.body));
+        assert!(output.order.is_none());
+        let (record, _) = output.body.to_record().unwrap();
+        assert_eq!(
+            (
+                record.faces.len(),
+                record.edges.len(),
+                record.vertices.len()
+            ),
+            (15, 36, 23)
+        );
+        let has = |point: [f64; 3]| {
+            record
+                .vertices
+                .iter()
+                .any(|v| v.point.iter().zip(point).all(|(a, b)| (a - b).abs() < 1e-9))
+        };
+        // The six rail ends are fixed by the radius and distance from the selected corner.
+        for point in [
+            [52., 35., 20.],
+            [52., 40., 15.],
+            [55., 32., 20.],
+            [60., 32., 15.],
+            [55., 40., 12.],
+            [60., 35., 12.],
+        ] {
+            assert!(has(point), "missing setback rail {point:?}");
+        }
+        assert!(has([0., 0., 0.]));
+        assert!(!has([60., 40., 20.]));
+        assert_eq!(input.body.to_record().unwrap().0, before);
+    }
+}
+
+#[test]
+fn filled_setback_ordered_api_rejects_foreign_entities_without_editing() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let (_, input) = filled_setback_input();
+    let before = input.body.to_record().unwrap().0;
+    let original = input.order.as_ref().unwrap();
+    for invalid in 0..4 {
+        let mut order = original.clone();
+        let mut edges = vec![3, 2, 4];
+        let mut vertex = 3;
+        match invalid {
+            0 => order.edges[3] = solidcore::EdgeId::from_index(1_000_000),
+            1 => order.vertices[3] = solidcore::VertexId::from_index(1_000_000),
+            2 => edges[0] = order.edges.len(),
+            _ => vertex = order.vertices.len(),
+        }
+        let r = blend_ordered(
+            &input.body,
+            &order,
+            Blend::Round,
+            &edges,
+            &[5.0; 3],
+            &[SetBack {
+                vertex,
+                distance: 8.0,
+            }],
+            Corners::Filled,
+        );
+        assert!(
+            matches!(r, Err(solidcore_ops::Error::Argument)),
+            "{invalid}: {r:?}"
+        );
+        assert_eq!(input.body.to_record().unwrap().0, before);
+    }
+}
+
+#[test]
+fn filled_setback_duplicate_picks_keep_first_values_without_hiding_refusals() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let (step, input) = filled_setback_input();
+    let expected = call(&step, &mut [input.clone()])
+        .unwrap()
+        .unwrap()
+        .body
+        .to_record()
+        .unwrap()
+        .0;
+    let mut duplicate = step.clone();
+    let edge = duplicate["params"]["edges"]["picked"][0].clone();
+    duplicate["params"]["edges"]["picked"]
+        .as_array_mut()
+        .unwrap()
+        .push(edge);
+    duplicate["params"]["sizes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(2.0));
+    let vertex = duplicate["params"]["corners"]["picked"][0].clone();
+    duplicate["params"]["corners"]["picked"]
+        .as_array_mut()
+        .unwrap()
+        .push(vertex);
+    duplicate["params"]["setbacks"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(4.0));
+    let output = call(&duplicate, &mut [input.clone()]).unwrap().unwrap();
+    assert_eq!(output.body.to_record().unwrap().0, expected);
+    for key in ["sizes", "setbacks"] {
+        let mut invalid = duplicate.clone();
+        *invalid["params"][key]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap() = serde_json::json!(-1.0);
+        assert!(call(&invalid, &mut [input.clone()]).unwrap().is_err());
+    }
+    for key in ["edges", "corners"] {
+        let mut outside = step.clone();
+        outside["params"][key]["picked"][0]["index"] = serde_json::json!(1_000_000);
+        assert!(matches!(
+            call(&outside, &mut [input.clone()]),
+            Err(Stop::Fail(_))
+        ));
+        let mut missed = step.clone();
+        missed["params"][key]["picked"][0] = serde_json::json!({"miss":"no entity near point"});
+        assert!(matches!(
+            call(&missed, &mut [input.clone()]),
+            Err(Stop::Unsupported(_))
+        ));
+    }
+    let mut no_room = step;
+    no_room["params"]["setbacks"] = serde_json::json!([40.0]);
+    assert!(call(&no_room, &mut [input]).unwrap().is_err());
+}
+
 /// The recorded operations already passed in SolidCraft; replay must reach their existing
 /// kernel construction instead of skipping the variable-radius request.
 #[test]
@@ -2248,6 +2529,7 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
         "merge_faces",
         "extend_sheet",
         "fillet_variable",
+        "blend_setback",
     ] {
         let step = serde_json::json!({
             "op": op, "error": "expected edit refusal",
@@ -2306,6 +2588,7 @@ fn an_invalid_copy_order_cannot_count_as_an_expected_refusal() {
             "distance": 1, "how": "natural"
         }}),
         serde_json::json!({"op": "fillet_variable", "params": {}}),
+        serde_json::json!({"op": "blend_setback", "params": {}}),
         serde_json::json!({"op": "merge_faces", "params": {
             "keep": {"kind": "edge", "picked": []}
         }}),

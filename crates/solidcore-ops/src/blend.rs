@@ -89,7 +89,9 @@ pub enum Corners {
     Open,
 }
 
-/// A corner set back: its vertex (record index) and the setback along each of its edges.
+/// A corner set back: its vertex and the setback along each of its edges.
+/// The vertex indexes the native list for [`blend`], or the supplied record order for
+/// [`blend_ordered`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SetBack {
     /// The corner's vertex.
@@ -871,7 +873,7 @@ fn setbacks_fit(k: &Kernel, b: &Brep, setbacks: &[(VertexId, f64)]) -> solidcore
     Ok(true)
 }
 
-/// The edges of `body` at record indices `edges` blended by `kind`, edge i at `sizes[i]` (or
+/// The edges of `body` at native-list indices `edges` blended by `kind`, edge i at `sizes[i]` (or
 /// `sizes[0]` for every edge), the corners at `setbacks` set back (not for a chamfer, whose
 /// corners are bevelled) and, with [`Corners::Open`], left open. When some of the rounds
 /// overflow their faces across cliffs and others fit (more than one edge, no setbacks, corners
@@ -902,6 +904,40 @@ pub fn blend(
     setbacks: &[SetBack],
     corners: Corners,
 ) -> Result<Blended> {
+    blend_impl(body, None, kind, edges, sizes, setbacks, corners)
+}
+
+/// Blend edges and setback vertices selected through the input record's [`crate::Order`].
+///
+/// `edges` indexes `order.edges`; each [`SetBack::vertex`] indexes `order.vertices`.
+/// The order must belong to `body` (or have been mapped through its copy). Construction,
+/// sizes, corner handling and refusals are those of [`blend`]. Returned hole indices, when
+/// corners are open, refer to the result's native lists, as in [`blend`].
+///
+/// # Errors
+/// The errors of [`blend`], including [`Error::Argument`] for an absent index or an entity
+/// in the supplied order that does not belong to the body.
+pub fn blend_ordered(
+    body: &Body,
+    order: &crate::Order,
+    kind: Blend,
+    edges: &[usize],
+    sizes: &[f64],
+    setbacks: &[SetBack],
+    corners: Corners,
+) -> Result<Blended> {
+    blend_impl(body, Some(order), kind, edges, sizes, setbacks, corners)
+}
+
+fn blend_impl(
+    body: &Body,
+    order: Option<&crate::Order>,
+    kind: Blend,
+    edges: &[usize],
+    sizes: &[f64],
+    setbacks: &[SetBack],
+    corners: Corners,
+) -> Result<Blended> {
     let one_size = sizes.len() == 1;
     if edges.is_empty()
         || !(one_size || sizes.len() == edges.len())
@@ -924,12 +960,17 @@ pub fn blend(
         })
         .collect();
     with_body("blend", body, |k, b| {
-        let picked = match each_once(b.edge_list(), edges) {
+        let edge_order = order.map_or_else(|| b.edge_list(), |o| o.edges.as_slice());
+        let picked = match each_once(edge_order, edges) {
             Ok(p) => p,
             Err(e) => return Ok(Err(e)),
         };
+        if order.is_some() && picked.iter().any(|e| !b.edge_list().contains(e)) {
+            return Ok(Err(Error::Argument));
+        }
         let vertices: Vec<usize> = setbacks.iter().map(|s| s.vertex).collect();
-        let back: Vec<(VertexId, f64)> = match each_once(b.vertex_list(), &vertices) {
+        let vertex_order = order.map_or_else(|| b.vertex_list(), |o| o.vertices.as_slice());
+        let back: Vec<(VertexId, f64)> = match each_once(vertex_order, &vertices) {
             Ok(vs) => vs
                 .into_iter()
                 .zip(setbacks)
@@ -937,6 +978,9 @@ pub fn blend(
                 .collect(),
             Err(e) => return Ok(Err(e)),
         };
+        if order.is_some() && back.iter().any(|(v, _)| !b.vertex_list().contains(v)) {
+            return Ok(Err(Error::Argument));
+        }
         if !setbacks_fit(k, b, &back)? {
             return Ok(Err(Error::NoRoom));
         }
