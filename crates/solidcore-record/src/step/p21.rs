@@ -566,8 +566,12 @@ fn decode_string_with(raw: &[u8], mut find_end: impl FnMut(&[u8]) -> Option<usiz
             if run {
                 continue;
             }
+            // `\S\` takes a basic-alphabet character (space to `~`); before any other byte,
+            // the start of a UTF-8 character, adding 128 would split it into mojibake, so the
+            // escape is kept as written.
             if rest.starts_with(b"\\S\\")
                 && let Some(&ch) = rest.get(3)
+                && (b' '..=b'~').contains(&ch)
             {
                 out.push(char::from_u32(u32::from(ch) + 128).unwrap_or('?'));
                 i += 4;
@@ -605,6 +609,8 @@ pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, 
     parse_limited(text, watch, LIMITS)
 }
 
+/// [`parse_with`] with the counts it refuses beyond given.
+
 fn parse_limited(
     text: &str,
     watch: Option<&dyn Progress>,
@@ -613,6 +619,8 @@ fn parse_limited(
     if text.len() > MAX_BYTES {
         return Err(Error::TooLarge { bytes: text.len() });
     }
+    // Some writers start the file with a UTF-8 byte order mark.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lx = Lexer {
         s: text.as_bytes(),
         i: 0,
