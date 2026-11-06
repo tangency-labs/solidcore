@@ -22,8 +22,16 @@ forms and independently compare its scalar with the surface evaluated at the
 returned parameters.
 
 These are current production-code checks. The full integration run that began
-at `14404b56f`, the queued refreshed workspace checks, and the separate affine
-integration regression are not reported as passing here before completion.
+at `14404b56f` and the queued refreshed workspace checks are not reported as
+passing here before completion.
+
+The [parent CI test job at `a62556200`](https://github.com/tangency-labs/solidcore/actions/runs/42289593125/job/128142398621)
+passed **6,483 tests, with 94 skipped**, including all eleven tests in
+`issue_2840_projected_affine_spans`. In particular, the near-constant regression
+that failed on the validated pre-fix parent with certificate error 1021 now
+passes. This is the red/green evidence for the parent review correction, not
+a substitute for the child's refreshed integration checks. The corresponding
+review thread is resolved with the executed result linked.
 
 ## Remaining construction
 
