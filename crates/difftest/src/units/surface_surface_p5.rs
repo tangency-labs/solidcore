@@ -63,6 +63,7 @@ use solidcore::SolidError;
 use crate::ssi::case::SurfaceSpec;
 
 use crate::case::CaseContext;
+use crate::cases::contract::{self, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -874,6 +875,310 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     }
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The size bounds of surface and curve blocks.
+const LIMITS: Limits = Limits {
+    max_index: 32,
+    max_degree: 5,
+    max_coord: 1e6,
+};
+/// `SM_SO_INTERSECT`, `SM_SO_MINIMIZE`, `SM_SO_MAXIMIZE`, `SM_SO_NORMALIZE`: the solver
+/// operations the point solvers support.
+const POINT_SOPS: [u8; 4] = [0, 3, 4, 5];
+/// The solver operations `DropPoint` supports (no maximum).
+const DROP_SOPS: [u8; 3] = [0, 3, 5];
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, LIMITS.max_coord)
+}
+
+fn vec3(v: &[f64; 3]) -> bool {
+    contract::vec3(v, LIMITS.max_coord)
+}
+
+fn positive(v: f64) -> bool {
+    fin(v) && v > 0.0
+}
+
+/// The natural domain (`None` for a plane) and whether it is a B-spline, of a resolved
+/// surface the wrapper's surface block admits: a B-spline as [`contract::surface_block`]
+/// takes it with a form up to 11, a plane with a non-zero normal, or a curve bounded
+/// surface over one of those (not nested).
+fn surface_kind(s: &SrfIn, nested: bool) -> Option<(Option<[f64; 4]>, bool)> {
+    match s {
+        SrfIn::Bspline(b) => {
+            let blk = contract::surface_block(&b.net, b.p, b.q, &b.u, &b.v, &LIMITS)?;
+            (b.form <= 11).then_some((Some(blk.dom), true))
+        }
+        SrfIn::Plane { o, n } => {
+            (vec3(o) && contract::nonzero3(n, LIMITS.max_coord)).then_some((None, false))
+        }
+        SrfIn::Bounded { basis, .. } if !nested => {
+            let (dom, _) = surface_kind(&resolve(basis).ok()?, true)?;
+            Some((dom, false))
+        }
+        SrfIn::Bounded { .. } | SrfIn::Sms(_) | SrfIn::Analytic(_) => None,
+    }
+}
+
+/// Whether a surface of `cover` keeps the contract: a B-spline or plane as
+/// [`surface_kind`] takes them, or an analytic surface of finite values.
+fn cover_surface(s: &SrfIn) -> bool {
+    match s {
+        SrfIn::Bspline(_) | SrfIn::Plane { .. } => surface_kind(s, false).is_some(),
+        SrfIn::Analytic(a) => {
+            let mut v = Vec::new();
+            match a.as_ref() {
+                AnalyticIn::Cylinder {
+                    origin,
+                    x,
+                    y,
+                    radius,
+                    angle,
+                    height,
+                } => {
+                    v.extend(origin.iter().chain(x).chain(y).chain(angle).chain(height));
+                    v.push(*radius);
+                }
+                AnalyticIn::Cone {
+                    apex,
+                    x,
+                    y,
+                    half_angle_deg,
+                    height,
+                } => {
+                    v.extend(apex.iter().chain(x).chain(y).chain(height));
+                    v.push(*half_angle_deg);
+                }
+                AnalyticIn::Sphere {
+                    center,
+                    x,
+                    y,
+                    radius,
+                    lon,
+                    lat,
+                } => {
+                    v.extend(center.iter().chain(x).chain(y).chain(lon).chain(lat));
+                    v.push(*radius);
+                }
+                AnalyticIn::Torus {
+                    center,
+                    x,
+                    y,
+                    major_radius,
+                    minor_radius,
+                    major,
+                    minor,
+                } => {
+                    v.extend(center.iter().chain(x).chain(y).chain(major).chain(minor));
+                    v.extend([*major_radius, *minor_radius]);
+                }
+            }
+            v.iter().all(|&c| fin(c))
+        }
+        SrfIn::Bounded { .. } | SrfIn::Sms(_) => false,
+    }
+}
+
+/// The knot range of a curve as [`contract::planar_curve_block`] takes it.
+fn curve_range(c: &CrvIn) -> Option<(f64, f64)> {
+    contract::planar_curve_block(c.dim, &c.cpts, c.p, &c.u, &LIMITS)
+}
+
+/// A finite parameter point within one domain length of `dom` (within `1e4` without one).
+fn uv_near([u, v]: [f64; 2], dom: Option<[f64; 4]>) -> bool {
+    fin(u)
+        && fin(v)
+        && match dom {
+            Some([u0, v0, u1, v1]) => {
+                let (du, dv) = (u1 - u0, v1 - v0);
+                u >= u0 - du && u <= u1 + du && v >= v0 - dv && v <= v1 + dv
+            }
+            None => u.abs() <= 1e4 && v.abs() <= 1e4,
+        }
+}
+
+/// A finite strictly ordered domain inside `dom` (within `1e4` without one).
+fn domain_in(d: &[f64; 4], dom: Option<[f64; 4]>) -> bool {
+    let [a, b, c, e] = *d;
+    d.iter().all(|&x| fin(x))
+        && a < c
+        && b < e
+        && match dom {
+            Some([u0, v0, u1, v1]) => a >= u0 && c <= u1 && b >= v0 && e <= v1,
+            None => d.iter().all(|x| x.abs() <= 1e4),
+        }
+}
+
+/// An interval `[x, y]` ordered inside the curve range `(a, b)`.
+fn interval_in([x, y]: [f64; 2], (a, b): (f64, f64)) -> bool {
+    fin(x) && fin(y) && x >= a && y <= b && x < y
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_p5.rs`, `validate`): a
+/// [`surface_kind`] (for `cover`, two [`cover_surface`]s) and the op's parameters:
+/// parameters near the surface's domain, domains inside it, positive tolerances,
+/// enumerators in range, the solver operations each function supports, B-spline
+/// surfaces for `lssi`, intervals and curve parameters inside the curve's range,
+/// non-negative values and up to 32 samples.
+fn keeps_contract(i: &Inputs) -> bool {
+    let Ok(this) = resolve(&i.surface) else {
+        return false;
+    };
+    if let OpIn::Cover { other, tol, .. } = &i.op {
+        return cover_surface(&this)
+            && resolve(other).is_ok_and(|o| cover_surface(&o))
+            && positive(*tol);
+    }
+    let Some((dom, is_bspline)) = surface_kind(&this, false) else {
+        return false;
+    };
+    let cont = |c: &u8| *c <= 10;
+    match &i.op {
+        OpIn::IsSing { uv, tol, .. } | OpIn::NormalSing { uv, tol } => {
+            uv_near(*uv, dom) && positive(*tol)
+        }
+        OpIn::Iso {
+            param,
+            iso,
+            tol,
+            dom: d,
+            ..
+        } => {
+            let near = match dom {
+                Some([u0, v0, u1, v1]) => {
+                    let (a, b) = if *param == 0 { (u0, u1) } else { (v0, v1) };
+                    *iso >= a - (b - a) && *iso <= b + (b - a)
+                }
+                None => iso.abs() <= 1e4,
+            };
+            *param <= 1
+                && fin(*iso)
+                && near
+                && fin(*tol)
+                && *tol >= 0.0
+                && domain_in(&d.unwrap_or_else(|| natural(&i.surface)), dom)
+        }
+        OpIn::Lps {
+            dom: d,
+            sop,
+            p,
+            guess,
+        }
+        | OpIn::Lps0 {
+            dom: d,
+            sop,
+            p,
+            guess,
+        } => domain_in(d, dom) && POINT_SOPS.contains(sop) && vec3(p) && uv_near(*guess, dom),
+        OpIn::Drop {
+            dom: d,
+            p,
+            guess,
+            sop,
+            tgt,
+            ..
+        } => {
+            domain_in(d, dom)
+                && vec3(p)
+                && uv_near(guess.unwrap_or([0.0, 0.0]), dom)
+                && DROP_SOPS.contains(sop)
+                && vec3(&tgt.unwrap_or([0.0; 3]))
+        }
+        OpIn::Lssi {
+            dom: d,
+            s2,
+            dom2,
+            s3,
+            dom3,
+            p,
+            p2,
+        } => {
+            let bspline = |s: &SrfIn, d: &[f64; 4]| {
+                resolve(s)
+                    .ok()
+                    .and_then(|s| surface_kind(&s, false))
+                    .is_some_and(|(sd, b)| b && sd.is_some() && domain_in(d, sd))
+            };
+            is_bspline
+                && dom.is_some()
+                && domain_in(d, dom)
+                && bspline(s2, dom2)
+                && bspline(s3, dom3)
+                && vec3(p)
+                && vec3(&p2.unwrap_or([0.0; 3]))
+        }
+        OpIn::Cover { .. } => false,
+        OpIn::Filter {
+            dom: d,
+            curve,
+            ivl,
+            uc,
+            vc,
+            tc,
+            value,
+            t,
+            uv,
+        } => {
+            let Some((a, b)) = curve_range(curve) else {
+                return false;
+            };
+            domain_in(d, dom)
+                && interval_in(*ivl, (a, b))
+                && uc.iter().chain(vc).chain(tc).all(cont)
+                && fin(*value)
+                && *value >= 0.0
+                && fin(*t)
+                && *t >= a
+                && *t <= b
+                && uv_near(*uv, dom)
+        }
+        OpIn::SpLocal {
+            dom: d,
+            uc,
+            vc,
+            p,
+            tol,
+            sop,
+            ..
+        } => {
+            domain_in(d, dom)
+                && uc.iter().chain(vc).all(cont)
+                && vec3(p)
+                && positive(*tol)
+                && POINT_SOPS.contains(sop)
+        }
+        OpIn::MaxDist {
+            dom: d,
+            curve,
+            ivl,
+            n,
+            needed,
+        } => {
+            domain_in(d, dom)
+                && curve_range(curve).is_some_and(|r| interval_in(*ivl, r))
+                && *n <= 32
+                && fin(needed.unwrap_or(0.0))
+        }
+        OpIn::Ident { kind, tol, a, b } => {
+            let sol = |s: &SolIn| {
+                let [p0, p1, p2] = s.p;
+                (1..=2).contains(&s.ty)
+                    && s.nvars <= 3
+                    && fin(s.value)
+                    && if *kind == 0 {
+                        uv_near([p0, p1], dom) && fin(p2)
+                    } else {
+                        fin(p0) && uv_near([p1, p2], dom)
+                    }
+            };
+            *kind <= 3 && positive(*tol) && sol(a) && sol(b)
+        }
+    }
+}
+
 // ---- generator ------------------------------------------------------------
 
 fn gen_knots(rng: &mut Rng, p: usize, n: usize) -> Vec<f64> {
@@ -1503,6 +1808,9 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             // the generator's acceptance before planes and analytic surfaces reached
             // Cover (fixtures only): B-spline surfaces on both sides
             if let OpIn::Cover { other, .. } = &i.op {
