@@ -288,7 +288,13 @@ impl<'a> InsertionGeometry<'a> {
             .notifications
             .as_mut()
             .ok_or_else(|| invalid("missing insertion notification context"))?;
-        let seeded = crate::topology::brep::p3::seed_records(notifications.records, body, &key_of);
+        // (not upstream) only the objects added since the last seeding are visited
+        let seeded = crate::topology::brep::p3::seed_new_records(
+            notifications.records,
+            body,
+            Some(serial),
+            &key_of,
+        )?;
         self.records_seeded = self.records_seeded.saturating_add(seeded);
         let mut env = crate::topology::edge::NotifyEnv {
             records: notifications.records,

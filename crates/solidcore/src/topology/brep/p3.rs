@@ -740,13 +740,12 @@ pub fn copy_brep(
 /// caller's [`NotifyEnv::records`], which `SmTopology::Notify` reads for every object a
 /// notification names (e.g. both vertices of `SqueezeEdge`'s `SM_NO_MERGE_IN_BREP`).
 /// Every edit seeds them ([`with_caller_identities`]), as a B-rep built upstream
-/// already has them; a record the caller keeps is left as it is. Returns the objects
-/// visited, the B-rep included.
+/// already has them; a record the caller keeps is left as it is.
 pub(crate) fn seed_records(
     records: &mut crate::topology::topology::NotifyRecords,
     b: &Brep,
     key_of: &dyn Fn(EntityRef) -> ObjectRef,
-) -> usize {
+) {
     if records.is_empty() {
         // Bulk build (sorted input is O(n)); the same map as entry-by-entry.
         *records = entities(b)
@@ -754,15 +753,12 @@ pub(crate) fn seed_records(
             .chain([p2::brep_ref(b).key])
             .map(|k| (k, topo::Topology::default()))
             .collect();
-        return records.len();
+        return;
     }
-    let mut visited = 1;
     for e in entities(b) {
         records.or_default(key_of(e).key);
-        visited += 1;
     }
     records.or_default(p2::brep_ref(b).key);
-    visited
 }
 
 /// Leaves `records` exactly as [`seed_records`] does on an empty map (a default record
