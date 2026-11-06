@@ -20,7 +20,7 @@
 //! `MAX_CONVERSION_DEPTH` (was the literal 4). Otherwise only formatting and doc comments on every
 //! public item.
 
-use super::p21::{Exchange, Param};
+use super::p21::{Entity, Exchange, Param};
 
 /// Most `CONVERSION_BASED_UNIT` links followed from one unit (a unit defined from a unit defined
 /// from …); a deeper chain, or a cycle, reads as no unit.
@@ -94,6 +94,17 @@ pub enum UnitKind {
     Other,
 }
 
+/// The value and unit of a measure with unit, by name: its `MEASURE_WITH_UNIT` record (in the
+/// alphabetical complex form `(LENGTH_MEASURE_WITH_UNIT()MEASURE_WITH_UNIT(…)…)` the first record
+/// is the empty subtype one), or the parameters of a simple instance of `MEASURE_WITH_UNIT` or a
+/// subtype (`LENGTH_MEASURE_WITH_UNIT`, `UNCERTAINTY_MEASURE_WITH_UNIT`, …), whose first two are
+/// the inherited value and unit.
+fn measure(e: &Entity) -> Option<&[Param]> {
+    e.record("MEASURE_WITH_UNIT").or_else(|| {
+        (!e.is_complex() && e.name().ends_with("MEASURE_WITH_UNIT")).then(|| e.params())
+    })
+}
+
 /// A unit's kind and size: millimetres for lengths, radians for plane angles (1 for anything
 /// else, or a unit that cannot be read). `None` when `#id` is not an entity, or is a
 /// `CONVERSION_BASED_UNIT` whose measure cannot be read or is not finite and positive.
@@ -122,8 +133,7 @@ fn factor(ex: &Exchange, id: u64, depth: usize) -> Option<(UnitKind, f64)> {
         });
     }
     if let Some(cb) = e.record("CONVERSION_BASED_UNIT") {
-        let m = ex.get(cb.get(1)?.as_ref_id()?)?;
-        let mp = m.params();
+        let mp = measure(ex.get(cb.get(1)?.as_ref_id()?)?)?;
         let v = mp.first()?.as_f64()?;
         let (_, f) = factor(ex, mp.get(1)?.as_ref_id()?, depth + 1)?;
         let x = v * f;
@@ -162,11 +172,10 @@ pub fn context(ex: &Exchange, id: u64) -> Context {
         .and_then(Param::as_list)
     {
         for uid in unc.iter().filter_map(Param::as_ref_id) {
-            if let Some(m) = ex.get(uid)
-                && let Some(v) = m.params().first().and_then(Param::as_f64)
+            if let Some(m) = ex.get(uid).and_then(measure)
+                && let Some(v) = m.first().and_then(Param::as_f64)
             {
                 let f = m
-                    .params()
                     .get(1)
                     .and_then(Param::as_ref_id)
                     .and_then(|x| unit_factor(ex, x))
