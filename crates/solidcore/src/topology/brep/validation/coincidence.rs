@@ -563,6 +563,7 @@ mod profile_tests {
     use crate::primitive::api_primitives::create_box;
     use crate::Point3;
 
+    /// Read a named counter from the single phase path expected by these fixtures.
     fn count(profile: &crate::profile::Profile, phase: &str, counter: &str) -> u64 {
         let scope = profile.scopes.iter().find(|s| s.name == phase).unwrap();
         crate::profile::Counter::ALL
@@ -573,6 +574,7 @@ mod profile_tests {
             .1
     }
 
+    /// Incident pairs contribute candidates but do not invoke geometric queries.
     #[test]
     fn cube_counts_distinguish_incidence_candidates_from_geometric_queries() {
         let mut k = Kernel::default();
@@ -599,6 +601,7 @@ mod profile_tests {
         assert_eq!(count(&profile, phase, "coincidence_classifications"), 0);
     }
 
+    /// A first-match return closes both scopes and leaves later phases unvisited.
     #[test]
     fn first_vertex_pair_return_closes_the_profile_and_skips_later_phases() {
         let mut k = Kernel::default();

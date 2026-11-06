@@ -17,6 +17,10 @@ use solidcore::topology::brep::validation::{check_brep, contains_coincident_topo
 use solidcore::{Kernel, Point3};
 use std::time::Instant;
 
+/// A 45-unit cube keeps 20/27 of its volume at each of two Menger levels.
+const EXPECTED_VOLUME: f64 = 45.0 * 45.0 * 45.0 * 20.0 * 20.0 / (27.0 * 27.0);
+
+/// Drain observational phase counts without treating profiled times as the baseline.
 #[cfg(feature = "profile")]
 fn coincidence_profile(kernel: &Kernel) -> serde_json::Value {
     let profile = kernel.take_profile();
@@ -36,11 +40,13 @@ fn coincidence_profile(kernel: &Kernel) -> serde_json::Value {
     serde_json::json!(rows)
 }
 
+/// Distinguish unmeasured work from a measured zero when profiling is disabled.
 #[cfg(not(feature = "profile"))]
 fn coincidence_profile(_kernel: &Kernel) -> serde_json::Value {
     serde_json::Value::Null
 }
 
+/// Execute the archived cuts and verify validity, topology and analytic volume.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut kernel = Kernel::default();
     let mut body = create_box(&mut kernel, Point3::new(0.0, 0.0, 0.0), 45.0, 45.0, 45.0)?;
@@ -129,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !all_valid
         || cuts != 27
         || faces(&body, None)?.len() != 414
-        || (volume - 50000.0).abs() > 1e-9 * 50000.0
+        || (volume - EXPECTED_VOLUME).abs() > 1e-9 * EXPECTED_VOLUME
     {
         return Err("Menger reproduction does not match expected topology/volume".into());
     }
