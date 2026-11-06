@@ -21,14 +21,19 @@
 
 use serde_json::Value;
 use solidcore::curve::curve::p2::{Curve, COMPOSITE_CURVE_TYPE, OFFSET_CURVE_TYPE};
+use solidcore::geom::transform::Transform;
 use solidcore::geom::vector2d::Point2;
+use solidcore::surface::plane::Plane;
+use solidcore::surface::srf_in_volume::SrfInVolume;
 use solidcore::surface::surface::p2::{
     OFFSET_SURFACE_TYPE, SRF_IN_VOLUME_TYPE, SURF_OF_REVOLUTION_TYPE,
 };
 use solidcore::surface::surface::Surface;
+use solidcore::surface::volume::{Volume, VolumeKind};
 use solidcore::topology::database_io::{fixed16, DatabaseReader, DatabaseWriter, FileType};
 use solidcore::topology::geometry_write::{write_curve, write_surface};
 use solidcore::Kernel;
+use solidcore::{Point3, Vec3};
 
 /// One frozen record.
 struct Record {
@@ -229,4 +234,50 @@ fn surfaces_of_revolution_write_back_their_records() {
 #[test]
 fn surfaces_in_volumes_write_back_their_records() {
     round_trip("surface.srf_in_volume", SRF_IN_VOLUME_TYPE, false);
+}
+
+/// A surface in a chain of `n` transform volumes, the last one with an orient map.
+fn surface_in_chain(k: &Kernel, n: usize) -> Option<Surface> {
+    let shift = |d: f64| {
+        Transform::new(
+            Point3::new(d, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            None,
+        )
+    };
+    let mut volume =
+        Volume::with_maps(VolumeKind::Transform(shift(1.0)), Some(shift(2.0)), None).ok()?;
+    for _ in 1..n {
+        volume = Volume::with_maps(VolumeKind::Transform(shift(1.0)), None, Some(volume)).ok()?;
+    }
+    let plane = Plane::from_normal(Point3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+    let siv = SrfInVolume::new(k, Surface::from(plane), true, volume, 0, 3).ok()?;
+    Some(Surface::from(siv))
+}
+
+/// Every volume chain the writer writes reads back, and the writer refuses every
+/// chain the reader would refuse: a map nested past the reader's bound, the orient
+/// map on the deepest volume included.
+#[test]
+fn a_volume_chain_is_written_only_when_it_reads_back() {
+    let k = Kernel::default();
+    let mut written = 0;
+    for n in 1..=40 {
+        let Some(s) = surface_in_chain(&k, n) else {
+            continue;
+        };
+        for ft in [FileType::Ascii, FileType::Binary] {
+            let mut w = DatabaseWriter::open_for_write(ft);
+            let Ok(()) = write_surface(&s, &mut w, 30) else {
+                continue;
+            };
+            written += 1;
+            let mut db = DatabaseReader::new();
+            db.open_for_read(w.into_bytes(), ft);
+            let read = Surface::read_from_db(&k, SRF_IN_VOLUME_TYPE, &mut db, 30);
+            assert!(read.is_ok(), "{n} volumes ({ft:?}): written, then {read:?}");
+        }
+    }
+    assert!(written > 0);
 }
