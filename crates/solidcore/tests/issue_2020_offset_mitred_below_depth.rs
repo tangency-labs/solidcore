@@ -264,7 +264,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.fillet_nx1_tangent_corner_edge = true;
     k.fixes.fillet_nx1_tangent_side_edge = true;
     k.fixes.fillet_patch_keeps_fillet_edges = true;
-    k.fixes.fillet_point_bigger_step_retry = true;
     k.fixes.fillet_point_step_per_point = true;
     k.fixes.fillet_rail_end_on_continued_surface = true;
     k.fixes.fillet_rail_rim_on_face = true;
@@ -322,7 +321,6 @@ fn solidcraft_flags(k: &mut Kernel) {
     k.fixes.offset_collapsed_rounds_mated = true;
     k.fixes.offset_excess_faces_after_merge = true;
     k.fixes.offset_extended_edges_mated = true;
-    k.fixes.offset_extends_cones_as_themselves = true;
     k.fixes.offset_extension_as_itself = true;
     k.fixes.offset_extension_from_base = true;
     k.fixes.offset_missing_surface_fails = true;
