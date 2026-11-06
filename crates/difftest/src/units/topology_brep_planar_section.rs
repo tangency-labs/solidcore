@@ -1,19 +1,16 @@
-//! Differential coverage for `topology.brep_planar_section`
-//! (`SmBrep::CreatePlanarSectionCurves`, `SmApiIntersectBrepWithPlane`).
+//! Runner for unit `topology.brep_planar_section` (`SmBrep::CreatePlanarSectionCurves`,
+//! `SmApiIntersectBrepWithPlane`). Ported from upstream `SmBrep::CreatePlanarSectionCurves`;
+//! checked against its golden.
 //!
-//! Each side builds the body itself: an upstream `.smb` solid (the native
-//! `SmBrep::ReadFromFile`, the Rust reader `own_reader::read_file`) or a box
-//! (`SmApiCreateBox` / `create_box`), optionally filleted on every edge
-//! (`SmApiCircularFillet` / `circular_fillet`). No C++-built geometry reaches the Rust
-//! side. A case may move the body first (`Transform` / `transform`) and may take the
-//! plane point from the B-rep's bounding box (`CalculateBoundingBox`, as `prog_test`'s
-//! `my_test_tsurf_section` walks it). The case then sections the body by a plane, with
+//! The case builds the body: an upstream `.smb` solid (the Rust reader
+//! `own_reader::read_file`) or a box (`create_box`), optionally filleted on every edge
+//! (`circular_fillet`). It may move the body first (`transform`) and may take the plane
+//! point from the B-rep's bounding box (`CalculateBoundingBox`, as `prog_test`'s
+//! `my_test_tsurf_section` walks it). It then sections the body by a plane, with
 //! `CreatePlanarSectionCurves` (its tolerances, outputs and `bForceUVClassify` from the
-//! case) or with `SmApiIntersectBrepWithPlane`, and compares the status (`status`) and
-//! the record (`record`): the count and samples of every 3D and UV section curve (type
-//! code, natural interval, five evaluated points) and the `GetFaces` index of each
-//! face. The native side runs in a fresh child process. Inputs the native build or the
-//! FFI guard refuse are `rejected`, not failed.
+//! case) or with `SmApiIntersectBrepWithPlane`, and records the status (`status`) and the
+//! record (`record`): the count and samples of every 3D and UV section curve (type code,
+//! natural interval, five evaluated points) and the `GetFaces` index of each face.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,8 +24,6 @@ use solidcore::topology::brep::planar_section::{
 };
 use solidcore::topology::Brep;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::topology_brep_planar_section::{self as ffi, NARGS};
-use solidcore_ffi::FfiError;
 
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
@@ -125,10 +120,6 @@ fn v(p: [f64; 3]) -> Vec3 {
     Vec3::new(p[0], p[1], p[2])
 }
 
-fn flag(b: bool) -> f64 {
-    f64::from(u8::from(b))
-}
-
 fn path(i: &Inputs) -> Result<String, HarnessError> {
     match &i.body {
         Body::File { file } => {
@@ -136,68 +127,6 @@ fn path(i: &Inputs) -> Result<String, HarnessError> {
             Ok(p.to_string_lossy().into_owned())
         }
         Body::Box { .. } | Body::BoxStrut { .. } => Ok(String::new()),
-    }
-}
-
-fn args(i: &Inputs) -> [f64; NARGS] {
-    let (kind, size, fillet, strut) = match &i.body {
-        Body::File { .. } => (0.0, [0.0; 3], 0.0, [0.0; 3]),
-        Body::Box { size, fillet } => (1.0, *size, *fillet, [0.0; 3]),
-        Body::BoxStrut { size, strut } => (2.0, *size, 0.0, *strut),
-    };
-    [
-        kind,
-        size[0],
-        size[1],
-        size[2],
-        fillet,
-        i.point[0],
-        i.point[1],
-        i.point[2],
-        i.normal[0],
-        i.normal[1],
-        i.normal[2],
-        flag(i.tol.is_some()),
-        i.tol.unwrap_or(0.0),
-        flag(i.ang_tol.is_some()),
-        i.ang_tol.unwrap_or(0.0),
-        flag(i.want_3d),
-        flag(i.want_uv),
-        flag(i.want_faces),
-        flag(i.force_uv_classify),
-        flag(i.translate.is_some()),
-        i.translate.unwrap_or_default()[0],
-        i.translate.unwrap_or_default()[1],
-        i.translate.unwrap_or_default()[2],
-        f64::from(i.plane_walk.map_or(0, |w| w[0])),
-        f64::from(i.plane_walk.map_or(0, |w| w[1])),
-        strut[0],
-        strut[1],
-        strut[2],
-    ]
-}
-
-/// The native record, or `Err(output)` when the FFI guard or the body build refuses.
-fn native(i: &Inputs) -> Result<Result<Vec<f64>, Output>, HarnessError> {
-    let op = if i.forced {
-        4
-    } else if i.faces {
-        3
-    } else if i.api {
-        2
-    } else {
-        1
-    };
-    match ffi::eval(op, &path(i)?, &args(i)) {
-        Ok(raw) if raw.first() == Some(&-999.) => Ok(Err(Output::rejected(format!(
-            "body build status {}",
-            raw.get(1).copied().unwrap_or(-1.)
-        )))),
-        Ok(raw) => Ok(Ok(raw)),
-        Err(e @ FfiError::InvalidArgument(_)) => {
-            Ok(Err(Output::rejected(format!("ffi guard: {e}"))))
-        }
-        Err(e) => Err(herr(e)),
     }
 }
 
@@ -541,14 +470,6 @@ fn output(raw: &[f64]) -> Result<Output, HarnessError> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_planar_section"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match native(&i)? {
-            Ok(raw) => output(&raw),
-            Err(refused) => Ok(refused),
-        }
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
