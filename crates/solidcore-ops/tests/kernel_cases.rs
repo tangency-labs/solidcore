@@ -57,7 +57,8 @@ use solidcore_ops::extend::{extend_sheet, Continuation};
 use solidcore_ops::split::{split_faces, Tool};
 use solidcore_ops::stitch::{merge_faces, stitch};
 use solidcore_ops::sweep::{
-    extrude, loft, revolve, sweep_stations, Affine, Curve, DraftCorner, Ends,
+    extrude, loft, revolve, screw_sweep, sweep_placed, sweep_stations, Affine, Curve, DraftCorner,
+    Ends, SweepFrame,
 };
 use solidcore_ops::untrim::{untrim_face, Holes};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
@@ -85,6 +86,8 @@ const PORTED: &[&str] = &[
     "revolve",
     "loft",
     "sweep_stations",
+    "sweep",
+    "screw_sweep",
     "blend_dropping",
     "chamfer_sides",
     "stitch",
@@ -598,6 +601,55 @@ fn call_with_copy(
                 Ok(None) => Err("the boolean left nothing".to_owned()),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        "sweep" => {
+            if !ins.is_empty() {
+                return Err(bad("no inputs"));
+            }
+            let curves = profile(&p["profile"]).ok_or_else(|| bad("profile"))?;
+            let path = profile(&p["path"]).ok_or_else(|| bad("path"))?;
+            let cap = p["cap"].as_bool().ok_or_else(|| bad("cap"))?;
+            let frame = match p["frame"].as_str().ok_or_else(|| bad("frame"))? {
+                "follow" => SweepFrame::Follow,
+                "translate" => SweepFrame::Translate,
+                other => return Err(Stop::Unsupported(format!("sweep frame {other}"))),
+            };
+            // The trace binds the body; placements and route are diagnostics, not outputs.
+            made(sweep_placed(&curves, &path, frame, cap).map(|(body, _, _)| body))
+        }
+        "screw_sweep" => {
+            if !ins.is_empty() {
+                return Err(bad("no inputs"));
+            }
+            let curves = profile(&p["profile"]).ok_or_else(|| bad("profile"))?;
+            let origin = f64s::<3>(&p["origin"]).ok_or_else(|| bad("origin"))?;
+            let direction = f64s::<3>(&p["direction"]).ok_or_else(|| bad("direction"))?;
+            let pitch = p["pitch"].as_f64().ok_or_else(|| bad("pitch"))?;
+            let turns = p["turns"].as_f64().ok_or_else(|| bad("turns"))?;
+            let tolerance = p["tolerance"].as_f64().ok_or_else(|| bad("tolerance"))?;
+            let law = match p.get("law") {
+                None => None,
+                Some(v) => Some(
+                    v.as_array()
+                        .ok_or_else(|| bad("law"))?
+                        .iter()
+                        .map(|pair| {
+                            let [turn, offset] = f64s::<2>(pair)?;
+                            Some((turn, offset))
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| bad("law"))?,
+                ),
+            };
+            made(screw_sweep(
+                &curves,
+                origin,
+                direction,
+                pitch,
+                turns,
+                law.as_deref(),
+                tolerance,
+            ))
         }
         "sweep_stations" => {
             if !ins.is_empty() {
@@ -1497,6 +1549,248 @@ fn untrim_point_holes_do_not_hide_missing_required_parameters() {
             matches!(call(&missing, &mut [input.clone()]), Err(Stop::Fail(_))),
             "{parameter}"
         );
+    }
+}
+
+fn sweep_replay_fixture(name: &str, op: &str) -> (PathBuf, Value, Value) {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join(format!("{name}.json"));
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    let step = e["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["op"] == op)
+        .unwrap()
+        .clone();
+    (entry, e, step)
+}
+
+#[test]
+fn sweep_replay_runs_all_eleven_captured_paths_and_coils() {
+    let names = [
+        ("ladder/04-spline-profiles/003-pipe-along-bezier", "sweep"),
+        (
+            "ladder/04-spline-profiles/004-sweep-square-along-bezier",
+            "sweep",
+        ),
+        ("surfaces/cov-sweep-line-along-a-line-plane", "sweep"),
+        (
+            "sweeps/1269-sweep-parallel-orientation-oblique-cylinder",
+            "sweep",
+        ),
+        ("sweeps/2820-pipe-hollow-with-a-wall-along-a-bend", "sweep"),
+        (
+            "sweeps/3345-sweep-profile-mid-line-round-a-rounded-rectangle",
+            "sweep",
+        ),
+        (
+            "sweeps/3862-coil-square-wire-outside-the-diameter",
+            "screw_sweep",
+        ),
+        (
+            "sweeps/5323-sweep-circle-along-polyline-turning-in-two-planes",
+            "sweep",
+        ),
+        (
+            "sweeps/5324-sweep-square-round-closed-path-from-mid-edge",
+            "sweep",
+        ),
+        (
+            "sweeps/757-surface-sweep-slanted-line-round-a-quarter-arc",
+            "sweep",
+        ),
+        ("sweeps/96-sweep-rectangle-round-a-mitred-corner", "sweep"),
+    ];
+    let mut failures = Vec::new();
+    for (name, op) in names {
+        let (entry, e, _) = sweep_replay_fixture(name, op);
+        assert_eq!(e["rig"]["status"], "pass", "{name}");
+        assert!(e["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["error"].is_null()));
+        match run_case(&entry, &e) {
+            Ok(deviation) => println!("{name}: pass, relative volume deviation {deviation:?}"),
+            Err(why) => failures.push(format!("{name}: {why:?}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn sweep_replay_keeps_follow_and_translate_frames_distinct() {
+    let (_, _, mut step) = sweep_replay_fixture(
+        "sweeps/757-surface-sweep-slanted-line-round-a-quarter-arc",
+        "sweep",
+    );
+    for follow in [true, false] {
+        step["params"]["frame"] = serde_json::json!(if follow { "follow" } else { "translate" });
+        let output = call(&step, &mut []).unwrap().unwrap();
+        assert!(output.order.is_none());
+        assert_eq!(output.body.counts().unwrap(), [1, 4, 4]);
+        assert_eq!(output.body.volume(1e-9).unwrap(), 0.0);
+        let record = output.body.to_record().unwrap().0;
+        let ends = [
+            [20.0, 0.0, 0.0],
+            [30.0, 0.0, 10.0],
+            [0.0, 20.0, 0.0],
+            if follow {
+                [0.0, 30.0, 10.0]
+            } else {
+                [10.0, 20.0, 10.0]
+            },
+        ];
+        for want in ends {
+            assert!(
+                record.vertices.iter().any(|v| v
+                    .point
+                    .iter()
+                    .zip(want)
+                    .all(|(a, b)| (a - b).abs() < 1e-9)),
+                "frame follow={follow}, missing {want:?}"
+            );
+        }
+        if follow {
+            let area = 125.0 * std::f64::consts::SQRT_2 * std::f64::consts::PI;
+            assert!((output.body.area(1e-9).unwrap() - area).abs() <= area * 1e-9);
+        }
+    }
+}
+
+#[test]
+fn sweep_replay_forwards_oblique_path_and_caps() {
+    let (_, _, mut step) = sweep_replay_fixture(
+        "sweeps/1269-sweep-parallel-orientation-oblique-cylinder",
+        "sweep",
+    );
+    for (x, z) in [(20.0, 20.0), (8.0, 12.0)] {
+        step["params"]["path"] = serde_json::json!([{"line": {"start": [0,0,0], "end": [x,0,z]}}]);
+        for cap in [true, false] {
+            step["params"]["cap"] = serde_json::json!(cap);
+            let output = call(&step, &mut []).unwrap().unwrap();
+            assert_eq!(output.body.counts().unwrap()[0], if cap { 3 } else { 1 });
+            let want = if cap {
+                25.0 * std::f64::consts::PI * z
+            } else {
+                0.0
+            };
+            let got = output.body.volume(1e-9).unwrap();
+            assert!(
+                (got - want).abs() <= want * 1e-9,
+                "{x}, {z}, cap={cap}: {got}"
+            );
+            let (lo, hi) = output.body.bounds().unwrap();
+            for (a, b) in lo
+                .into_iter()
+                .zip([-5.0, -5.0, 0.0])
+                .chain(hi.into_iter().zip([x + 5.0, 5.0, z]))
+            {
+                assert!((a - b).abs() < 1e-8, "bound {a} != {b}");
+            }
+        }
+    }
+}
+
+fn sweep_replay_screw_step() -> Value {
+    let corners = [[27, -11, 1], [31, -11, 1], [31, -11, 5], [27, -11, 5]];
+    let profile: Vec<_> = (0..4)
+        .map(|i| serde_json::json!({"line": {"start": corners[i], "end": corners[(i+1)%4]}}))
+        .collect();
+    serde_json::json!({"op": "screw_sweep", "inputs": [], "params": {
+        "profile": profile, "origin": [7,-11,3], "direction": [0,0,1],
+        "pitch": 8, "turns": 1, "tolerance": 1e-4
+    }})
+}
+
+/// For a radial/axial rectangle the volume is integral r dr dz dtheta, independent of
+/// the axial lift: area 16 times centroid radius (22 + radial offset) times total angle.
+#[test]
+fn sweep_replay_screw_keeps_axis_pitch_turns_origin_and_radial_law() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    for (sign, pitch, turns, offset) in [
+        (1.0, 8.0, 1.0, 0.0),
+        (-1.0, 8.0, 0.5, 0.0),
+        (1.0, -8.0, 1.0, 3.0),
+        (-1.0, -8.0, 0.5, 3.0),
+    ] {
+        let mut step = sweep_replay_screw_step();
+        step["params"]["direction"] = serde_json::json!([0, 0, sign]);
+        step["params"]["pitch"] = serde_json::json!(pitch);
+        step["params"]["turns"] = serde_json::json!(turns);
+        if offset != 0.0 {
+            step["params"]["law"] = serde_json::json!([[0, offset], [turns, offset]]);
+        }
+        let output = call(&step, &mut []).unwrap().unwrap();
+        assert!(output.order.is_none());
+        let want = 32.0 * (22.0 + offset) * std::f64::consts::PI * turns;
+        let got = output.body.volume(1e-9).unwrap();
+        assert!(
+            (got - want).abs() <= want * 1e-9,
+            "sign={sign}, pitch={pitch}, turns={turns}, offset={offset}: {got} != {want}"
+        );
+        let rise: f64 = sign * pitch * turns;
+        let (lo, hi) = output.body.bounds().unwrap();
+        assert!((lo[2] - (1.0 + rise.min(0.0))).abs() < 1e-8, "{lo:?}");
+        assert!((hi[2] - (5.0 + rise.max(0.0))).abs() < 1e-8, "{hi:?}");
+    }
+}
+
+#[test]
+fn sweep_replay_metadata_does_not_satisfy_a_refusal() {
+    let (_, _, path) = sweep_replay_fixture("surfaces/cov-sweep-line-along-a-line-plane", "sweep");
+    let screw = sweep_replay_screw_step();
+    for (step, fields) in [
+        (&path, &["profile", "path", "frame", "cap"][..]),
+        (
+            &screw,
+            &[
+                "profile",
+                "origin",
+                "direction",
+                "pitch",
+                "turns",
+                "tolerance",
+            ][..],
+        ),
+    ] {
+        for field in fields {
+            let mut bad = step.clone();
+            bad["params"].as_object_mut().unwrap().remove(*field);
+            assert!(matches!(call(&bad, &mut []), Err(Stop::Fail(_))), "{field}");
+        }
+    }
+    let mut unknown = path.clone();
+    unknown["params"]["frame"] = serde_json::json!("future_frame");
+    assert!(
+        matches!(call(&unknown, &mut []), Err(Stop::Unsupported(why)) if why.contains("future_frame"))
+    );
+    let mut malformed = path.clone();
+    malformed["params"]["path"] = serde_json::json!([{"unknown_curve": {}}]);
+    assert!(matches!(call(&malformed, &mut []), Err(Stop::Fail(_))));
+    for law in [
+        Value::Null,
+        serde_json::json!([[0, 1, 2]]),
+        serde_json::json!("bad"),
+    ] {
+        let mut bad = screw.clone();
+        bad["params"]["law"] = law;
+        assert!(matches!(call(&bad, &mut []), Err(Stop::Fail(_))));
+    }
+    let mut empty_path = path;
+    empty_path["params"]["path"] = serde_json::json!([]);
+    assert!(matches!(call(&empty_path, &mut []), Ok(Err(_))));
+    for (field, value) in [
+        ("pitch", serde_json::json!(0)),
+        ("direction", serde_json::json!([0, 0, 0])),
+        ("tolerance", serde_json::json!(0)),
+        ("law", serde_json::json!([])),
+        ("law", serde_json::json!([[0.5, 0], [0.2, 0]])),
+    ] {
+        let mut refused = screw.clone();
+        refused["params"][field] = value;
+        assert!(matches!(call(&refused, &mut []), Ok(Err(_))), "{field}");
     }
 }
 
