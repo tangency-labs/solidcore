@@ -31,6 +31,15 @@ The first reproduces the recorded failing scalar. The second agrees with the
 analytic maximum to floating-point precision, without changing query tolerance.
 This is a representation experiment, not a complete production repair.
 
+The same diagnostic was compiled and executed on current main `b43a3ec3a`:
+both representations return zero candidates, while all sampled values below
+are identical. The filtered golden run passes its stored empty success
+(`cases=1 changed=0 added=0 removed=0 broken=0`, exit 0). Both the diagnostic
+and baseline commands complete with exit 0. Thus the approximation error is
+present independently, but repairing this complete query depends on #2840's
+candidate-finding changes. #2968 stacks that dependency by merging its existing
+branch, rather than reimplementing or independently owning the same solver work.
+
 The sampled 3D-curve maximum is `0.8605419689531334`; the sampled on-surface
 maximum is `0.8605550981685833`. The largest sampled curve-to-surface distance
 is `8.695878052481907e-5`. Sampling the fitted curve more densely would still
