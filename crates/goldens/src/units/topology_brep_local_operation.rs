@@ -267,7 +267,8 @@ fn edited(case: &Case) -> Result<Edited, HarnessError> {
 }
 
 /// The case's edited B-rep, labelled `edited` (for `examples/case_smb.rs`). A case whose
-/// replacements cannot be built, or that ends before the edit, has none.
+/// replacements cannot be built, that ends before the edit, or whose edit is refused (the
+/// input put back) has none.
 ///
 /// # Errors
 ///
@@ -275,8 +276,15 @@ fn edited(case: &Case) -> Result<Edited, HarnessError> {
 pub fn result_breps(case: &Case) -> Result<super::surface_surface_p2::Drawn, HarnessError> {
     match edited(case)? {
         Edited::Done(d) => {
-            let Done { k, b, .. } = *d;
-            Ok((k, vec![("edited", b)]))
+            let Done { k, b, record } = *d;
+            match record.first() {
+                Some(&0.) => Ok((k, vec![("edited", b)])),
+                st => Err(herr(format!(
+                    "case {}: cannot be drawn: the edit is refused (status {st:?}), the input \
+                     put back",
+                    case.name
+                ))),
+            }
         }
         Edited::Ended(_) => Err(herr(format!(
             "case {}: cannot be drawn: it ends before the edit (replacements not built, \
@@ -516,5 +524,17 @@ mod result_breps_tests {
         });
         let e = result_breps(&case(inputs)).err().unwrap();
         assert!(e.0.contains("cannot be drawn"), "{e}");
+    }
+
+    /// A refused edit puts the input back: drawing it as `edited` would show the input.
+    /// `cone.smb`'s full-turn side face given a plane is refused as its seam opening.
+    #[test]
+    fn result_breps_refused_edit_cannot_be_drawn() {
+        let inputs = serde_json::json!({
+            "file": "cone.smb",
+            "replaced": [{ "face": 0, "offset": 0.5, "tilt": [0.0, 0.0, 0.0] }]
+        });
+        let e = result_breps(&case(inputs)).err().unwrap();
+        assert!(e.0.contains("the edit is refused"), "{e}");
     }
 }
