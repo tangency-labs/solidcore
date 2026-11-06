@@ -56,8 +56,8 @@
   },
   {
     "case": "fillets/cov-fillet-g2-oblique-three-edge-corner",
-    "issue": "solidcore#2250",
-    "reason": "refused on solidcore: its three edges meet at different wedge angles, and one curvature fillet takes the first edge's equal-area thumbweight for every edge (solidcore#2250, issuecomment-6563419897); SMLib d01d7b0 fails it too"
+    "issue": "tangency-labs/solidcore#2697",
+    "reason": "the G2 setback corner (blend_setback_open) waits on the certified G2 corner fill; each edge's equal-area thumbweight is resolved at every station from its own wedge already, and SMLib d01d7b0 fails it too"
   },
   {
     "case": "fillets/cov-fillet-g2-pocket-corner",
