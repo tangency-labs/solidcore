@@ -207,4 +207,22 @@ mod tests {
         let t = bspline_param(&c, m).unwrap();
         assert!((t - 0.5).abs() < 1e-9);
     }
+
+    #[test]
+    fn bspline_with_decreasing_knots_has_no_point() {
+        // a model built by hand, not read: the reader's `check_knots` refuses these knots
+        let c = BSplineCurve {
+            degree: 1,
+            points: vec![[0.0; 3], [1.0, 0.0, 0.0]],
+            weights: None,
+            knots: vec![1.0, 0.0],
+            mults: vec![2, 2],
+        };
+        assert_eq!(bspline_point(&c, 0.5), None);
+        let c = BSplineCurve {
+            knots: vec![0.0, f64::NAN],
+            ..c
+        };
+        assert_eq!(bspline_point(&c, 0.5), None);
+    }
 }
