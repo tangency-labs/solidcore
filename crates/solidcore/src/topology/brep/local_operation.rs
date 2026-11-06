@@ -1949,9 +1949,10 @@ mod tests {
     /// A refusal leaves everything as it came in: `b` in its `Debug` form, the caches its
     /// surfaces had built before the call included (none dropped, none added), and the
     /// caller's notification records and attributes. Refused by the gate after the offset
-    /// ran (a cube's round given a wider coaxial cylinder) and by the reach before anything is built
-    /// (a side moved off its round); `b` carries an attribute of its own, lent to the
-    /// offset, and the caller's store one of the caller's.
+    /// ran, a cube's round given a wider coaxial cylinder, and a side moved off its round
+    /// (the edge between them apart: `LocalReach::apart`, adding nothing to the reach);
+    /// `b` carries an attribute of its own, lent to the offset, and the caller's store one
+    /// of the caller's.
     #[test]
     fn a_refusal_leaves_the_input_its_caches_and_the_callers_stores_as_they_were() {
         use crate::geom::attribute::{Attribute, Behavior};
@@ -1963,7 +1964,7 @@ mod tests {
                 let s = ap::create_cylinder_surface(k, Point3::new(8.0, 8.0, -1.0), 2.3, 12.0);
                 (b, round, Surface::from(s.unwrap()))
             }),
-            ("reach", |k| {
+            ("apart", |k| {
                 let b = cube_rounded_r5(k);
                 let side = face_on_x(k, &b, 20.0);
                 let s = Plane::from_normal(Vec3::new(20.1, 0.0, 0.0), Vec3::X);
@@ -1996,9 +1997,7 @@ mod tests {
             assert!(
                 matches!(
                     e.failure().map(|f| &f.reason),
-                    Some(crate::error::Reason::Offset(
-                        OffsetFailure::Unsound { .. } | OffsetFailure::FacesApart { .. }
-                    ))
+                    Some(crate::error::Reason::Offset(OffsetFailure::Unsound { .. }))
                 ),
                 "{name}: {e}"
             );
@@ -2272,9 +2271,10 @@ mod tests {
     /// coaxial cylinder of another radius: the wider r 2.3 and r 2.05 refused as not sound
     /// (the first new failure an edge's curve owner, #61); the narrower
     /// r 1.8 no longer reaches the side planes it was tangent to (it ends 0.2 short of
-    /// them), so it is refused as apart (review finding 6) before anything is built.
+    /// them): the edges between them are apart (`LocalReach::apart`, adding nothing to the
+    /// reach), and the body built is refused as not sound.
     #[test]
-    fn a_round_given_a_coaxial_cylinder_is_refused_as_not_sound_or_apart() {
+    fn a_round_given_a_coaxial_cylinder_is_refused_as_not_sound() {
         use crate::primitive::api_primitives as ap;
         for radius in [2.3, 2.05, 1.8] {
             let mut k = Kernel::default();
@@ -2283,15 +2283,14 @@ mod tests {
                 ap::create_cylinder_surface(&k, Point3::new(8.0, 8.0, -1.0), radius, 12.0).unwrap(),
             );
             let why = refused_unchanged_or_returned(&mut k, &mut b, &[round], vec![s]);
-            let want = if radius < 2.0 {
-                // the side x = 10, the first of the two the round was tangent to
-                Some(OffsetFailure::FacesApart {
-                    face: face_on_x(&k, &b, 10.0),
-                })
+            if radius < 2.0 {
+                assert!(
+                    matches!(why, Some(OffsetFailure::Unsound { .. })),
+                    "{radius}: {why:?}"
+                );
             } else {
-                Some(unsound_check(7, 61))
-            };
-            assert_eq!(why, want, "{radius}");
+                assert_eq!(why, Some(unsound_check(7, 61)), "{radius}");
+            }
         }
     }
 
@@ -2653,25 +2652,29 @@ mod tests {
     }
 
     /// The same side moved out by 0.1: the plane x = 20.1 passes the round, which bends
-    /// away from it, so no extension makes them meet: refused as apart before anything
-    /// is built, the cube as it came in.
+    /// away from it, so no extension makes them meet: their edge is apart
+    /// (`LocalReach::apart`, adding nothing to the reach), and the body built is refused
+    /// as not sound, the cube as it came in.
     #[test]
-    fn a_side_moved_off_its_round_is_refused_as_apart() {
+    fn a_side_moved_off_its_round_is_refused_as_not_sound() {
         let mut k = Kernel::default();
         let mut b = cube_rounded_r5(&mut k);
         let side = face_on_x(&k, &b, 20.0);
         let moved = Surface::from(Plane::from_normal(Vec3::new(20.1, 0.0, 0.0), Vec3::X));
         let why = refused_unchanged_or_returned(&mut k, &mut b, &[side], vec![moved]);
-        assert_eq!(why, Some(OffsetFailure::FacesApart { face: side }));
+        assert!(
+            matches!(why, Some(OffsetFailure::Unsound { .. })),
+            "{why:?}"
+        );
     }
 
     /// A tangent pair of equal curvature: a 60 x 40 x 20 block whose top is imprinted
     /// along x = 30, the piece x < 30 raised 1. The two pieces' planes stay parallel and
-    /// 1 apart: they meet nowhere, refused as apart (at the first of the two faces whose
-    /// reach is taken) before anything is built (without the step walls, which build the
-    /// wall between them: `wr_530_local_operation_step_walls`).
+    /// 1 apart: they meet nowhere, so their edge is apart (`LocalReach::apart`, adding
+    /// nothing to the reach), and without the step walls, which build the wall between
+    /// them (`wr_530_local_operation_step_walls`), the body built is refused as not sound.
     #[test]
-    fn a_coplanar_neighbour_raised_off_its_twin_is_refused_as_apart() {
+    fn a_coplanar_neighbour_raised_off_its_twin_is_refused_as_not_sound() {
         use crate::boolean::api_brep::boolean_with_options;
         use crate::boolean::merge::MergeOptions;
         use crate::geom::a_object::BooleanOperation;
@@ -2703,7 +2706,7 @@ mod tests {
         let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 21.0), Vec3::Z));
         let why = refused_unchanged_or_returned(&mut k, &mut b, &[piece], vec![raised]);
         assert!(
-            matches!(why, Some(OffsetFailure::FacesApart { .. })),
+            matches!(why, Some(OffsetFailure::Unsound { .. })),
             "{why:?}"
         );
     }
