@@ -1056,7 +1056,8 @@ fn planned(plan: &Plan, line: &Trace, q: &AlongLine) -> Option<Vec<Di>> {
 /// What a piece of an edge's parameters gives a bound.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PieceBound {
-    /// An upper bound over the piece and a value at its middle (which steers only).
+    /// An upper bound over the piece and a value the bounded quantity takes at its middle
+    /// (a lower bound on its largest, which steers the halving only).
     Value { upper: f64, lower: f64 },
     /// No meeting anywhere on the piece.
     Apart,
@@ -1103,23 +1104,61 @@ fn plane_quadric_piece(
     let (Some(over), Some(mid)) = (planned(&plan, &line, &q), planned(&plan, &mline, &mq)) else {
         return PieceBound::Unknown;
     };
-    let mut bound: Option<(f64, f64)> = None;
-    for (g, m) in over.into_iter().zip(mid) {
-        let enclosed = mean_value(g, m, dt);
-        if !(enclosed.hi.is_finite() && m.v.lo.is_finite()) {
-            continue;
-        }
-        let upper = round_up(crate::geom::vector3d::sqrt(enclosed.hi.max(0.0)));
-        let lower = crate::geom::vector3d::sqrt(m.v.lo.max(0.0));
-        bound = Some(match bound {
-            Some((u, l)) => (u.min(upper), l.min(lower)),
-            None => (upper, lower),
-        });
-    }
-    match bound {
-        Some((upper, lower)) => PieceBound::Value { upper, lower },
+    // the mean-value form of each root the piece's plan takes, centred on the same formula
+    // at the middle
+    let upper = over
+        .into_iter()
+        .zip(mid)
+        .map(|(g, m)| mean_value(g, m, dt).hi)
+        .filter(|hi| hi.is_finite())
+        .map(|hi| round_up(sqrt(hi.max(0.0))))
+        .reduce(f64::min);
+    match upper {
+        Some(upper) => PieceBound::Value {
+            upper,
+            lower: attained(&mline, &mq, quadric, tolerance),
+        },
         None => PieceBound::Unknown,
     }
+}
+
+/// The reach at one edge point (a piece's middle, whose `line` and `q` are point
+/// enclosures): the distance of the meeting nearest the point, from the plan decided there
+/// ([`plan_of`]), the low end of its enclosure: a value the reach takes, so at most its
+/// largest. 0 where the nearest meeting is not decided there: a [`Plan::Cover`] (its bound covers
+/// both roots, it is not a meeting) or a root certified neither on nor off the nappe.
+///
+/// The piece's own plan is not used for this: on a piece the roots may be undecided while
+/// at its middle they are not, and the cover's value at the middle (`|−B/2A| + √disc/2|A|`,
+/// the far root's distance where the roots are apart) would mark every piece as settled at
+/// the first one's bound.
+fn attained(line: &Trace, q: &AlongLine, quadric: &Implicit, tolerance: f64) -> f64 {
+    let plan = plan_of(line, q, quadric, tolerance);
+    // every root of the formula is a meeting the plan takes or certified off the nappe
+    let off_nappe = |tau: Option<Di>| tau.and_then(|tau| q.on_nappe(tau)) == Some(false);
+    let decided = match &plan {
+        Plan::Roots {
+            positive,
+            roots: listed,
+        } => roots(q, *positive)
+            .into_iter()
+            .enumerate()
+            .all(|(i, tau)| listed.contains(&i) || off_nappe(tau)),
+        Plan::Touch => true,
+        Plan::Apart | Plan::Cover | Plan::Unknown => false,
+    };
+    if !decided {
+        return 0.0;
+    }
+    planned(&plan, line, q)
+        .and_then(|found| {
+            found
+                .iter()
+                .map(|g| g.v.lo)
+                .filter(|lo| lo.is_finite())
+                .reduce(f64::min)
+        })
+        .map_or(0.0, |lo| sqrt(lo.max(0.0)))
 }
 
 /// The certified upper bound of the distance of a piece of the edge from a quadric (a
