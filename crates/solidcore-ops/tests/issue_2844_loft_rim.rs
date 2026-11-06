@@ -14,6 +14,7 @@
 //! (10 - d, 0, 30) to the point d down the ruling.
 //!
 //! Its own test binary, on the kernel's default fixes: none is set.
+#![allow(clippy::disallowed_methods)] // closed-form oracles, not ops geometry
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)] // test helpers
 
 mod common;
