@@ -2,8 +2,8 @@
 # Focused portability tests for scripts/wasm-digest.sh.
 #
 # The real script runs against a throwaway rig (a copy of the script, a symlinked
-# upstream/ and fake cargo, python3, wasmtime and difftest), so no wasm target,
-# wasmtime, C++ build or difftest compile is needed. The fakes record what the
+# upstream/ and fake cargo, wasmtime and goldens), so no wasm target,
+# wasmtime installation or kernel compile is needed. The fakes record what the
 # script asked them to do; the wasmtime fake also checks the WASI preopens.
 #
 # The pre-fix script fails here for two independent reasons:
@@ -51,26 +51,23 @@ make_rig() {
     *) rig=$tmp/$1 ;;
   esac
   mkdir -p "$rig/scripts" "$rig/fakebin" "$rig/real-upstream" \
-    "$rig/target/difftest" "$rig/target/wasm32-wasip1/difftest"
+    "$rig/target/goldens" "$rig/target/wasm32-wasip1/goldens"
   cp "$script" "$rig/scripts/wasm-digest.sh"
   if [ -f "$repo/scripts/wasm-digest-unit.sh" ]; then
     cp "$repo/scripts/wasm-digest-unit.sh" "$rig/scripts/wasm-digest-unit.sh"
   fi
   ln -s "$rig/real-upstream" "$rig/upstream"
-  : >"$rig/target/wasm32-wasip1/difftest/difftest.wasm"
+  : >"$rig/target/wasm32-wasip1/goldens/goldens.wasm"
 
   cat >"$rig/fakebin/cargo" <<'SH'
 #!/bin/sh
-exit 0
+case "$*" in
+  'build --profile goldens -p goldens'|'build --profile goldens -p goldens --target wasm32-wasip1') exit 0 ;;
+  *) echo "fake cargo: unexpected invocation: $*" >&2; exit 2 ;;
+esac
 SH
 
-  cat >"$rig/fakebin/python3" <<'SH'
-#!/bin/sh
-# args: wasm_stub.py WASM OUT.wat
-: >"$3"
-SH
-
-  cat >"$rig/fakebin/difftest" <<'SH'
+  cat >"$rig/fakebin/goldens" <<'SH'
 #!/bin/sh
 set -e
 digest=
@@ -84,7 +81,7 @@ while [ $# -gt 0 ]; do
     *) shift ;;
   esac
 done
-[ -n "$digest" ] || { echo "fake difftest: no --digest-dir" >&2; exit 2; }
+[ -n "$digest" ] || { echo "fake goldens: no --digest-dir" >&2; exit 2; }
 mkdir -p "$digest"
 printf '%s\n' "$units" >"$digest/../selected-units.txt"
 printf '%s\n' "$jobs" >"$digest/../selected-jobs.txt"
@@ -100,6 +97,8 @@ if [ "${FAKE_WASMTIME_LOG:-}" ]; then printf '%s\n' "$*" >>"$FAKE_WASMTIME_LOG";
 case ${1:-} in
   compile)
     shift
+    [ "${1:-}" = "$CARGO_TARGET_DIR/wasm32-wasip1/goldens/goldens.wasm" ] && [ -f "$1" ] \
+      || { echo "fake wasmtime: wrong goldens wasm input" >&2; exit 2; }
     out=
     while [ $# -gt 0 ]; do
       case $1 in -o) out=$2; shift 2 ;; *) shift ;; esac
@@ -110,7 +109,7 @@ case ${1:-} in
   run)
     shift
     [ "$PWD" = "$FAKE_EXPECT_ROOT" ] || { echo "fake wasmtime: cwd '$PWD'" >&2; exit 2; }
-    digest= unit= root_dir= up_dir= out_dir= preload=
+    digest= unit= root_dir= up_dir= out_dir= module=
     while [ $# -gt 0 ]; do
       case $1 in
         --digest-dir) digest=$2; shift 2 ;;
@@ -121,7 +120,8 @@ case ${1:-} in
             *) [ -n "${up_dir:-}" ] && out_dir=$2 || up_dir=$2 ;;
           esac
           shift 2 ;;
-        --preload) preload=$2; shift 2 ;;
+        --preload) echo 'fake wasmtime: retired C++ preload is forbidden' >&2; exit 2 ;;
+        *.cwasm) module=$1; shift ;;
         *) shift ;;
       esac
     done
@@ -133,8 +133,8 @@ case ${1:-} in
       || { echo "fake wasmtime: upstream dir '$up_dir'" >&2; exit 2; }
     [ "${FAKE_EXPECT_OUT:-}" = "" ] || [ "$out_dir" = "$FAKE_EXPECT_OUT::$FAKE_EXPECT_OUT" ] \
       || { echo "fake wasmtime: out dir '$out_dir'" >&2; exit 2; }
-    [ "${FAKE_EXPECT_OUT:-}" = "" ] || [ "$preload" = "env=$FAKE_EXPECT_OUT/stub.wat" ] \
-      || { echo "fake wasmtime: preload '$preload'" >&2; exit 2; }
+    [ "$module" = "$FAKE_EXPECT_OUT/goldens.cwasm" ] && [ -f "$module" ] \
+      || { echo "fake wasmtime: wrong goldens module '$module'" >&2; exit 2; }
     if [ "${FAKE_WASM_FAIL_UNIT:-}" = "$unit" ]; then
       echo "fake wasmtime: trap in $unit" >&2
       exit 7
@@ -198,8 +198,8 @@ exit $rc
 SH
 
   chmod +x "$rig/fakebin/"*
-  cp "$rig/fakebin/difftest" "$rig/target/difftest/difftest"
-  chmod +x "$rig/target/difftest/difftest"
+  cp "$rig/fakebin/goldens" "$rig/target/goldens/goldens"
+  chmod +x "$rig/target/goldens/goldens"
   # Canonical path: the script resolves root with `cd`/`pwd`, so a trailing `//`
   # from TMPDIR would otherwise disagree with the fake tools.
   (cd "$rig" && pwd -P)
@@ -234,7 +234,7 @@ select_gnu_readlink "$rig"
 cp "$rig/fakebin/xargs-bsd" "$rig/fakebin/xargs"
 chmod +x "$rig/fakebin/xargs"
 status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --unit unit.one --unit unit.two)
-if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 4 compared' "$rig/run.log"; then
+if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 0 mismatch(es), 0 unit(s) without wasm digest' "$rig/run.log"; then
   ok 'BSD xargs: per-unit runner fits the 255-byte template'
 else
   no 'BSD xargs: per-unit runner fits the 255-byte template' \
@@ -250,7 +250,7 @@ for _ in 1 2 3; do
 done
 rig=$(make_rig "$long/long-tmpdir")
 status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --unit unit.one --unit unit.two)
-if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 4 compared' "$rig/run.log"; then
+if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 0 mismatch(es), 0 unit(s) without wasm digest' "$rig/run.log"; then
   ok 'long TMPDIR: real xargs accepts a long static helper path'
 else
   no 'long TMPDIR: real xargs accepts a long static helper path' \
@@ -283,10 +283,10 @@ status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --jobs 3 \
 if [ "$status" -eq 0 ] \
   && [ "$(cat "$rig/out/selected-units.txt")" = 'unit.one unit.two unit.three' ] \
   && [ "$(cat "$rig/out/selected-jobs.txt")" = '3' ] \
-  && grep -q 'wasm-digest: 3 unit(s), 6 case(s), 6 compared' "$rig/run.log"; then
-  ok 'selection: every --unit reaches difftest and every unit runs on wasm'
+  && grep -q 'wasm-digest: 3 unit(s), 6 case(s), 0 mismatch(es), 0 unit(s) without wasm digest' "$rig/run.log"; then
+  ok 'selection: every --unit reaches goldens and every unit runs on wasm'
 else
-  no 'selection: every --unit reaches difftest and every unit runs on wasm' \
+  no 'selection: every --unit reaches goldens and every unit runs on wasm' \
     "exit $status: units='$(cat "$rig/out/selected-units.txt" 2>/dev/null || echo -)' jobs='$(cat "$rig/out/selected-jobs.txt" 2>/dev/null || echo -)' $(tail -n 1 "$rig/run.log")"
 fi
 
@@ -373,7 +373,7 @@ for variant in root upstream out combined; do
   status=$(run_digest "$rig" "$rig/run.log" --jobs 2 --out "$out" --unit unit.one --unit unit.two)
   unset RUN_EXPECT_UP RUN_EXPECT_OUT
   if [ "$status" -eq 0 ] \
-    && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 4 compared' "$rig/run.log" \
+    && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 0 mismatch(es), 0 unit(s) without wasm digest' "$rig/run.log" \
     && [ -f "$out/wasm/unit.one.digest" ] && [ -f "$out/wasm/unit.two.digest" ]; then
     ok "literal braces: $variant paths and unit reach the helper unchanged"
   else
@@ -388,7 +388,7 @@ out=$rig/'out-{}-"-$-`-;'
 export RUN_EXPECT_OUT=$out
 status=$(run_digest "$rig" "$rig/run.log" --jobs 2 --out "$out" --unit unit.one --unit unit.two)
 unset RUN_EXPECT_OUT
-if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 4 compared' "$rig/run.log"; then
+if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 0 mismatch(es), 0 unit(s) without wasm digest' "$rig/run.log"; then
   ok 'shell metacharacters in static paths stay literal data'
 else
   no 'shell metacharacters in static paths stay literal data' "exit $status: $(tail -n 1 "$rig/run.log")"
