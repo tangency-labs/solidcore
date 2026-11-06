@@ -31,7 +31,9 @@
 //!   negative, or a scaled length that is not positive).
 //! - Uniform implied knots are counted in integers before conversion (`i - degree`; was the
 //!   same difference in `f64`, exact for every count below 2^53).
-//! - The depth bound is checked in the one function every curve read goes through.
+//! - The depth bound is checked in the one function every curve read goes through, and on a
+//!   cache hit against the height stored with the cached curve (SolidCraft returned a cached
+//!   curve unchecked, so a chain read link by link in ascending id order had no bound).
 //! - The cache is a `BTreeMap` (was a `HashMap`); nothing iterates it. Collections grow as they
 //!   are read (no capacity from a count in the file). [`Units`] is `super::units::Units`.
 //!   Rustfmt, clippy-driven rewrites that keep the result, and doc comments on every public
@@ -50,8 +52,11 @@ use super::units::Units;
 pub type R<T> = Result<T, String>;
 
 /// Geometry nesting we follow (a trimmed curve of a trimmed curve of …). Every curve read
-/// checks it, so a reference cycle ends here.
+/// checks it, a fresh one and one found in the cache alike, so a reference cycle ends here and
+/// what is read does not depend on the order of the reads.
 pub const MAX_GEOM_DEPTH: usize = 12;
+/// The refusal of a read past [`MAX_GEOM_DEPTH`].
+const TOO_DEEP: &str = "curve definitions nested too deeply";
 /// Most control points in one B-spline (the whole net for a surface).
 pub const MAX_CTRL: usize = 1_000_000;
 /// Largest coordinate or length, in file units.
@@ -90,11 +95,21 @@ impl Space {
     }
 }
 
+/// A curve as read, with its height: how many curve references its deepest chain follows
+/// (0 for a curve that refers to no other curve). A read that reaches a cached curve at depth
+/// `d` refuses it when `d + height` passes [`MAX_GEOM_DEPTH`], as reading it afresh at `d`
+/// would, so a chain read link by link through the cache is bounded as one read at once.
+#[derive(Clone)]
+struct CurveEntry {
+    curve: Arc<Curve>,
+    height: usize,
+}
+
 /// Reads geometry from one exchange structure, in one context's units.
 pub struct Reader<'a> {
     ex: &'a Exchange,
     units: Units,
-    curves: BTreeMap<u64, Arc<Curve>>,
+    curves: BTreeMap<u64, CurveEntry>,
 }
 
 fn entity(ex: &Exchange, id: u64) -> R<&Entity> {
@@ -478,14 +493,23 @@ impl<'a> Reader<'a> {
 
     /// A 3D curve entity.
     pub fn curve(&mut self, id: u64) -> R<Arc<Curve>> {
-        self.curve_in(id, 0)
+        Ok(self.curve_in(id, 0)?.curve)
     }
 
-    fn curve_in(&mut self, id: u64, depth: usize) -> R<Arc<Curve>> {
+    /// The curve `id` reached at `depth`: from the cache when its height still fits under
+    /// [`MAX_GEOM_DEPTH`], else read (and cached when it can be read).
+    fn curve_in(&mut self, id: u64, depth: usize) -> R<CurveEntry> {
         if let Some(c) = self.curves.get(&id) {
+            if depth.saturating_add(c.height) > MAX_GEOM_DEPTH {
+                return Err(TOO_DEEP.into());
+            }
             return Ok(c.clone());
         }
-        let c = Arc::new(self.read_curve(id, depth)?);
+        let (curve, height) = self.read_curve(id, depth)?;
+        let c = CurveEntry {
+            curve: Arc::new(curve),
+            height,
+        };
         self.curves.insert(id, c.clone());
         Ok(c)
     }
@@ -497,17 +521,18 @@ impl<'a> Reader<'a> {
         }
     }
 
-    fn read_curve(&mut self, id: u64, depth: usize) -> R<Curve> {
+    /// The curve `id` at `depth`, and its height (see [`CurveEntry`]).
+    fn read_curve(&mut self, id: u64, depth: usize) -> R<(Curve, usize)> {
         if depth > MAX_GEOM_DEPTH {
-            return Err("curve definitions nested too deeply".into());
+            return Err(TOO_DEEP.into());
         }
         let sp = Space::model(self.units.len, 3);
         let e = entity(self.ex, id)?;
         if e.is_complex() {
-            return self.bspline_curve(e, sp);
+            return Ok((self.bspline_curve(e, sp)?, 0));
         }
         let p = e.params();
-        match e.name() {
+        let c = match e.name() {
             "LINE" => {
                 let origin = self.point_in(reference(p.get(1), "line point")?, sp)?;
                 let vector = self.vector_in(reference(p.get(2), "line vector")?, sp)?;
@@ -575,7 +600,10 @@ impl<'a> Reader<'a> {
             }
             "TRIMMED_CURVE" => {
                 let b = reference(p.get(1), "trimmed curve basis")?;
-                let basis = self.curve_in(b, depth + 1)?;
+                let CurveEntry {
+                    curve: basis,
+                    height,
+                } = self.curve_in(b, depth + 1)?;
                 // Conic parameters are angles; every other basis curve's are plain numbers.
                 let kind = match &*basis {
                     Curve::Circle { .. } | Curve::Ellipse { .. } => ParamKind::Angle,
@@ -589,29 +617,39 @@ impl<'a> Reader<'a> {
                     Some("PARAMETER") => TrimPreference::Parameter,
                     _ => TrimPreference::Unspecified,
                 };
-                Ok(Curve::Trimmed {
-                    basis,
-                    trim_1,
-                    trim_2,
-                    sense,
-                    preference,
-                })
+                return Ok((
+                    Curve::Trimmed {
+                        basis,
+                        trim_1,
+                        trim_2,
+                        sense,
+                        preference,
+                    },
+                    height + 1,
+                ));
             }
             "OFFSET_CURVE_3D" => {
-                let basis = self.curve_in(reference(p.get(1), "offset curve basis")?, depth + 1)?;
+                let CurveEntry {
+                    curve: basis,
+                    height,
+                } = self.curve_in(reference(p.get(1), "offset curve basis")?, depth + 1)?;
                 let distance = self.length(p.get(2), "offset distance")?;
                 let self_intersect = logical(p.get(3), "offset curve self_intersect")?;
                 let ref_direction =
                     self.direction(reference(p.get(4), "offset curve direction")?)?;
-                Ok(Curve::OffsetCurve3d {
-                    basis,
-                    distance,
-                    self_intersect,
-                    ref_direction,
-                })
+                return Ok((
+                    Curve::OffsetCurve3d {
+                        basis,
+                        distance,
+                        self_intersect,
+                        ref_direction,
+                    },
+                    height + 1,
+                ));
             }
             n => Err(format!("not supported yet: curve {n}")),
-        }
+        };
+        Ok((c?, 0))
     }
 
     fn trims(&self, p: Option<&Param>, kind: ParamKind, sp: Space) -> R<Vec<Trim>> {
