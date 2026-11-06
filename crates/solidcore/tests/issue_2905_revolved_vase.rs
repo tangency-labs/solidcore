@@ -144,14 +144,9 @@ fn closed_vase_chamfer_has_its_meridian_volume() {
     {
         let mut s = FilletSession::new(&mut k, &mut b).unwrap();
         s.set_swept_turns(false);
-        s.prepare_chamfers_along(
-            &mut k,
-            &edges,
-            &[ChamferSize::Distances([2.995, 2.995])],
-            &[],
-        )
-        .unwrap();
-        s.create_corners(&mut k, None).unwrap();
+        s.prepare_chamfers_along(&k, &edges, &[ChamferSize::Distances([2.995, 2.995])], &[])
+            .unwrap();
+        s.create_corners(&k, None).unwrap();
         for corner in s.fillet_corners().unwrap() {
             s.set_corner_bevel(corner, true).unwrap();
         }

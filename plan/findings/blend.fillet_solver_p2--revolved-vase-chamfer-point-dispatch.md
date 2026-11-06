@@ -7,7 +7,9 @@ Issue: #2905 (revolved vase only); PR: #2932.
 
 The captured operand in `crates/solidcore/tests/data/issue_2905_revolved_vase.smb`
 is the application's pre-chamfer body from `04-revolve-vase`: 5 faces, 7 edges,
-4 vertices. On pristine main `513e6fcfc`, the operand is manifold, passes Level2,
+4 vertices. The CLI capture used application `74e0596` with an unknown kernel
+revision; Core985 and main below are replay targets, not that producer.
+On pristine main `513e6fcfc`, the operand is manifold, passes Level2,
 and has its independent meridian volume. The z=60 circular edge's tangent chain
 has one closed edge. Equal chamfer setbacks 2.995 prepare offsets
 6.483916671439901, but execution returns status 1001 and "Fillet Surface
