@@ -50,8 +50,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use solidcore_ops::blend::{
-    blend, blend_ordered, chamfer_sides_ordered, edge_faces_along_ordered, fillet_variable_ordered,
-    Blend, ChamferSecond, Corners, SetBack,
+    blend_ordered, chamfer_sides_ordered, edge_faces_along_ordered, fillet_variable_ordered, Blend,
+    ChamferSecond, Corners, SetBack,
 };
 use solidcore_ops::boolean::{boolean, BooleanOp};
 use solidcore_ops::extend::{extend_sheet, Continuation};
@@ -806,13 +806,7 @@ fn call_with_copy(
                 return Err(bad("one input"));
             }
             let mut source = first()?;
-            if source.order.is_none() {
-                let (_, order) = source
-                    .body
-                    .to_record()
-                    .map_err(|e| Stop::Fail(format!("order before blend_setback: {e}")))?;
-                source.order = Some(order);
-            }
+            ensure_order(&mut source, "blend_setback")?;
             let s = copy_for_edit(&source)?;
             let order = s
                 .order
@@ -825,37 +819,13 @@ fn call_with_copy(
                 Some("chamfer") => Blend::Chamfer,
                 _ => return Err(bad("kind")),
             };
-            let picks = |key: &str, kind: &str, length: usize| {
-                if p[key]["kind"].as_str() != Some(kind) {
-                    return Err(bad(key));
-                }
-                p[key]["picked"]
-                    .as_array()
-                    .ok_or_else(|| bad(key))?
-                    .iter()
-                    .map(|pick| {
-                        if let Some(miss) = pick.get("miss") {
-                            let why = miss.as_str().ok_or_else(|| bad(key))?;
-                            if pick.get("index").is_some() {
-                                return Err(bad(key));
-                            }
-                            return Err(Stop::Unsupported(format!(
-                                "blend_setback: {key} pick missed: {why}"
-                            )));
-                        }
-                        let i = pick["index"]
-                            .as_u64()
-                            .and_then(|i| usize::try_from(i).ok())
-                            .ok_or_else(|| bad(key))?;
-                        if i >= length {
-                            return Err(bad("pick outside record order"));
-                        }
-                        Ok(i)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            };
-            let edges = picks("edges", "edge", order.edges.len())?;
-            let vertices = picks("corners", "vertex", order.vertices.len())?;
+            let edges = record_picks("blend_setback", &p["edges"], "edge", order.edges.len())?;
+            let vertices = record_picks(
+                "blend_setback",
+                &p["corners"],
+                "vertex",
+                order.vertices.len(),
+            )?;
             let numbers = |key: &str| {
                 p[key]
                     .as_array()
@@ -927,7 +897,7 @@ fn call_with_copy(
                 .collect::<Option<_>>()
                 .ok_or_else(|| bad("sizes"))?;
             let mut s = copy_for_edit(&first()?)?;
-            let (edges, _) = faces(&mut s, &p["edges"])?;
+            let (edges, order) = faces(&mut s, &p["edges"])?;
             let one_size = sizes.len() == 1;
             if !(one_size || sizes.len() == edges.len()) {
                 return Err(bad("sizes"));
@@ -951,7 +921,8 @@ fn call_with_copy(
                     );
                 }
             }
-            let r = blend(&s.body, kind, &unique, &each, &[], Corners::Filled).map(|_| ());
+            let r = blend_ordered(&s.body, &order, kind, &unique, &each, &[], Corners::Filled)
+                .map(|_| ());
             in_place(Slot { order: None, ..s }, r)
         }
         "merge_faces" => {
@@ -1350,7 +1321,7 @@ fn blend_replay_keeps_the_record_edge_after_reordering_and_aliasing() {
         })
         .unwrap();
     let selected = original.edges[selected];
-    for mode in 0..3 {
+    for mode in 0..4 {
         let mut order = original.clone();
         match mode {
             1 => order.edges.rotate_left(3),
@@ -1365,7 +1336,7 @@ fn blend_replay_keeps_the_record_edge_after_reordering_and_aliasing() {
             .unwrap();
         let input = Slot {
             body: Arc::clone(&body),
-            order: Some(order),
+            order: (mode != 3).then_some(order),
         };
         let step = serde_json::json!({"op":"blend_dropping","params":{
             "kind":"round","sizes":[2.0],
