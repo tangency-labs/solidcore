@@ -35,6 +35,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::util::v3;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -436,6 +437,70 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     Ok(to_output(&o))
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest derivative order.
+const MAX_N: usize = 5;
+/// The largest magnitude of a value.
+const MAX_COORD: f64 = 1e8;
+/// The longest `read_db` stream.
+const MAX_BYTES: usize = 4096;
+/// A box whose every corner coordinate is at least this large is unbounded.
+const UNBOUNDED_FROM: f64 = 1111.0;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+fn vecs(vs: &[[f64; 3]]) -> bool {
+    vs.iter().all(|v| contract::vec3(v, MAX_COORD))
+}
+
+/// Whether a twist volume's constructor arguments and next map are finite within range.
+fn twist_ok(t: &TwistIn) -> bool {
+    t.ctor
+        .as_ref()
+        .is_none_or(|c| vecs(&[c.o, c.axis, c.mid]) && fin(c.period) && fin(c.min))
+        && t.next.as_ref().is_none_or(|n| vecs(n))
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_twist_volume.rs`, `validate`): finite values
+/// within [`MAX_COORD`], up to 64 type codes in `[0, 2^30]`, derivative orders up to
+/// [`MAX_N`], no `b_box` asking for the pseudo box alone of an unbounded box (upstream
+/// writes the missing box through a null pointer) and streams up to [`MAX_BYTES`].
+fn keeps_contract(i: &Inputs) -> bool {
+    match i {
+        Inputs::Info { twist, types } => {
+            twist_ok(twist) && types.len() <= 64 && types.iter().all(|t| (0..=1 << 30).contains(t))
+        }
+        Inputs::Eval { twist, p, n, .. } | Inputs::EvalSimple { twist, p, n } => {
+            twist_ok(twist) && vecs(&[*p]) && *n <= MAX_N
+        }
+        Inputs::BBox {
+            twist,
+            a,
+            b,
+            want_box,
+            want_pseudo,
+        } => {
+            let unbounded = a.iter().chain(b).all(|c| c.abs() >= UNBOUNDED_FROM);
+            twist_ok(twist) && vecs(&[*a, *b]) && !(*want_pseudo && !*want_box && unbounded)
+        }
+        Inputs::InvGuess { twist, p } => twist_ok(twist) && vecs(&[*p]),
+        Inputs::Global { twist, p, dom } => {
+            twist_ok(twist) && vecs(&[*p]) && dom.as_ref().is_none_or(|d| vecs(d))
+        }
+        Inputs::Local { twist, p, g, dom } => {
+            twist_ok(twist) && vecs(&[*p, *g]) && dom.as_ref().is_none_or(|d| vecs(d))
+        }
+        Inputs::Preds { twist, p, a, b } => twist_ok(twist) && vecs(&[*p, *a, *b]),
+        Inputs::Copy { twist, .. } => twist_ok(twist),
+        Inputs::Equal { twist, other, .. } => twist_ok(twist) && twist_ok(other),
+        Inputs::ReadDb { data } => data.len() <= MAX_BYTES,
+    }
+}
+
 // ---- generation ---------------------------------------------------------------------
 
 fn coord(rng: &mut Rng, r: f64) -> [f64; 3] {
@@ -645,7 +710,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        for _ in 0..64 {
+            let i = gen_case(rng);
+            if keeps_contract(&i) {
+                return serde_json::to_value(i).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
