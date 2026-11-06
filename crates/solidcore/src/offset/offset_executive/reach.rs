@@ -1250,14 +1250,72 @@ fn point_and_tangent(cn: &NurbsCurve, s: Ivl) -> Result<Option<(Dv, Dv)>> {
     Ok(Some((Dv::of(d0, d1), Dv::of(d1, d2))))
 }
 
+/// A piece of an edge's parameters `[t0, t1]` with a certified upper bound on it, ordered by
+/// that bound (the most is taken first in [`edge_interval_maximum`]); `halvable` false
+/// where a halving left a half undecided, so the piece keeps its own bound.
+#[derive(Debug, Clone, Copy)]
+struct Bounded {
+    upper: f64,
+    t0: f64,
+    t1: f64,
+    depth: usize,
+    halvable: bool,
+}
+
+impl PartialEq for Bounded {
+    fn eq(&self, o: &Self) -> bool {
+        self.cmp(o).is_eq()
+    }
+}
+
+impl Eq for Bounded {}
+
+impl PartialOrd for Bounded {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+impl Ord for Bounded {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.upper.total_cmp(&o.upper)
+    }
+}
+
+/// The edge's parameter interval cut at the curve's knots, each piece at depth 0: one per
+/// polynomial span, as the mean-value form needs the point and its tangent continuous on
+/// each piece.
+fn spans(cn: &NurbsCurve, interval: crate::geom::extent1d::Extent1d) -> Vec<(f64, f64, usize)> {
+    let (lo, hi) = (interval.min(), interval.max());
+    let mut cuts: Vec<f64> = cn.u.iter().copied().filter(|&k| lo < k && k < hi).collect();
+    cuts.dedup();
+    let mut ends = vec![lo];
+    ends.extend(cuts);
+    ends.push(hi);
+    ends.windows(2)
+        .filter_map(|w| match w {
+            [a, c] if a < c => Some((*a, *c, 0)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A certified upper bound on the largest value over edge `e` of what `f` bounds on each
 /// piece of its parameters (given the point and tangent over the piece, at its middle, and
-/// the piece about its middle), and whether some piece is apart. A piece is halved while
-/// its bound exceeds the largest middle value found by more than `tolerance`, or while it
-/// is undecided, at most [`MAX_INTERVAL_HALVINGS`] times and over at most
-/// [`MAX_INTERVALS`] pieces; a piece whose bound is below the largest bound found is
-/// dropped. Past the caps a bounded piece gives its bound, an undecided one gives `None`;
-/// `None` too for an edge with no NURBS curve.
+/// the piece about its middle), and whether some piece is apart.
+///
+/// Every piece is decided first: an undecided one is halved until each piece is bounded or
+/// apart, at most [`MAX_INTERVAL_HALVINGS`] times; an edge with a piece still undecided
+/// there, or past [`MAX_INTERVALS`] pieces looked at, is `None`, as is one with no NURBS
+/// curve. Then the bounded piece with the largest bound is halved while that bound exceeds
+/// the largest middle value found (a value the quantity takes) by more than `tolerance`,
+/// within the same caps; the answer is the largest bound left, which bounds every piece.
+/// A halving that leaves a half undecided keeps the piece's own bound. Deciding first, the
+/// caps are never spent tightening some pieces' bounds while another piece is still
+/// undecided: taken depth first, an edge of several spans (a full circle's four) could
+/// spend them on the spans taken first and leave a later one undecided, refusing the whole
+/// edge, though every piece was bounded or apart within the caps. Taking the largest bound
+/// first spends them where the answer is.
 fn edge_interval_maximum(
     b: &Brep,
     e: crate::topology::EdgeId,
@@ -1267,61 +1325,88 @@ fn edge_interval_maximum(
     let Some(cn) = edge_nurbs(b, e)? else {
         return Ok(None);
     };
-    let interval = edge::interval(b, e)?;
-    let (lo, hi) = (interval.min(), interval.max());
-    // one piece per polynomial span of the curve: the mean-value form needs the point and
-    // its tangent continuous on each piece
-    let mut cuts: Vec<f64> = cn.u.iter().copied().filter(|&k| lo < k && k < hi).collect();
-    cuts.dedup();
-    let mut ends = vec![lo];
-    ends.extend(cuts);
-    ends.push(hi);
-    let mut work: Vec<(f64, f64, usize)> = ends
-        .windows(2)
-        .filter_map(|w| match w {
-            [a, c] if a < c => Some((*a, *c, 0)),
-            _ => None,
-        })
-        .collect();
-    let (mut found, mut best, mut apart, mut seen) = (0.0_f64, 0.0_f64, false, 0_usize);
-    while let Some((t0, t1, depth)) = work.pop() {
-        seen += 1;
+    let mut undecided = spans(&cn, edge::interval(b, e)?);
+    // the bound on a piece; a bound that is not finite bounds nothing
+    let bound_of = |t0: f64, t1: f64| -> Result<PieceBound> {
         let tm = 0.5 * (t0 + t1);
         let over = point_and_tangent(&cn, Ivl::new(t0, t1))?;
         let mid = point_and_tangent(&cn, Ivl::from(tm))?;
-        let bound = match (over, mid) {
-            (Some(over), Some(mid)) => f(over, mid, Ivl::checked(t0 - tm, t1 - tm)),
+        Ok(match (over, mid) {
+            (Some(over), Some(mid)) => match f(over, mid, Ivl::checked(t0 - tm, t1 - tm)) {
+                PieceBound::Value { upper, .. } if !upper.is_finite() => PieceBound::Unknown,
+                bound => bound,
+            },
             _ => PieceBound::Unknown,
-        };
-        let can_halve = depth < MAX_INTERVAL_HALVINGS
-            && seen + work.len() + 2 <= MAX_INTERVALS
-            && t0 < tm
-            && tm < t1;
-        match bound {
-            PieceBound::Apart => {
-                apart = true;
-                continue;
-            }
+        })
+    };
+    let halves = |t0: f64, t1: f64, depth: usize| {
+        let tm = 0.5 * (t0 + t1);
+        (depth < MAX_INTERVAL_HALVINGS && t0 < tm && tm < t1).then_some(tm)
+    };
+    let (mut best, mut apart, mut seen) = (0.0_f64, false, 0_usize);
+    let mut bounded: std::collections::BinaryHeap<Bounded> = std::collections::BinaryHeap::new();
+    // every piece decided: bounded or apart
+    while let Some((t0, t1, depth)) = undecided.pop() {
+        seen += 1;
+        match bound_of(t0, t1)? {
+            PieceBound::Apart => apart = true,
             PieceBound::Value { upper, lower } => {
                 best = best.max(lower);
-                if upper <= found {
-                    continue;
-                }
-                if upper <= best + tolerance || !can_halve {
-                    found = found.max(upper);
-                    continue;
-                }
+                bounded.push(Bounded {
+                    upper,
+                    t0,
+                    t1,
+                    depth,
+                    halvable: true,
+                });
             }
             PieceBound::Unknown => {
-                if !can_halve {
+                let tm = halves(t0, t1, depth)
+                    .filter(|_| seen + undecided.len() + 2 <= MAX_INTERVALS);
+                let Some(tm) = tm else {
                     return Ok(None);
-                }
+                };
+                undecided.push((t0, tm, depth + 1));
+                undecided.push((tm, t1, depth + 1));
             }
         }
-        work.push((t0, tm, depth + 1));
-        work.push((tm, t1, depth + 1));
     }
-    Ok(Some((found, apart)))
+    // the largest bound tightened: it bounds every piece left
+    while let Some(top) = bounded.pop() {
+        let tm = halves(top.t0, top.t1, top.depth).filter(|_| seen + 2 <= MAX_INTERVALS);
+        let Some(tm) = tm.filter(|_| top.halvable && top.upper > best + tolerance) else {
+            return Ok(Some((top.upper, apart)));
+        };
+        seen += 2;
+        let mut parts = Vec::with_capacity(2);
+        let mut decided = true;
+        for (t0, t1) in [(top.t0, tm), (tm, top.t1)] {
+            match bound_of(t0, t1)? {
+                PieceBound::Apart => apart = true,
+                PieceBound::Value { upper, lower } => {
+                    best = best.max(lower);
+                    parts.push(Bounded {
+                        upper,
+                        t0,
+                        t1,
+                        depth: top.depth + 1,
+                        halvable: true,
+                    });
+                }
+                PieceBound::Unknown => decided = false,
+            }
+        }
+        if decided {
+            bounded.extend(parts);
+        } else {
+            bounded.push(Bounded {
+                halvable: false,
+                ..top
+            });
+        }
+    }
+    // every piece apart
+    Ok(Some((0.0, apart)))
 }
 
 /// How the line where two planes meet passes a quadric at a corner
@@ -1689,6 +1774,7 @@ mod tests {
     use crate::math::Point3;
     use crate::surface::surface::SurfaceKind;
     use crate::topology::brep::p1 as bp1;
+    use crate::topology::EdgeId;
 
     fn box_faceuses(k: &mut Kernel, inset: bool) -> (Brep, Vec<(FaceId, FaceuseId)>) {
         let brep = crate::primitive::api_primitives::create_box(
@@ -2043,6 +2129,83 @@ mod tests {
             let found = reach_of(&k, &b, f, &moved);
             assert!(bounds(&b, found.reach, want), "{f:?}: {found:?}");
             assert!(bounds(&b, found.shift, 0.1), "{f:?}: {found:?}");
+        }
+    }
+
+    /// A cylinder r 1 from z 0 to 2 (its side one face meeting itself across its seam,
+    /// plane caps), its side, caps and seam edge (the edge whose uses are all the side's),
+    /// and the coaxial cylinder `r` from z −1 to 3 for the side.
+    fn seamed_cylinder(k: &mut Kernel, r: f64) -> (Brep, FaceId, [FaceId; 2], EdgeId, Surface) {
+        use crate::primitive::api_primitives as ap;
+        let b = ap::create_cylinder(k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let wider = Surface::from(
+            ap::create_cylinder_surface(k, Point3::new(0.0, 0.0, -1.0), r, 4.0).unwrap(),
+        );
+        let faces = bp1::faces(&b, None).unwrap();
+        let curved = |f: &FaceId| {
+            let surface = b.face(*f).unwrap().surface.as_ref().unwrap();
+            matches!(surface.kind(), SurfaceKind::Cone(_))
+        };
+        let side = *faces.iter().find(|f| curved(f)).unwrap();
+        let caps: Vec<FaceId> = faces.iter().copied().filter(|f| !curved(f)).collect();
+        assert_eq!(caps.len(), 2, "{faces:?}");
+        let seams: Vec<EdgeId> = b
+            .edges()
+            .ids()
+            .filter(|&e| edge::faces(&b, e, None).unwrap() == [side])
+            .collect();
+        assert_eq!(seams.len(), 1, "the side's seam");
+        (b, side, [caps[0], caps[1]], seams[0], wider)
+    }
+
+    /// The side of a cylinder r 1 given the coaxial cylinder r 2 (moved out 1, across its
+    /// seam): each cap's trace in the normal section of its circle, the radial line, meets
+    /// the cylinder r 2 1 past the circle, so the side and both caps reach 1, and each
+    /// moved 1. The seam is no meeting of two surfaces: the side continues across it, so it
+    /// adds nothing beyond the side's own move there (the seam line r 1 is 1 from the
+    /// cylinder r 2) and is not apart.
+    #[test]
+    fn a_seamed_cylinder_moved_out_is_reached_and_its_seam_adds_only_the_move() {
+        let mut k = Kernel::default();
+        let (b, side, caps, seam, wider) = seamed_cylinder(&mut k, 2.0);
+        let moved = [(side, &wider)];
+        for f in [side, caps[0], caps[1]] {
+            let found = reach_of(&k, &b, f, &moved);
+            assert!(bounds(&b, found.reach, 1.0), "{f:?}: {found:?}");
+            assert!(bounds(&b, found.shift, 1.0), "{f:?}: {found:?}");
+            assert!(found.apart.is_empty(), "{f:?}: {found:?}");
+        }
+        let Some(Exact::Quadric(q)) = exact_class(&k, &wider).unwrap() else {
+            panic!("the cylinder r 2 is a quadric");
+        };
+        let piece = |over: (Dv, Dv), mid: (Dv, Dv), dt: Ivl| {
+            quadric_distance_piece(over.0, mid.0, dt, &q)
+        };
+        let (at_seam, apart) = edge_interval_maximum(&b, seam, &piece, b.tolerance())
+            .unwrap()
+            .unwrap();
+        assert!(bounds(&b, at_seam, 1.0), "{at_seam}");
+        assert!(!apart);
+    }
+
+    /// The side of a cylinder r 1 given the coaxial cylinder one rounding wider: every
+    /// face is reached with no refusal, by a certified bound (the true meetings are a
+    /// rounding past the circles: the bound stays within the B-rep's tolerance of that
+    /// rounding when its pieces converge within the caps, and is a bound past them), and
+    /// the move, a rounding along the seam and the circles, within the tolerance.
+    #[test]
+    fn a_seamed_cylinder_a_rounding_wider_is_reached() {
+        let mut k = Kernel::default();
+        let r = f64::from_bits(1.0_f64.to_bits() + 1);
+        let (b, side, caps, _, wider) = seamed_cylinder(&mut k, r);
+        let moved = [(side, &wider)];
+        for f in [side, caps[0], caps[1]] {
+            let found = local_extension_reach(&k, &b, faceuse_of(&b, f), &moved, &[], 1e-3)
+                .unwrap()
+                .unwrap();
+            assert!(found.reach >= 0.0 && found.reach < 1e-3, "{f:?}: {found:?}");
+            assert!(bounds(&b, found.shift, 0.0), "{f:?}: {found:?}");
+            assert!(found.apart.is_empty(), "{f:?}: {found:?}");
         }
     }
 
