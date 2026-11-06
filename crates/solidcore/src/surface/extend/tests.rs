@@ -2620,3 +2620,32 @@ fn least_step_accepts_only_a_length_proved_to_reach() {
     unconverged.converged = false;
     assert!(!reaches(Some(&unconverged), 0.0, d), "not measured");
 }
+
+/// Tangent asked a little more than one full mirror step: the remainder, half a least step,
+/// is shorter than the side's knot can carry, and a mirror step that short leaves a sliver
+/// span the knot fixup merges or spreads. What is left is split in two instead, so every
+/// span of the extension is at least a least step long, and its end is the length asked.
+#[test]
+fn tangent_past_one_mirror_step_leaves_no_sliver_span() {
+    let s = quarter();
+    let SurfaceKind::BSpline(b) = s.kind() else {
+        panic!()
+    };
+    let net = b.gw_nurb().unwrap().clone();
+    let source = Local::of(&net, BoxSide::UMax).unwrap();
+    let least = source.least_step().unwrap();
+    let e = source.range().unwrap() + 0.5 * least;
+    let g = source.extended(Continuity::Tangent, e).unwrap().unwrap();
+    let mut gaps = g
+        .knots
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .filter(|&gap| gap > 0.0);
+    assert!(gaps.all(|gap| gap >= least), "{:?}", g.knots);
+    let end = source.end().unwrap() + e;
+    assert!(
+        (g.end().unwrap() - end).abs() <= 4.0 * f64::EPSILON * end.abs(),
+        "{:?}",
+        g.knots
+    );
+}
