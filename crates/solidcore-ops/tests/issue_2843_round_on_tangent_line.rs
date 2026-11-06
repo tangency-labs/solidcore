@@ -2,6 +2,7 @@
 //! a corner round. The cylinder's end disc stands on the seam, so a face lies between the seam
 //! and the other side edge: the rail ends on the seam, and the disc's plane ends the round.
 
+#![allow(clippy::disallowed_methods)] // closed-form oracle, not ops geometry
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test
 
 mod common;
