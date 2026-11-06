@@ -144,6 +144,100 @@ impl BPoly {
 ///
 /// `SM_ERR` without NURB data; those of the Bézier decomposition.
 pub fn lies_on(form: &BSplineSurface, a: &Implicit) -> Result<bool> {
+    Ok(residuals(form, a)?
+        .iter()
+        .all(|&(largest, rounding)| largest <= rounding))
+}
+
+/// Whether `continued`, `source`'s net continued Natural past the ends of its knot vectors
+/// (the homogeneous polynomial of each end span carried on, the source's own spans kept),
+/// lies on `a`, which `source` lies on within its rounding.
+///
+/// The equation composed with the net is the same polynomial on the continuation, but the
+/// source's net is on `a` only to its rounding, and the continuation carries that residual
+/// out with it: [`lies_on`]'s bound, the rounding of the check alone, holds for it only near
+/// the source. So every coefficient of `continued` is held to its own rounding plus the
+/// source's residual grown by the continuation:
+/// - `R`, the largest coefficient of `source`'s patches plus the rounding of computing it,
+///   bounds the true coefficients of every source patch;
+/// - an end span `[a, b]` of length `L`, continued by `e` past `b` (or before `a`), is the
+///   same polynomial on the wider interval. A Bernstein coefficient there is its blossom at
+///   the new ends, and each new end is the affine combination `(1 - s) a + s b` with
+///   `|1 - s| + |s| = 1 + 2 e / L`, so the blossom being affine in each of its `m`
+///   arguments, every coefficient on the wider interval, and on any piece of it, is within
+///   `(1 + 2 e / L)^m` of the largest on `[a, b]` (`m` the equation's degree times the
+///   net's in that direction);
+/// - in both directions the two factors multiply.
+///
+/// `continued` must have `source`'s degrees and be its Natural continuation; this bounds
+/// the residual, it does not prove that.
+///
+/// # Errors
+///
+/// `SM_ERR` without NURB data or a knot vector without a span; those of the Bézier
+/// decomposition.
+pub fn continuation_lies_on(
+    source: &BSplineSurface,
+    continued: &BSplineSurface,
+    a: &Implicit,
+) -> Result<bool> {
+    let from = residuals(source, a)?
+        .iter()
+        .fold(0.0_f64, |m, &(largest, rounding)| m.max(largest + rounding));
+    let src = source.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
+    let out = continued.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
+    let d = equation_degree(a);
+    let growth = growth(src.u_knots(), out.u_knots(), d * src.p())?
+        * growth(src.v_knots(), out.v_knots(), d * src.q())?;
+    // the rounding of this bound itself, a few ulps
+    let allowed = from * growth * (1.0 + gamma(8));
+    Ok(residuals(continued, a)?
+        .iter()
+        .all(|&(largest, rounding)| largest <= rounding + allowed))
+}
+
+/// The degree of `a`'s equation in the homogeneous coordinates.
+fn equation_degree(a: &Implicit) -> usize {
+    match a {
+        Implicit::Plane { .. } => 1,
+        Implicit::Cone { .. } | Implicit::Sphere { .. } => 2,
+        Implicit::Torus { .. } => 4,
+    }
+}
+
+/// How much a polynomial of degree `m` on the end spans of the knots `source` can grow on
+/// the knots `continued` reach past them, as a Bernstein coefficient
+/// ([`continuation_lies_on`]): `(1 + 2 e / L)^m` for the end that grows most, 1 where
+/// neither end is continued.
+fn growth(source: &[f64], continued: &[f64], m: usize) -> Result<f64> {
+    let (Some(&a), Some(&b), Some(&a2), Some(&b2)) = (
+        source.first(),
+        source.last(),
+        continued.first(),
+        continued.last(),
+    ) else {
+        return Err(SolidError::sm_err(OP));
+    };
+    // the end spans: from each end to the first knot past it
+    let first = source
+        .iter()
+        .find(|&&x| x > a)
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    let last = source
+        .iter()
+        .rev()
+        .find(|&&x| x < b)
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    let factor = |e: f64, l: f64| 1.0 + 2.0 * e.max(0.0) / l;
+    let f = factor(a - a2, first - a).max(factor(b2 - b, b - last));
+    let m = i32::try_from(m).map_err(|_| SolidError::sm_err(OP))?;
+    Ok(f.powi(m))
+}
+
+/// The largest absolute Bernstein coefficient of `a`'s equation on each Bézier patch of
+/// `form`, with the rounding of computing it ([`lies_on`]).
+fn residuals(form: &BSplineSurface, a: &Implicit) -> Result<Vec<(f64, f64)>> {
+    let mut out = Vec::new();
     let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
     let origin = match *a {
         Implicit::Plane { origin, .. } | Implicit::Cone { origin, .. } => origin,
@@ -226,18 +320,18 @@ pub fn lies_on(form: &BSplineSurface, a: &Implicit) -> Result<bool> {
                 }
             };
             let tol = gamma(4 * degree * (p + 1) * (q + 1) + 16) * scale;
-            let within = |v: &f64| {
-                matches!(
-                    v.abs().partial_cmp(&tol),
-                    Some(core::cmp::Ordering::Less | core::cmp::Ordering::Equal)
-                )
-            };
-            if !f.c.iter().all(within) {
-                return Ok(false);
-            }
+            // a NaN coefficient is within nothing
+            let largest = f.c.iter().fold(0.0_f64, |m, x| {
+                if x.is_nan() {
+                    f64::INFINITY
+                } else {
+                    m.max(x.abs())
+                }
+            });
+            out.push((largest, tol));
         }
     }
-    Ok(true)
+    Ok(out)
 }
 
 const OP_EXACT: &str = "surface::implicit::check_exact_net";

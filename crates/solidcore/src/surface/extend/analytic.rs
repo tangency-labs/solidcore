@@ -10,7 +10,8 @@
 //! analytic itself ([`Surface::continued`]) rebuilds its canonical form over the wider STEP
 //! box, which moves every kept UV trim. The implicit equation composed with the net is a
 //! polynomial identity, so it holds on its continuation: the result is certified on the
-//! analytic on its net ([`lies_on`]), within its rounding. It is a B-spline, carrying the
+//! analytic on its net ([`continuation_lies_on`]), within its rounding and the source net's
+//! own residual as the continuation carries it out. It is a B-spline, carrying the
 //! source's kept exact round where it has one (#2487); an offset surface of an analytic is
 //! the offset of its base so extended.
 //!
@@ -66,7 +67,7 @@ use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use crate::nurbs::math::{gamma, NOW};
 use crate::nurbs::srf_basic::{Direction, Surface as Net};
 use crate::nurbs::srf_tool::p1::extract_iso_crv;
-use crate::surface::implicit::{lies_on, AnalyticSupport, Implicit};
+use crate::surface::implicit::{continuation_lies_on, AnalyticSupport, Implicit};
 use crate::surface::offset_surface::{OffsetSurface, SS_UNKNOWN};
 use crate::surface::side::{Across, BoxSide, Bracket};
 use crate::surface::surface::{Surface, SurfaceKind};
@@ -229,7 +230,7 @@ pub(super) fn analytic_extended_sides(
         ..frame
     };
     let dom_src = carrier.natural_uv_domain_with_nurb(k)?;
-    let mut cur = form;
+    let mut cur = form.clone();
     let mut sides = [SideExtension::NotAsked; 4];
     let mut extension = 0.0_f64;
     for (&side, done) in BoxSide::ALL.iter().zip(sides.iter_mut()) {
@@ -284,7 +285,7 @@ pub(super) fn analytic_extended_sides(
             extension,
         }));
     }
-    if !lies_on(&cur, &implicit)? {
+    if !continuation_lies_on(&form, &cur, &implicit)? {
         return Err(refused(ExtendRefusal::NotExact, None));
     }
     let mut surface = carrier.carry_round_on_continuation(Surface::from(cur));
