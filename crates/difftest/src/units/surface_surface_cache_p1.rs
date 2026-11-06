@@ -1054,7 +1054,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
 // ---- input contract -----------------------------------------------------------------
 
 /// The size bounds of the surface and curve blocks.
-const LIMITS: Limits = Limits {
+pub(crate) const LIMITS: Limits = Limits {
     max_index: 32,
     max_degree: 7,
     max_coord: 1e6,
@@ -1064,11 +1064,11 @@ const MAX_NODES: usize = 256;
 /// Object indices (faces, pointers) are below this.
 const MAX_OBJECTS: i64 = 4096;
 
-fn fin(v: f64) -> bool {
+pub(crate) fn fin(v: f64) -> bool {
     contract::finite(v, LIMITS.max_coord)
 }
 
-fn vec3(v: &[f64; 3]) -> bool {
+pub(crate) fn vec3(v: &[f64; 3]) -> bool {
     contract::vec3(v, LIMITS.max_coord)
 }
 
@@ -1081,11 +1081,11 @@ pub(crate) fn bss_block(b: &BssIn) -> Option<contract::SurfaceBlock> {
         .flatten()
 }
 
-fn inline_block(s: &InlineSrf) -> bool {
+pub(crate) fn inline_block(s: &InlineSrf) -> bool {
     contract::surface_block(&s.net, s.p, s.q, &s.u, &s.v, &LIMITS).is_some()
 }
 
-fn curves_ok(c: Option<&Vec<CrvIn>>) -> bool {
+pub(crate) fn curves_ok(c: Option<&Vec<CrvIn>>) -> bool {
     c.is_none_or(|v| {
         v.len() < 9
             && v
@@ -1096,7 +1096,7 @@ fn curves_ok(c: Option<&Vec<CrvIn>>) -> bool {
 
 /// Alternate cache user data: a finite vector, an integer long within `2e9`, a finite
 /// double and an object index in `[-1, MAX_OBJECTS)`.
-fn key_ok(k: &KeyIn) -> bool {
+pub(crate) fn key_ok(k: &KeyIn) -> bool {
     let l = k.l.unwrap_or(0);
     let p = k.p.unwrap_or(-1);
     vec3(&k.vec.unwrap_or([0.0; 3]))

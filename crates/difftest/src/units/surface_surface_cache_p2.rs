@@ -15,7 +15,8 @@
 //! block subdivision of a node with a surface, `SmSurface::IsSingularity` in the Bezier
 //! approximation of B-splines, `SmSurface::CalculateBoundingBox` / `CreateIsoParametricCurve`
 //! of planes and curve-bounded surfaces, `SmSurface::EvaluateNormal` in the bounding planes).
-//! Every run has at least [`MIN_GENERATED`] generated cases.
+//! Every run has at least [`MIN_GENERATED`] generated cases; generated inputs outside the C++
+//! reference wrapper's input contract ([`keeps_contract`]) are redrawn.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,11 +43,13 @@ use solidcore::surface::surface_cache::p2 as sc;
 use solidcore::SolidError;
 
 use super::surface_surface_cache_p1::{
-    alt_type, bss_of, curves_of, domain_of_srf, flag, gen_bss, gen_curve, gen_key, gen_srf,
-    gen_sub_dom, gvec, harness, key_of, perturb_key, push3, push_box, push_dom, srf, status,
-    surface_of, v3, BssIn, CrvIn, InlineSrf, KeyIn, SrfIn,
+    alt_type, bss_block, bss_of, curves_ok, curves_of, domain_of_srf, flag, gen_bss, gen_curve, gen_key, gen_srf,
+    gen_sub_dom, gvec, harness, inline_block, key_of, key_ok, perturb_key, push3, push_box, push_dom, srf, status,
+    surface_of, v3, fin, BssIn, CrvIn, InlineSrf, KeyIn, SrfIn,
 };
+use super::surface_surface_cache_p1::LIMITS;
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -557,6 +560,102 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The surface block of a case's surface and whether it is a curve bounded one: a
+/// [`contract::plane`] (its domain) or a [`bss_block`].
+fn surf_block(s: &SurfIn) -> Option<([f64; 4], bool)> {
+    match s {
+        SurfIn::Plane(p) => contract::plane(&p.o, &p.x, &p.y, p.scale, p.dom, LIMITS.max_coord)
+            .then_some((p.dom, false)),
+        SurfIn::Bspline(b) | SurfIn::RawBspline(b) => bss_block(b).map(|s| (s.dom, false)),
+        SurfIn::CurveBounded(b) | SurfIn::RawCurveBounded(b) => {
+            bss_block(b).map(|s| (s.dom, true))
+        }
+    }
+}
+
+fn opts_ok(o: &OptsIn) -> bool {
+    [o.chord, o.ang, o.aspect, o.max_side, o.min_side, o.ratio, o.start]
+        .iter()
+        .all(|&v| fin(v))
+}
+
+/// Whether a tessellation tolerance is unset (0) or at least `min`.
+fn bounded_split(v: f64, min: f64) -> bool {
+    v == 0.0 || v >= min
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_cache_p2.rs`, `validate`): a
+/// [`surf_block`] surface (a B-spline for `bez_block`) and the op's parameters: domains
+/// inside the surface's (of non-degenerate sides for `test`), up to 8 bounding plane indices
+/// up to 3, up to 8 adds and 8 queries of types up to 1 with finite tolerances, bounded keys
+/// and well-formed curves, finite options; a `test` node of aux type 3 (with a well-formed
+/// Bezier patch and ordered pseudo box intervals), 4 or 6 (over a B-spline only); a
+/// `subdiv_block` over a B-spline or plane unless the node has no surface, with chord, angle
+/// and side tolerances unset or at least `1e-3`, `0.05` and `0.05`.
+fn keeps_contract(i: &Inputs) -> bool {
+    let max = LIMITS.max_coord;
+    if let OpIn::BezBlock = i.op {
+        return matches!(&i.surf, SurfIn::Bspline(b) if bss_block(b).is_some());
+    }
+    let Some((d, bounded)) = surf_block(&i.surf) else {
+        return false;
+    };
+    match &i.op {
+        OpIn::BezBlock | OpIn::ApproxBlock => true,
+        OpIn::Nth { dom, idx } => {
+            contract::domain_in(dom, &d, false, max) && idx.len() <= 8 && idx.iter().all(|&k| k <= 3)
+        }
+        OpIn::Add { adds, queries } => {
+            adds.len() <= 8
+                && adds.iter().all(|a| {
+                    a.ty <= 1
+                        && fin(a.approx)
+                        && fin(a.angle)
+                        && key_ok(&a.key)
+                        && curves_ok(a.c3.as_ref())
+                        && curves_ok(a.cuv.as_ref())
+                })
+                && queries.len() <= 8
+                && queries
+                    .iter()
+                    .all(|q| q.ty <= 1 && fin(q.approx) && fin(q.angle) && key_ok(&q.key))
+        }
+        OpIn::Test {
+            cache_dom,
+            opts,
+            aux,
+            dom,
+            bez,
+            ivl,
+            ..
+        } => {
+            let bspline = matches!(i.surf, SurfIn::Bspline(_) | SurfIn::RawBspline(_));
+            contract::domain(cache_dom, max)
+                && opts_ok(opts)
+                && matches!(aux, 3 | 4 | 6)
+                && (*aux != 6 || bspline)
+                && contract::domain_in(dom, &d, true, max)
+                && (*aux != 3
+                    || (bez
+                        .as_ref()
+                        .and_then(|b| srf(b).ok())
+                        .is_some_and(|b| inline_block(&b))
+                        && ivl.iter().all(|&[lo, hi]| fin(lo) && fin(hi) && lo <= hi)))
+        }
+        OpIn::SubdivBlock { opts, dom, nosurf } => {
+            opts_ok(opts)
+                && contract::domain_in(dom, &d, false, max)
+                && (*nosurf || !bounded)
+                && bounded_split(opts.chord, 1e-3)
+                && bounded_split(opts.ang, 0.05)
+                && bounded_split(opts.max_side, 0.05)
+        }
+    }
+}
+
 // ---- generated cases ----------------------------------------------------------------
 
 /// Scales the net coordinates of `s` by `f` (huge / tiny surfaces).
@@ -874,7 +973,9 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         for _ in 0..64 {
             if let Ok(i) = gen_case(rng) {
-                return serde_json::to_value(i).ok();
+                if keeps_contract(&i) {
+                    return serde_json::to_value(i).ok();
+                }
             }
         }
         None
@@ -910,6 +1011,9 @@ mod tests {
             let Ok(i) = gen_case(&mut rng) else {
                 continue;
             };
+            if !keeps_contract(&i) {
+                continue;
+            }
             let op = serde_json::to_value(&i.op).unwrap()["op"].as_str().unwrap().to_string();
             let out = rust(&i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
