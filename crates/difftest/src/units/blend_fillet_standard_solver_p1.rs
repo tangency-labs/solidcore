@@ -417,15 +417,6 @@ pub(crate) fn put_default_geom(
 
 // ---- C++ side -----------------------------------------------------------------------
 
-pub(crate) fn push_crv(o: &mut Vec<f64>, c: &InlineCrv) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
 /// Splits a flat record into `status` and `out`.
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat

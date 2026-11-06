@@ -1,5 +1,5 @@
-//! Runner for unit `blend.fillet_executive_p1`. C++:
-//! `solidcore_ffi::units::blend_fillet_executive_p1`. Rust:
+//! Runner for unit `blend.fillet_executive_p1`. Ported from upstream
+//! `source/SMLib/src/SmFilletExecutive.cpp`; checked against its golden. Rust:
 //! `solidcore::blend::fillet_executive::p1`.
 //!
 //! Two kinds of case. A law case (`law_eval`) builds a law (base, linear or B-spline,
@@ -28,14 +28,25 @@ use solidcore::geom::object::OBJECT_TYPE;
 use solidcore::math::EFF_ZERO;
 use solidcore::nurbs::math::NOW;
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_executive_p1 as ffi;
 
 use super::blend_fillet_standard_solver_p1::{
-    bcurve_of, dump_curve, push_crv, status, uniform_knots, InlineCrv,
+    bcurve_of, dump_curve, status, uniform_knots, InlineCrv,
 };
 use crate::util::flag;
 use crate::runner::default_cases;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
+
+/// Most calls in a script.
+const MAX_SCRIPT: usize = 64;
+
+/// Largest handle.
+const MAX_HANDLE: usize = 1 << 20;
+
+/// Longest text.
+const MAX_TEXT: usize = 1200;
+
+/// Most entries of a list argument.
+const MAX_LIST: usize = 16;
 
 /// `blend.fillet_executive_p1` runner.
 pub struct Runner;
@@ -86,29 +97,6 @@ enum CaseIn {
     },
     Law(Inputs),
     Object(ObjectIn),
-}
-
-fn cpp_input(i: &Inputs) -> Vec<f64> {
-    let mut o = Vec::new();
-    match &i.law {
-        LawIn::Linear { r0, r1 } => o.extend([0.0, *r0, *r1]),
-        LawIn::Bspline { c } => {
-            o.push(1.0);
-            push_crv(&mut o, c);
-        }
-        LawIn::Base => o.push(2.0),
-    }
-    match i.map {
-        Some([a, b]) => o.extend([1.0, a, b]),
-        None => o.extend([0.0, 0.0, 0.0]),
-    }
-    o.push(i.calls.len() as f64);
-    for c in &i.calls {
-        o.extend([c.t, c.ivl[0], c.ivl[1], flag(c.reverse)]);
-    }
-    o.push(i.kinds.len() as f64);
-    o.extend(i.kinds.iter().map(|&k| k as f64));
-    o
 }
 
 pub(crate) fn to_output(flat: &[f64]) -> Output {
@@ -250,17 +238,6 @@ impl UnitDiff for Runner {
         "blend.fillet_executive_p1"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let flat = match case.parse()? {
-            CaseIn::Topo { remove_topo_edges } => return topo::cpp(&remove_topo_edges),
-            CaseIn::Loader { loader } => super::blend_fillet_executive_p2::loader_cpp(&loader),
-            CaseIn::Law(i) => ffi::law_eval(&cpp_input(&i)),
-            CaseIn::Object(i) => ffi::object_eval(i.parts().0, &object_cpp_input(&i)),
-        }
-        .map_err(|e| HarnessError::new(e.to_string()))?;
-        Ok(to_output(&flat))
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         match case.parse()? {
             CaseIn::Topo { remove_topo_edges } => topo::rust(&remove_topo_edges),
@@ -380,7 +357,7 @@ fn out_handle(h: Option<H>) -> f64 {
     match h {
         None => 0.0,
         Some(SELF) => -1.0,
-        Some(H(h)) if h <= MADE && h > MADE - ffi::MAX_SCRIPT as u32 => {
+        Some(H(h)) if h <= MADE && h > MADE - MAX_SCRIPT as u32 => {
             -2.0 - f64::from(MADE - h)
         }
         Some(H(h)) => f64::from(h),
@@ -485,134 +462,6 @@ enum Step {
 enum ObjectIn {
     ErrorInfo { exec: u32, script: Vec<Step> },
     Executive { target: u32, script: Vec<Step> },
-}
-
-impl ObjectIn {
-    fn parts(&self) -> (ffi::ObjectOp, u32, &[Step]) {
-        match self {
-            Self::ErrorInfo { exec, script } => (ffi::ObjectOp::ErrorScript, *exec, script),
-            Self::Executive { target, script } => (ffi::ObjectOp::ExecScript, *target, script),
-        }
-    }
-}
-
-fn push_text(o: &mut Vec<f64>, t: Option<&String>) {
-    match t {
-        None => o.push(-1.0),
-        Some(t) => {
-            o.push(t.len() as f64);
-            o.extend(t.bytes().map(f64::from));
-        }
-    }
-}
-
-fn push_list(o: &mut Vec<f64>, hs: &[u32]) {
-    o.push(hs.len() as f64);
-    o.extend(hs.iter().map(|&h| f64::from(h)));
-}
-
-fn object_cpp_input(i: &ObjectIn) -> Vec<f64> {
-    let (_, handle, script) = i.parts();
-    let mut o = vec![f64::from(handle), script.len() as f64];
-    for s in script {
-        match s {
-            Step::Note { code, comment } => {
-                o.extend([0.0, f64::from(*code)]);
-                push_text(&mut o, comment.as_ref());
-            }
-            Step::Edge {
-                edge,
-                status,
-                code,
-                comment,
-            } => {
-                o.extend([1.0, f64::from(*edge), f64::from(*status), f64::from(*code)]);
-                push_text(&mut o, comment.as_ref());
-            }
-            Step::Merge {
-                code,
-                status,
-                edge,
-                face,
-                fillet_edge,
-                surface,
-                comment,
-            } => {
-                o.extend([2.0, f64::from(*code), f64::from(*status)]);
-                o.extend([*edge, *face, *fillet_edge, *surface].map(f64::from));
-                push_text(&mut o, comment.as_ref());
-            }
-            Step::Corner {
-                code,
-                corner,
-                status,
-                name,
-                vertex,
-                surfaces,
-                fillet_vertices,
-                comment,
-            } => {
-                o.extend([3.0, f64::from(*code), f64::from(*corner), f64::from(*status)]);
-                push_text(&mut o, name.as_ref());
-                o.push(f64::from(*vertex));
-                o.extend(surfaces.map(f64::from));
-                o.extend(fillet_vertices.map(f64::from));
-                push_text(&mut o, comment.as_ref());
-            }
-            Step::FilletEdge {
-                code,
-                status,
-                fe_type,
-                fillet_edge,
-                name,
-                comment,
-            } => {
-                o.extend([4.0, f64::from(*code), f64::from(*status), f64::from(*fe_type)]);
-                o.push(f64::from(*fillet_edge));
-                push_text(&mut o, name.as_ref());
-                push_text(&mut o, comment.as_ref());
-            }
-            Step::Intersection {
-                code,
-                status,
-                edge,
-                surfaces,
-                curves,
-                edges,
-                at,
-                comment,
-            } => {
-                o.extend([5.0, f64::from(*code), f64::from(*status), f64::from(*edge)]);
-                push_list(&mut o, surfaces);
-                push_list(&mut o, curves);
-                push_list(&mut o, edges);
-                o.extend(*at);
-                push_text(&mut o, comment.as_ref());
-            }
-            Step::GlobalMerge { on } => o.extend([10.0, flag(*on)]),
-            Step::Trimming { on } => o.extend([11.0, flag(*on)]),
-            Step::Handler { h } => o.extend([12.0, f64::from(*h)]),
-            Step::AddGenerator { h } => o.extend([13.0, f64::from(*h)]),
-            Step::AddTopoEdge { h } => o.extend([14.0, f64::from(*h)]),
-            Step::RemoveTopoEdge { h } => o.extend([15.0, f64::from(*h)]),
-            Step::MapCorner { v, c } => o.extend([16.0, f64::from(*v), f64::from(*c)]),
-            Step::MapSolver { eu, s } => o.extend([17.0, f64::from(*eu), f64::from(*s)]),
-            Step::CornerOf { v } => o.extend([18.0, f64::from(*v)]),
-            Step::SolverOf { eu } => o.extend([19.0, f64::from(*eu)]),
-            Step::MakeCorner { v } => o.extend([21.0, f64::from(*v)]),
-            Step::Bevel { v } => o.extend([22.0, f64::from(*v)]),
-            Step::NoteFilletError {
-                code,
-                fe_type,
-                status,
-                comment,
-            } => {
-                o.extend([20.0, f64::from(*code), f64::from(*fe_type), f64::from(*status)]);
-                push_text(&mut o, comment.as_ref());
-            }
-        }
-    }
-    o
 }
 
 fn bad_code(what: &str) -> HarnessError {
@@ -976,7 +825,7 @@ fn gen_handle(rng: &mut Rng) -> u32 {
     match rng.below(10) {
         0..=1 => 0,
         2..=8 => rng.below(6) as u32 + 1,
-        _ => rng.range_i64(7, ffi::MAX_HANDLE as i64) as u32,
+        _ => rng.range_i64(7, MAX_HANDLE as i64) as u32,
     }
 }
 
@@ -988,7 +837,7 @@ fn gen_text(rng: &mut Rng) -> Option<String> {
     let len = match rng.below(10) {
         0..=1 => return None,
         2 => 0,
-        3 => rng.range_i64(1000, ffi::MAX_TEXT as i64) as usize,
+        3 => rng.range_i64(1000, MAX_TEXT as i64) as usize,
         _ => rng.below(40) as usize,
     };
     let wide = len < 200 && rng.chance(0.4);
@@ -1003,7 +852,7 @@ fn gen_text(rng: &mut Rng) -> Option<String> {
 }
 
 fn gen_list(rng: &mut Rng) -> Vec<u32> {
-    (0..rng.below(ffi::MAX_LIST as u64 + 1))
+    (0..rng.below(MAX_LIST as u64 + 1))
         .map(|_| gen_handle(rng))
         .collect()
 }
