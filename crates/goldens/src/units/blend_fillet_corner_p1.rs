@@ -362,8 +362,8 @@ const KINDS: [Option<FilletCornerKind>; 11] = [
 ];
 
 /// A case on a corner of the deleted `SmFillet1x1Corner` or `SmFillet2x2Corner` (#2400),
-/// or `SmFilletNx1ClosedCorner` (#2349): not run, no Rust class is left to compare
-/// (plan/difftest-waivers.toml).
+/// or `SmFilletNx1ClosedCorner` (#2349): not run, no Rust class is left to construct;
+/// their golden rows are retired with the class.
 fn retired(case: &Case) -> bool {
     retired_inputs(&case.inputs)
 }

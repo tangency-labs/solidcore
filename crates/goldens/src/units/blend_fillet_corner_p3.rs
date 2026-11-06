@@ -291,7 +291,7 @@ fn kind_of(i: usize) -> Result<FilletCornerKind, HarnessError> {
 /// #2349), or `AdjustTangentCorner` (the Nx2
 /// override went with the fork's smlib#113 34288e5, the closed Nx1 one with caa67d0;
 /// every corner's is the base class's success now). Not run: no Rust code is left to
-/// compare (plan/difftest-waivers.toml).
+/// construct; their golden rows are retired with the class.
 fn retired(case: &Case) -> bool {
     matches!(
         case.parse::<Inputs>(),

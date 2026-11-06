@@ -42,3 +42,32 @@ Before this change, on main 4b10d7d6e and on the rebased #2381 head 9aa43f084,
 source-file-box_w_slot-all-edges, source-file-cyl_on_box_w_fillet-all-edges and
 sweep4-sphere_diff_3cylinders-all-r0.1 (main's CI report, run 41980837473). This change
 does not touch them.
+
+## Goldens migration (2026-11-06)
+
+Main `3168565c1` removes the C++ harness. The rebase preserves the historical native
+observations above, keeps the deleted mismatch files deleted, and adds no ratchet waiver.
+The current runner and its retirement assertions live in `crates/goldens`.
+
+Before blessing, checking the rebased closed-Turn branch against the allocation branch's
+goldens measured exactly the intended representation changes:
+
+| Unit | Removed rows | Changed rows | Change |
+| --- | --- | --- | --- |
+| `blend.fillet_corner_p1` | 16 | 0 | direct construction of the deleted class |
+| `blend.fillet_corner_p2` | 44 | 0 | direct construction of the deleted class |
+| `blend.fillet_corner_p3` | 5 | 2 | `gen0011`, `gen0332`: `ints.type` 7 to 9, `ints.g1` 0 to -1 |
+| `blend.fillet_executive_p3` | 0 | 8 | intermediate teardrop checkpoints: corner type 7 to 9 |
+
+No cases were added by the closed-Turn change. Every retained floating-point value,
+topology record, operation status and other integer is unchanged. The executive's
+`prefix_state` and, where present, `before_direct_topology` retain all their fields;
+only the class at index 5 changes. The other five affected units have no golden changes.
+The ten live tangent-solver expectations remain; six direct requests for the retired
+class explicitly assert its unavailable-class error rather than being silently skipped.
+
+The allocation branch adds eight intermediate checkpoint rows. Its two full-body
+teardrops remain known failing on the true-round and fit-size contracts, with no golden
+rows. The closed Turn preserves those failures and the existing unrelated setback
+failure on #2933. No incorrect full-body geometry is blessed, no tolerance is relaxed,
+and no fresh C++ execution is claimed after main removes the harness.
