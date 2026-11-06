@@ -307,7 +307,10 @@ fn split_tool(t: &Value) -> Result<Tool, Stop> {
                 },
                 radius: c["radius"].as_f64().ok_or_else(|| bad("radius"))?,
             },
-            domain: [v2(c, "angle_deg")?.map(f64::to_radians), v2(c, "height")?],
+            domain: [
+                v2(c, "angle_deg")?.map(|angle| angle * (std::f64::consts::PI / 180.0)),
+                v2(c, "height")?,
+            ],
         });
     }
     Err(Stop::Unsupported(
