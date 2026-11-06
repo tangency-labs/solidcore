@@ -526,17 +526,6 @@ fn push_surface(v: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
     Ok(())
 }
 
-/// The `.smb` path of a B-rep input ("" when it is not a file).
-pub(super) fn path_of(b: Option<&BrepIn>) -> Result<String, HarnessError> {
-    match b {
-        Some(BrepIn::File { file, .. }) => {
-            let p = crate::fixtures::upstream_test_file(&crate::case::repo_root(), file)?;
-            Ok(p.to_string_lossy().into_owned())
-        }
-        _ => Ok(String::new()),
-    }
-}
-
 pub(super) fn brep_block(v: &mut Vec<f64>, b: &BrepIn) -> Result<(), HarnessError> {
     match b {
         BrepIn::File { rebuild, .. } => {
@@ -572,19 +561,6 @@ fn blocks(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         None => v.push(0.0),
     }
     Ok(v)
-}
-
-/// A build failure as an operation error.
-pub(super) fn build_failure(export: &[f64]) -> Output {
-    Output::err(format!(
-        "brep_build_{}_status_{}",
-        if export.first() == Some(&-3.0) {
-            "b"
-        } else {
-            "a"
-        },
-        export.get(1).copied().unwrap_or(0.0)
-    ))
 }
 
 /// The magnitude from which `IntersectInsertRelate`'s full intersection does not finish

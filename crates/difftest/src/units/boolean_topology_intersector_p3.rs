@@ -1,14 +1,12 @@
-//! Runner for unit `boolean.topology_intersector_p3`. C++:
-//! `solidcore_ffi::units::boolean_topology_intersector_p3` (shim
-//! `harness/cpp/shim/boolean_topology_intersector_p3.cpp`). Rust:
-//! `solidcore::boolean::topology_intersector::p3`.
+//! Runner for unit `boolean.topology_intersector_p3`: upstream `SmTopologyIntersector`'s
+//! merges ported into `solidcore::boolean::topology_intersector::p3`, checked against the
+//! unit's golden.
 //!
-//! **Two real B-reps.** Each case builds two `SmBrep`s on the C++ side (an upstream
-//! `.smb` file, often the same file twice so that every edge has a coincident partner,
-//! or the wire network of `prog_test` `my_test_topology`), makes an
-//! `SmTopologyIntersector` over them, relates some vertex or edge pairs first, and runs
-//! one of the unit's three merges. The Rust side builds the same B-reps with the Rust
-//! kernel (the p1 runner's `own_breps`; no C++ export reaches it) into the
+//! **Two real B-reps.** Each case builds two B-reps (an upstream `.smb` file, often the
+//! same file twice so that every edge has a coincident partner, or the wire network of
+//! `prog_test` `my_test_topology`), relates some vertex or edge pairs first, and runs
+//! one of the unit's three merges. The B-reps are built by the Rust kernel (the p1
+//! runner's `own_breps`) into the
 //! `boolean.topology_intersector_p1` runner's two-B-rep adapter (`Two`, extended here
 //! with [`IntersectorBrepP3`]) and runs the same merge on a [`TopologyIntersector`].
 //! Both sides produce one flat record: the pre-relation statuses, the merge's status
@@ -61,20 +59,17 @@ use solidcore::topology::face::p4 as fp4;
 use solidcore::topology::loopuse as lu;
 use solidcore::topology::proto_topology::ProtoBrep;
 use solidcore::topology::{
-    Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopuseId, VertexId, VertexuseId,
+    Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopuseId, VertexId,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::boolean_topology_intersector_p1 as ffi1;
-use solidcore_ffi::units::boolean_topology_intersector_p3::{self as ffi, Op};
 
 use super::boolean_topology_intersector_p1::{
-    brep_block, brep_h, build_failure, own_breps, BrepPair, eid, fid, flag, harness, hd, path_of, put_h, BrepIn, Hin,
+    brep_h, own_breps, eid, fid, flag, harness, hd, put_h, BrepIn, Hin,
     Two, H, K_BREP, K_EDGE, K_EDGE_CURVE, K_FACE, K_FACE_SURFACE, K_NULL, K_TRIM_CURVE, K_VERTEX,
     K_VERTEXUSE,
     NULL_DEREF, TI_HANDLE,
 };
 use super::boolean_merge_p1::Canon;
-use super::topology_vertexuse::import;
 use crate::case::{CaseContext, CaseSource};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -227,24 +222,6 @@ struct Prepared {
     merge: MergeR,
 }
 
-/// The two B-rep blocks of a case.
-fn blocks(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    brep_block(&mut v, &i.brep_a)?;
-    match &i.brep_b {
-        Some(b) => {
-            v.push(1.0);
-            brep_block(&mut v, b)?;
-        }
-        None => v.push(0.0),
-    }
-    Ok(v)
-}
-
-fn paths(i: &Inputs) -> Result<[String; 2], HarnessError> {
-    Ok([path_of(Some(&i.brep_a))?, path_of(i.brep_b.as_ref())?])
-}
-
 /// The edge interval of an edge-curve handle's edge.
 fn edge_interval_of(two: &Two, curve: Option<H>) -> Option<Extent1d> {
     let c = curve?;
@@ -268,100 +245,15 @@ fn resolve_class(c: &ClassIn, counts: &Counts, two: &Two) -> ClassR {
     }
 }
 
-/// Puts each imported vertex's uses in upstream's list order. The shared import lists
-/// them in arena order (its export does not carry the order), which `GetEdges` /
-/// `GetVertexuses` and so the "first edge" choices of `sm_MakeConsistentClassifications`
-/// read.
-fn apply_vertex_use_order(
-    out: &[f64],
-    brep_a: &mut Brep,
-    brep_b: Option<&mut Brep>,
-) -> Result<(), HarnessError> {
-    let bad = || harness("vertex use order: malformed output");
-    if out.first() != Some(&0.0) {
-        return Err(bad());
-    }
-    let mut at = 1usize;
-    let next = |at: &mut usize| -> Result<f64, HarnessError> {
-        let v = *out.get(*at).ok_or_else(bad)?;
-        *at += 1;
-        Ok(v)
+/// Builds the case's B-reps (the p1 runner's [`own_breps`]: the Rust `.smb` reader and
+/// constructors, renumbered into the reference fixture's traversal order, each vertex's
+/// uses in their native list order) and resolves the relations and the merge on them.
+fn prepare(i: &Inputs) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
+    let (brep_a, brep_b) = match own_breps(&i.brep_a, i.brep_b.as_ref()) {
+        Ok(Ok(x)) => x,
+        Ok(Err(o)) => return Err(Box::new(Ok(o))),
+        Err(e) => return Err(Box::new(Err(e))),
     };
-    for b in [Some(brep_a), brep_b] {
-        let n = next(&mut at)?;
-        let Some(b) = b else {
-            if n != -1.0 {
-                return Err(bad());
-            }
-            continue;
-        };
-        if n < 0.0 || n as usize != b.vertices().len() {
-            return Err(bad());
-        }
-        for v in 0..b.vertices().len() {
-            let k = next(&mut at)? as usize;
-            let mut order = Vec::new();
-            for _ in 0..k {
-                let u = next(&mut at)?;
-                // (a use the export's walk never registered is not in the import either:
-                // the rest keep their relative order)
-                if u >= 0.0 {
-                    order.push(VertexuseId::from_index(u as u32));
-                }
-            }
-            let id = VertexId::from_index(u32::try_from(v).map_err(|_| bad())?);
-            let rec = b.vertex_mut(id).map_err(|e| harness(e.to_string()))?;
-            let mut have = rec.vertexuses.clone();
-            let mut want = order.clone();
-            have.sort();
-            want.sort();
-            if have != want {
-                return Err(harness(
-                    "vertex use order: not a permutation of the imported uses",
-                ));
-            }
-            rec.vertexuses = order;
-        }
-    }
-    Ok(())
-}
-
-/// The B-reps a side resolves the merge on: the Rust build of the p1 runner's
-/// [`own_breps`] (the Rust `.smb` reader and constructors, renumbered into the
-/// fixture's traversal order, each vertex's uses in their native list order; no C++
-/// export reaches the Rust side). The C++ side resolves on the same Rust build, so both
-/// get the same numbers, and only when the Rust build fails on the import of its own
-/// exports with upstream's vertex use order.
-fn side_breps(
-    rust: bool,
-    i: &Inputs,
-) -> Result<BrepPair, Box<Result<Output, HarnessError>>> {
-    match own_breps(&i.brep_a, i.brep_b.as_ref()) {
-        Ok(Ok(x)) => return Ok(x),
-        Ok(Err(o)) if rust => return Err(Box::new(Ok(o))),
-        Err(e) if rust => return Err(Box::new(Err(e))),
-        _ => {}
-    }
-    let [pa, pb] = paths(i).map_err(|e| Box::new(Err(e)))?;
-    let bl = blocks(i).map_err(|e| Box::new(Err(e)))?;
-    let ex = ffi::eval(Op::Export, [&pa, &pb], &bl)
-        .map_err(|e| Box::new(Err(harness(format!("c++ export: {e}")))))?;
-    let Some((a, b)) = ffi1::split_exports(&ex) else {
-        return Err(Box::new(Ok(build_failure(&ex))));
-    };
-    let (mut brep_a, _) = import(&a).map_err(|e| Box::new(Err(e)))?;
-    let mut brep_b = match &b {
-        Some(b) => Some(import(b).map_err(|e| Box::new(Err(e)))?.0),
-        None => None,
-    };
-    let uses = ffi::eval(Op::VertexUses, [&pa, &pb], &bl)
-        .map_err(|e| Box::new(Err(harness(format!("c++ vertex uses: {e}")))))?;
-    apply_vertex_use_order(&uses, &mut brep_a, brep_b.as_mut()).map_err(|e| Box::new(Err(e)))?;
-    Ok((brep_a, brep_b))
-}
-
-fn prepare(i: &Inputs, rust: bool) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
-    let (brep_a, brep_b) = side_breps(rust, i)?;
     let count4 = |b: &Brep| {
         [
             b.vertices().len(),
@@ -419,82 +311,6 @@ fn prepare(i: &Inputs, rust: bool) -> Result<Prepared, Box<Result<Output, Harnes
 }
 
 // ---- the C++ side ----------------------------------------------------------------------------
-
-fn put_class(v: &mut Vec<f64>, c: &ClassR) {
-    put_h(v, c.curve);
-    v.extend([c.t0, c.t1, c.tol]);
-    for (cls, h) in c.pcs {
-        v.push(cls as f64);
-        put_h(v, h);
-    }
-}
-
-fn encode(i: &Inputs, p: &Prepared) -> Result<Vec<f64>, HarnessError> {
-    let mut v = blocks(i)?;
-    v.extend([
-        i.approx,
-        i.ang,
-        flag(i.doing_fillets),
-        flag(i.ignore_tangency),
-    ]);
-    v.push(p.relates.len() as f64);
-    for &(a, b) in &p.relates {
-        put_h(&mut v, a);
-        put_h(&mut v, b);
-    }
-    match &p.merge {
-        MergeR::CurveOnSurfaces {
-            s1,
-            s2,
-            tol,
-            curve,
-            edge1,
-            edge2,
-            uv1,
-            uv2,
-        } => {
-            v.push(1.0);
-            put_h(&mut v, *s1);
-            put_h(&mut v, *s2);
-            v.push(*tol);
-            put_h(&mut v, *curve);
-            put_h(&mut v, *edge1);
-            put_h(&mut v, *edge2);
-            put_h(&mut v, *uv1);
-            put_h(&mut v, *uv2);
-        }
-        MergeR::CurveClasses {
-            merge_singularities,
-            c1,
-            c2,
-        } => {
-            v.push(2.0);
-            v.push(flag(*merge_singularities));
-            put_class(&mut v, c1);
-            put_class(&mut v, c2);
-        }
-        MergeR::CoincidentSurfaces { s1, s2 } => {
-            v.push(3.0);
-            put_h(&mut v, *s1);
-            put_h(&mut v, *s2);
-        }
-    }
-    Ok(v)
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let p = match prepare(i, false) {
-        Ok(p) => p,
-        Err(r) => return *r,
-    };
-    let input = encode(i, &p)?;
-    let [pa, pb] = paths(i)?;
-    let out = ffi::eval(Op::Run, [&pa, &pb], &input).map_err(|e| harness(format!("c++: {e}")))?;
-    if out.first() != Some(&0.0) {
-        return Ok(build_failure(&out));
-    }
-    Ok(Output::new().values("state", out))
-}
 
 // ---- the Rust side ----------------------------------------------------------------------------
 
@@ -842,7 +658,7 @@ fn run_rust_merge(i: &Inputs, p: Prepared) -> Result<Vec<f64>, SolidError> {
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let p = match prepare(i, true) {
+    let p = match prepare(i) {
         Ok(p) => p,
         Err(r) => return *r,
     };
@@ -1370,11 +1186,6 @@ impl UnitDiff for Runner {
             });
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        run_cpp(&i)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
