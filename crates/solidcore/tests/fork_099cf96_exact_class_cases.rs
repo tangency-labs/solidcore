@@ -438,10 +438,7 @@ enum Graded {
     /// The round returned an error.
     Round(String),
     /// The round built: what's wrong with it and how far it lies off the ball.
-    Built {
-        problems: Vec<String>,
-        off: f64,
-    },
+    Built { problems: Vec<String>, off: f64 },
 }
 
 fn grade(case: &Case, k: &mut Kernel) -> Graded {
