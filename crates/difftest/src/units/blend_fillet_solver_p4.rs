@@ -1,10 +1,10 @@
 //! Runner for unit `blend.fillet_solver_p4`: `SmFilletSolver::ComputePointValues` and the
 //! early-exit / status paths of `SmFilletSolver::CalcFilletGeom`.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_solver_p4` (a real `SmConstantRadiusFS` over real
-//! `SmPlane`, `SmBSplineSurface` and `SmSurfOfRevolution` surfaces; for the
-//! finite-difference branch an `SmConstantRadiusFS` whose only override is
-//! `OffsetRadiiCanChange() == TRUE`). Rust: [`FilletSolver::compute_point_values`] /
+//! Ported from upstream `source/SMLib/src/SmFilletSolver.cpp`; checked against its golden
+//! (the reference ran a real `SmConstantRadiusFS` over real `SmPlane`, `SmBSplineSurface`
+//! and `SmSurfOfRevolution` surfaces; for the finite-difference branch an
+//! `SmConstantRadiusFS` whose only override is `OffsetRadiiCanChange() == TRUE`). Rust: [`FilletSolver::compute_point_values`] /
 //! [`FilletSolver::calc_fillet_geom`] over the co-ported `ConstantRadiusAssistedFs`
 //! (`SmConstantRadiusFS`'s members and virtuals), wrapped where the C++ solver overrides a
 //! virtual.
@@ -16,20 +16,18 @@
 //!   call (80 values, whatever the status) and both offset distances. Surfaces of
 //!   revolution are built as unit `surface.surf_of_revolution_p1` builds them (cylinder,
 //!   cone, sphere and torus shapes from line and circle generators); the build status is
-//!   compared when one fails. Every case's C++ side runs in a fresh child process, where
-//!   the library's `sdStaticStep` starts unlatched as on a first call, and every Rust case
-//!   on a fresh [`Kernel`]; the step each side leaves latched is compared
-//!   (`fillet_point_step`; the C++ one read by [`ffi::static_step`] in the child, ND-3).
-//! - `calc_geom`: `CalcFilletGeom` on a rectangle sheet's edge (see the ffi module):
+//!   compared when one fails. Every case runs on a fresh [`Kernel`], where the
+//!   library's `sdStaticStep` starts unlatched as on a first call; the step the case
+//!   leaves latched is compared (`fillet_point_step`, ND-3).
+//! - `calc_geom`: `CalcFilletGeom` on a rectangle sheet's edge (the reference wrapper's layout):
 //!   a non-B-spline (`SmHermiteCurve`) edge curve, and a B-spline edge curve with the
 //!   solver's bare fillet geometry (the one the `SmFilletSolver` constructor adds; no
 //!   rails; G1 knots and its split flag optional), which stops at the first rail at the
 //!   latest. Compared: status, solver status, extension flags, the G1 knots
-//!   after the call and the knots given. The Rust solver replays `SetExtensionFlags` (the
-//!   C++ override) and imports the rectangle exported by the shim. With `uv_curves` the
-//!   shim makes the face's UV trim curves first (`SmFace::CreateUVTrimCurves`), so both
-//!   sides find them (and the G1 / split knots reach `EvaluateBinormal`); without, both
-//!   sides build them (`GetOrCreateUVTrimCurve`, `topology.edgeuse_p3`).
+//!   after the call and the knots given. The solver replays `SetExtensionFlags` (the reference
+//!   shim's override). With `uv_curves` the face's UV trim curves are made first
+//!   (`SmFace::CreateUVTrimCurves`), so the call finds them (and the G1 / split knots reach
+//!   `EvaluateBinormal`); without, it builds them (`GetOrCreateUVTrimCurve`, `topology.edgeuse_p3`).
 //!
 //! Deferred: the finite-difference cases on `StepSolve` (`blend.fillet_solver_p3`) and the
 //! `calc_geom` cases on the unported callees (`SmSurface::DropCurve` of the UV trim curve
@@ -59,13 +57,24 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::topology::{Brep, EdgeId};
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_solver_p4::{self as ffi};
 
 use super::surface_surf_of_revolution_p1 as rev;
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::util::{p2, v3};
 use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
+
+/// Largest input magnitude.
+const MAX_COORD: f64 = 1e9;
+
+/// An offset the solver does not have.
+const UNSET: f64 = -777.0;
+
+/// Values per point.
+const POINT_LEN: usize = 80;
+
+/// Most G1 knots of a `calc_geom` program.
+const MAX_G1: usize = 8;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 600;
@@ -188,7 +197,7 @@ fn cpt4(c: &[Option<f64>; 4]) -> [f64; 4] {
 }
 
 fn point_values(p: &PointIn) -> Vec<f64> {
-    let mut v = Vec::with_capacity(ffi::POINT_LEN);
+    let mut v = Vec::with_capacity(POINT_LEN);
     v.push(f64::from(p.t));
     v.extend(p.ptype.map(f64::from));
     for (uv, duv) in p.uv.iter().zip(&p.duv) {
@@ -206,141 +215,12 @@ fn point_values(p: &PointIn) -> Vec<f64> {
     v
 }
 
-fn ffi_surface(s: &SurfaceIn) -> Result<ffi::SurfaceIn, HarnessError> {
-    Ok(match s {
-        SurfaceIn::Plane {
-            o,
-            x,
-            y,
-            scale,
-            domain,
-        } => ffi::SurfaceIn::Plane {
-            o: *o,
-            x: *x,
-            y: *y,
-            scale: *scale,
-            domain: *domain,
-        },
-        SurfaceIn::BSpline { p, q, net, u, v } => ffi::SurfaceIn::BSpline {
-            p: *p,
-            q: *q,
-            net: net.iter().map(|r| r.iter().map(cpt4).collect()).collect(),
-            u: u.clone(),
-            v: v.clone(),
-        },
-        SurfaceIn::Revolution { surf } => ffi::SurfaceIn::Revolution(rev::ffi_surf(surf)?),
-    })
-}
-
-fn ffi_point_program(i: &PointCase) -> Result<ffi::PointProgram, HarnessError> {
-    Ok(ffi::PointProgram {
-        a: ffi_surface(&i.a)?,
-        b: i.b.as_ref().map(ffi_surface).transpose()?,
-        dom1: i.dom1,
-        dom2: i.dom2,
-        radii: i.radii,
-        orient: i.orient,
-        tol: i.tol,
-        ang_tol: i.ang_tol,
-        tangency_tol: i.tangency_tol,
-        fd: i.fd,
-        uv: i.uv,
-        dir: i.dir,
-        point: point_values(&i.point),
-        prev: i.prev.as_ref().map(point_values),
-    })
-}
-
-fn ffi_calc_program(c: &CalcCase) -> ffi::CalcProgram {
-    ffi::CalcProgram {
-        w: c.w,
-        h: c.h,
-        tol: c.tol,
-        uv_curves: c.uv_curves,
-        edge: c.edge,
-        eu1_same: c.eu1_same,
-        hermite: c.hermite,
-        geom: c.geom,
-        split: c.split,
-        extend: c.extend,
-        g1: c.g1.clone(),
-        radii: c.radii,
-        orient: c.orient,
-    }
-}
-
 // ---- outputs ------------------------------------------------------------------------------
-
-fn point_output(rec: &[f64]) -> Result<Output, HarnessError> {
-    let (head, rest) = rec.split_first().ok_or_else(|| harness("empty record"))?;
-    if *head == -1.0 {
-        let b = rest.first().ok_or_else(|| harness("short build record"))?;
-        return Ok(Output::new().int("build", *b as i64));
-    }
-    if rest.len() != ffi::POINT_LEN + 2 {
-        return Err(harness("point record length"));
-    }
-    let (pt, off) = rest.split_at(ffi::POINT_LEN);
-    Ok(Output::new()
-        .int("status", *head as i64)
-        .values("point", pt.to_vec())
-        .values("offsets", off.to_vec()))
-}
-
-fn calc_output(rec: &[f64], n_in: usize) -> Result<Output, HarnessError> {
-    let mut it = rec.iter().copied();
-    let mut next = || it.next().ok_or_else(|| harness("short calc record"));
-    let status = next()? as i64;
-    let solver_status = next()? as i64;
-    let before = next()? as i64;
-    let after = next()? as i64;
-    let n = next()? as usize;
-    if n > 64 {
-        return Err(harness("calc record G1 count"));
-    }
-    let mut g1 = Vec::new();
-    for _ in 0..n {
-        g1.push(next()?);
-    }
-    let mut knots_in = Vec::new();
-    for _ in 0..n_in {
-        knots_in.push(next()?);
-    }
-    if it.next().is_some() {
-        return Err(harness("trailing calc record"));
-    }
-    Ok(Output::new()
-        .int("status", status)
-        .int("solver_status", solver_status)
-        .ints("extend", vec![before, after])
-        .values("g1", g1)
-        .values("knots_in", knots_in))
-}
 
 // ---- C++ side -----------------------------------------------------------------------------
 
 /// Compared key: the `sdStaticStep` latch (ND-3) after the case.
 const POINT_STEP: &str = "fillet_point_step";
-
-/// Every case's C++ side runs in a fresh child process ([`ffi::with_fresh_static_step`]),
-/// where `sdStaticStep` starts unlatched; the step it leaves is compared, never seeded.
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (out, step) = match i {
-        Inputs::PointValues(p) => {
-            let program = ffi_point_program(p)?;
-            let (rec, step) = ffi::with_fresh_static_step(|| ffi::point_values(&program))
-                .map_err(|e| harness(format!("C++: {e}")))?;
-            (point_output(&rec)?, step)
-        }
-        Inputs::CalcGeom(c) => {
-            let program = ffi_calc_program(c);
-            let (rec, step) = ffi::with_fresh_static_step(|| ffi::calc_geom(&program))
-                .map_err(|e| harness(format!("C++: {e}")))?;
-            (calc_output(&rec, c.g1.len())?, step)
-        }
-    };
-    Ok(out.values(POINT_STEP, vec![step]))
-}
 
 // ---- Rust side ----------------------------------------------------------------------------
 
@@ -442,7 +322,7 @@ fn ept(code: f64) -> Result<solidcore::geom::extent1d::ExtentPointType, HarnessE
 }
 
 fn rust_point(v: &[f64]) -> Result<TsectPnt, HarnessError> {
-    if v.len() != ffi::POINT_LEN {
+    if v.len() != POINT_LEN {
         return Err(harness("point length"));
     }
     let mut it = v.iter().copied();
@@ -701,7 +581,7 @@ fn rust_point_case(k: &Kernel, i: &PointCase) -> Result<Output, Fail> {
         prev.as_ref(),
     );
     let st = op_status(r)?;
-    let mut pt = Vec::with_capacity(ffi::POINT_LEN);
+    let mut pt = Vec::with_capacity(POINT_LEN);
     put_point(&mut pt, &point);
     let offsets: Vec<f64> = ops
         .solver()
@@ -709,7 +589,7 @@ fn rust_point_case(k: &Kernel, i: &PointCase) -> Result<Output, Fail> {
         .iter()
         .map(|s| {
             s.as_ref()
-                .map_or(ffi::UNSET, |s| s.surface.offset_distance())
+                .map_or(UNSET, |s| s.surface.offset_distance())
         })
         .collect();
     Ok(Output::new()
@@ -1295,12 +1175,308 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
     gen_point_case(rng).map(|p| Inputs::PointValues(Box::new(p)))
 }
 
+/// Whether a case keeps the reference wrapper's input contract
+/// (`crates/solidcore-ffi/src/units/blend_fillet_solver_p4.rs`, its `encode_point` /
+/// `encode_calc`): every value finite and at most [`MAX_COORD`] in magnitude (the trace
+/// direction finite), clamped B-spline surfaces of degree 1..=8 with 2..=17 control points
+/// a side and one rationality, surfaces of revolution as unit
+/// `surface.surf_of_revolution_p1`'s wrapper builds them, points of [`POINT_LEN`] values
+/// with their type codes in range; a `calc_geom` rectangle of sides in `[1e-6, 1e6]` with a
+/// tolerance up to a hundredth of the shorter side, an edge index below 4, a Hermite edge
+/// curve or a fillet geometry, and at most [`MAX_G1`] G1 knot fractions inside `(0, 1)`.
 fn encodable(i: &Inputs) -> bool {
     match i {
-        Inputs::PointValues(p) => {
-            ffi_point_program(p).is_ok_and(|prog| ffi::encode_point(&prog).is_ok())
+        Inputs::PointValues(p) => contract::point_case(p),
+        Inputs::CalcGeom(c) => contract::calc_case(c),
+    }
+}
+
+mod contract {
+    use super::rev::{BuildIn, GenIn, InlineCrv, SurfIn};
+    use super::{cpt4, point_values, CalcCase, PointCase, SurfaceIn, MAX_COORD, MAX_G1, POINT_LEN};
+    use crate::cases::blend::knots_ok;
+    use solidcore::nurbs::math::NOW;
+
+    fn num(x: f64) -> bool {
+        x.is_finite() && x.abs() <= MAX_COORD
+    }
+
+    fn nums(xs: &[f64]) -> bool {
+        xs.iter().all(|&x| num(x))
+    }
+
+    /// `ncp + p + 1` clamped, non-decreasing knots with interior multiplicity at most `p`.
+    fn knots(knots: &[f64], ncp: usize, p: usize) -> bool {
+        if knots.len() != ncp + p + 1 || knots.windows(2).any(|w| w.first() > w.last()) {
+            return false;
         }
-        Inputs::CalcGeom(c) => ffi::encode_calc(&ffi_calc_program(c)).is_ok(),
+        let (Some(&k0), Some(&km)) = (knots.first(), knots.last()) else {
+            return false;
+        };
+        if km <= k0
+            || knots.iter().take(p + 1).any(|&k| k != k0)
+            || knots.iter().rev().take(p + 1).any(|&k| k != km)
+        {
+            return false;
+        }
+        let mut run = 0usize;
+        let mut last = f64::NAN;
+        for &k in knots.iter().filter(|&&k| k != k0 && k != km) {
+            run = if k == last { run + 1 } else { 1 };
+            last = k;
+            if run > p {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// All [`NOW`] or all in `(0, MAX_COORD]`.
+    fn weights(net: &[[f64; 4]]) -> bool {
+        let Some(first) = net.first() else {
+            return false;
+        };
+        let rational = first[3] != NOW;
+        net.iter().all(|c| {
+            if rational {
+                c[3] > 0.0 && c[3] <= MAX_COORD
+            } else {
+                c[3] == NOW
+            }
+        })
+    }
+
+    fn finite(v: &[f64]) -> bool {
+        v.iter().all(|x| x.is_finite())
+    }
+
+    fn len(v: [f64; 3]) -> f64 {
+        let [x, y, z] = v;
+        (x * x + y * y + z * z).sqrt()
+    }
+
+    /// Two axes long enough, far from parallel, of a length whose square is finite.
+    fn axes(x: [f64; 3], y: [f64; 3]) -> bool {
+        if !finite(&x) || !finite(&y) {
+            return false;
+        }
+        let (lx, ly) = (len(x), len(y));
+        let [ax, ay, az] = x;
+        let [bx, by, bz] = y;
+        let c = [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+        lx.is_finite() && ly.is_finite() && lx >= 1e-6 && ly >= 1e-6 && len(c) >= 1e-3 * lx * ly
+    }
+
+    /// A unit vector within `SM_EFF_ZERO` on its squared length.
+    fn unit([x, y, z]: [f64; 3]) -> bool {
+        ((x * x + y * y + z * z) - 1.0).abs() <= 1e-12
+    }
+
+    fn angular(d0: f64, d1: f64) -> bool {
+        finite(&[d0, d1]) && d0 < d1 && d0 >= -360.0 && d1 <= 360.0 && d1 - d0 <= 360.0
+    }
+
+    /// The control points of a generator curve as stored (`NOW` for a non-rational one).
+    fn cpts4(c: &InlineCrv) -> Option<Vec<[f64; 4]>> {
+        match &c.weights {
+            None => Some(c.cpts.iter().map(|&[x, y, z]| [x, y, z, NOW]).collect()),
+            Some(w) => (w.len() == c.cpts.len()).then(|| {
+                c.cpts
+                    .iter()
+                    .zip(w)
+                    .map(|(&[x, y, z], &w)| [x * w, y * w, z * w, w])
+                    .collect()
+            }),
+        }
+    }
+
+    /// The generator block, if it keeps the contract: a bounded clamped B-spline of 3D
+    /// points of one rationality, a line of length at least `1e-6`, a circle of radius
+    /// above `1e-6` on an angular domain, a hyperbola on a domain inside `[-10, 10]` with
+    /// semi axes above `1e-6`.
+    fn gen(o: &mut Vec<f64>, g: &GenIn) -> Option<()> {
+        match g {
+            GenIn::BSpline(c) => {
+                let cpts = cpts4(c)?;
+                let n = cpts.len().checked_sub(1)?;
+                if c.p == 0 || c.p > n || c.p > 9 || n > 256 || c.u.len() != n + c.p + 2 {
+                    return None;
+                }
+                let rational = cpts.first()?[3] != NOW;
+                let points = cpts.iter().all(|&[x, y, z, w]| {
+                    finite(&[x, y, z])
+                        && (w != NOW) == rational
+                        && (!rational || (w.is_finite() && w > 0.0))
+                });
+                if !points || !finite(&c.u) || !knots_ok(&c.u, c.p) {
+                    return None;
+                }
+                o.extend([0.0, n as f64, c.p as f64, (c.u.len() - 1) as f64]);
+                o.extend(cpts.iter().flatten());
+                o.extend_from_slice(&c.u);
+            }
+            GenIn::Line { a, b } => {
+                let [ax, ay, az] = *a;
+                let [bx, by, bz] = *b;
+                if !finite(a) || !finite(b) || len([bx - ax, by - ay, bz - az]) < 1e-6 {
+                    return None;
+                }
+                o.push(1.0);
+                o.extend(a.iter().chain(b));
+            }
+            GenIn::Circle { c, x, y, d, r } => {
+                let ok = finite(c) && axes(*x, *y) && angular(d[0], d[1]) && r.is_finite() && *r > 1e-6;
+                if !ok {
+                    return None;
+                }
+                o.push(2.0);
+                o.extend(c.iter().chain(x).chain(y).chain(d));
+                o.push(*r);
+            }
+            GenIn::Hyperbola { c, x, y, d, a, b } => {
+                let [d0, d1] = *d;
+                let ok = finite(c)
+                    && axes(*x, *y)
+                    && finite(d)
+                    && d0 < d1
+                    && d0 >= -10.0
+                    && d1 <= 10.0
+                    && a.is_finite()
+                    && *a > 1e-6
+                    && b.is_finite()
+                    && *b > 1e-6;
+                if !ok {
+                    return None;
+                }
+                o.push(3.0);
+                o.extend(c.iter().chain(x).chain(y).chain(d));
+                o.extend([*a, *b]);
+            }
+        }
+        Some(())
+    }
+
+    /// The surface of revolution block, if it keeps the contract.
+    fn revolution(s: &SurfIn) -> Option<Vec<f64>> {
+        let mut o = Vec::new();
+        let flags = [f64::from(u8::from(s.oob)), f64::from(u8::from(s.swap))];
+        match &s.build {
+            BuildIn::Canonical { point, axis } => {
+                if !finite(point) || !finite(axis) {
+                    return None;
+                }
+                o.push(0.0);
+                gen(&mut o, &s.gen)?;
+                o.extend(flags);
+                o.extend(point.iter().chain(axis));
+            }
+            BuildIn::Ctor {
+                origin,
+                x,
+                y,
+                domain,
+            } => {
+                let [u0, v0, u1, v1] = *domain;
+                let v_ok = match &s.gen {
+                    GenIn::Circle { .. } => angular(v0, v1),
+                    GenIn::Hyperbola { .. } => v0 < v1 && v0 >= -10.0 && v1 <= 10.0,
+                    _ => true,
+                };
+                let ok = finite(origin)
+                    && axes(*x, *y)
+                    && unit(*x)
+                    && unit(*y)
+                    && finite(domain)
+                    && u0 <= u1
+                    && v0 <= v1
+                    && angular(u0, u1)
+                    && v_ok;
+                if !ok {
+                    return None;
+                }
+                o.push(1.0);
+                gen(&mut o, &s.gen)?;
+                o.extend(flags);
+                o.extend(origin.iter().chain(x).chain(y).chain(domain));
+            }
+        }
+        Some(o)
+    }
+
+    fn surface(s: &SurfaceIn) -> bool {
+        match s {
+            SurfaceIn::Plane {
+                o,
+                x,
+                y,
+                scale,
+                domain,
+            } => nums(o) && nums(x) && nums(y) && nums(scale) && nums(domain),
+            SurfaceIn::BSpline { p, q, net, u, v } => {
+                let net: Vec<Vec<[f64; 4]>> =
+                    net.iter().map(|r| r.iter().map(cpt4).collect()).collect();
+                let (nu, nv) = (net.len(), net.first().map_or(0, Vec::len));
+                let flat: Vec<[f64; 4]> = net.iter().flatten().copied().collect();
+                (1..=8).contains(p)
+                    && (1..=8).contains(q)
+                    && (2..=17).contains(&nu)
+                    && (2..=17).contains(&nv)
+                    && *p < nu
+                    && *q < nv
+                    && net.iter().all(|r| r.len() == nv)
+                    && knots(u, nu, *p)
+                    && knots(v, nv, *q)
+                    && weights(&flat)
+                    && flat.iter().all(|c| nums(&c[..3]))
+                    && nums(u)
+                    && nums(v)
+            }
+            // the revolution guard bounds coordinates only by finiteness, then the
+            // block's values by MAX_COORD
+            SurfaceIn::Revolution { surf } => revolution(surf)
+                .is_some_and(|b| b.iter().all(|&x| x == NOW || num(x))),
+        }
+    }
+
+    /// A point of [`POINT_LEN`] bounded values, its type code in `0..=7` and its four
+    /// extent point types in `0..=5`.
+    fn point(p: &[f64]) -> bool {
+        let code = |x: f64, hi: f64| (0.0..=hi).contains(&x) && x.fract() == 0.0;
+        p.len() == POINT_LEN
+            && p.iter()
+                .take(5)
+                .enumerate()
+                .all(|(k, &t)| code(t, if k == 0 { 7.0 } else { 5.0 }))
+            && nums(p)
+    }
+
+    pub(super) fn point_case(i: &PointCase) -> bool {
+        surface(&i.a)
+            && i.b.as_ref().is_none_or(surface)
+            && nums(&i.dom1)
+            && nums(&i.dom2)
+            && nums(&i.radii)
+            && nums(&[i.tol, i.ang_tol, i.tangency_tol])
+            && i.uv.iter().all(|uv| nums(uv))
+            && i.dir.is_finite()
+            && point(&point_values(&i.point))
+            && i.prev.as_ref().is_none_or(|p| point(&point_values(p)))
+    }
+
+    pub(super) fn calc_case(c: &CalcCase) -> bool {
+        let sized = |x: f64| x.is_finite() && (1e-6..=1e6).contains(&x);
+        sized(c.w)
+            && sized(c.h)
+            && c.tol.is_finite()
+            && c.tol > 0.0
+            && c.tol <= 0.01 * c.w.min(c.h)
+            && nums(&[c.w, c.h, c.tol])
+            && c.edge < 4
+            && (c.hermite || c.geom)
+            && c.g1.len() <= MAX_G1
+            && c.g1.iter().all(|&f| f > 0.0 && f < 1.0)
+            && nums(&c.g1)
+            && nums(&c.radii)
     }
 }
 
@@ -1596,19 +1772,6 @@ impl UnitDiff for Runner {
 
     // ND-3: every C++ case runs in a fresh child, which inherits this process's
     // `sdStaticStep`; it must still be unlatched before the unit's cases and after them.
-    fn before_cases(&self) -> Result<(), HarnessError> {
-        ffi::check_parent_static_step("before the cases")
-            .map_err(|e| HarnessError::new(format!("C++: {e}")))
-    }
-
-    fn after_cases(&self) -> Result<(), HarnessError> {
-        ffi::check_parent_static_step("after the cases")
-            .map_err(|e| HarnessError::new(format!("C++: {e}")))
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
@@ -1631,46 +1794,4 @@ mod tests {
         assert!(n > 150, "{n}");
     }
 
-    /// Most generated point cases reach a successful C++ evaluation (they compare real
-    /// values once the Rust side lands), and the probe names one of the two steps.
-    #[test]
-    fn cpp_outcomes() {
-        let (_, step) = ffi::with_fresh_static_step(|| Ok(vec![])).expect("probe");
-        assert_eq!(step, 1e-5, "a fresh process latches the probe's own step");
-        let mut rng = Rng::new(11);
-        let (mut ok, mut total) = (0, 0);
-        let mut statuses = std::collections::BTreeMap::new();
-        for _ in 0..300 {
-            let Some(v) = Runner.generate(&mut rng) else {
-                continue;
-            };
-            let i: Inputs = serde_json::from_value(v).expect("inputs");
-            let out = cpp(&i).expect("C++ ran");
-            let op = match &i {
-                Inputs::PointValues(p) if p.fd || p.point.t == 3 || p.prev.is_some() => {
-                    "point-may-step"
-                }
-                Inputs::PointValues(p) => match &p.a {
-                    SurfaceIn::Plane { .. } => "point-nofd-plane",
-                    SurfaceIn::BSpline { .. } => "point-nofd-bsp",
-                    SurfaceIn::Revolution { .. } => "point-nofd-rev",
-                },
-                Inputs::CalcGeom(_) => "calc",
-            };
-            let tag = match (out.ints.get("status"), out.ints.get("build")) {
-                (Some(st), _) => format!("{op} status {st:?}"),
-                (None, Some(b)) => format!("{op} build {b:?}"),
-                _ => format!("{op} ?"),
-            };
-            if op.starts_with("point") {
-                total += 1;
-                if out.ints.get("status") == Some(&vec![0]) {
-                    ok += 1;
-                }
-            }
-            *statuses.entry(tag).or_insert(0) += 1;
-        }
-        eprintln!("{statuses:#?}");
-        assert!(ok * 2 > total, "{ok}/{total}");
-    }
 }

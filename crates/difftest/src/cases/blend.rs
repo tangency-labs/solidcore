@@ -98,7 +98,8 @@ impl<'a> Reader<'a> {
 
 /// A clamped knot vector of degree `p`: non-decreasing, end multiplicity exactly `p + 1`,
 /// interior multiplicity at most `p`.
-fn knots_ok(knots: &[f64], p: usize) -> bool {
+#[must_use]
+pub fn knots_ok(knots: &[f64], p: usize) -> bool {
     let Some(m) = knots.len().checked_sub(1) else {
         return false;
     };
