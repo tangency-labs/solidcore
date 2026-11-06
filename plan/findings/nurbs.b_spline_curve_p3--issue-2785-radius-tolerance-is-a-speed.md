@@ -57,26 +57,30 @@ where the reports stop.
 
 ## The fix
 
-`radius_tol` is a length at part scale: `size_xyz / 10000.0` (and `mapped_size / 10000.0` for a
-mapped UV trim). This is the same 1/10000 fraction of the curve's own extent that the speed
-tolerance is of its average speed, and it is the only scale in the function that does not
-involve `size_t`, so the verdict is invariant by construction. `tol` stays a speed for tests
-11/12 and for `speed_clear`.
+Two changes, both in the radius tests' half of the function:
 
-No flag: the change is on the path `Kernel::fixes.bspline_check_min_radius` (WR-382, #475)
+1. **The tolerance is a length.** `radius_tol` is `size_xyz / 10000.0` (and `mapped_size /
+   10000.0` for a mapped UV trim): the same 1/10000 fraction of the curve's own extent that the
+   speed tolerance is of its average speed, and the only scale in the function that does not
+   involve `size_t`, so the verdict is invariant by construction. `tol` stays a speed for tests
+   11/12 and for `speed_clear`.
+2. **A radius minimum on a natural boundary end is skipped**, as the first-derivative loop above
+   already skips one (the next section gives the case that decided it).
+
+No flag: both changes are on the path `Kernel::fixes.bspline_check_min_radius` (WR-382, #475)
 already gates. With that flag off — which is `UpstreamFixes::default()`, and so the difftest —
 `min_radius` stays `BIG_DOUBLE` and tests 13/14 never fire, so the difftest cannot see this
 change. `issue_2785_radius_tolerance_is_a_length_not_a_speed` pins that too.
 
-## What moves
+## The case that decided the second change
 
-One case in the corpus: `crates/solidcore/tests/issue_2343_curved_setback.rs`,
-`countersink_asked_corner_is_certified_with_its_nets`. A corner trim's radius is
-`1.5145154e-4` against the new tolerance `1.6900205e-4` (it passed the old `1.008e-4` by a
-factor 1.5). Measured for that trim: `size_xyz` 1.5229, `size_t` 1.6770, mapped size 1.6900, so
-the old tolerance was `mapped_size / size_t / 10000` and the two nearly cancelled.
+`issue_2343_curved_setback::countersink_asked_corner_is_certified_with_its_nets`. A corner
+trim's minimum radius is `1.5145154e-4`; the new length tolerance is `1.6900205e-4`, so the
+tolerance change alone reported it (it had passed the old `1.0078e-4` by a factor 1.5, because
+that trim's `size_t` 1.6770 nearly cancels its mapped size 1.6900). Measured: `size_xyz` 1.5229,
+`size_t` 1.6770, mapped size 1.6900.
 
-Its radius profile along the curve is a spike at the curve's own start, not a bend:
+Its radius profile along the curve is a spike at the curve's own **start**, not a bend:
 
 ```
 1.515e-4  8.533e-1  1.150e0  1.578e0  2.214e0  3.220e0  5.025e0  9.178e0
@@ -84,37 +88,56 @@ Its radius profile along the curve is a spike at the curve's own start, not a be
 3.643e0   3.434e0  3.304e0  3.239e0  3.233e0
 ```
 
-The first span is short (the first two control points are `3e-5` apart), which is the WR-668
-zero-speed-end shape. Note that the *derivative* loop skips a solution on a natural boundary end
-("they are not a problem") and the radius loop does not; WR-668 then added a conditional waiver
-for a zero-speed tangent end at a vertex. Whether a radius minimum at a curve's own end should
-be skipped outright, waived as WR-668 does, or reported, is a separate question from the units,
-and is left out of this fix.
+and its minimum is at parameter **exactly 0** of `[0, 1.677]`, with the first two control points
+`3e-5` apart. There is no bend in that curve; there is one at its end, and the end is the WR-668
+shape: a G2 blend's tangent end has radius growing as `|t - t_end|` from 0, so a small radius
+there is inherent to the construction, not a defect in it.
 
-**Any dimensionally correct fix flips this case.** The corpus's own expectations pin the
-fraction to a narrow window:
+The radius loop therefore now skips a solution on a natural boundary end, as the
+first-derivative loop above it already does ("skip solutions on the natural boundary ends - they
+are not a problem"): an end is where the curve joins a neighbour or a vertex, and that joint's
+own checks (G1 across the knot, the vertex's, WR-668's waiver) judge it. The radius test judging
+the end in isolation double-counts a thing another check owns. The trade: a curve that genuinely
+ends in a kink is no longer reported by tests 13/14 — such a joint is what the vertex and G1
+checks exist for, the same trade the derivative loop made.
 
-| must report | radius / size | must accept | radius / size |
-|---|---|---|---|
-| `wr_668_zero_speed_tangent_end_is_no_kink` | 4.71e-5 | `countersink_asked_corner_is_certified_with_its_nets` | 8.96e-5 |
+(A minimal synthetic reproducer is an open nicety: no Bezier of the shape `(0,0) (h,0) (a,b)
+(1,1)` puts the solver's minimum on the domain end — from `h = 1e-3` down to `1e-6` the reported
+minimum sits at `1.22e-4 ... 2.44e-4`, interior. The countersink case is the regression test;
+`issue_2785_the_default_fixes_see_no_report_at_any_parametrisation` pins the difftest's side.)
 
-A 1.90x window, and `1/10000` sits 11.6 % above its top. A window that narrow means the fraction
-is a fitted parameter, not a derived one, so the fix does not move it: `1/10000` is the fraction
-the function already used, applied to the right quantity. The balanced fitted value would be
-`1/15000` (6.50e-5), which keeps the corpus green but derives from nothing.
+## The fraction, freed
 
-The principled alternative is the **scale**, not the fraction. `docs/definitions-and-certificates.md`
-§5 asks for a gate "at part scale", and a UV trim's own box is not the part: this trim is 1.69 mm
-on a much larger face, so at the face's scale its 1.5e-4 radius is irrelevant and at its own it is
-not. A face-scale tolerance accepts this trim and still reports `issue_891`'s trim on a 600 x 3
-plane (whose 2D radius is 8.3e-6 against 0.06). It needs the face's size plumbed into
-`assert_valid`, which is an API change and is left as the follow-up.
+The tolerance change alone had pinned the fraction into a 1.90x window: `wr_668` must report at
+`4.71e-5` of the curve's box, the countersink trim had to be accepted at `8.96e-5`, and
+`1/10000` sat 11.6 % above the top — which is why the case moved. With the end minimum decided
+by the skip instead, the window widens to `(4.71e-5, 4.0e-4)` (`assert_valid_accepts_regular_
+curvature_and_linear_empty_analysis` holds the top: radius `2e-4` on a box of `0.5`) — **8.5x
+wide**, with `1/10000` 2.1x above the floor and 4x below the ceiling. The constant is no longer
+marginal, and stays as agreed on the issue.
 
-**Tried and rejected: skipping a radius minimum on a natural boundary end.** The countersink
-trim's minimum is at parameter exactly `0` of `[0, 1.677]`, and the first-derivative loop above
-already skips a solution on a natural boundary end ("they are not a problem"), so the radius loop
-not skipping one looks like an asymmetry. It fixes this case, but it cannot be pinned with a test:
-no Bezier of the shape `(0,0) (h,0) (a,b) (1,1)` makes the solver return the domain end — with
-`h` from 1e-3 down to 1e-6 the reported minimum is at `1.22e-4`..`2.44e-4`, interior — so the
-skip only fires when the solver happens to land exactly on the end, which is incidental to this
-trim and not a rule. It is worth revisiting on its own evidence, not as part of this fix.
+The alternative considered was the **scale**, not the fraction: `docs/definitions-and-certificates.md`
+§5 asks for a gate at part scale, and a UV trim's own box is not the part — this trim is 1.69 mm
+on a much larger face. A face-scale tolerance would also accept this trim, but it needs the
+face's size plumbed into `assert_valid` (an API change), it changes every trim's tolerance in the
+corpus, and it would rescue the case by its face's size rather than at its cause. Rejected for
+this fix; worth revisiting if a case shows a genuine interior near-cusp on a small trim being
+missed.
+
+## What this does to SolidCraft's reports
+
+The check is the one that refuses a body SolidCraft has just built ("SMLib's check refuses the
+result"). A report survives the tolerance change iff `size_t > radius / old_tolerance`; the ratio
+is given per issue so triage can decide without re-running:
+
+| SolidCraft issue | test | radius | old tolerance | survives iff `size_t` > |
+|---|---|---|---|---|
+| #12059 | 13 | 9.3833822e-8 | 1.4354766e-4 | 6.54e-4 |
+| #12090 | 14 | 2.0557583e-3 | 9.403931e-3 | 0.2186 |
+| #12319 | 13 | 2.2940238e-5 | 5.0182638e-5 | 0.4571 |
+| #11582 | 13 | 2.6946122e-6 | 2.6884914e-3 | 1.00e-3 |
+| #11754 | 13 | 2.6946122e-6 / 1.3805233e-6 | 2.6884914e-3 / 4.0427811e-3 | 1.00e-3 / 3.41e-4 |
+
+None of these is closed by this fix alone. What it changes is that the verdict no longer depends
+on the domain, so a report that survives is a real near-cusp in the geometry and can be fixed at
+the construction that made it, instead of appearing or vanishing with the parametrisation.

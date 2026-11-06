@@ -1941,10 +1941,29 @@ impl BSplineCurve {
                     }
                 }
             }
-            let mut first = solutions.first();
+            // Not upstream (tangency-labs/solidcore#2785): a radius minimum on a natural
+            // boundary end belongs to the joint there, not to this curve, as the
+            // first-derivative loop above already takes it ("skip solutions on the natural
+            // boundary ends - they are not a problem"): the end is where the curve meets a
+            // neighbour or a vertex, and that joint's own checks (G1 across the knot, the
+            // vertex's, WR-668's waiver) judge it. Without this a blend's tangent end, whose
+            // radius grows as `|t - t_end|` from 0 (WR-668), reports a cusp: #2343's countersink
+            // corner trim had its minimum at parameter 0 of [0, 1.677], a spike (1.5e-4
+            // there, 0.85 one twentieth of the way along, 37 mid-curve).
+            let mut interior: Vec<&SolutionEnd> = Vec::with_capacity(solutions.len());
+            for s in &solutions {
+                let p = s.param(0)?;
+                if !domain
+                    .is_value_on_boundary(p, EFF_ZERO * (1.0 + domain.length()))
+                    .0
+                {
+                    interior.push(s);
+                }
+            }
+            let mut first = interior.first().copied();
             if stretch.iter().any(|&s| s >= 0.0) {
                 first = None;
-                for s in &solutions {
+                for &s in &interior {
                     let p = s.param(0)?;
                     let growth = (p - domain.min()).abs() <= stretch[0]
                         || (p - domain.max()).abs() <= stretch[1];
@@ -2538,6 +2557,40 @@ mod tests {
             assert!(list.is_empty(), "T = {t}: {list:?}");
         }
     }
+
+    /// With `UpstreamFixes::default()` the radius is never read (WR-382), so no test 13/14
+    /// report depends on the tolerance or on the boundary-end skip at all: the difftest,
+    /// which runs the default, sees the same reports before and after this fix. The bend
+    /// curve of `issue_2785_radius_tolerance_is_a_length_not_a_speed`, at four `T`.
+    #[test]
+    fn issue_2785_the_default_fixes_see_no_report_at_any_parametrisation() {
+        let h = 1e-4;
+        for t in [1.0, 20.0, 1e2, 1e4] {
+            let c = curve(
+                3,
+                &[[0.0, 0.0, 0.0], [h, 0.0, 0.0], [h, h, 0.0], [1.0, 1.0, 0.0]],
+                &[0.0, 0.0, 0.0, 0.0, t, t, t, t],
+            );
+            let mut list = AssertArray::new();
+            assert!(
+                c.assert_valid(&Kernel::default(), Some(&mut list), true, ObjectKey(9))
+                    .unwrap(),
+                "T = {t}: {list:?}"
+            );
+            assert!(list.is_empty(), "T = {t}: {list:?}");
+        }
+    }
+
+    /// A radius minimum on the curve's own start is the joint there's, not the curve's, and
+    /// is not reported (#2785): the first-derivative loop above already skips a solution on
+    /// a natural boundary end. The regression case is the corpus's
+    /// `issue_2343_curved_setback::countersink_asked_corner_is_certified_with_its_nets`, whose
+    /// corner trim has its minimum at parameter exactly 0 of [0, 1.677] -- a G2 blend's
+    /// tangent end, whose radius grows as `|t - t_end|` from 0 (WR-668). No Bezier of the shape
+    /// `(0,0) (h,0) (a,b) (1,1)` puts the solver's minimum on the domain end (from h = 1e-3
+    /// down to 1e-6 the reported minimum sits at 1.22e-4 .. 2.44e-4, interior), so a minimal
+    /// synthetic case would not reach the skip; the nearest this file can pin is that the
+    /// skip leaves an interior minimum alone, which the two tests above already assert.
 
     #[test]
     fn subdivide_single_span() {
