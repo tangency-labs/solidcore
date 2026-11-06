@@ -507,6 +507,63 @@ fn nesting_is_bounded() {
     );
 }
 
+/// A chain of `n` trimmed curves in ascending id order: `#20` trims the line `#11`, and each
+/// `#(20 + k)` trims `#(19 + k)`, so `#(20 + k)` lies `k + 1` curve references above the line.
+fn ascending_chain(n: u64) -> String {
+    let mut d = String::from("#10=VECTOR('',#3,1.);#11=LINE('',#1,#10);");
+    for k in 0..n {
+        let basis = if k == 0 { 11 } else { 19 + k };
+        write!(
+            d,
+            "#{}=TRIMMED_CURVE('',#{basis},(PARAMETER_VALUE(0.)),(PARAMETER_VALUE(1.)),.T.,.PARAMETER.);",
+            20 + k
+        )
+        .unwrap();
+    }
+    d
+}
+
+/// The depth bound holds through the cache (jyviko on #2607): one reader shared by every read,
+/// as `step_p21_corpus.rs` uses it, reading a chain in ascending id order finds each basis
+/// already read, one level down. `#(20 + k)` is `k + 1` levels above its line, so it is read
+/// exactly when `k + 1 <= MAX_GEOM_DEPTH`, whichever order the reads come in; and a chain of
+/// 200 000 neither passes nor overflows the stack when the reader is dropped.
+#[test]
+fn nesting_is_bounded_through_the_cache() {
+    let expected = |k: u64| {
+        if k < MAX_GEOM_DEPTH as u64 {
+            Ok(())
+        } else {
+            Err("curve definitions nested too deeply".to_string())
+        }
+    };
+    let n = 3 * MAX_GEOM_DEPTH as u64;
+    let ex = file(&format!("{BASE}{}", ascending_chain(n)));
+    let want: Vec<_> = (0..n).map(expected).collect();
+    let mut shared = Reader::new(&ex, MM);
+    let ascending: Vec<_> = (0..n).map(|k| shared.curve(20 + k).map(|_| ())).collect();
+    assert_eq!(ascending, want);
+    let mut shared = Reader::new(&ex, MM);
+    let mut descending: Vec<_> = (0..n)
+        .rev()
+        .map(|k| shared.curve(20 + k).map(|_| ()))
+        .collect();
+    descending.reverse();
+    assert_eq!(descending, want);
+    let alone: Vec<_> = (0..n)
+        .map(|k| Reader::new(&ex, MM).curve(20 + k).map(|_| ()))
+        .collect();
+    assert_eq!(alone, want);
+
+    let n = 200_000;
+    let ex = file(&format!("{BASE}{}", ascending_chain(n)));
+    let mut shared = Reader::new(&ex, MM);
+    for k in 0..n {
+        assert_eq!(shared.curve(20 + k).map(|_| ()), expected(k), "#{}", 20 + k);
+    }
+    drop(shared);
+}
+
 #[test]
 fn refusals_say_why() {
     for (data, id, why) in [
