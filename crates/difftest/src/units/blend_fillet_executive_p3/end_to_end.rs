@@ -918,6 +918,11 @@ fn setback_fillet_edges(
             input.continuity,
             input.thumbweight,
         )?;
+        // A requested positive setback must exclude the Ball classification before the
+        // corner is made, just as the ops blend pass registers its setback vertices.
+        if setback.distance > 0.0 {
+            session.add_set_back_vertex(*vertex);
+        }
         session.create_corners(k, None)?;
         let mut corners = Vec::new();
         for corner in session.fillet_corners()? {
@@ -1728,6 +1733,24 @@ mod tests {
             zero.values["mass_properties"]
         );
         assert!(!result.values["result_geometry"].is_empty());
+        // The independent bounds and section ends are those of the captured
+        // ladder/07-fillets/013-corner-setback case: three r5 rounds whose
+        // sections start 8 from (60,40,20). The fixture derives its volume
+        // interval from a convex hull and tangent supporting planes.
+        let volume = result.values["mass_properties"][1];
+        assert!((47271.9757..=47384.8935).contains(&volume), "{volume}");
+        // primitive::append writes each reachable vertex as x,y,z,tolerance first.
+        let vertices = result.values["result_geometry"]
+            .get(..23 * 4)
+            .expect("all 23 vertex records");
+        let has = |point: [f64; 3]| vertices.chunks_exact(4)
+            .any(|v| v.iter().take(3).zip(point).all(|(a,b)| (a-b).abs() < 1e-9));
+        for point in [[52.,35.,20.], [52.,40.,15.], [55.,32.,20.],
+            [60.,32.,15.], [55.,40.,12.], [60.,35.,12.]] {
+            assert!(has(point), "missing setback section end {point:?}");
+        }
+        assert!(has([0.,0.,0.]));
+        assert!(!has([60.,40.,20.]));
     }
 
     #[test]
