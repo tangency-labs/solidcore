@@ -91,7 +91,8 @@
 //! subtracts) the port returns `SM_ERR`, and a least-squares system with fewer rows than
 //! columns (where the fork would allocate a wrapped size) is not solvable (`FALSE`); the
 //! fork's cases never reach these. The moved ease's errors name this module as their
-//! operation; their statuses are unchanged. No recursion.
+//! operation; their statuses are unchanged. No recursion but `piece_bound`'s halving (not
+//! the fork's), at most [`graph::GRAPH_DEPTH`] levels deep.
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // the fork's NaN-safe tests
 
@@ -2836,15 +2837,17 @@ fn fill_hole_with(
 /// `SmBlendSetback::Containment`: the most any patch of `fill` stands past a face out of the
 /// corner (positive: past it): out of the material for a convex corner (`convex`), into it
 /// for a concave one. A certified bound: every patch lies in the convex hull of its control
-/// points (weights positive). Beside a curved face (solidcore#2343): 0 where every patch is
-/// certified on the material's side of every face, by the faces' implicit forms, else
-/// `f64::INFINITY` (the fork's `HUGE_VAL`, 37c9e1d).
+/// points (weights positive). Not the fork (solidcore#2904): where that hull stands more than
+/// `tol` past a plane, the bound is tightened on the patch itself ([`plane_bound`]), so a
+/// fill on the material's side is not refused for its control net. Beside a curved face
+/// (solidcore#2343): 0 where every patch is certified on the material's side of every face,
+/// by the faces' implicit forms, else `f64::INFINITY` (the fork's `HUGE_VAL`, 37c9e1d).
 ///
 /// # Errors
 /// `SM_ERR_INVALID_INPUT` for an empty fill; `SM_ERR` for a patch with a weight not positive
 /// (beside a curved face also: of more than one span, or of degree below 2 across a face it
 /// lies on).
-pub fn containment(fill: &Fill, faces: &[Face], convex: bool) -> Result<f64> {
+pub fn containment(fill: &Fill, faces: &[Face], convex: bool, tol: f64) -> Result<f64> {
     if fill.patches.is_empty() {
         return Err(SolidError::invalid_input(
             OP,
@@ -2861,11 +2864,74 @@ pub fn containment(fill: &Fill, faces: &[Face], convex: bool) -> Result<f64> {
         if canonical.weights.iter().any(|&w| !(w > 0.0)) {
             return Err(sm_err()); // a patch with a weight not positive
         }
-        for &pt in &canonical.control_points {
-            for face in faces {
-                worst = smax(worst, side * (pt - face.point).dot(face.normal));
+        let one_span = canonical.u_knots.len() == 2 && canonical.v_knots.len() == 2;
+        for face in faces {
+            let mut hull = f64::NEG_INFINITY;
+            for &pt in &canonical.control_points {
+                hull = smax(hull, side * (pt - face.point).dot(face.normal));
             }
+            if hull > tol && one_span {
+                hull = plane_bound(&canonical, face, side, tol)?;
+            }
+            worst = smax(worst, hull);
         }
+    }
+    Ok(worst)
+}
+
+/// A certified bound of how far a one-span patch (`canonical`, weights positive) stands past
+/// the plane `face` on `side`, tighter than its control net's: the distance is `f / w`, `f`
+/// the homogeneous form `w ((X - X0) . N) side` and `w` the weight, both in Bernstein form.
+/// Each piece's coefficients bound it there (`f_k / w_k`, the weights positive); a piece
+/// bounded past `tol` is halved each way by de Casteljau, up to [`graph::GRAPH_DEPTH`] times,
+/// so the bound converges on the patch's own distance [48]. Past `tol` at that depth the bound
+/// stands, and the fill is refused by its caller. Each bound carries the rounding of computing
+/// the form and of the halvings.
+fn plane_bound(
+    canonical: &crate::nurbs::b_spline_surface::p1::SurfaceCanonical,
+    face: &Face,
+    side: f64,
+    tol: f64,
+) -> Result<f64> {
+    let (p, q) = (canonical.u_degree, canonical.v_degree);
+    let rational = canonical.weights.len() == canonical.control_points.len();
+    let mut f = certify::t_make(p, q);
+    let mut w = certify::t_make(p, q);
+    for (k, &pt) in canonical.control_points.iter().enumerate() {
+        let wk = if rational {
+            el(&canonical.weights, k)?
+        } else {
+            1.0
+        };
+        *el_mut(&mut w.c, k)? = wk;
+        *el_mut(&mut f.c, k)? = wk * side * (pt - face.point).dot(face.normal);
+    }
+    // the form's terms (three products and sums, a difference per coordinate, the weight) and
+    // each halving's (one sum and one product per level of de Casteljau, p + q per halving)
+    let rounding = crate::nurbs::math::gamma(12 + 2 * (p + q) * graph::GRAPH_DEPTH)
+        * certify::t_scale(&f)
+        / w.c.iter().copied().fold(f64::INFINITY, f64::min);
+    Ok(piece_bound(&f, &w, tol - rounding, graph::GRAPH_DEPTH)? + rounding)
+}
+
+/// [`plane_bound`] on one piece: the largest `f_k / w_k`, the piece halved each way while that
+/// passes `tol` and `depth` lasts, the pieces' largest.
+fn piece_bound(f: &Tensor, w: &Tensor, tol: f64, depth: usize) -> Result<f64> {
+    let mut hull = f64::NEG_INFINITY;
+    for (&fk, &wk) in f.c.iter().zip(&w.c) {
+        hull = smax(hull, fk / wk);
+    }
+    if !(hull > tol) || depth == 0 {
+        return Ok(hull);
+    }
+    let (fa, fb) = certify::t_split(f, 0)?;
+    let (wa, wb) = certify::t_split(w, 0)?;
+    let mut worst = f64::NEG_INFINITY;
+    for (fh, wh) in [(&fa, &wa), (&fb, &wb)] {
+        let (f0, f1) = certify::t_split(fh, 1)?;
+        let (w0, w1) = certify::t_split(wh, 1)?;
+        worst = smax(worst, piece_bound(&f0, &w0, tol, depth - 1)?);
+        worst = smax(worst, piece_bound(&f1, &w1, tol, depth - 1)?);
     }
     Ok(worst)
 }
