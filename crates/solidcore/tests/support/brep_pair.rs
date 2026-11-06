@@ -2,7 +2,7 @@
 //! queries (`brep_closest_point`, `brep_relationship`, `brep_distance`) builds it: each
 //! B-rep read live through [`LiveBrepObjects`] under its own identities, with a B-rep
 //! cache of each. `Object(i, ..)` names an object of B-rep `i`. (The adapter of
-//! difftest's `query_api_queries` unit, on the B-reps' proven identities.)
+//! goldens' `query_api_queries` unit, on the B-reps' proven identities.)
 
 #![allow(dead_code)] // test helpers
 
