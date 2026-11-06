@@ -7,7 +7,7 @@
 //!
 //! The inner planar contour has length L = 152 + 6*pi and total turning 2*pi.
 //! Integrating a section against its parallel-curve Jacobian (1 +/- curvature*u)
-//! gives volume L*area +/- 2*pi*first_moment. A round's removed section has area
+//! gives volume L*area +/- 2*pi*`first_moment`. A round's removed section has area
 //! (1-pi/4)*r^2 and first moment (5/6-pi/4)*r^3. A chamfer's are d^2/2 and d^3/6.
 //! The floor adds material on the inward side; the rim removes it outward.
 #![allow(
