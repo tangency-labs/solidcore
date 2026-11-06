@@ -654,9 +654,10 @@ fn refusals_say_why() {
             "knot multiplicities do not match the control points",
         ),
         (
+            // Two points of degree 2: too few before the multiplicities are summed.
             "#10=B_SPLINE_CURVE_WITH_KNOTS('',2,(#1,#1),.UNSPECIFIED.,.F.,.F.,(3,3),(0.,1.),.UNSPECIFIED.);",
             10,
-            "knot multiplicities do not match the control points",
+            "too few control points",
         ),
         (
             "#10=B_SPLINE_CURVE_WITH_KNOTS('',99,(#1,#1),.UNSPECIFIED.,.F.,.F.,(1,1),(0.,1.),.UNSPECIFIED.);",
