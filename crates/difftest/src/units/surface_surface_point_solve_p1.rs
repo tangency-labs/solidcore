@@ -40,11 +40,14 @@ use solidcore::surface::surface_point_solve::p1::{
 use solidcore::SolidError;
 
 use super::surface_surface_cache_p1::{
-    default_form, dom_of, flag, gen_knots, gen_sub_dom, gvec, harness, push3, push_dom, srf, status, v3,
-    BssIn, InlineSrf, SrfIn,
+    default_form, dom_of, fin, flag, gen_knots, gen_sub_dom, gvec, harness, push3, push_dom, srf, status, v3,
+    vec3, BssIn, InlineSrf, SrfIn, LIMITS,
 };
-use super::surface_surface_cache_p3::{gen_surf, surf_domain, surf_size, surface_in, SurfIn};
+use super::surface_surface_cache_p3::{
+    gen_surf, sized_surface, surf_domain, surf_size, surface_in, SurfIn,
+};
 use crate::case::{CaseContext, CaseSource};
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -397,6 +400,109 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         Ok(o) => to_output(&o),
         Err(e) => Output::unported(&e).unwrap_or_else(|| to_output(&[status(&e)])),
     })
+}
+
+// ---- input contract -----------------------------------------------------------------
+
+/// The solver operations the wrapper passes on: intersect, minimise, maximise, normalise and
+/// 3D signed directed maximise.
+pub(crate) const OPS: [u8; 5] = [0, 3, 4, 5, 10];
+
+/// What a point-solve problem that keeps the contract tells the rest of a case.
+pub(crate) struct Problem {
+    /// The surface domain.
+    pub(crate) dom: [f64; 4],
+    /// The control net size in u (2 for a plane).
+    pub(crate) num_u: usize,
+    /// The control net size in v (2 for a plane).
+    pub(crate) num_v: usize,
+}
+
+/// The problem of a surface `surf`, solver domain `dom`, operation `solver`, test vector and
+/// tolerance, if it keeps the contract: a surface as `surface_cache_p3` takes it, a solver
+/// domain of non-degenerate sides inside the surface domain, an operation of [`OPS`] and
+/// finite values.
+pub(crate) fn problem(
+    surf: &SurfIn,
+    dom: &[f64; 4],
+    solver: u8,
+    test: &[f64; 3],
+    tol: f64,
+) -> Option<Problem> {
+    let (d, _, _) = sized_surface(surf)?;
+    let (num_u, num_v) = match surf {
+        SurfIn::Plane(_) => (2, 2),
+        SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => {
+            let s = srf(&b.srf).ok()?;
+            (s.net.len(), s.net.first()?.len())
+        }
+    };
+    let ok = contract::domain_in(dom, &d, true, LIMITS.max_coord)
+        && OPS.contains(&solver)
+        && vec3(test)
+        && fin(tol);
+    ok.then_some(Problem { dom: d, num_u, num_v })
+}
+
+/// Whether `uv` is finite and inside `d`, or with `reach > 0` within `reach` times its sides
+/// of it.
+pub(crate) fn uv_within(uv: [f64; 2], d: &[f64; 4], reach: f64) -> bool {
+    let [u, v] = uv;
+    let (w, h) = (reach * (d[2] - d[0]), reach * (d[3] - d[1]));
+    fin(u) && fin(v) && u >= d[0] - w && u <= d[2] + w && v >= d[1] - h && v <= d[3] + h
+}
+
+/// Whether control point `(i + k, j + k)` is in the net, `k` being `d`.
+pub(crate) fn net_index(i: usize, j: usize, p: &Problem, d: usize) -> bool {
+    i <= 1 << 20 && j <= 1 << 20 && i + d < p.num_u && j + d < p.num_v
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_point_solve_p1.rs`, `validate`): a
+/// [`problem`] and the op's parameters: finite values, points inside the surface domain
+/// wherever a surface evaluator is read (within a domain size of it for `func`),
+/// control-net indices inside the net, up to [`MAX_HIT_STEPS`] hit steps of integer
+/// directions up to 3 in magnitude, a drop crease inside the surface domain.
+fn keeps_contract(i: &Inputs) -> bool {
+    let Some(p) = problem(&i.surf, &i.dom, i.solver, &i.test, i.tol) else {
+        return false;
+    };
+    let d = &p.dom;
+    match &i.op {
+        OpIn::Ctor | OpIn::Closed | OpIn::Crease => true,
+        OpIn::Func { uv } => uv_within(*uv, d, 1.0),
+        OpIn::TriGuess { iu, iv } | OpIn::Leg { iu, iv } | OpIn::SeamsCpts { iu, iv } => {
+            net_index(*iu, *iv, &p, 0)
+        }
+        OpIn::Well { i, j } => net_index(*i, *j, &p, 0),
+        OpIn::TriDist { i, j } => net_index(*i, *j, &p, 1),
+        OpIn::Stride { uv } | OpIn::SeamsUv { uv } => uv_within(*uv, d, 0.0),
+        OpIn::Local { uv, ltol } => uv_within(*uv, d, 0.0) && fin(*ltol),
+        OpIn::Stepper { uv, tight, uv2 } => {
+            uv_within(*uv, d, 0.0) && fin(*tight) && uv2.iter().all(|&c| fin(c))
+        }
+        OpIn::HitBound { uv, steps } => {
+            uv_within(*uv, d, 0.0)
+                && steps.len() <= MAX_HIT_STEPS
+                && steps
+                    .iter()
+                    .all(|h| h.uv.iter().all(|&c| fin(c)) && h.tob.unsigned_abs() <= 3)
+        }
+        OpIn::CheckBounds { curr, next, bdom } => {
+            uv_within(*curr, d, 0.0)
+                && next.iter().all(|&c| fin(c))
+                && contract::domain(bdom, LIMITS.max_coord)
+        }
+        OpIn::DropIso {
+            uv,
+            v,
+            crease,
+            param,
+        } => {
+            let (lo, hi) = if *v { (d[1], d[3]) } else { (d[0], d[2]) };
+            uv_within(*uv, d, 0.0) && fin(*crease) && (lo..=hi).contains(crease) && fin(*param)
+        }
+    }
 }
 
 // ---- generated cases ----------------------------------------------------------------
@@ -856,7 +962,7 @@ impl UnitDiff for Runner {
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         let k = &Kernel::default();
         (0..64)
-            .find_map(|_| gen_case(k, rng).ok())
+            .find_map(|_| gen_case(k, rng).ok().filter(keeps_contract))
             .and_then(|i| serde_json::to_value(i).ok())
     }
 
