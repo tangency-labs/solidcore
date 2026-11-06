@@ -670,6 +670,21 @@ fn the_pipes_join_only_with_wr77() {
 
 /// The grading sees what it's for: on a case that passes, a volume one part in 1e5 off and
 /// each wrong surface kind are refused, and the fork's marks on it don't hold.
+/// The ball's rim with one of its two edges picked, as the case was before #2441: the half
+/// rim's round would end at the sphere's seam, and a round does not end at a seam (#2864).
+#[test]
+fn the_ball_s_half_rim_is_refused() {
+    let mut case = cases()
+        .into_iter()
+        .find(|c| c.name == "sphere_plane")
+        .unwrap();
+    case.points.truncate(1);
+    for kernel in [solidcraft_kernel, solidcraft_before_definitions] {
+        let got = grade(&case, &mut kernel());
+        assert!(holds(Mark::Status1001, &got), "{got:?}");
+    }
+}
+
 #[test]
 fn the_grading_refuses_a_wrong_volume_and_a_wrong_kind() {
     let graded = |want_factor: f64, kind: RoundKind| {
