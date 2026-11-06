@@ -6,40 +6,67 @@
 //!
 //! - **Volumes** where the file carries its exporter's geometric validation volume
 //!   (read through `step_import`'s parser and converted from the file's unit, see
-//!   [`validation`]), or where the geometry has a closed form (`ftc_11_rb`, below).
+//!   [`validation`]), where another export of the same part does ([`Volume::Sister`]),
+//!   or where the geometry has a closed form (`ftc_11_rb`, below).
 //! - **Counts and closedness** everywhere, from the file's census: one body per
 //!   `MANIFOLD_SOLID_BREP` / `BREP_WITH_VOIDS` / `FACETED_BREP` /
 //!   `SHELL_BASED_SURFACE_MODEL`, and the faces of the shells each body holds
 //!   ([`validation::body_census`]). Every solid is expected closed, a surface model open.
 //!
-//! | file (corpus path) | bodies | faces | closed | volume expected (mm³) |
-//! |---|---|---|---|---|
-//! | `nist_ftc_06_asme1_rd` (AP203 geometry only) | 1 | 144 | 1 | none in the file |
-//! | `nist_stc_06_asme1_ap242-e3` | 1 | 144 | 1 | the file writes `VOLUME_MEASURE(0.0)` |
-//! | `nist_ftc_11_asme1_rb` (AP203 geometry only) | 1 | 6 | 1 | 5129.386136 (closed form) |
-//! | `nist_ftc_11_asme1_ap242-e2` | 1 | 42 | 1 | none in the file |
-//! | `turbine` (STEP Tools AP203) | 1 | 1241 | 1 | none in the file |
-//! | `nist_ctc_05_asme1_rd` (AP203 geometry only) | 2 | 209 | 1 | 774.6912251592 in³ = 12 694 914.687 |
-//! | `nist_ctc_05_asme1_ap203` (AP203 with PMI) | 1 | 156 | 1 | 774.691593579675 in³ = 12 694 920.724 |
-//! | `nist_ctc_05_asme1_ap242-e1` | 1 | 156 | 1 | none in the file |
-//! | `nist_stc_10_asme1_ap242-e2` | 1 | 256 | 1 | 188 312.244641244 |
+//! | file (corpus path) | bodies | faces | closed | volume expected (mm³) | bound | today |
+//! |---|---|---|---|---|---|---|
+//! | `nist_ftc_06_asme1_rd` (AP203 geometry only) | 1 | 144 | 1 | 3 323 556.50526143, `ftc_06_ap242-e2`'s | 1e-9 + 1.5e-15 | 3.761e-6, known failing |
+//! | `nist_stc_06_asme1_ap242-e3` | 1 | 144 | 1 | the same (its own is `VOLUME_MEASURE(0.0)`) | 1e-9 + 1.5e-15 | 4.810e-6, known failing |
+//! | `nist_ftc_11_asme1_rb` (AP203 geometry only) | 1 | 6 | 1 | 5129.386136 (closed form) | 1e-9 | 0.3801, known failing |
+//! | `nist_ftc_11_asme1_ap242-e2` | 1 | 42 | 1 | none: another part, see below | | |
+//! | `turbine` (STEP Tools AP203) | 1 | 1241 | 1 | none, see below | | |
+//! | `nist_ctc_05_asme1_rd` (AP203 geometry only) | 2 | 209 | 1 | `7.746912251592E2` in³ = 12 694 914.687 | 1e-9 + 6.5e-14 | 1.095e-6, known failing |
+//! | `nist_ctc_05_asme1_ap203` (AP203 with PMI) | 1 | 156 | 1 | `774.691593579675` in³ = 12 694 920.724 | 1e-9 + 6.5e-16 | 1.208e-7, known failing |
+//! | `nist_ctc_05_asme1_ap242-e1` | 1 | 156 | 1 | 12 694 920.724, `ctc_05_ap203`'s | 1e-9 + 6.5e-16 | 1.545e-7, known failing |
+//! | `nist_stc_10_asme1_ap242-e2` | 1 | 256 | 1 | `188312.244641244` | 1e-9 + 2.7e-15 | 3.396e-6, known failing |
 //!
 //! `ctc_05_rd`'s second body is its `SHELL_BASED_SURFACE_MODEL` of one face, an open
 //! sheet. `stc_06`'s validation properties are all zero (volume, area, and a centroid at
-//! the origin): an exporter placeholder, not a measurement, so no volume is asserted for
-//! it. The issue lists `ctc_05` twice; the corpus has three exports of it, and all three
-//! are pinned (the two AP203 ones on their validation volumes).
+//! the origin): an exporter placeholder, not a measurement. The issue lists `ctc_05`
+//! twice; the corpus has three exports of it, and all three are pinned.
 //!
-//! **Tolerance.** [`VALIDATION_TOLERANCE`] is the smallest round relative tolerance the
-//! three validation volumes meet with today's reader (measured 1.1e-6, 1.2e-7 and 3.4e-6);
-//! it is not derived from the files. The CAx-IF Recommended Practices for Geometric and
-//! Assembly Validation Properties (release 4.2, §4.11) leave the threshold to the
-//! business process and count a volume within 1 % as a successful exchange, which is far
-//! too loose to catch a wrong face here. It is an open question to the maintainers.
+//! **Bounds.** Each file's bound is the accuracy the test asks the integrator for,
+//! [`ACCURACY`] = 1e-9 (what that argument controls is in its doc), plus, against a
+//! validation volume, half a unit of the last digit the exporter wrote, relative to the
+//! value ([`validation_bound`]): `7.746912251592E2` has 13 significant digits, so
+//! 5e-11 / 774.69 = 6.5e-14; `774.691593579675` and `188312.244641244` have 15, and
+//! `3323556.50526143` 15 (5e-9 / 3 323 556.5 = 1.5e-15). A closed form is evaluated in
+//! f64 to a few ulps, so its bound is the accuracy. No bound is chosen from a
+//! measurement. With these bounds every volume pinned here is beyond it today and held
+//! known failing with today's deviation ([`State::KnownFailing`]); the integrator is not
+//! the cause, as each volume at 1e-9 is within 7e-11 of the volume at 1e-11. The NIST
+//! exporter's own two validation volumes of `ctc_05` (`rd` and `ap203`) differ by 4.8e-7.
 //!
-//! **Known failing today.** `ftc_11_rb` is a washer of six faces, two of them tori whose
-//! faces run over the top of the tube; today's reader closes it at 3179.68 mm³, 38 % below
-//! its closed form ([`ftc_11_rb_volume_is_wrong_known_failing`]).
+//! **Sister exports.** A file without a validation volume of its own is checked against
+//! another export's where the corpus holds one of the same part ([`Volume::Sister`]), and
+//! the test first checks that they are one part ([`validation::same_form`]: the sizes of
+//! the vertices' box and the distinct cylinder, sphere and torus radii, within the larger
+//! of the files' uncertainties):
+//!
+//! - `ftc_06_rd` and `stc_06` against `nist_ftc_06_asme1_ap242-e2`, whose 187 faces are
+//!   the same part with its periodic faces split (cylinders 58 → 88 faces' surfaces,
+//!   tori 6 → 12, spheres 5 → 8, cones 4 → 8: +43);
+//! - `ctc_05_ap242-e1` against `ctc_05_ap203`: the same 156 faces, 331 edges and 249
+//!   vertices. `ctc_05_rd` (209 faces) is the same part too, with its own volume.
+//!
+//! **No volume:** `ftc_11_ap242-e2` is not `ftc_11_rb` ([`ftc_11_exports_are_two_parts`]):
+//! the washer with 30 small faces more (cylinders of radius 0.08 to 0.9 mm and tori of
+//! tube 0.1 mm), with no validation property, no other export in the corpus and no closed
+//! form derived. `turbine` has no validation property and no other export in the corpus;
+//! a closed form of its 1241 analytic faces (866 cylinders, 129 cones, 244 planes, 2 tori)
+//! is not derived. Both are checked on counts and closedness only.
+//!
+//! **Known failing today**, besides the deviations above: `ftc_11_rb` is a washer of six
+//! faces, two of them tori whose faces run over the top of the tube; today's reader
+//! closes it at 3179.68 mm³, 38 % below its closed form.
+//!
+//! **Follow-up:** the census and validation-volume helper reads the file through
+//! `step_import::part21`; when #2591 lands it reads through the record's parser.
 //!
 //! The corpus tests are ignored by default; the corpus is not in the repository. Fetch it
 //! with `scripts/fetch-steptools-corpus.sh` and `scripts/fetch-nist-pmi-corpus.sh` and run
@@ -62,56 +89,126 @@ use solidcore::topology::Brep;
 use step_brep::{import_with_report, is_closed_solid, ImportReport};
 use step_import::Limits;
 
-use validation::{corpus_dir, corpus_file, relative};
-
-/// The relative tolerance of a measured volume against the file's validation volume
-/// (see the module docs: chosen from today's measurements, an open question).
-const VALIDATION_TOLERANCE: f64 = 5e-6;
-
-/// The relative tolerance of a measured volume against a closed form: the integrator's
-/// accuracy is 1e-9, so this is left at 1e-7 for the trims of the curved faces.
-const CLOSED_FORM_TOLERANCE: f64 = 1e-7;
+use validation::{corpus_dir, corpus_file, relative, validation_bound, ACCURACY};
 
 /// What a file's volume is checked against.
 #[derive(Debug, Clone, Copy)]
 enum Volume {
-    /// The file's geometric validation volume.
+    /// The file's own geometric validation volume.
     Validation,
+    /// The geometric validation volume of another export of the same part (its corpus
+    /// name), checked to be the same form first ([`validation::same_form`]).
+    Sister(&'static str),
     /// A closed form of the file's geometry, in mm³.
     ClosedForm(fn() -> f64),
-    /// Nothing: counts and closedness only.
-    None,
+    /// Nothing: counts and closedness only, for the reason given.
+    None(&'static str),
 }
 
-/// One corpus file: (file name, bodies, faces, closed solids, volume).
-type Case = (&'static str, usize, usize, usize, Volume);
+/// What today's reader gives against a file's expected volume.
+#[derive(Debug, Clone, Copy)]
+enum State {
+    /// Within the file's bound.
+    Within,
+    /// Beyond it: today's relative deviation, as measured.
+    KnownFailing(f64),
+}
 
-/// The files of #2580 with their census (see the module docs).
+/// One corpus file of #2580.
+#[derive(Debug, Clone, Copy)]
+struct Case {
+    name: &'static str,
+    bodies: usize,
+    faces: usize,
+    closed: usize,
+    volume: Volume,
+    state: State,
+}
+
+const NO_FTC_11_AP242: &str = "another model than ftc_11_rb (42 faces: the washer with 30 \
+     small faces, cylinders of radius 0.08 to 0.9 mm and tori of tube 0.1 mm), no validation \
+     property, no other export of it in the corpus, no closed form derived";
+const NO_TURBINE: &str = "no validation property, no other export of it in the corpus; a \
+     closed form of its 1241 analytic faces (866 cylinders, 129 cones, 244 planes, 2 tori) \
+     is not derived";
+
+/// The files of #2580 (see the module docs).
 const CASES: [Case; 9] = [
-    ("nist_ftc_06_asme1_rd.stp", 1, 144, 1, Volume::None),
-    ("nist_stc_06_asme1_ap242-e3.stp", 1, 144, 1, Volume::None),
-    (
-        "nist_ftc_11_asme1_rb.stp",
-        1,
-        6,
-        1,
-        Volume::ClosedForm(ftc_11_rb_closed_form), // known failing
-    ),
-    ("nist_ftc_11_asme1_ap242-e2.stp", 1, 42, 1, Volume::None),
-    ("turbine.stp", 1, 1241, 1, Volume::None),
-    ("nist_ctc_05_asme1_rd.stp", 2, 209, 1, Volume::Validation),
-    ("nist_ctc_05_asme1_ap203.stp", 1, 156, 1, Volume::Validation),
-    ("nist_ctc_05_asme1_ap242-e1.stp", 1, 156, 1, Volume::None),
-    (
-        "nist_stc_10_asme1_ap242-e2.stp",
-        1,
-        256,
-        1,
-        Volume::Validation,
-    ),
+    Case {
+        name: "nist_ftc_06_asme1_rd.stp",
+        bodies: 1,
+        faces: 144,
+        closed: 1,
+        volume: Volume::Sister("nist_ftc_06_asme1_ap242-e2.stp"),
+        state: State::KnownFailing(3.761e-6),
+    },
+    Case {
+        name: "nist_stc_06_asme1_ap242-e3.stp",
+        bodies: 1,
+        faces: 144,
+        closed: 1,
+        volume: Volume::Sister("nist_ftc_06_asme1_ap242-e2.stp"),
+        state: State::KnownFailing(4.810e-6),
+    },
+    Case {
+        name: "nist_ftc_11_asme1_rb.stp",
+        bodies: 1,
+        faces: 6,
+        closed: 1,
+        volume: Volume::ClosedForm(ftc_11_rb_closed_form),
+        state: State::KnownFailing(0.3801),
+    },
+    Case {
+        name: "nist_ftc_11_asme1_ap242-e2.stp",
+        bodies: 1,
+        faces: 42,
+        closed: 1,
+        volume: Volume::None(NO_FTC_11_AP242),
+        state: State::Within,
+    },
+    Case {
+        name: "turbine.stp",
+        bodies: 1,
+        faces: 1241,
+        closed: 1,
+        volume: Volume::None(NO_TURBINE),
+        state: State::Within,
+    },
+    Case {
+        name: "nist_ctc_05_asme1_rd.stp",
+        bodies: 2,
+        faces: 209,
+        closed: 1,
+        volume: Volume::Validation,
+        state: State::KnownFailing(1.095e-6),
+    },
+    Case {
+        name: "nist_ctc_05_asme1_ap203.stp",
+        bodies: 1,
+        faces: 156,
+        closed: 1,
+        volume: Volume::Validation,
+        state: State::KnownFailing(1.208e-7),
+    },
+    Case {
+        name: "nist_ctc_05_asme1_ap242-e1.stp",
+        bodies: 1,
+        faces: 156,
+        closed: 1,
+        volume: Volume::Sister("nist_ctc_05_asme1_ap203.stp"),
+        state: State::KnownFailing(1.545e-7),
+    },
+    Case {
+        name: "nist_stc_10_asme1_ap242-e2.stp",
+        bodies: 1,
+        faces: 256,
+        closed: 1,
+        volume: Volume::Validation,
+        state: State::KnownFailing(3.396e-6),
+    },
 ];
 
-/// The volume of `brep`, or `None` where the integrator gives none.
+/// The volume of `brep` at [`ACCURACY`], or `None` where the integrator gives none.
 fn volume(brep: &Brep) -> Option<f64> {
     let kernel = Kernel::default();
     let store = AttributeStore::default();
@@ -120,7 +217,7 @@ fn volume(brep: &Brep) -> Option<f64> {
         key_of: &|_| ObjectKey(0),
     };
     let mut copy = brep.clone();
-    brep_volume(&kernel, &mut copy, 1e-9, &attrs).ok()
+    brep_volume(&kernel, &mut copy, ACCURACY, &attrs).ok()
 }
 
 /// (bodies, faces over all bodies, closed bodies) of `report`.
@@ -181,9 +278,44 @@ fn ftc_11_rb_closed_form() -> f64 {
     2.0 * std::f64::consts::PI * (rectangle + inner + flat + outer)
 }
 
-/// The file's validation volume of a case, in mm³.
-fn validation_volume_of(name: &str, bytes: &[u8]) -> Option<f64> {
-    validation::validation_volume(&validation::parse(bytes))
+/// The same washer as [`ftc_11_rb_closed_form`], by Pappus over the pieces of its
+/// section, each an area times the radius of its centroid, from the textbook area and
+/// centroid of a circular segment instead of an antiderivative:
+///
+/// - the rectangle 16…31.5 × −1.5…0;
+/// - over each torus, the upper half of its tube's disk (area π a²/2, centroid on the
+///   tube's centre radius) less the half of the circular segment beyond the chord where
+///   the tube meets the plane z = 0.425 (the chord at distance d = √(a² − 0.425²) from
+///   the centre, half-angle α = acos(d / a): segment area a² (α − sin α cos α), centroid
+///   at 4 a sin³α / (3 (2α − sin 2α)) from the centre, the same for its upper half);
+/// - the strip between the two chords, 0.425 high.
+fn ftc_11_rb_by_pieces() -> f64 {
+    use std::f64::consts::PI;
+    let (a, top, base) = (1.5_f64, 0.425_f64, 1.5_f64);
+    let (r_in, r_out, c_in, c_out) = (16.0_f64, 31.5_f64, 17.5_f64, 30.0_f64);
+    let d = (a * a - top * top).sqrt();
+    let alpha = (d / a).acos();
+    let segment = a * a * (alpha - alpha.sin() * alpha.cos());
+    let offset = 4.0 * a * alpha.sin().powi(3) / (3.0 * (2.0 * alpha - (2.0 * alpha).sin()));
+    let half_disk = PI * a * a / 2.0;
+    // (area, centroid radius) of each piece, the segments' halves taken away
+    let pieces = [
+        (base * (r_out - r_in), (r_in + r_out) / 2.0),
+        (half_disk, c_in),
+        (-segment / 2.0, c_in + offset),
+        (
+            top * ((c_out - d) - (c_in + d)),
+            ((c_in + d) + (c_out - d)) / 2.0,
+        ),
+        (half_disk, c_out),
+        (-segment / 2.0, c_out - offset),
+    ];
+    2.0 * PI * pieces.iter().map(|(area, r)| area * r).sum::<f64>()
+}
+
+/// The file's validation volume of `name`, if it writes one.
+fn validation_volume_of(name: &str, bytes: &[u8]) -> Option<validation::ValidationVolume> {
+    validation::validation_volume(&validation::parse(bytes), bytes)
         .unwrap_or_else(|error| panic!("{name}: {error}"))
 }
 
@@ -211,15 +343,20 @@ fn part21(data: &str) -> Vec<u8> {
 
 /// The validation-volume helper reads a geometric validation property only, and converts
 /// it from the file's unit: 2 in³ is 2 × 25.4³ = 32 774.128 mm³. The `'pmi validation
-/// property'` beside it is not a geometric one.
+/// property'` beside it is not a geometric one. Its written `2.0` is good to half a unit
+/// of its last digit, 0.05 of 2.0.
 #[test]
 fn validation_volume_converts_the_files_unit() {
-    let file = validation::parse(&part21(INCH_VOLUME));
-    let volumes = validation::validation_volumes(&file).expect("units resolve");
+    let bytes = part21(INCH_VOLUME);
+    let file = validation::parse(&bytes);
+    let volumes = validation::validation_volumes(&file, &bytes).expect("units resolve");
     assert_eq!(volumes.len(), 1, "{volumes:?}");
     assert_eq!(volumes[0].property, 8);
     assert_eq!(volumes[0].description, "volume of part");
     assert_eq!(volumes[0].written, 2.0);
+    assert_eq!(volumes[0].literal, "2.0");
+    assert_eq!(volumes[0].digits(), 0.05 / 2.0);
+    assert_eq!(validation_bound(1e-9, &volumes[0]), 1e-9 + 0.025);
     let expected = 2.0 * 25.4 * 25.4 * 25.4;
     assert!(
         relative(volumes[0].mm3, expected) <= 1e-15,
@@ -227,31 +364,83 @@ fn validation_volume_converts_the_files_unit() {
         volumes[0].mm3
     );
     assert_eq!(
-        validation::validation_volume(&file).expect("one value"),
-        Some(volumes[0].mm3)
+        validation::validation_volume(&file, &bytes).expect("one value"),
+        Some(volumes[0].clone())
     );
 }
 
-/// A file whose geometric validation volumes disagree is reported, not averaged.
+/// A file whose geometric validation volumes disagree beyond their written digits is
+/// reported, not averaged.
 #[test]
 fn disagreeing_validation_volumes_are_an_error() {
     let disagreeing = INCH_VOLUME.replace(
         "'pmi validation property'",
         "'geometric validation property'",
     );
-    let file = validation::parse(&part21(&disagreeing));
+    let bytes = part21(&disagreeing);
+    let file = validation::parse(&bytes);
     assert_eq!(
-        validation::validation_volumes(&file).map(|v| v.len()),
+        validation::validation_volumes(&file, &bytes).map(|v| v.len()),
         Ok(2)
     );
-    assert!(validation::validation_volume(&file).is_err());
+    assert!(validation::validation_volume(&file, &bytes).is_err());
 }
 
-/// The closed form of `ftc_11_rb` at its derived parameters (see [`ftc_11_rb_closed_form`]).
+/// Half a unit of the last digit written, with and without an exponent and a sign.
+#[test]
+fn half_unit_of_the_last_digit_written() {
+    for (literal, half) in [
+        ("7.746912251592E2", 5e-11),
+        ("188312.244641244", 5e-10),
+        ("4.710152747498E7", 5e-6),
+        ("3.", 0.5),
+        ("12", 0.5),
+        ("-2.50e-3", 5e-6),
+    ] {
+        let got = validation::half_unit_of_last_digit(literal).expect("a number");
+        assert!(
+            relative(got, half) <= f64::EPSILON,
+            "{literal}: {got}, expected {half}"
+        );
+    }
+    for bad in ["", "E3", "1.2.3", "x"] {
+        assert!(validation::half_unit_of_last_digit(bad).is_err(), "{bad}");
+    }
+}
+
+/// The literal is read from the instance it belongs to, across a line break, and not
+/// from an instance whose id only ends in the same digits.
+#[test]
+fn written_literal_is_the_instances_own() {
+    let bytes = b"#16=MEASURE_REPRESENTATION_ITEM('v',VOLUME_MEASURE(1.5),#5);\n\
+#6=MEASURE_REPRESENTATION_ITEM('volume measure',VOLUME_MEASURE(\n7.746912251592E2),#5);";
+    assert_eq!(
+        validation::written_literal(bytes, 6, "VOLUME_MEASURE").as_deref(),
+        Some("7.746912251592E2")
+    );
+    assert_eq!(
+        validation::written_literal(bytes, 16, "VOLUME_MEASURE").as_deref(),
+        Some("1.5")
+    );
+    assert_eq!(
+        validation::written_literal(bytes, 7, "VOLUME_MEASURE"),
+        None
+    );
+}
+
+/// [`ftc_11_rb_closed_form`] is the washer: it agrees with the independent decomposition
+/// [`ftc_11_rb_by_pieces`] to rounding (each a sum of a few terms, so within a few ulps),
+/// and with 5129.386136, the value jyviko re-derived on #2593, to its six decimals (half
+/// a unit of the last one).
 #[test]
 fn ftc_11_rb_closed_form_is_the_washer() {
     let v = ftc_11_rb_closed_form();
-    assert!((v - 5129.386136422674).abs() <= 1e-9 * v, "{v}");
+    let pieces = ftc_11_rb_by_pieces();
+    assert!(
+        relative(v, pieces) <= 8.0 * f64::EPSILON,
+        "antiderivative {v}, pieces {pieces}"
+    );
+    assert!((v - 5129.386136).abs() <= 0.5e-6, "{v}");
 }
 
 /// Each file imports with the bodies, faces and closed solids of its census, and no body
@@ -264,7 +453,8 @@ fn winding_face_files_match_their_census() {
         return;
     };
     let mut failures = Vec::new();
-    for (name, bodies, faces, closed, _) in CASES {
+    for case in CASES {
+        let (name, bodies, faces, closed) = (case.name, case.bodies, case.faces, case.closed);
         let (bytes, report) = import(&dir, name);
         let census = validation::body_census(&validation::parse(&bytes));
         let census = (
@@ -290,97 +480,119 @@ fn winding_face_files_match_their_census() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// The files with a geometric validation volume close at it, within
-/// [`VALIDATION_TOLERANCE`]; the files without one say so, and `stc_06` writes its zero
-/// placeholder.
+/// The expected volume of `case` and its relative bound, or why it has none; `own` is
+/// the file's own validation volume.
+fn expected(
+    dir: &std::path::Path,
+    case: &Case,
+    bytes: &[u8],
+    own: Option<&validation::ValidationVolume>,
+) -> Result<(f64, f64), String> {
+    let name = case.name;
+    match (case.volume, own) {
+        (Volume::Validation, Some(own)) => Ok((own.mm3, validation_bound(ACCURACY, own))),
+        (Volume::Validation, None) => Err(format!("{name}: no validation volume in the file")),
+        (_, Some(own)) if own.written != 0.0 => Err(format!(
+            "{name}: carries a validation volume {} mm³; assert it",
+            own.mm3
+        )),
+        (Volume::Sister(sister), _) => {
+            let sister_bytes = corpus_file(dir, sister);
+            let sister_file = validation::parse(&sister_bytes);
+            validation::same_form(
+                &validation::form(&validation::parse(bytes))?,
+                &validation::form(&sister_file)?,
+            )
+            .map_err(|error| format!("{name} and {sister} are not one part: {error}"))?;
+            let sister_volume = validation::validation_volume(&sister_file, &sister_bytes)?
+                .ok_or_else(|| format!("{sister}: no validation volume"))?;
+            Ok((
+                sister_volume.mm3,
+                validation_bound(ACCURACY, &sister_volume),
+            ))
+        }
+        // The closed forms are evaluated in f64 to a few ulps, far inside the accuracy.
+        (Volume::ClosedForm(closed_form), _) => Ok((closed_form(), ACCURACY)),
+        (Volume::None(why), _) => Err(format!("none: {why}")),
+    }
+}
+
+/// Each file's volume against its expected one ([`Volume`]), within its bound: the
+/// integrator's [`ACCURACY`] plus, for a validation volume, the digits the exporter wrote
+/// ([`validation_bound`]). A file that is [`State::KnownFailing`] must still be beyond its
+/// bound, by a finite deviation; once it is within, mark it [`State::Within`]. `stc_06`
+/// writes its zero placeholder, which is not a measurement.
 #[test]
 #[ignore = "needs SOLIDCORE_STEP_CORPUS"]
-fn winding_face_files_match_their_validation_volume() {
+fn winding_face_volumes_are_within_their_bound_or_known_failing() {
     let Some(dir) = corpus_dir() else {
         eprintln!("SOLIDCORE_STEP_CORPUS is not set");
         return;
     };
     let mut failures = Vec::new();
-    for (name, _, _, _, expected) in CASES {
+    for case in &CASES {
+        let name = case.name;
         let (bytes, report) = import(&dir, name);
-        let file_volume = validation_volume_of(name, &bytes);
+        let own = validation_volume_of(name, &bytes);
+        if let Some(placeholder) = own.as_ref().filter(|v| v.written == 0.0) {
+            println!("{name}: validation placeholder {}", placeholder.literal);
+        }
         let measured = closed_volume(&report);
-        match (expected, file_volume) {
-            (Volume::Validation, Some(file_volume)) => {
-                let deviation = relative(measured, file_volume);
-                println!(
-                    "{name}: volume {measured:.6} mm³, validation {file_volume:.6} mm³, \
-                     {deviation:.2e} relative"
-                );
-                if deviation > VALIDATION_TOLERANCE {
-                    failures.push(format!(
-                        "{name}: volume {measured} mm³, validation {file_volume} mm³ \
-                         ({deviation:.2e} relative)"
-                    ));
-                }
+        let (expected, bound) = match expected(&dir, case, &bytes, own.as_ref()) {
+            Ok(expected) => expected,
+            Err(why) if why.starts_with("none: ") => {
+                println!("{name}: volume {measured:.6} mm³, {why}");
+                continue;
             }
-            (Volume::Validation, None) => {
-                failures.push(format!("{name}: no validation volume in the file"));
+            Err(why) => {
+                failures.push(why);
+                continue;
             }
-            (Volume::None, Some(placeholder)) if name.starts_with("nist_stc_06") => {
-                println!("{name}: volume {measured:.6} mm³, validation placeholder {placeholder}");
-                if placeholder != 0.0 {
-                    failures.push(format!(
-                        "{name}: validation volume {placeholder}, the zero placeholder expected; \
-                         assert it as a validation volume"
-                    ));
-                }
-            }
-            (Volume::None | Volume::ClosedForm(_), Some(file_volume)) => {
-                failures.push(format!(
-                    "{name}: carries a validation volume {file_volume} mm³; assert it"
-                ));
-            }
-            (Volume::None | Volume::ClosedForm(_), None) => {
-                println!("{name}: volume {measured:.6} mm³, no validation volume");
-            }
+        };
+        let deviation = relative(measured, expected);
+        println!(
+            "{name}: volume {measured:.6} mm³, expected {expected:.6} mm³ ({:?}), \
+             {deviation:.3e} relative, bound {bound:.3e}",
+            case.volume
+        );
+        match case.state {
+            State::Within if deviation > bound => failures.push(format!(
+                "{name}: volume {measured} mm³, expected {expected} mm³, {deviation:.3e} \
+                 relative, bound {bound:.3e}"
+            )),
+            State::KnownFailing(today) if !deviation.is_finite() => failures.push(format!(
+                "{name}: no measurable volume ({measured} mm³), so the known failure \
+                 ({today:.2e}) is not the one pinned"
+            )),
+            State::KnownFailing(today) if deviation <= bound => failures.push(format!(
+                "{name} is within its bound now ({deviation:.3e} <= {bound:.3e}, was \
+                 {today:.2e}); mark it State::Within"
+            )),
+            _ => {}
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// `ftc_11_rb`'s washer (see [`ftc_11_rb_closed_form`]) is one closed solid of six faces
-/// today, but of the wrong volume: 3179.68 mm³ against 5129.386 mm³ in closed form (38 %
-/// low). Its tori run over the top of their tubes, the faces #2580 is about.
-///
-/// Fails when the reader gets the volume right, which is the point: then move the file
-/// to a closed-form volume test with [`CLOSED_FORM_TOLERANCE`].
+/// `ftc_11_rb` and `ftc_11_ap242-e2` are not one part, so the AP242 file has no sister
+/// volume (the module docs).
 #[test]
 #[ignore = "needs SOLIDCORE_STEP_CORPUS"]
-fn ftc_11_rb_volume_is_wrong_known_failing() {
+fn ftc_11_exports_are_two_parts() {
     let Some(dir) = corpus_dir() else {
         eprintln!("SOLIDCORE_STEP_CORPUS is not set");
         return;
     };
-    let name = "nist_ftc_11_asme1_rb.stp";
-    let closed_form = CASES
-        .iter()
-        .find_map(|(n, _, _, _, v)| match v {
-            Volume::ClosedForm(f) if *n == name => Some(f()),
-            _ => None,
-        })
-        .expect("a closed-form case");
-    let (_, report) = import(&dir, name);
-    let measured = closed_volume(&report);
-    let deviation = relative(measured, closed_form);
-    println!(
-        "{name}: volume {measured:.6} mm³, closed form {closed_form:.6} mm³, \
-         {deviation:.2e} relative"
+    let form = |name| {
+        validation::form(&validation::parse(&corpus_file(&dir, name)))
+            .unwrap_or_else(|error| panic!("{name}: {error}"))
+    };
+    let difference = validation::same_form(
+        &form("nist_ftc_11_asme1_rb.stp"),
+        &form("nist_ftc_11_asme1_ap242-e2.stp"),
     );
-    assert!(
-        deviation.is_finite(),
-        "{name}: no measurable volume ({measured} mm³), so the known failure is not the one pinned"
-    );
-    assert!(
-        deviation > CLOSED_FORM_TOLERANCE,
-        "{name} now closes at its closed form ({measured} against {closed_form}); move it \
-         to a closed-form volume test"
-    );
+    println!("{difference:?}");
+    assert!(difference.is_err());
 }
 
 /// A volume that is not finite never counts as close to its expected value.
