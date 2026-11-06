@@ -386,6 +386,8 @@ pub fn planar_curve_block(
         return None;
     }
     clamped(u, p)
+}
+
 /// The B-rep blocks of the `topology.vertexuse` fixture (`.smb` file, wire edge, face,
 /// network, shell vertices and edges, face list, exact ellipse face, edge-loop face; the
 /// layout is documented with that runner's `brep_block`), as the reference wrapper
