@@ -9,12 +9,12 @@
 //! `IsKindOf` classification is exercised (the object keeps `SmTopology` storage and
 //! the final state dump asks the base class explicitly).
 //!
-//! C++: `solidcore_ffi::units::topology_topology` (upstream `SmTopology.cpp`,
-//! `SmTrackTopologyChanges.cpp`). Rust: `solidcore::topology::topology`.
+//! Ported from upstream `SmTopology.cpp` and `SmTrackTopologyChanges.cpp`; checked
+//! against its golden. Rust: `solidcore::topology::topology`.
 //!
 //! Inputs: `n_objs` (pool size, 1..=32), `user_cb` (record the user notify
 //! callback), `kind_ts` (type codes asked of `IsKindOf` at the end) and `ops`
-//! (8-wide records, see `solidcore_ffi::units::topology_topology::op`). Output `i`:
+//! (8-wide records, see [`op`]). Output `i`:
 //! per op `[status, n, values...]`, then the final state of every object, the
 //! context's marks and locks, the system callback and the type system; `d`: the
 //! tolerances asked for.
@@ -29,11 +29,70 @@ use solidcore::geom::context::{Context, MarkLock, MarkType, NotifyCallback};
 use solidcore::geom::object::{NotifyOperation, ObjectRef};
 use solidcore::topology::topology::{self as topo, Topology, TrackTopologyChanges};
 use solidcore::BrepId;
-use solidcore_ffi::units::topology_topology::{self as ffi, op, MAX_OBJECTS};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Op codes of a script record `[op, a, b, c, d, e, f, g]`.
+pub(crate) mod op {
+    /// `[o, flags]`: `SetAllFlags`.
+    pub(crate) const SET_FLAGS: i64 = 0;
+    /// `[o]`: `GetAllFlags`.
+    pub(crate) const GET_FLAGS: i64 = 1;
+    /// `[o, v]`: `SetUserIndex1`.
+    pub(crate) const SET_UIDX1: i64 = 2;
+    /// `[o, v]`: `SetUserIndex2`.
+    pub(crate) const SET_UIDX2: i64 = 3;
+    /// `[o, p]`: `SetUserPtr1` (a pointer identifying object `p`, `-1` null).
+    pub(crate) const SET_UPTR: i64 = 4;
+    /// `[o]`: the user indices and pointer.
+    pub(crate) const GET_USER: i64 = 5;
+    /// `[o, mark type]`: `Mark`.
+    pub(crate) const MARK: i64 = 6;
+    /// `[o, mark type]`: `GetMark`.
+    pub(crate) const GET_MARK: i64 = 7;
+    /// `[o, mark type]`: `IsMarked`.
+    pub(crate) const IS_MARKED: i64 = 8;
+    /// `[mask]`: push `SmNewMarkAndLock(ctx, mask)`.
+    pub(crate) const LOCK: i64 = 9;
+    /// `NewMark` of the top lock.
+    pub(crate) const LOCK_NEW_MARK: i64 = 10;
+    /// Pop (destroy) the top lock.
+    pub(crate) const UNLOCK: i64 = 11;
+    /// `[operation, this, d1, d2, d3]`: `this->Notify(...)` (`-1` data are null).
+    pub(crate) const NOTIFY: i64 = 12;
+    /// `[o]`: `GetTolerance` (to the double output).
+    pub(crate) const TOLERANCE: i64 = 13;
+    /// `[o, p]`: `SmTopology::IsConnectedTo(p)`.
+    pub(crate) const CONNECTED: i64 = 14;
+    /// `[start_now, has_brep]`: a new `SmTrackTopologyChanges`.
+    pub(crate) const TRACK_NEW: i64 = 15;
+    /// `[t]`: `StartTracking`.
+    pub(crate) const TRACK_START: i64 = 16;
+    /// `[t]`: `StopTracking`.
+    pub(crate) const TRACK_STOP: i64 = 17;
+    /// `[t]`: `IsTracking`.
+    pub(crate) const TRACK_IS: i64 = 18;
+    /// `[t]`: `GetRmList`, `GetAddList`, `GetChgList`, `GetNotifyEvents`.
+    pub(crate) const TRACK_LISTS: i64 = 19;
+    /// `[t]`: `ReSetArrays`.
+    pub(crate) const TRACK_RESET: i64 = 20;
+    /// `[t]`: delete the tracker.
+    pub(crate) const TRACK_DROP: i64 = 21;
+    /// `[on]`: install (1) or clear (0) a foreign system notify callback.
+    pub(crate) const SYS_FOREIGN: i64 = 22;
+    /// `[o]`: delete the object.
+    pub(crate) const DESTROY: i64 = 23;
+    /// `[o, type]`: give the object a stand-in type code (`SmTopology` storage) so
+    /// the change tracker's `IsKindOf` classification can be exercised: 16001
+    /// `SmTopology`, 16002 `SmFace`, 16005 `SmEdgeuse`, 16016 `SmEdge`, 16021
+    /// `SmVertex`.
+    pub(crate) const SET_KIND: i64 = 24;
+}
+
+/// Largest object pool.
+pub(crate) const MAX_OBJECTS: i64 = 32;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 600;
@@ -63,11 +122,6 @@ struct Inputs {
 
 fn harness(e: impl std::fmt::Display) -> HarnessError {
     HarnessError::new(e.to_string())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let raw = ffi::run(i.n_objs, i.user_cb, &i.kind_ts, &i.ops).map_err(harness)?;
-    Ok(Output::new().ints("i", raw.ints).values("d", raw.dbls))
 }
 
 // ---- Rust side ---------------------------------------------------------------------
@@ -651,10 +705,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
