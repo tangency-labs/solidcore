@@ -1,16 +1,14 @@
-//! Differential coverage for `topology.brep_mirror` (`SmBrep::Mirror`).
+//! Runner for unit `topology.brep_mirror` (`SmBrep::Mirror`). Ported from upstream
+//! `SmBrep::Mirror` and `SmBrep::Transform`; checked against its golden.
 //!
-//! The fixtures are upstream `.smb` solids read by the native `SmBrep::ReadFromFile`
-//! and imported into Rust from the native raw graph; each is mirrored about an
-//! axis-aligned or a generated plane by the real `SmBrep::Mirror` and by
-//! `topology::brep::mirror::mirror`. A case compares the status, the whole B-rep graph
-//! (topology, vertex points, tolerances, intervals, UV domains) and samples of every
-//! edge curve, every edge use's UV trim curve and every face surface (type code,
-//! natural domain, evaluated points). Inputs the native reader cannot build are
-//! `rejected`, not failed.
+//! The fixtures are upstream `.smb` solids read by the Rust reader; each is mirrored about
+//! an axis-aligned or a generated plane by `topology::brep::mirror::mirror`. The output is
+//! the status, the whole B-rep graph (topology, vertex points, tolerances, intervals, UV
+//! domains) and samples of every edge curve, every edge use's UV trim curve and every face
+//! surface (type code, natural domain, evaluated points).
 //!
 //! A case with a `matrix` runs `SmBrep::Transform(const double[4][4], bScaleTol)`
-//! (`topology::brep::mirror::transform_matrix`) instead of the mirror, compared the same
+//! (`topology::brep::mirror::transform_matrix`) instead of the mirror, recorded the same
 //! way: the fixture file `transform_matrix.json` (identity, rotation, uniform and
 //! non-uniform scale, shear, mirror, near-singular, singular, huge and tiny scale) and
 //! [`MATRIX_GENERATED`] generated `mat####` cases, seeded apart from the `gen####`
@@ -25,11 +23,9 @@ use solidcore::topology::brep::mirror::{mirror, transform_matrix};
 use solidcore::topology::brep::p3::notify_serial;
 use solidcore::topology::Brep;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::topology_brep_mirror as ffi;
-use solidcore_ffi::FfiError;
 
 use super::boolean_merge_p1::{graph_owned, OwnerSource};
-use super::topology_vertexuse::{import_raw_with_owners, path_of, BrepIn};
+use super::topology_vertexuse::{path_of, BrepIn};
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// The runner of `SmBrep::Mirror`.
@@ -97,58 +93,11 @@ fn v(p: [f64; 3]) -> Vec3 {
     Vec3::new(p[0], p[1], p[2])
 }
 
-fn args(i: &Inputs) -> [f64; 10] {
-    [
-        f64::from(i.editing),
-        i.origin[0],
-        i.origin[1],
-        i.origin[2],
-        i.x[0],
-        i.x[1],
-        i.x[2],
-        i.y[0],
-        i.y[1],
-        i.y[2],
-    ]
-}
-
-/// The shared B-rep block of `ReadFromFile(file, rebuild)`; no validate-only, no gaps.
-fn block(i: &Inputs) -> Vec<f64> {
-    vec![0.0, f64::from(i.rebuild), 0.0, 0.0]
-}
-
 fn path(i: &Inputs) -> Result<String, HarnessError> {
     path_of(&BrepIn::File {
         file: i.file.clone(),
         rebuild: i.rebuild,
     })
-}
-
-/// The native output, or `Err(output)` when the FFI guard refuses the input.
-fn native(i: &Inputs, op: u8) -> Result<Result<Vec<f64>, Output>, HarnessError> {
-    let r = match (op, i.matrix) {
-        (1, Some(m)) => {
-            let mut a = [0.0; 18];
-            a[0] = f64::from(i.editing);
-            a[1] = f64::from(i.scale_tol);
-            for (slot, x) in a.iter_mut().skip(2).zip(m.iter().flatten()) {
-                *slot = *x;
-            }
-            ffi::transform(&path(i)?, &block(i), &a)
-        }
-        _ => ffi::eval(op, &path(i)?, &block(i), &args(i)),
-    };
-    match r {
-        Ok(raw) if raw.first() == Some(&-999.) => Ok(Err(Output::rejected(format!(
-            "fixture constructor status {}",
-            raw.get(1).copied().unwrap_or(-1.)
-        )))),
-        Ok(raw) => Ok(Ok(raw)),
-        Err(e @ FfiError::InvalidArgument(_)) => {
-            Ok(Err(Output::rejected(format!("ffi guard: {e}"))))
-        }
-        Err(e) => Err(herr(e)),
-    }
 }
 
 pub(super) fn status(r: SolidResult<()>) -> SolidResult<f64> {
@@ -251,21 +200,6 @@ fn clear_logical_lists(b: &mut Brep) -> SolidResult<()> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.brep_mirror"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let raw = match native(&i, 1)? {
-            Ok(raw) => raw,
-            Err(refused) => return Ok(refused),
-        };
-        let n = *raw.first().ok_or_else(|| herr("short record"))? as usize;
-        let record = raw.get(1..=n).ok_or_else(|| herr("short record"))?.to_vec();
-        let (mut b, owners) =
-            import_raw_with_owners(raw.get(n + 1..).ok_or_else(|| herr("short graph"))?)?;
-        clear_logical_lists(&mut b).map_err(herr)?;
-        normalize_face_shells(&mut b).map_err(herr)?;
-        graph_owned(&b, record, OwnerSource::Native(&owners))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
