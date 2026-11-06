@@ -1,0 +1,62 @@
+# blend.fillet_solver_p2: a revolved chamfer enters a spherical exact builder (2026-11-06)
+
+Units: `blend.fillet_solver_p2`, `blend.fillet_solver_p4`, `blend::fillet_exact`.
+Issue: #2905 (revolved vase only); PR: #2932.
+
+## Reproduction and root cause
+
+The captured operand in `crates/solidcore/tests/data/issue_2905_revolved_vase.smb`
+is the application's pre-chamfer body from `04-revolve-vase`: 5 faces, 7 edges,
+4 vertices. On pristine main `513e6fcfc`, the operand is manifold, passes Level2,
+and has its independent meridian volume. The z=60 circular edge's tangent chain
+has one closed edge. Equal chamfer setbacks 2.995 prepare offsets
+6.483916671439901, but execution returns status 1001 and "Fillet Surface
+Computation Failure". The reported Core985 application wrapper independently
+returns status 1001 for the same operand.
+
+Temporary native tracing, removed before implementation, identifies
+`BlendSpine::Point`, supports `[None,Cone]`, followed by
+`ball_triangle_fillet_geom_parts`'s explicit circular-generator rejection. The
+Point dispatch did not check the section type before choosing a spherical
+builder. A straight section is the chord between contacts, not that ball's
+spherical patch. Restrict the Point spherical builders to circular sections;
+other generators use the existing trace/construction and its certificate.
+No error is swallowed and no tolerance or certificate is weakened.
+
+## Independent geometry
+
+In the (radius,z) meridian the curved support is the circle centred at (-16,33),
+radius sqrt(1690), between z = 30 and 60; the upper line is
+r=15+0.15*(z-60). Their unit directions into the supports enclose
+130.41442061908944 degrees. For equal setbacks d=2.995 the offsets are
+R=d*(1-cos(alpha))/sin(alpha)=6.483916671439901.
+Solving the meridian offset circle and line, selecting the root in both faces,
+gives centre (21.837023752770484,61.87045851362839) and contacts
+(16.68228678705657,57.937283941291334) and
+(15.424842847414759,62.83228564943175).
+The joining segment revolves into a cone. Integrate
+pi*(-16+sqrt(1690-(z-33)^2))^2 and the conical frusta to obtain input volume
+112499.47865571645 and chamfered volume 112773.94647120051. The concave waist
+adds material. The test computes these from the meridian, independently of the
+kernel result; the reported/cached old volume 112773.944 is not an expected value.
+
+Research: Shene's [Surfaces of Revolution, cone example](https://pages.mtu.edu/~shene/COURSES/cs3621/LAB/surface/rev-surf.html)
+constructs a cone by revolving a meridian line segment. This agrees with
+`docs/generic-blend.md`'s chord section. The existing exact revolution builder
+could be a future route only with proof of both supports' shared symmetry;
+a circular input edge alone is insufficient. Sampling recognisers alone do not
+supply that proof.
+
+## Validation and limits
+
+The dedicated native tests on pristine main: one passes (operand), one fails
+(actual chamfer). With the Point dispatch guard, both pass in the standard
+optimized difftest profile: the chamfer completes, is manifold, passes Level2,
+and its volume agrees with the independent meridian within 1e-9 relative.
+A separate native run gives 6 faces, 9 edges, 5 vertices and volume
+112773.94647118454 (about 1.4e-13 relative from the independent value).
+Generic chord certification remains expensive (the two tests took 83.08 seconds
+on this machine). A stack sample locates that work in `gn_certify_span` through
+`GnSectionFsg::build_chord`; this is not a performance improvement claim.
+The unoptimized diagnostic had exceeded 180 seconds. Broader validation is tracked
+in the PR. This fixes only the Vase action, not all eleven #2905 actions.
