@@ -848,14 +848,11 @@ fn planed(i: &Inputs) -> Result<Result<(Vec<f64>, Plane), Output>, HarnessError>
 /// The case's inputs are bad, it ends before the ops finish, or the plane's domain is
 /// unbounded (a plane made from a normal or a frame).
 pub fn result_breps(case: &Case) -> Result<super::surface_surface_p2::Drawn, HarnessError> {
-    let a = match planed(&case.parse()?)? {
-        Ok((_, a)) => a,
-        Err(_) => {
-            return Err(harness(format!(
-                "case {}: cannot be drawn: it ends before its ops finish",
-                case.name
-            )))
-        }
+    let Ok((_, a)) = planed(&case.parse()?)? else {
+        return Err(harness(format!(
+            "case {}: cannot be drawn: it ends before its ops finish",
+            case.name
+        )));
     };
     let mut k = Kernel::default();
     let dom = a.natural_uv_domain();
@@ -1393,7 +1390,7 @@ impl UnitDiff for Runner {
 mod result_breps_tests {
     use super::*;
 
-    fn case(make: Value) -> Case {
+    fn case(make: &Value) -> Case {
         Case {
             unit: "surface.plane_p1".into(),
             name: "result_breps".into(),
@@ -1413,7 +1410,7 @@ mod result_breps_tests {
             "scale": [1.0, 1.0],
             "domain": [0.0, 0.0, 2.0, 3.0],
         });
-        let (_, bodies) = result_breps(&case(make)).unwrap();
+        let (_, bodies) = result_breps(&case(&make)).unwrap();
         assert_eq!(bodies.len(), 1);
         assert_eq!(bodies[0].0, "plane");
         assert_eq!(bodies[0].1.faces().len(), 1);
@@ -1423,7 +1420,7 @@ mod result_breps_tests {
     #[test]
     fn result_breps_unbounded_plane_cannot_be_drawn() {
         let make = serde_json::json!({ "kind": "normal", "o": [0.0, 0.0, 0.0], "n": [0.0, 0.0, 1.0] });
-        let e = result_breps(&case(make)).err().unwrap();
+        let e = result_breps(&case(&make)).err().unwrap();
         assert!(e.0.contains("cannot be drawn"), "{e}");
     }
 }
