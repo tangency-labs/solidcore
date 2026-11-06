@@ -1,6 +1,7 @@
-//! Real native `ManifoldBoolean` versus the Rust orchestration entry point.
-//! The real kernel adapter delegates the ported later stages;
-//! genuine missing dependencies still defer at their exact call sites.
+//! The Rust orchestration entry point `ManifoldBoolean` (ported from upstream
+//! `SmMerge::ManifoldBoolean`), checked against its golden. The real kernel adapter
+//! delegates the ported later stages; genuine missing dependencies still defer at their
+//! exact call sites.
 //!
 //! Both sides' B-reps are compared with each loop use's start edge use chosen
 //! canonically ([`canonical_loop_starts`]): upstream's `BooleanPostProcess` deletes
@@ -19,10 +20,13 @@ use solidcore::geom::context::MarkLock;
 use solidcore::kernel::Kernel;
 use solidcore::topology::Brep;
 use solidcore::SolidError;
-use solidcore_ffi::units::boolean_merge_p4::{self as ffi, Operand};
 
-/// Differential runner for the manifold Boolean unit.
+/// Runner for the manifold Boolean unit.
 pub struct Runner;
+
+/// Operand kind (-1 null, 0 empty, 1 isolated vertex, 2 B-spline line wire,
+/// 3 analytic plane sheet), origin xyz and dimension/direction xyz.
+type Operand = [f64; 7];
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Inputs {
@@ -46,15 +50,6 @@ fn yes() -> bool {
 }
 fn error(e: &(impl ToString + ?Sized)) -> HarnessError {
     HarnessError::new(e.to_string())
-}
-fn request(i: &Inputs) -> ffi::Request {
-    ffi::Request {
-        operation: i.operation,
-        flags: i.flags,
-        manifold: i.manifold,
-        distinct_contexts: i.distinct_contexts,
-        caller_lock: i.caller_lock,
-    }
 }
 /// The Rust operand B-rep, built by the Rust kernel as the shim's `make_operand` builds
 /// the native one (kind 1 `MakeShellVertex`, kind 2 `CreateWireEdgeFromCurve` over a
@@ -222,80 +217,6 @@ fn append_graph(k: &Kernel, output: &mut Output, prefix: &str, brep: &Brep) -> R
     Ok(())
 }
 
-struct Record<'a> {
-    remaining: &'a [f64],
-}
-impl<'a> Record<'a> {
-    fn num(&mut self) -> Result<f64, HarnessError> {
-        let (v, rest) = self
-            .remaining
-            .split_first()
-            .ok_or_else(|| error("short native record"))?;
-        self.remaining = rest;
-        Ok(*v)
-    }
-    fn take(&mut self, n: usize) -> Result<&'a [f64], HarnessError> {
-        if n > self.remaining.len() {
-            return Err(error("short native graph"));
-        }
-        let (v, rest) = self.remaining.split_at(n);
-        self.remaining = rest;
-        Ok(v)
-    }
-    fn done(&self) -> Result<(), HarnessError> {
-        if self.remaining.is_empty() {
-            Ok(())
-        } else {
-            Err(error("trailing native state"))
-        }
-    }
-}
-
-fn native_snapshot(k: &Kernel, raw: &[f64]) -> Result<Output, HarnessError> {
-    let mut rd = Record { remaining: raw };
-    let mut header = Vec::new();
-    for _ in 0..9 {
-        header.push(rd.num().map_err(|e| error(&e))? as i64);
-    }
-    let component_count = header
-        .get(7)
-        .zip(header.get(8))
-        .and_then(|(&a, &b)| a.checked_add(b))
-        .and_then(|n| usize::try_from(n).ok())
-        .ok_or_else(|| error("invalid component count"))?;
-    let mut output = Output::new().ints("status_and_state", header);
-    let mut graph = |rd: &mut Record<'_>, prefix: &str| -> Result<(), HarnessError> {
-        let n = rd.num().map_err(|e| error(&e))? as usize;
-        let record = rd.take(n).map_err(|e| error(&e))?;
-        let (editing, body) = record
-            .split_first()
-            .ok_or_else(|| error("empty native graph"))?;
-        let mut exported = vec![0.0];
-        exported.extend_from_slice(body);
-        let (mut b, exact) = super::topology_vertexuse::import(&exported)?;
-        if exact.iter().any(|v| !v) {
-            return Err(error("inexact post-state surface import"));
-        }
-        b.set_editing_enabled(*editing != 0.0);
-        // (the loop starts in canonical order, as the Rust side's: ND-258)
-        canonical_loop_starts(&mut b)?;
-        append_graph(k, &mut output, prefix, &b)
-    };
-    let mut presence = Vec::new();
-    for prefix in ["primary", "other"] {
-        let present = rd.num().map_err(|e| error(&e))? != 0.0;
-        presence.push(i64::from(present));
-        if present {
-            graph(&mut rd, prefix)?;
-        }
-    }
-    for i in 0..component_count {
-        graph(&mut rd, &format!("component.{i}"))?;
-    }
-    rd.done().map_err(|e| error(&e))?;
-    Ok(output.ints("survivors", presence))
-}
-
 fn rust_snapshot(
     status: i32,
     returned: bool,
@@ -344,16 +265,6 @@ fn rust_snapshot(
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "boolean.merge_p4"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let k = &Kernel::default();
-        let i: Inputs = case.parse()?;
-        let raw = ffi::eval(&i.primary, &i.other, request(&i)).map_err(|e| error(&e))?;
-        if raw == [-1.0] {
-            return Ok(Output::rejected("native primitive constructor"));
-        }
-        // Status is data: Output::err would suppress all state comparison.
-        native_snapshot(k, &raw)
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
