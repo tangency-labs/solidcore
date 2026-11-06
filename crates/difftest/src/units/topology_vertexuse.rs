@@ -541,25 +541,12 @@ pub(crate) fn read_shell_state(
     Ok(infinite_region)
 }
 
-/// Builds the Rust B-rep from the shim's export (see the module docs), with whether
-/// each face's surface was imported exactly, and its cached gaps refilled
-/// ([`refill_gaps`]).
-pub(crate) fn import(ex: &[f64]) -> Result<(Brep, Vec<bool>), HarnessError> {
-    import_with_types(ex).map(|(b, exact, _)| (b, exact))
-}
-
 /// An imported B-rep with, per face, whether its surface was imported exactly and its
 /// exported surface subclass type code (`None` for a plane or no surface).
 pub(crate) type TypedImport = (Brep, Vec<bool>, Vec<Option<i64>>);
 
-/// [`import`], also with each face's exported surface subclass type code.
-pub(crate) fn import_with_types(ex: &[f64]) -> Result<TypedImport, HarnessError> {
-    let (mut b, exact, types) = import_raw_with_types(ex)?;
-    refill_gaps(&mut b);
-    Ok((b, exact, types))
-}
-
-/// [`import`] without refilling the cached gaps: they stay marked as set with
+/// Builds the Rust B-rep from the shim's export (see the module docs), with whether each
+/// face's surface was imported exactly, without refilling the cached gaps: they stay marked as set with
 /// `SM_UNDEF_DOUBLE` placeholder values. For the C++ side (which only resolves
 /// selectors on the import), and for Rust-side callers that change the geometry or
 /// replace the cached gaps after the import (they refill them themselves, through

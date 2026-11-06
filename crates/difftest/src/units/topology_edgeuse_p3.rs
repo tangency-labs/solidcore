@@ -41,7 +41,7 @@ use solidcore::topology::{Brep, EdgeuseId, ObjectHandle};
 use solidcore::{SolidError, Vec3};
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, domain, gen_brep, gen_surface, harness, path_of, sel, BrepIn, SrfIn, FILES,
+    brep_block_of, domain, gen_brep, gen_surface, harness, sel, BrepIn, SrfIn, FILES,
 };
 use super::topology_edgeuse_p2::{flag, inexact_geometry, put_eu_state, Setup};
 use crate::cases::topology_entities::block_magnitudes_ok;
