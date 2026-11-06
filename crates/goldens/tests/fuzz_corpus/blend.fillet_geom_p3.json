@@ -6,7 +6,7 @@
    "origin": "nightly fuzz runs 40177686438 and 40298730423: blend.fillet_geom_p3/fuzz00137 (crash: rust: killed by signal 6, memory allocation of 412316860608 bytes failed; base gen0137, mutations /brep/rebuild = true, /model/vertices/0/uv/1 = -1e+300, /model/vertices/0/corner = 2147483648)",
    "issue": "runner: shim_corners sized the Rust corner table by the tag (2^31 corners of 192 bytes) where the FFI refuses a tag at or above MAX_LIST (64) for the C++ side; fixed by applying the FFI's checks on the Rust side (PR #1367)",
    "cpp": "harness: c++: invalid argument: index 2147483648 out of range (64)",
-   "rust": "harness: invalid argument: index 2147483648 out of range (64)",
+   "rust": "harness: input outside the contract",
    "inputs": {
     "brep": {
      "file": "box_with_large_fillet.smb",
