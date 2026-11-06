@@ -625,7 +625,10 @@ fn seam_gap(
         return Ok(None);
     };
     let clamped = knots.len() > degree.saturating_mul(2).saturating_add(1)
-        && knots.iter().take(degree.saturating_add(1)).all(|&t| t == first)
+        && knots
+            .iter()
+            .take(degree.saturating_add(1))
+            .all(|&t| t == first)
         && knots
             .iter()
             .rev()
