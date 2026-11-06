@@ -2,8 +2,8 @@
 //! (`SmBrep::MakeTopologyFromData`), then `TestClosureSplitRegion` (edge version),
 //! `RemoveAllTopology`, `ProjectAndTrim` or `SubdivideFaceAtDiscontinuities`.
 //!
-//! C++: `solidcore_ffi::units::topology_brep_p10` (upstream
-//! `source/SMLib/src/SmBrep.cpp`). Rust: `solidcore::topology::brep::p10`.
+//! `solidcore::topology::brep::p10`, ported from upstream `SmBrep` (`SmBrep.cpp`); checked
+//! against its golden.
 //!
 //! A case names an upstream test file (`file`, relative to `TestFiles/pt_TestFiles`, or
 //! `fixture:<name>` for a crafted file of this unit: three triangles around one spine
@@ -11,11 +11,11 @@
 //! a degree-1 B-spline surface with interior knots, flat (`g1`: only G1 at the
 //! knots), kinked (`c0`), or with one U knot and two V knots, none in U or none in V),
 //! the six `MakeTopologyFromData` flags (`options`; the default is `ReadFromFile`'s
-//! call), patches to the read B-rep data and an op. Both sides read the file
-//! (`SmBrepData::ReadFromFile` / [`BrepData::read_from_file`]), patch it, build the
-//! B-rep and dump the result in the layout documented in the FFI module: integers to
-//! `ints`, doubles to `dbls` (subnormals as 0; pure reader/build cases also audit raw
-//! `dbl_bits`), `kinds` the interleaving. A Rust `InvalidInput` is the guard's `-2`.
+//! call), patches to the read B-rep data and an op. The case reads the file
+//! ([`BrepData::read_from_file`]), patches it, builds the B-rep and dumps the result:
+//! integers to `ints`, doubles to `dbls` (subnormals as 0; pure reader/build cases also
+//! record raw `dbl_bits`), `kinds` the interleaving. An `InvalidInput` refusal is the
+//! status `-2`.
 //!
 //! Generated cases pick a file, flags and patches (zone tolerance, manifold flag,
 //! healer version, borrowed geometry, flag stamps, the implied regions of an IGES
@@ -39,7 +39,7 @@ use solidcore::geom::geom_utility::p2::ContinuityType;
 use solidcore::topology::brep::p10::{
     make_topology_from_data, project_and_trim, remove_all_topology_notified,
     subdivide_face_at_discontinuities, test_closure_split_region, MakeTopologyOptions,
-    ProjectAndTrimOptions, ProjectEnv, TopologyEnv, TrimType, HEALER_VERSION,
+    ProjectAndTrimOptions, ProjectEnv, TopologyEnv, TrimType,
 };
 use solidcore::topology::brep_cache::CacheObject;
 use solidcore::topology::brep_data::{BrepData, TopologyData};
@@ -53,7 +53,6 @@ use solidcore::topology::{
     LoopuseStart, RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, Kernel, SolidError};
-use solidcore_ffi::units::topology_brep_p10::{self as ffi, Item, Op, Patch, Request};
 use super::topology_vertexuse::CrvIn;
 
 use crate::case::{repo_root, CaseContext};
@@ -63,6 +62,15 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 300;
+
+/// One dumped value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Item {
+    /// An integer.
+    Int(i64),
+    /// A double.
+    Dbl(f64),
+}
 
 /// `topology.brep_p10` runner.
 pub struct Runner;
@@ -221,192 +229,6 @@ fn operation_output(items: &[Item], i: &Inputs) -> Result<Output, HarnessError> 
         }).collect::<Result<Vec<_>, _>>()?;
     Ok(out.ints("face_counts", vec![*original, count as i64])
         .ints("retained_original_faces", retained))
-}
-
-/// Why the C++ side must not build these inputs, if it must not: requests on which
-/// `MakeTopologyFromData` runs the healer (`bHealerIsEnabled` and either `bAlwaysHeal`
-/// or an old healer version) over a B-rep it builds unchecked from patched records.
-///
-/// * After `Set` patches that change the data and leave records the build accepts
-///   (the Rust build, healing off, does not return `InvalidInput`; data it refuses is
-///   the shim's `-2`, and upstream never runs): the build keeps edge uses linked into
-///   loops their records do not name, loop rings of the wrong length or edges on
-///   another edge's curve, and the healer walks that B-rep unchecked (SIGSEGV and
-///   hangs in the C++ reference, UB-164; the ops after the build would too, and the
-///   FFI refuses those itself). A `Set` that changes nothing is compared.
-/// * After an `Iges` patch whose kept shells leave a face use record in no face use
-///   shell (the crafted spine fixtures: region 1 has no shells): that face use is built
-///   without a shell and `SmHealData::Fix_BadSheets` hands it to
-///   `SmBrep::TestClosureSplitRegion`, which reads `pFUStart->GetShell()->GetRegion()`
-///   through the null shell (`SmBrep.cpp:27909`, SIGSEGV).
-///
-/// The data is read and patched with the Rust reader (the same records upstream reads).
-fn heal_guard(i: &Inputs) -> Option<&'static str> {
-    let [_, _, _, _, always_heal, healer_enabled] = i.options;
-    if !healer_enabled {
-        return None;
-    }
-    let path = path_of(i).ok()?;
-    let bytes = std::fs::read(&path).ok()?;
-    let k = Kernel::default();
-    let mut data = BrepData::read_from_file(&k, bytes.clone(), FileType::Ascii).ok()?;
-    apply_patches(&mut data, &i.patches).ok()?;
-    if !(always_heal || data.healer_version() < HEALER_VERSION) {
-        return None;
-    }
-    if changes_indices(&k, &bytes, &i.patches) && builds(i, &data) {
-        return Some("healing a b-rep a set patch left inconsistent");
-    }
-    if i.patches.iter().any(|p| matches!(p, PatchIn::Iges)) {
-        let in_shell = |f: usize| {
-            data.shells.iter().any(|s| {
-                s.shell_type == 0
-                    && usize::try_from(s.faceuse_start).is_ok_and(|a| {
-                        usize::try_from(s.num_faceuses).is_ok_and(|n| f >= a && f - a < n)
-                    })
-            })
-        };
-        if !(0..data.faceuses.len()).all(in_shell) {
-            return Some("healing a face use the iges patch left without a shell");
-        }
-    }
-    None
-}
-
-/// Whether the case's `Set` patches change the patched data: the data with every patch
-/// differs from the data with the same patches but its `Set` patches left out. A `Set`
-/// past its array, or of a field to the value it holds, changes nothing.
-fn changes_indices(k: &Kernel, bytes: &[u8], patches: &[PatchIn]) -> bool {
-    let without: Vec<PatchIn> = patches
-        .iter()
-        .filter(|p| !matches!(p, PatchIn::Set { .. }))
-        .copied()
-        .collect();
-    let patched = |ps: &[PatchIn]| {
-        let mut d = BrepData::read_from_file(k, bytes.to_vec(), FileType::Ascii).ok()?;
-        apply_patches(&mut d, ps).ok()?;
-        Some(format!("{d:?}"))
-    };
-    match (patched(patches), patched(&without)) {
-        (Some(a), Some(b)) => a != b,
-        _ => true,
-    }
-}
-
-/// Whether upstream gets past the build to the healer: false only when the Rust build
-/// (healing off) returns `InvalidInput`, the data the shim's simulation of the build's
-/// record indexing keeps from upstream (`-2`, UB-164), so upstream never runs.
-fn builds(i: &Inputs, data: &BrepData) -> bool {
-    let mut k = Kernel::default();
-    let mut data = data.clone();
-    let Ok(mut b) = Brep::new_with_infinite_region() else {
-        return true;
-    };
-    let mut store = AttributeStore::new();
-    let mut records: solidcore::topology::topology::NotifyRecords = solidcore::topology::topology::NotifyRecords::new();
-    let mut env = TopologyEnv {
-        all_attributes: &[],
-        attributes: &mut store,
-        key_of: &key_of,
-        records: &mut records,
-        next_key: 1u64 << 50,
-    };
-    let [make_uv_trim_curves, add_analytics, force_same_tol, check_uv_trim_curves, always_heal, _] =
-        i.options;
-    let options = MakeTopologyOptions {
-        make_uv_trim_curves,
-        add_analytics,
-        force_same_tol,
-        check_uv_trim_curves,
-        always_heal,
-        healer_enabled: false,
-    };
-    !matches!(
-        make_topology_from_data(&mut k, &mut b, &mut data, &mut env, options),
-        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. })
-    )
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if let Some(why) = heal_guard(i) {
-        // C++ undefined behaviour: neither side runs (not a harness error, which a
-        // normal run would count as a failure)
-        return Ok(Output::rejected(format!("guard: {why}")));
-    }
-    let patches = i
-        .patches
-        .iter()
-        .map(|p| match *p {
-            PatchIn::ZoneTol(v) => Patch::ZoneTol(v),
-            PatchIn::Manifold(v) => Patch::Manifold(v),
-            PatchIn::Healer(v) => Patch::Healer(v),
-            PatchIn::Borrowed(v) => Patch::Borrowed(v),
-            PatchIn::Stamp(v) => Patch::Stamp(v),
-            PatchIn::Iges => Patch::Iges,
-            PatchIn::Scale(v) => Patch::Scale(v),
-            PatchIn::DropUv(v) => Patch::DropUv(v),
-            PatchIn::Set {
-                field,
-                index,
-                value,
-            } => Patch::Set {
-                field,
-                index,
-                value,
-            },
-        })
-        .collect();
-    let op = match i.op {
-        OpIn::Make => Op::Make,
-        OpIn::Closure { do_infinite } => Op::Closure { do_infinite },
-        OpIn::RemoveAll { editing } => Op::RemoveAll { editing },
-        OpIn::Project {
-            trim,
-            a,
-            b,
-            dir,
-            reference,
-            approx_tol,
-            angle_tol,
-        } => Op::Project {
-            trim,
-            a,
-            b,
-            dir,
-            reference,
-            approx_tol,
-            angle_tol,
-        },
-        OpIn::Subdivide { face, continuity } => Op::Subdivide { face, continuity },
-    };
-    let req = Request {
-        path: path_of(i)?,
-        binary: false,
-        options: i.options,
-        patches,
-        op,
-        projection_curve: i.projection_curve.as_ref().map(|c| ffi::ProjectionCurve {
-            degree: c.p,
-            control_points: c.cpts.clone(),
-            knots: c.u.clone(),
-        }),
-        empty_projection_subset: i.empty_projection_subset,
-    };
-    let items = match ffi::run(&req) {
-        Ok(items) => items,
-        Err(solidcore_ffi::FfiError::Status(ffi::STATUS_UNDEFINED_PROJECTION_DEGREE)) => {
-            return Ok(Output::rejected(
-                "projecting a raw curve above NL_MAXDEG into a face overruns native surface scratch arrays",
-            ));
-        }
-        Err(solidcore_ffi::FfiError::Status(ffi::STATUS_UNDEFINED_SUBDIVIDE)) => {
-            return Ok(Output::rejected(
-                "subdivide: more U knots than V knots, or a refused iso line (not compared)",
-            ));
-        }
-        Err(e) => return Err(harness(format!("ffi: {e}"))),
-    };
-    operation_output(&items, i)
 }
 
 // ---- the Rust side --------------------------------------------------------------------
@@ -1442,10 +1264,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
