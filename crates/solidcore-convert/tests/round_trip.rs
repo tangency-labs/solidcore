@@ -645,6 +645,8 @@ fn geometry_depth_is_bounded() {
 
 /// Every planar profile segment kind goes to the kernel's of the same fields (checked against
 /// literals) and back unchanged; loops and regions keep their segments in order.
+}
+
 #[test]
 fn planar_profiles_become_the_kernel_kinds_and_come_back() {
     let (a, b, c, d) = (
