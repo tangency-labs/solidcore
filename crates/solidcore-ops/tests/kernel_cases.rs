@@ -1552,6 +1552,36 @@ fn untrim_point_holes_do_not_hide_missing_required_parameters() {
     }
 }
 
+/// The recorded operations already passed in SolidCraft; replay must reach their existing
+/// kernel construction instead of skipping the variable-radius request.
+#[test]
+fn variable_fillet_replays_all_five_captured_laws() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let names = [
+        "fillets/cov-fillet-variable-box-edge-1-to-5-on-its-cone",
+        "ladder/07-fillets/005-variable-r5-to-r1",
+        "ladder/07-fillets/006-variable-r5-to-zero",
+        "ladder/07-fillets/007-variable-r5-to-1e-3",
+        "ladder/07-fillets/012-variable-into-rounded-corner",
+    ];
+    let mut failures = Vec::new();
+    for name in names {
+        let entry = corpus().join(format!("{name}.json"));
+        let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+        assert_eq!(e["rig"]["status"], "pass", "{name}");
+        assert!(e["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["error"].is_null()));
+        match run_case(&entry, &e) {
+            Ok(deviation) => println!("{name}: pass, relative volume deviation {deviation:?}"),
+            Err(why) => failures.push(format!("{name}: {why:?}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 fn sweep_replay_fixture(name: &str, op: &str) -> (PathBuf, Value, Value) {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
     let entry = corpus().join(format!("{name}.json"));
