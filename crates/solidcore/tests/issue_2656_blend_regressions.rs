@@ -553,7 +553,7 @@ fn block_cylinder_both_pieces_round_the_half_circle() {
 /// Both pieces rounded r 2 through the session's `do_fillet` (its tolerance scope, the split
 /// at radius corners and the closed-manifold check) with every fix but
 /// `geometric_g2_continuity`, as the blend's other End tests: the same torus, valid at level
-/// 2, its volume at 1e-12.
+/// 2 and a manifold solid, its volume at 1e-12.
 #[test]
 fn block_cylinder_both_pieces_round_through_do_fillet() {
     let mut k = Kernel::default();
@@ -582,6 +582,7 @@ fn block_cylinder_both_pieces_round_through_do_fillet() {
         .unwrap()
         .lines();
     assert!(lines.is_empty(), "{lines:?}");
+    assert!(is_manifold_solid(&b).unwrap());
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
         store: &store,
