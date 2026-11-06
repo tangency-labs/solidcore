@@ -1,11 +1,8 @@
-//! Rust-side reader for the `.smb` file sources the shims read natively.
+//! Reader for the `.smb` file sources of the runners' cases.
 //!
-//! A shim reads a file source with `SmBrep::ReadFromFile` into `new SmBrep(ctx)`.
-//! Runners used to rebuild their Rust B-rep from the shim's graph export of that
-//! B-rep, so the Rust side's input was C++ output. [`read_file`] instead reads the
-//! same file with the Rust reader (`topology::brep::p7::read_from_file`), so no
-//! C++-built geometry or topology reaches the Rust side
-//! (`crates/goldens/README.md`, No C++ state reaches the Rust side).
+//! The reference shims read a file source with `SmBrep::ReadFromFile` into
+//! `new SmBrep(ctx)`. [`read_file`] reads the same file with the Rust reader
+//! (`topology::brep::p7::read_from_file`).
 //!
 //! The reader builds its arenas in its own construction order, which is not the shim's
 //! export traversal (`walk` in `sc_edgeuse_graph.h`): on the 15 `topology.edgeuse_p1`
