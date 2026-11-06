@@ -55,7 +55,8 @@
 //!   driven and bounded by [`DatabaseReader::enter_nested`] (32 levels); past the
 //!   bound the read fails with [`SolidError::InvalidInput`], which the nested reads
 //!   whose statuses upstream ignores propagate rather than drop. `WriteToDB` counts
-//!   the same levels and refuses past [`MAX_GEOMETRY_NESTING`] with
+//!   the same levels and refuses past [`MAX_GEOMETRY_NESTING`], or an orient map
+//!   the reader would read past [`MAX_READ_NESTING`], with
 //!   [`SolidError::InvalidInput`].
 //! - **Writing what cannot be read.** `ReadFromDB` refuses a plain `SmVolume` and a
 //!   B-spline volume, so their records are refused when written, with the reader's
@@ -83,7 +84,7 @@ use crate::surface::surface::p2::MAX_GEOMETRY_NESTING;
 use crate::surface::twist_volume::TwistVolume;
 use crate::surface::unbend_volume::UnbendVolume;
 use crate::topology::database_io::{
-    DatabaseReader, DatabaseWriter, FileType, InputStream, NESTING_LIMIT_REASON,
+    DatabaseReader, DatabaseWriter, FileType, InputStream, MAX_READ_NESTING, NESTING_LIMIT_REASON,
 };
 
 use super::p1::{
@@ -1545,9 +1546,15 @@ impl Volume {
     ///
     /// [`SolidError::Unsupported`] for a plain volume and `SM_ERR` for a B-spline
     /// volume (the module docs); [`SolidError::InvalidInput`] past
-    /// [`MAX_GEOMETRY_NESTING`].
+    /// [`MAX_GEOMETRY_NESTING`], or for an orient map the reader would read past
+    /// [`MAX_READ_NESTING`].
     pub fn write_to_db(&self, db: &mut DatabaseWriter, depth: usize) -> Result<()> {
-        if depth > MAX_GEOMETRY_NESTING {
+        // the reader enters a level per surface, volume and map from 1 at the top, so
+        // it reads this volume at level `depth + 1` and its orient map one deeper
+        let orient_level = u32::try_from(depth + 2).unwrap_or(u32::MAX);
+        if depth > MAX_GEOMETRY_NESTING
+            || (self.orient_map.is_some() && orient_level > MAX_READ_NESTING)
+        {
             return Err(SolidError::invalid_input(
                 OP_WRITE,
                 "geometry nested too deeply",
@@ -1992,7 +1999,7 @@ mod tests {
         // MAX_READ_NESTING + 1 (33) twists chained by next maps, one past the bound;
         // the twist data and base flags are zeros, so a swallowed bound error would
         // leave a stream that still reads as a shorter (32-map) chain
-        let max = crate::topology::database_io::MAX_READ_NESTING as usize;
+        let max = MAX_READ_NESTING as usize;
         assert_eq!(max, 32);
         let twist = format!("0\n0\n1\nObject Type {TWIST_VOLUME_TYPE}\n");
         let mut text = twist.repeat(max);

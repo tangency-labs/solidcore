@@ -119,7 +119,7 @@ fn write(o: &Object, r: &Record, binary: bool) -> Vec<u8> {
 /// domain, as bits; an evaluation error as its text.
 fn grid(k: &Kernel, o: &Object) -> Vec<String> {
     let at = |lo: f64, hi: f64, i: usize| lo + (hi - lo) * (i as f64) / 4.0;
-    let bits = |p: solidcore::Result<solidcore::Point3>| match p {
+    let bits = |p: solidcore::Result<Point3>| match p {
         Ok(p) => format!(
             "{:x} {:x} {:x}",
             p.x.to_bits(),
