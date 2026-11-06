@@ -1,8 +1,7 @@
 //! Runner for unit `blend.fillet_corner_p2`: `sm_FindConcaveEdgeuses` and the corner
 //! methods ported so far (`AdjustConcaveCornerTopology`, `UpdateSplitFace`).
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_corner_p2` (its shim is included in
-//! `blend_fillet_corner_p1.cpp`, which compiles `source/SMLib/src/SmFilletCorner.cpp`).
+//! Ported from upstream `source/SMLib/src/SmFilletCorner.cpp`; checked against its golden.
 //! Rust: `solidcore::blend::fillet_corner::p2`.
 //!
 //! **Corner cases** (`corner`) use unit `blend.fillet_corner_p3`'s corner harness (its
@@ -87,12 +86,10 @@ use solidcore::error::SolidError;
 use solidcore::kernel::Kernel;
 use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::{Brep, EdgeuseId, VertexId};
-use solidcore_ffi::units::blend_fillet_corner_p2 as ffi;
-use solidcore_ffi::units::blend_fillet_corner_p3::Op as CornerOp;
 
 use super::blend_fillet_corner_p1 as p1;
 use super::blend_fillet_corner_p3::{
-    corner_cpp_op, corner_rust_status, edge_in, gen_nx2_model, line, plane_srf, vin, CornerIn,
+    corner_rust_status, edge_in, gen_nx2_model, line, plane_srf, vin, CornerIn,
     EuSel,
 };
 use super::blend_fillet_geom_p1::{Crv, Model};
@@ -100,7 +97,7 @@ use super::blend_fillet_geom_p1::{Crv, Model};
 use super::blend_fillet_corner_p1::{
     eu_vertex, gen_topo_brep, inexact, rust_err, Topo, CORNER_FILES,
 };
-use super::topology_edgeuse_p1::{brep_block_of, harness, path_of, sel, BrepIn};
+use super::topology_edgeuse_p1::{harness, sel, BrepIn};
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -339,8 +336,6 @@ fn topo(i: &Inputs, own: bool) -> Result<Result<Topo, Output>, HarnessError> {
     let Inputs::FindConcave { brep, v, eus, walk } = i else {
         return Err(harness("not a find_concave case"));
     };
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
     // the Rust side's B-rep is read or built by the Rust kernel, never imported
     // (`crate::own_reader::edgeuse_case`)
     let (c, b, types) = match crate::own_reader::edgeuse_case(brep, false, false, own)? {
@@ -393,30 +388,10 @@ fn topo(i: &Inputs, own: bool) -> Result<Result<Topo, Output>, HarnessError> {
     let mut args = vec![vv];
     args.extend(chosen.iter().map(|e| i64::from(e.index())));
     Ok(Ok(Topo {
-        path,
-        block,
         brep: b,
         types,
         args,
     }))
-}
-
-fn corner_cpp(
-    method: CornerMethod,
-    model: &Model,
-    c: &CornerIn,
-    split: [usize; 2],
-) -> Result<Output, HarnessError> {
-    match method {
-        CornerMethod::AdjustConcave => corner_cpp_op(CornerOp::AdjustTopology, &[], model, c),
-        CornerMethod::UpdateSplitFace => corner_cpp_op(
-            CornerOp::UpdateSplitFace,
-            &[split[0] as f64, split[1] as f64],
-            model,
-            c,
-        ),
-        CornerMethod::Analytic => corner_cpp_op(CornerOp::AnalyticSurface, &[], model, c),
-    }
 }
 
 fn corner_rust(
@@ -469,45 +444,6 @@ fn is_tangent_case(v: &Value) -> bool {
         && v.get("solvers")
             .and_then(Value::as_array)
             .is_some_and(|a| !a.is_empty())
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if let Inputs::P1Corner { inner } = i {
-        return p1::Runner.run_cpp(&p1_case(inner));
-    }
-    if let Inputs::Corner {
-        method,
-        model,
-        corner,
-        split,
-    } = i
-    {
-        return corner_cpp(*method, model, corner, *split);
-    }
-    let t = match topo(i, false)? {
-        Ok(t) => t,
-        Err(o) => return Ok(o),
-    };
-    let mut v = t.block.clone();
-    let (&vv, eus) = t
-        .args
-        .split_first()
-        .ok_or_else(|| harness("missing vertex"))?;
-    v.push(vv as f64);
-    v.push(eus.len() as f64);
-    v.extend(eus.iter().map(|&a| a as f64));
-    let out = ffi::find_concave(&t.path, &v).map_err(|e| harness(format!("c++: {e}")))?;
-    let Some((&head, rest)) = out.split_first() else {
-        return Err(harness("empty output"));
-    };
-    if head != 0.0 {
-        let st = rest.first().copied().unwrap_or(0.0);
-        return Ok(Output::err(format!("brep_build_status_{st}")));
-    }
-    if rest.first().copied() == Some(-2.0) {
-        return Ok(Output::err("refused"));
-    }
-    Ok(Output::new().values("concave", rest.to_vec()))
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
@@ -949,10 +885,6 @@ fn gen_analytic(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.fillet_corner_p2"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
