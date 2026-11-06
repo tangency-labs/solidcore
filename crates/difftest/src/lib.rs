@@ -14,6 +14,7 @@ pub mod case;
 pub mod cases {
     pub mod blend;
     pub mod contract;
+    pub mod topology_entities;
 }
 pub mod compare;
 pub mod constructor;

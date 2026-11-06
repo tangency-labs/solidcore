@@ -1,11 +1,11 @@
-//! Runner for unit `topology.trimming_tools`. C++: `solidcore_ffi::units::topology_trimming_tools`.
-//! Rust: `solidcore::topology::trimming_tools`.
+//! Runner for unit `topology.trimming_tools`. Ported from upstream `SmTrimmingTools.cpp`
+//! (the shim `harness/cpp/shim/topology_trimming_tools.cpp` was the reference); checked
+//! against its golden. Rust: `solidcore::topology::trimming_tools`.
 //!
 //! **Geometry ops** run on curves (`{"bspline": {dim, oob, cpts, p, u}}` with control
 //! points as stored `[x, y, z, w]`, `{"line": {p, v, domain, scale, inside_out}}`,
 //! `{"ellipse": {c, x, y, domain, radii, inside_out}}` with the domain in degrees, or
-//! `{"circle": ..}`, a quadratic B-spline arc made by the Rust `CreateCircleSegment` and
-//! handed to both sides as data) and surfaces (`{"bspline": ..}` or `{"plane": {o, n}}`):
+//! `{"circle": ..}`, a quadratic B-spline arc made by the Rust `CreateCircleSegment`) and surfaces (`{"bspline": ..}` or `{"plane": {o, n}}`):
 //! `order` (`OrderCurvesIntoLoops`, then `FindOuterLoops` on its result when `outer`),
 //! `outer` (`FindOuterLoops` on given loops), `mirror`, `iso_at`, `iso`, `iso_seam`,
 //! `continuity`, `uv_gap` (`sm_IsLoopUVGapWithinTolerance`, copied verbatim into the
@@ -15,30 +15,28 @@
 //! operations on a store of curves.
 //!
 //! **B-rep ops** use the B-reps of unit `topology.vertexuse` (upstream `.smb` files and
-//! faces of B-spline surfaces or real `SmPlane`s): the C++ side builds a real `SmBrep`
-//! and preserves exactly exported analytic surfaces. Other surfaces and edge curves
-//! get the plain B-spline copies the Rust import rebuilds. The Rust side reads an `.smb`
-//! file itself (`crate::own_builder::read_with`: the Rust reader) and builds a wire, face
-//! or network the way the shim's `build` does (`crate::own_builder::build_as`), each
-//! renumbered into the shim's walk order: no C++ export reaches the Rust side. Loop,
-//! face and edge use selectors are taken modulo their counts. The mutating ops compare
-//! every edge use's UV trim curve afterwards.
+//! faces of B-spline surfaces or planes): the runner reads an `.smb` file with the Rust
+//! reader (`crate::own_builder::read_with`) and builds a wire, face or network the way
+//! the shim's `build` does (`crate::own_builder::build_as`), each renumbered into the
+//! shim's walk order. Loop, face and edge use selectors are taken modulo their counts.
+//! The mutating ops record every edge use's UV trim curve afterwards.
+//!
+//! Generated geometry ops keep the reference wrapper's input contract ([`accepted`]),
+//! checked on the case's encoding; a case outside it is drawn again.
 //!
 //! Existing ops produce one flat record (`out`); `trim_constructed` reuses the complete
-//! typed `topology.brep_p10` snapshot plus its trim result. Layouts are in the ffi
-//! module. `-2` marks a
-//! call the shim skips because upstream would dereference null or read out of bounds (the
-//! Rust side reports [`SolidError::InvalidInput`] or fails the same guard), `-3` a call
-//! the shim skips because the Rust side defers it to an unported unit.
+//! typed `topology.brep_p10` snapshot plus its trim result. `-2` marks a call upstream
+//! would make dereferencing null or reading out of bounds (the port reports
+//! [`SolidError::InvalidInput`] or fails the same guard), `-3` a call deferred to an
+//! unported unit.
 //!
-//! `CheckFace`, `FixTrimLoopOrientation` and `FixTrimLoopOrder` run in full on both sides
-//! (`SmFace::ComputeLoopOrientation` is ported; it was skipped with `-3` while the Rust
-//! side still deferred it), guarded (`-2`) where a loop lacks its loop use, the face its
+//! `CheckFace`, `FixTrimLoopOrientation` and `FixTrimLoopOrder` run in full
+//! (`SmFace::ComputeLoopOrientation` is ported), guarded (`-2`) where a loop lacks its loop use, the face its
 //! surface or UV trim curves, or `CheckLoop` a loop's UV extremes.
 //!
 //! Deferred: `SplitAtSeams` (`topology.face_p1` / `topology.face_p4`), `CreateUVTrimCurves`
 //! at the face-owned surface's `SmFace::GetTolerance` stub of `GetSingularities`
-//! (`topology.face_p2`; it and `ClearUVTrimCurves` are compared, with every edge use's
+//! (`topology.face_p2`; it and `ClearUVTrimCurves` are recorded, with every edge use's
 //! UV trim curve after the call), `SmEdgeuse::GetOrCreateUVTrimCurve`
 //! (`topology.edgeuse_p3`), and the vertex-use UV points some B-reps need
 //! (`ComputeUVPoint`'s own deferrals). Last run: 3263 cases, 2842 pass, 421 deferred
@@ -47,8 +45,6 @@
 //! The UV curve ops (`mirror`, `iso_at`, `iso`, `iso_seam`) take every curve kind: an
 //! `SmLine` or `SmEllipse` is an `SmBSplineCurve` (`rv_ellipse.json`).
 
-use std::cell::RefCell;
-use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -83,11 +79,11 @@ use solidcore::topology::trimming_tools::curve_loops::{
 };
 use solidcore::topology::{Brep, EdgeuseId, FaceId, LoopId};
 use solidcore::SolidError;
-use solidcore_ffi::units::topology_trimming_tools::{self as ffi, Op};
-use solidcore_ffi::units::topology_vertexuse as fixture;
 
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::case::CaseContext;
+use crate::cases::contract;
+use crate::cases::topology_entities::Reader;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -885,66 +881,6 @@ fn resolve_op(op: &OpIn, c: [usize; 10]) -> Option<OpIn> {
         _ => {}
     }
     Some(op)
-}
-
-/// A cached export with its key (the `.smb` path and the block's bits).
-type CachedExport = (String, Vec<u64>, Rc<Vec<f64>>);
-
-thread_local! {
-    /// The last few exports (both sides of a case export the same B-rep).
-    static EXPORTS: RefCell<Vec<CachedExport>> = const { RefCell::new(Vec::new()) };
-}
-
-/// The export of a B-rep op's B-rep.
-fn export_of(brep: &BrepIn) -> Result<Rc<Vec<f64>>, HarnessError> {
-    let path = shared::path_of(brep)?;
-    let block = brep_block(brep)?;
-    let bits: Vec<u64> = block.iter().map(|x| x.to_bits()).collect();
-    if let Some(e) = EXPORTS.with(|c| {
-        c.borrow()
-            .iter()
-            .find(|(p, b, _)| *p == path && *b == bits)
-            .map(|(_, _, e)| Rc::clone(e))
-    }) {
-        return Ok(e);
-    }
-    let e = Rc::new(
-        fixture::eval(fixture::Op::Export, &path, &block)
-            .map_err(|e| harness(format!("c++ export: {e}")))?,
-    );
-    EXPORTS.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() >= 4 {
-            c.remove(0);
-        }
-        c.push((path, bits, Rc::clone(&e)));
-    });
-    Ok(e)
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &OpIn) -> Result<Output, HarnessError> {
-    let op = match brep_of(i) {
-        Some(b) => {
-            let ex = export_of(b)?;
-            let Some(c) = fixture::counts(&ex) else {
-                return Ok(Output::new().values("out", ex.to_vec()));
-            };
-            match resolve_op(i, c) {
-                Some(op) => op,
-                None => return Ok(Output::err("no_entity_of_that_kind")),
-            }
-        }
-        None => i.clone(),
-    };
-    let (code, path, input) = encode(&op)?;
-    let out = ffi::eval(code, &path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    if matches!(op, OpIn::TrimConstructed { .. }) {
-        constructed_output(&out)
-    } else {
-        Ok(Output::new().values("out", out))
-    }
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -2333,97 +2269,6 @@ fn run_rust_constructed(k: &mut Kernel, kind: TrimConstructedKind) -> Result<Out
     .ints("trim", built.trim))
 }
 
-struct ConstructedReader<'a> {
-    data: &'a [f64],
-    at: usize,
-}
-
-impl ConstructedReader<'_> {
-    fn number(&mut self) -> Result<f64, HarnessError> {
-        let value = *self
-            .data
-            .get(self.at)
-            .ok_or_else(|| harness("truncated constructed trim output"))?;
-        self.at += 1;
-        if !value.is_finite() {
-            return Err(harness("nonfinite constructed trim output"));
-        }
-        Ok(value)
-    }
-
-    fn integer(&mut self) -> Result<i64, HarnessError> {
-        let value = self.number()?;
-        if value.fract() != 0.0 || value.abs() > 9_007_199_254_740_991.0 {
-            return Err(harness("inexact constructed trim integer"));
-        }
-        Ok(value as i64)
-    }
-
-    fn count(&mut self) -> Result<usize, HarnessError> {
-        let value = usize::try_from(self.integer()?)
-            .map_err(|_| harness("negative constructed trim count"))?;
-        if value > self.data.len().saturating_sub(self.at) {
-            return Err(harness("constructed trim count exceeds output"));
-        }
-        Ok(value)
-    }
-
-    fn integers(&mut self) -> Result<Vec<i64>, HarnessError> {
-        let n = self.count()?;
-        (0..n).map(|_| self.integer()).collect()
-    }
-}
-
-fn constructed_output(data: &[f64]) -> Result<Output, HarnessError> {
-    let mut reader = ConstructedReader { data, at: 0 };
-    let continuity_status = reader.integer()?;
-    let g1 = reader.integer()?;
-    let trim_status = reader.integer()?;
-    let returned_available = reader.integer()?;
-    let mut trim = vec![continuity_status, g1, trim_status, returned_available];
-    if !matches!(g1, 0 | 1)
-        || !matches!(returned_available, 0 | 1)
-        || (trim_status == 0) != (returned_available == 1)
-    {
-        return Err(harness("invalid constructed trim availability"));
-    }
-    if returned_available == 1 {
-        let returned = reader.integers()?;
-        trim.push(returned.len() as i64);
-        trim.extend(returned);
-    }
-    let count = reader.count()?;
-    let (mut kinds, mut ints, mut doubles) = (Vec::new(), Vec::new(), Vec::new());
-    for _ in 0..count {
-        let tag = reader.integer()?;
-        kinds.push(tag);
-        match tag {
-            0 => ints.push(reader.integer()?),
-            1 => doubles.push(reader.number()?),
-            _ => return Err(harness("unknown constructed snapshot tag")),
-        }
-    }
-    let validate_only = reader.integer()?;
-    let links = reader.integers()?;
-    let flags = reader.integers()?;
-    let n = reader.count()?;
-    let uv = (0..n)
-        .map(|_| reader.number())
-        .collect::<Result<Vec<_>, _>>()?;
-    if reader.at != data.len() {
-        return Err(harness("trailing constructed trim output"));
-    }
-    Ok(Output::new()
-        .ints("trim", trim)
-        .ints("ints", ints)
-        .ints("kinds", kinds)
-        .values("dbls", doubles)
-        .int("validate_only", validate_only)
-        .ints("faceuse_links", links)
-        .ints("gap_initialized", flags)
-        .values("uv", uv))
-}
-
 // ---- generation -------------------------------------------------------------------------
 
 fn clamped_knots(rng: &mut Rng, p: usize, n: usize, a: f64, b: f64) -> Vec<f64> {
@@ -3142,25 +2987,369 @@ fn gen_op(rng: &mut Rng) -> OpIn {
     }
 }
 
-/// Whether the C++ wrapper accepts the op (generated cases that it rejects are drawn
-/// again).
+// ---- input contract -----------------------------------------------------------------------
+
+/// The reference shim's operations (the first value of the encoding).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Order = 1,
+    Outer = 2,
+    Mirror = 3,
+    IsoAt = 4,
+    Iso = 5,
+    IsoSeam = 6,
+    Continuity = 7,
+    UvGap = 8,
+    Min = 9,
+    Loops = 10,
+    TrimNull = 11,
+    TrimConstructed = 12,
+    BPresent = 20,
+    BExtremes = 21,
+    BCheckLoop = 22,
+    BCheckFace = 23,
+    BTiny = 24,
+    BEnsure = 25,
+    BBackwards = 26,
+    BOrient = 27,
+    BOrder = 28,
+    BDeferred = 29,
+}
+
+/// Largest control point index of a curve or surface block.
+const MAX_INDEX: usize = 32;
+/// Largest degree.
+const MAX_DEGREE: usize = 5;
+/// Largest coordinate magnitude.
+const MAX_COORD: f64 = 1.0e300;
+/// Largest number of curves in a geometry op.
+const MAX_CURVES: usize = 64;
+/// Largest number of script ops.
+const MAX_OPS: usize = 64;
+/// Largest loop index argument of a script op.
+const MAX_LOOP_INDEX: usize = 1 << 40;
+
+/// `k` control points sharing their rational marker, `z = NOZ` exactly when `planar`,
+/// weights in `[1e-3, 1e3]` and finite coordinates within [`MAX_COORD`].
+fn points_ok(rd: &mut Reader<'_>, k: usize, planar: bool) -> Option<()> {
+    let mut w0 = None;
+    for _ in 0..k {
+        let [x, y, z, w] = [rd.num()?, rd.num()?, rd.num()?, rd.num()?];
+        if (z == NOZ) != planar {
+            return None;
+        }
+        let rational = w != NOW;
+        if *w0.get_or_insert(rational) != rational || (rational && !(1e-3..=1e3).contains(&w)) {
+            return None;
+        }
+        let z = if z == NOZ { 0.0 } else { z };
+        if [x, y, z].iter().any(|c| !c.is_finite() || c.abs() > MAX_COORD) {
+            return None;
+        }
+    }
+    Some(())
+}
+
+/// A surface block: a B-spline (`0 oob form n m p q r s cpts u v`), a plane
+/// (`1 O[3] N[3]`, a non-zero normal) or, when `bounded_ok`, a curve-bounded surface
+/// without boundary curves over a basis block (`2 basis implicit`).
+fn surface_ok(rd: &mut Reader<'_>, bounded_ok: bool) -> Option<()> {
+    let kind = rd.index(if bounded_ok { 2 } else { 1 })?;
+    if kind == 2 {
+        surface_ok(rd, false)?;
+        rd.flag()?;
+        return Some(());
+    }
+    if kind == 1 {
+        rd.vec3()?;
+        rd.nonzero3()?;
+        return Some(());
+    }
+    rd.flag()?;
+    rd.index(11)?;
+    let n = rd.index(MAX_INDEX)?;
+    let m = rd.index(MAX_INDEX)?;
+    let p = rd.index(MAX_DEGREE)?;
+    let q = rd.index(MAX_DEGREE)?;
+    let r = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+    let s = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+    if p == 0 || p > n || q == 0 || q > m || r != n + p + 1 || s != m + q + 1 {
+        return None;
+    }
+    points_ok(rd, (n + 1) * (m + 1), false)?;
+    let u = rd.finites(r + 1)?;
+    let v = rd.finites(s + 1)?;
+    contract::clamped(&u, p)?;
+    contract::clamped(&v, q)?;
+    Some(())
+}
+
+/// A curve block: a clamped B-spline of dimension 2 or 3, a bounded line with a non-zero
+/// vector, an ordered domain and a scale in `[1e-6, 1e6]`, or an ellipse with non-zero
+/// independent axes whose squared lengths do not overflow (UB-46, WR-159), an ordered
+/// domain of at most 720 degrees and radii above `1e-9`.
+fn curve_ok(rd: &mut Reader<'_>) -> Option<()> {
+    let kind = rd.index(3)?;
+    let dim = rd.index(3)?;
+    match kind {
+        0 => {
+            if dim < 2 {
+                return None;
+            }
+            rd.flag()?;
+            let n = rd.index(MAX_INDEX)?;
+            let p = rd.index(MAX_DEGREE)?;
+            let m = rd.index(MAX_INDEX + MAX_DEGREE + 1)?;
+            if p == 0 || p > n || m != n + p + 1 {
+                return None;
+            }
+            points_ok(rd, n + 1, dim == 2)?;
+            contract::clamped(&rd.finites(m + 1)?, p)?;
+        }
+        2 => {
+            if dim != 3 {
+                return None;
+            }
+            rd.vec3()?;
+            rd.nonzero3()?;
+            let d0 = rd.finite()?;
+            let d1 = rd.finite()?;
+            let scale = rd.finite()?;
+            rd.flag()?;
+            if d0 >= d1 || !(1e-6..=1e6).contains(&scale) {
+                return None;
+            }
+        }
+        3 => {
+            if dim != 3 {
+                return None;
+            }
+            rd.vec3()?;
+            let x = rd.nonzero3()?;
+            let y = rd.nonzero3()?;
+            let d0 = rd.finite()?;
+            let d1 = rd.finite()?;
+            let rx = rd.finite()?;
+            let ry = rd.finite()?;
+            rd.flag()?;
+            let (nx, ny) = (contract::len_sq(x), contract::len_sq(y));
+            if !nx.is_finite() || !ny.is_finite() {
+                return None;
+            }
+            let cross = [
+                x[1] * y[2] - x[2] * y[1],
+                x[2] * y[0] - x[0] * y[2],
+                x[0] * y[1] - x[1] * y[0],
+            ];
+            if contract::len_sq(cross) < 1e-6 * nx * ny
+                || d0 >= d1
+                || d1 - d0 > 720.0
+                || rx <= 1e-9
+                || ry <= 1e-9
+            {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+/// The curve-loops script: a non-empty curve store, loop counts adding up to the keyed
+/// curves (none for mode 2), an optional surface and ops whose curve keys, loop indices,
+/// sides, domains and solution objects are in range.
+#[allow(clippy::too_many_lines)] // one arm per script op
+fn loops_ok(rd: &mut Reader<'_>) -> Option<()> {
+    let ns = rd.index(MAX_CURVES)?;
+    if ns == 0 {
+        return None;
+    }
+    for _ in 0..ns {
+        curve_ok(rd)?;
+    }
+    let nl = rd.index(MAX_CURVES)?;
+    let mut sum = 0;
+    for _ in 0..nl {
+        sum += rd.index(MAX_CURVES)?;
+    }
+    let nk = rd.index(MAX_CURVES)?;
+    for _ in 0..nk {
+        rd.below(ns)?;
+    }
+    for _ in 0..nk {
+        rd.index(2)?;
+    }
+    let mode = rd.index(2)?;
+    if sum != nk || (mode == 2 && (nk != 0 || nl != 0)) {
+        return None;
+    }
+    let has_srf = rd.flag()?;
+    if has_srf {
+        surface_ok(rd, true)?;
+    }
+    let nops = rd.index(MAX_OPS)?;
+    for _ in 0..nops {
+        match rd.index(12)? {
+            1 | 2 | 7 => {
+                rd.index(MAX_LOOP_INDEX)?;
+            }
+            3 | 5 => {
+                rd.below(ns)?;
+                rd.finite()?;
+            }
+            4 => {
+                rd.index(MAX_LOOP_INDEX)?;
+                rd.index(MAX_LOOP_INDEX)?;
+            }
+            6 => {
+                rd.below(ns)?;
+                rd.finite()?;
+                rd.index(1)?;
+                rd.finites(2)?;
+                let d = rd.finites(4)?;
+                if d.first() > d.get(2) || d.get(1) > d.get(3) {
+                    return None;
+                }
+            }
+            8 => {
+                rd.below(ns)?;
+                rd.below(ns)?;
+            }
+            9 => {
+                rd.below(ns)?;
+                rd.finites(2)?;
+                for _ in 0..4 {
+                    rd.index(MAX_LOOP_INDEX)?;
+                }
+            }
+            10 => {
+                let nint = rd.index(8)?;
+                for _ in 0..nint {
+                    let iso = rd.finite()?;
+                    if iso != -1.0 && (iso.fract() != 0.0 || iso < 0.0 || iso >= ns as f64) {
+                        return None;
+                    }
+                    rd.index(1)?;
+                    rd.finite()?;
+                    let nsol = rd.index(8)?;
+                    for _ in 0..nsol {
+                        let obj = rd.finite()?;
+                        let ok = obj == -1.0
+                            || (obj == -2.0 && has_srf)
+                            || (obj.fract() == 0.0 && obj >= 0.0 && obj < ns as f64);
+                        if !ok {
+                            return None;
+                        }
+                        rd.finite()?;
+                    }
+                }
+                rd.below(ns)?;
+                rd.below(ns)?;
+                rd.finite()?;
+            }
+            11 => {}
+            12 => {
+                for _ in 0..4 {
+                    rd.index(MAX_LOOP_INDEX)?;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(())
+}
+
+/// The arguments of geometry op `op`.
+fn geometry_args_ok(op: Op, rd: &mut Reader<'_>) -> Option<()> {
+    match op {
+        Op::TrimConstructed => {
+            rd.index(1)?;
+        }
+        Op::Order => {
+            let k = rd.index(MAX_CURVES)?;
+            for _ in 0..k {
+                curve_ok(rd)?;
+            }
+            rd.finite()?;
+            rd.flag()?;
+        }
+        Op::Outer => {
+            let k = rd.index(MAX_CURVES)?;
+            for _ in 0..k {
+                curve_ok(rd)?;
+            }
+            let nl = rd.index(MAX_CURVES)?;
+            let mut sum = 0;
+            for _ in 0..nl {
+                sum += rd.index(MAX_CURVES)?;
+            }
+            if sum != k {
+                return None;
+            }
+            for _ in 0..k {
+                rd.index(2)?;
+            }
+            rd.vec3()?;
+            rd.finite()?;
+        }
+        Op::Mirror => {
+            curve_ok(rd)?;
+            rd.index(1)?;
+            rd.finites(3)?;
+        }
+        Op::IsoAt => {
+            curve_ok(rd)?;
+            rd.index(1)?;
+            rd.finites(2)?;
+        }
+        Op::Iso => curve_ok(rd)?,
+        Op::IsoSeam => {
+            surface_ok(rd, true)?;
+            curve_ok(rd)?;
+        }
+        Op::Continuity => surface_ok(rd, true)?,
+        Op::UvGap => {
+            surface_ok(rd, true)?;
+            rd.finites(5)?;
+            rd.flag()?;
+            rd.finites(6)?;
+        }
+        Op::Min => {
+            rd.num()?;
+            rd.num()?;
+        }
+        Op::Loops => loops_ok(rd)?,
+        Op::TrimNull => {
+            surface_ok(rd, true)?;
+            let k = rd.index(MAX_CURVES)?;
+            for _ in 0..k {
+                curve_ok(rd)?;
+            }
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+/// Whether a generated op keeps the reference wrapper's input contract (generated cases
+/// that do not are drawn again): a B-rep op always (its selectors are taken modulo the
+/// counts); a geometry op whose encoding is a whole, non-empty record of well-formed
+/// clamped B-splines, lines with a non-zero vector, ellipses with non-zero independent
+/// axes, planes with a non-zero normal, finite values, and curve keys and loop counts that
+/// add up.
 fn accepted(op: &OpIn) -> bool {
     if brep_of(op).is_some() {
         return true;
     }
-    match encode(op) {
-        Ok((code, path, input)) => ffi::eval(code, &path, &input).is_ok(),
-        Err(_) => false,
-    }
+    encode(op).is_ok_and(|(code, _, input)| {
+        let mut rd = Reader::new(&input, MAX_COORD);
+        !input.is_empty() && geometry_args_ok(code, &mut rd).is_some() && rd.done()
+    })
 }
 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.trimming_tools"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -3216,18 +3405,6 @@ mod constructed_tests {
         assert_eq!(op, Op::TrimNull);
         assert!(path.is_empty());
         assert_eq!(wire, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
-    }
-
-    #[test]
-    fn constructed_snapshot_rejects_truncation_and_invalid_tags() {
-        for raw in [
-            vec![],
-            vec![0.0, 1.0, 0.0, 0.0],
-            vec![0.0, 1.0, 0.0, 1.0, -1.0],
-            vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 2.0, 0.0],
-        ] {
-            assert!(constructed_output(&raw).is_err(), "{raw:?}");
-        }
     }
 
     fn actual_trim(k: &mut Kernel, kind: TrimConstructedKind) -> ConstructedTrim {
