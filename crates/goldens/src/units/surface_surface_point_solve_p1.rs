@@ -160,7 +160,31 @@ fn to_output(flat: &[f64]) -> Output {
 
 // ---- Rust side ----------------------------------------------------------------------
 
+/// Refuses a surface with a control point (or plane vector) beyond the kernel's model
+/// space, [`solidcore::limits::MAX_COORDINATE_MAGNITUDE`] (`1e150`). The point solvers'
+/// derivatives overflow there: on a curve-bounded B-spline with a control point of
+/// `1e300`, `LocalPointSolve_1` reported a NaN point as found (fuzz
+/// `surface.surface_point_solve_p3` fuzz00349). Shared by the three point-solve
+/// runners.
+pub(crate) fn check_model_space(s: &SurfIn) -> Result<(), HarnessError> {
+    use solidcore::limits::exceeds_coordinate_bound as beyond;
+    let beyond_any = |p: [f64; 3]| p.iter().any(|&c| beyond(c));
+    let outside = match s {
+        SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => srf(&b.srf)?
+            .net
+            .iter()
+            .flatten()
+            .any(|&q| beyond_any(contract::euclid(q))),
+        SurfIn::Plane(p) => [p.o, p.x, p.y].into_iter().any(beyond_any),
+    };
+    if outside {
+        return Err(harness("surface: coordinate beyond 1e150"));
+    }
+    Ok(())
+}
+
 pub(crate) fn wrapped_of(wrap: bool, s: &SurfIn) -> Result<Surface, HarnessError> {
+    check_model_space(s)?;
     let s = surface_in(s)?;
     Ok(if wrap {
         Surface::from(StepSurface::new(s, true).map_err(|e| HarnessError::new(e.to_string()))?)
