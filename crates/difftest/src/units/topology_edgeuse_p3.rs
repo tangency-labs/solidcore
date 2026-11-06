@@ -114,7 +114,6 @@ impl OpIn {
 /// side.
 fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
     use crate::own_builder::{build_any, counts, failed_output, Built, Conventions};
-    let path = path_of(Some(&i.brep))?;
     let block = brep_block_of(Some(&i.brep), i.validate_only, i.init_gaps)?;
     // an input the FFI refuses is a harness error on both sides: building a face on a
     // surface with a coordinate above 1e150 does not return upstream (HANG-29, nightly
@@ -132,8 +131,6 @@ fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
             }
             let eu = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
             Ok(Ok(Setup {
-                path,
-                block,
                 brep,
                 eu,
                 // the Rust side holds its own exact geometry: nothing to defer

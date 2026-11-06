@@ -138,8 +138,6 @@ impl OpIn {
 /// The case's B-rep: the C++ export, the imported Rust B-rep and the selected edge
 /// use; `Err(output)` when the B-rep cannot be built or has no edge use.
 pub(super) struct Setup {
-    pub(super) path: String,
-    pub(super) block: Vec<f64>,
     pub(super) brep: Brep,
     pub(super) eu: EdgeuseId,
     pub(super) types: ImportTypes,
@@ -167,8 +165,6 @@ fn setup(i: &Inputs, prepare: bool) -> Result<Result<CaseSetup, Output>, Harness
                 let eu = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
                 return Ok(Ok((
                     Setup {
-                        path,
-                        block,
                         brep,
                         eu,
                         types: ImportTypes::default(),
@@ -200,8 +196,6 @@ fn setup(i: &Inputs, prepare: bool) -> Result<Result<CaseSetup, Output>, Harness
                 let eu = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
                 return Ok(Ok((
                     Setup {
-                        path,
-                        block,
                         brep,
                         eu,
                         types: ImportTypes::default(),
@@ -236,16 +230,7 @@ fn setup(i: &Inputs, prepare: bool) -> Result<Result<CaseSetup, Output>, Harness
     }
     let (brep, types) = import_with_types(&ex)?;
     let eu = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
-    Ok(Ok((
-        Setup {
-            path,
-            block,
-            brep,
-            eu,
-            types,
-        },
-        prepared,
-    )))
+    Ok(Ok((Setup { brep, eu, types }, prepared)))
 }
 
 /// A 2D curve as a [`CrvIn`] (`None` for a non-B-spline or one without NURB data).

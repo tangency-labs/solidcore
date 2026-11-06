@@ -70,7 +70,7 @@ use super::blend_fillet_geom_p1::{
     RustModel, Srf, VertexIn,
 };
 use super::topology_edgeuse_p1::{
-    brep_block_of, gen_brep, path_of, sel, BrepIn, FILES,
+    gen_brep, sel, BrepIn, FILES,
 };
 use super::topology_edgeuse_p2::{inexact_geometry, put_eu_state, Setup};
 
@@ -357,8 +357,6 @@ fn flag(b: bool) -> f64 {
 /// read or built by the Rust kernel) and the selected edge use; `Err(output)` when the B-rep cannot be built or has no edge use (as unit
 /// `topology.edgeuse_p3`'s runner).
 fn eu_setup(brep: &BrepIn, eu: i64, own: bool) -> Result<Result<Setup, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
     // with `own` (the Rust side) the B-rep is read or built by the Rust kernel, never
     // imported (`crate::own_reader::edgeuse_case`)
     let (c, brep, types) = match crate::own_reader::edgeuse_case(brep, false, false, own)? {
@@ -371,13 +369,7 @@ fn eu_setup(brep: &BrepIn, eu: i64, own: bool) -> Result<Result<Setup, Output>, 
         return Ok(Err(Output::err("no_entity_of_that_kind")));
     }
     let eu = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
-    Ok(Ok(Setup {
-        path,
-        block,
-        brep,
-        eu,
-        types,
-    }))
+    Ok(Ok(Setup { brep, eu, types }))
 }
 
 /// The output of the constructor's record after the build status, as both sides build
@@ -544,8 +536,6 @@ fn rust_edgeuse(i: &Inputs) -> Result<Output, HarnessError> {
     if has_prim(&s.brep, s.eu).map_err(|e| he(&e))? {
         if let Some(radial) = eu1::radial(&s.brep, s.eu).map_err(|e| he(&e))? {
             let probe = Setup {
-                path: String::new(),
-                block: Vec::new(),
                 brep: s.brep.clone_standing_for_self().map_err(|e| he(&e))?,
                 eu: radial,
                 types: s.types.clone(),
@@ -689,8 +679,6 @@ fn rust_cr_eu(i: &Inputs) -> Result<Output, HarnessError> {
     if has_prim(&s.brep, s.eu).map_err(|e| he(&e))? {
         if let Some(radial) = eu1::radial(&s.brep, s.eu).map_err(|e| he(&e))? {
             let probe = Setup {
-                path: String::new(),
-                block: Vec::new(),
                 brep: s.brep.clone_standing_for_self().map_err(|e| he(&e))?,
                 eu: radial,
                 types: s.types.clone(),
