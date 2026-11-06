@@ -1612,6 +1612,22 @@ fn untrim_point_holes_do_not_hide_missing_required_parameters() {
     }
 }
 
+/// The filled radius-5 corner with explicit setback8 already has a successful captured
+/// result; the runner must replay it rather than skip its operation as unported.
+#[test]
+fn filled_setback_replays_the_captured_corner() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let entry = corpus().join("ladder/07-fillets/013-corner-setback.json");
+    let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    assert_eq!(e["rig"]["status"], "pass");
+    assert!(e["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|c| c["error"].is_null()));
+    run_case(&entry, &e).unwrap();
+}
+
 /// The recorded operations already passed in SolidCraft; replay must reach their existing
 /// kernel construction instead of skipping the variable-radius request.
 #[test]
