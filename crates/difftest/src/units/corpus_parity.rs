@@ -1,40 +1,32 @@
-//! Runner for unit `corpus.parity`: the Rust port is at least as good as upstream on
-//! every real model file under `upstream/TestFiles/pt_TestFiles` (188 `.smb` B-rep
-//! files and 74 `.smp` part files), and on the generated case inputs of
-//! `REPO_MODEL_DIRS`. C++: `solidcore_ffi::units::corpus_parity`. Rust:
-//! the readers (`SmBrep::ReadFromFile`, `SmBrepData::ReadPartFromFile`) and the
-//! measures of `crates/solidcore/examples/corpus`.
+//! Runner for unit `corpus.parity`: every real model file under
+//! `upstream/TestFiles/pt_TestFiles` (188 `.smb` B-rep files and 74 `.smp` part files) and
+//! the generated case inputs of `REPO_MODEL_DIRS`, read and measured by the port and
+//! checked against the unit's golden. Ported from the readers `SmBrep::ReadFromFile` and
+//! `SmBrepData::ReadPartFromFile` and the measures of `crates/solidcore/examples/corpus`;
+//! it compared them with upstream's until the goldens replaced that comparison.
 //!
-//! One case per file. Each side reads the file and measures every B-rep: the kind
+//! One case per file. The file is read and every B-rep measured: the kind
 //! (`IsManifoldSolid`, else `IsSheet`, else other; empty without faces, edges and
-//! vertices), the face, edge, vertex and loop counts, the area (`SmApiFaceComputeArea`'s
-//! per-face integration without its accuracy clamp) and, for a solid, the volume
-//! (`SmApiBrepComputeVolume`), at integration accuracy [`ACCURACY`]. Both sides run in
-//! child processes (`difftest --corpus-parity-child <cpp|rust> <path> <accuracy>`), so a
-//! crash or hang on one file fails only that file's side (timeout [`TIMEOUT`]).
+//! vertices), the face, edge, vertex, loop and shell counts, the validity check's result
+//! (`check_brep` at level 2, its geometry owners taken as the geometry records them, as
+//! [`crate::soundness`] does: the number of failure lines, `-1` when the check itself
+//! errs), the area (`SmApiFaceComputeArea`'s per-face integration without its accuracy
+//! clamp) and, for a solid, the volume (`SmApiBrepComputeVolume`), at integration accuracy
+//! [`ACCURACY`]. The counts are `ints`, one entry per B-rep; area and volume are `values`
+//! under the 1e-9 relative rule (volume NaN unless a solid).
 //!
-//! The file's class, decided on the Rust side (`run_cpp` only records the expected
-//! verdict):
-//! * `pass`: both succeed, with equal B-rep counts, kinds and counts, and areas and
-//!   volumes within `10 * ACCURACY` relative (the integration accuracy, not the 1e-9
-//!   of the ported units: the two integrations are separate); also when both fail.
-//! * `rust-better`: upstream fails (error status, crash or timeout) and the port
-//!   succeeds. Not a failure: recorded as the diagnostic `rust_better` and printed as
-//!   `corpus.parity: rust-better <file>`. So is a disagreement on a file listed in
-//!   [`KNOWN_CPP_DEFECTS`] (upstream's value there is a recorded C++ defect) when every
-//!   quantity outside the defect agrees; it also gets the diagnostic `cpp_defect`.
-//! * `REGRESSION`: upstream succeeds and the port fails or disagrees. The only
-//!   failing class: the Rust output is the error `REGRESSION: <why>`.
-//! * deferred: upstream succeeds and the port stops at an `Unported` callee (the unit
-//!   is `partial` until the callee is ported).
+//! A file that reads is then round-tripped: every B-rep written as an ASCII `.smb`
+//! (`SmBrep::WriteToFile`: `SmBrepData::FromBrep`, `WriteToFile`), read back into a new
+//! B-rep and measured again, recorded under the same names with the prefix `rt_`.
 //!
-//! A file whose read passes is then round-tripped on both sides: every B-rep written as
-//! an ASCII `.smb` (`SmBrep::WriteToFile`: `SmBrepData::FromBrep`, `WriteToFile`), read
-//! back into a new B-rep and measured again, and the read-back measures are compared
-//! the same way (children `cpp-roundtrip` / `rust-roundtrip`). Upstream's writer prints
-//! fixed-format doubles, so a read-back volume can drift from the read one by more than
-//! the integration accuracy; the two sides write the same bytes and must drift alike.
+//! An error of the kernel (reading, measuring, writing) is recorded as the case's error,
+//! named by its stage (`round trip: ` before a round trip's), with what was measured
+//! before it; an `Unported` callee defers the case. Each side runs in a child process
+//! (`difftest --corpus-parity-child <rust|rust-roundtrip> <path> <accuracy>`), so a crash
+//! or a hang (timeout [`TIMEOUT`]) fails only that file, as a harness error: never
+//! blessed.
 
+use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -52,6 +44,7 @@ use solidcore::topology::brep::p1 as bl;
 use solidcore::topology::brep::p10::TopologyEnv;
 use solidcore::topology::brep::p2::{is_manifold_solid, is_sheet};
 use solidcore::topology::brep::p7::read_from_file;
+use solidcore::topology::brep::validation::{check_brep_with_keys, CheckLevel};
 use solidcore::topology::brep_data::BrepData;
 use solidcore::topology::brep_data_write::FromBrepEnv;
 use solidcore::topology::database_io::FileType;
@@ -59,7 +52,6 @@ use solidcore::topology::face::p2::{self as fl, PPF_AREA};
 use solidcore::topology::part_file::{read_part_from_file, PartEnv};
 use solidcore::topology::{Brep, EdgeId, EdgeuseId, FaceId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::corpus_parity as ffi;
 
 use crate::case::{CaseContext, CaseSource};
 use crate::{Case, HarnessError, Output, UnitDiff};
@@ -72,13 +64,15 @@ pub const TIMEOUT: Duration = Duration::from_secs(300);
 pub const CHILD_FLAG: &str = "--corpus-parity-child";
 /// Deepest directory level searched below the test files.
 const MAX_DEPTH: usize = 32;
-/// Repository directories of generated `.smb` case inputs other runners read on both
-/// sides, measured here too so a difference in those runners cannot be a reader
-/// difference (#1528: `offset.offset_executive_p2`'s `issue1528_plate_api_shell_2`
-/// shells `issue1528_plate.smb`). Their case names keep the repository-relative path.
+/// Repository directories of generated `.smb` case inputs other runners read, measured
+/// here too so a change in those runners' results that comes from the reader shows here
+/// (`offset.offset_executive_p2`'s `issue1528_plate_api_shell_2` shells
+/// `issue1528_plate.smb`). Their case names keep the repository-relative path.
 const REPO_MODEL_DIRS: [&str; 1] = ["fixtures/offset.offset_executive_p2/data"];
-/// Values per B-rep in a measurement (as [`ffi::PER_BREP`]).
-const PER_BREP: usize = ffi::PER_BREP;
+/// The integer quantities of one B-rep's record, in order (the area and volume follow).
+const COUNTS: [&str; 7] = ["kind", "faces", "edges", "vertices", "loops", "shells", "check"];
+/// Values per B-rep in a measurement: [`COUNTS`], area, volume.
+const PER_BREP: usize = COUNTS.len() + 2;
 /// First identity of the geometry the readers make (topology identities stay below).
 const GEOMETRY_KEYS: u64 = 1 << 62;
 
@@ -99,108 +93,16 @@ struct Inputs {
 /// What one side made of a file.
 #[derive(Debug, Clone, PartialEq)]
 enum Measured {
-    /// `read_status n` then [`PER_BREP`] values per B-rep (`kind faces edges vertices
-    /// loops status area volume`; volume NaN unless a solid).
-    Values(Vec<f64>),
+    /// [`PER_BREP`] values per B-rep measured, and the kernel's error that stopped the
+    /// side, if one did (its stage and message).
+    Values {
+        records: Vec<f64>,
+        error: Option<String>,
+    },
     /// The port stopped at an unported callee.
     Unported { upstream: String, unit: String },
-    /// The side failed: an error, a crash or a timeout (the reason).
-    Failed(String),
-}
-
-impl Measured {
-    /// The B-reps' records when the side read the file and measured every B-rep.
-    fn breps(&self) -> Option<Vec<&[f64]>> {
-        let Self::Values(v) = self else { return None };
-        let (&status, rest) = v.split_first()?;
-        let (&n, rest) = rest.split_first()?;
-        if status != 0.0 || rest.len() != n as usize * PER_BREP {
-            return None;
-        }
-        let breps: Vec<&[f64]> = rest.chunks(PER_BREP).collect();
-        breps
-            .iter()
-            .all(|b| b.get(5) == Some(&0.0))
-            .then_some(breps)
-    }
-
-    /// Why the side did not succeed (for the report).
-    fn why(&self) -> String {
-        match self {
-            Self::Values(v) => match v.split_first() {
-                Some((&s, _)) if s != 0.0 => format!("read status {s}"),
-                _ => "a B-rep's measurement failed".to_string(),
-            },
-            Self::Unported { upstream, unit } => format!("unported {upstream} ({unit})"),
-            Self::Failed(why) => why.clone(),
-        }
-    }
-}
-
-/// `|a - b| <= 10 * ACCURACY * max(|a|, |b|)` (both NaN: no volume on either side).
-fn close(a: f64, b: f64) -> bool {
-    if a.is_nan() && b.is_nan() {
-        return true;
-    }
-    (a - b).abs() <= 10.0 * ACCURACY * a.abs().max(b.abs())
-}
-
-/// The first disagreement between two successful measurements, if any.
-fn disagreement(cpp: &[&[f64]], rust: &[&[f64]]) -> Option<String> {
-    disagreement_except(cpp, rust, &[])
-}
-
-/// [`disagreement`] ignoring the quantities named in `skip`.
-fn disagreement_except(cpp: &[&[f64]], rust: &[&[f64]], skip: &[&str]) -> Option<String> {
-    const NAMES: [&str; 5] = ["kind", "faces", "edges", "vertices", "loops"];
-    if cpp.len() != rust.len() {
-        return Some(format!("{} B-reps, upstream {}", rust.len(), cpp.len()));
-    }
-    for (i, (c, r)) in cpp.iter().zip(rust).enumerate() {
-        for (j, name) in NAMES.iter().enumerate() {
-            if !skip.contains(name) && c.get(j) != r.get(j) {
-                return Some(format!(
-                    "B-rep {i}: {name} {:?}, upstream {:?}",
-                    r.get(j),
-                    c.get(j)
-                ));
-            }
-        }
-        for (j, name) in [(6, "area"), (7, "volume")] {
-            if skip.contains(&name) {
-                continue;
-            }
-            let (a, b) = (c.get(j).copied(), r.get(j).copied());
-            match (a, b) {
-                (Some(a), Some(b)) if close(a, b) => {}
-                _ => return Some(format!("B-rep {i}: {name} {b:?}, upstream {a:?}")),
-            }
-        }
-    }
-    None
-}
-
-/// Files where upstream's result is a known C++ defect and the port's is right: the file,
-/// the quantities the defect affects (empty: the whole result) and the evidence.
-const KNOWN_CPP_DEFECTS: [(&str, &[&str], &str); 1] = [
-    (
-        "Solids/fillet_ts.smb",
-        &[],
-        "plan/upstream-issues.md ND-257 (UB-254): upstream's B-rep depends on the allocator; \
-         without address reuse it is the port's",
-    ),
-];
-
-/// The evidence when `file`'s disagreement is a known C++ defect: everything outside the
-/// defect's quantities agrees.
-fn known_cpp_defect(file: &str, cpp: &[&[f64]], rust: &[&[f64]]) -> Option<&'static str> {
-    KNOWN_CPP_DEFECTS
-        .iter()
-        .find(|(f, _, _)| *f == file)
-        .and_then(|(_, quantities, why)| {
-            (quantities.is_empty() || disagreement_except(cpp, rust, quantities).is_none())
-                .then_some(*why)
-        })
+    /// The side did not run to an answer: a crash, a timeout, bad child output.
+    Broken(String),
 }
 
 // ---- the Rust side --------------------------------------------------------------------
@@ -299,7 +201,46 @@ fn integrated_area(
     Ok(area)
 }
 
-/// One B-rep's record (as the shim's `measure`).
+/// The validity check's result: the number of `check_brep` level-2 failure lines, the
+/// geometry owners taken as the geometry records them (an edge's curve's, a face's
+/// surface's, an edge use's trim curve's), as [`crate::soundness`] checks a body; `-1`
+/// when the check errs.
+fn check_lines(k: &mut Kernel, b: &mut Brep) -> f64 {
+    let mut owners = std::collections::BTreeMap::new();
+    for (id, e) in b.edges().iter() {
+        if let Some(o) = e.curve.as_ref().and_then(solidcore::curve::curve::Curve::owner) {
+            owners.insert(EntityRef::Edge(id), o);
+        }
+    }
+    for (id, f) in b.faces().iter() {
+        if let Some(o) = f
+            .surface
+            .as_ref()
+            .and_then(solidcore::surface::surface::Surface::owner)
+        {
+            owners.insert(EntityRef::Face(id), o);
+        }
+    }
+    for (id, u) in b.edgeuses().iter() {
+        if let Some(o) = u
+            .uv_trim_curve
+            .as_ref()
+            .and_then(solidcore::curve::curve::Curve::owner)
+        {
+            owners.insert(EntityRef::Edgeuse(id), o);
+        }
+    }
+    let keys = |e: EntityRef| {
+        owners.get(&e).copied().unwrap_or(ObjectRef {
+            type_code: 0,
+            key: ObjectKey(0),
+        })
+    };
+    check_brep_with_keys(k, b, CheckLevel::Level2, &keys)
+        .map_or(-1.0, |c| c.failure_count() as f64)
+}
+
+/// One B-rep's record: [`COUNTS`], area, volume.
 fn measure(
     k: &mut Kernel,
     b: &mut Brep,
@@ -322,6 +263,7 @@ fn measure(
     } else {
         3.0
     };
+    let shells = bl::shells(k, b, None)?.len();
     let area = integrated_area(k, b, &faces, accuracy)?;
     let mut volume = f64::NAN;
     if kind == 1.0 {
@@ -339,62 +281,66 @@ fn measure(
         edges.len() as f64,
         vertices.len() as f64,
         loops as f64,
-        0.0,
-        area,
-        volume,
+        shells as f64,
     ]);
+    // the check builds caches and names geometry owners: it runs after the measures
+    let check = check_lines(k, b);
+    out.extend([check, area, volume]);
     Ok(())
+}
+
+/// A kernel error as a side's result: an unported callee defers; any other error stops
+/// the side at `stage`, keeping the records measured before it.
+fn stopped(records: Vec<f64>, stage: &str, e: SolidError) -> Measured {
+    match e {
+        SolidError::Unported { upstream, unit } => Measured::Unported {
+            upstream: upstream.to_string(),
+            unit: unit.to_string(),
+        },
+        e => Measured::Values {
+            records,
+            error: Some(format!("{stage}: {e}")),
+        },
+    }
 }
 
 /// The Rust side on one file.
 fn measure_rust(path: &Path, accuracy: f64) -> Measured {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(e) => return Measured::Failed(format!("read: {e}")),
-    };
-    let fail = |stage: &str, e: SolidError| match e {
-        SolidError::Unported { upstream, unit } => Measured::Unported {
-            upstream: upstream.to_string(),
-            unit: unit.to_string(),
-        },
-        e => Measured::Failed(format!("{stage}: {e}")),
+        Err(e) => return Measured::Broken(format!("read {}: {e}", path.display())),
     };
     let mut k = Kernel::default();
     let mut read = match read_breps(&mut k, bytes) {
         Ok(r) => r,
-        Err(e) => return fail("read", e),
+        Err(e) => return stopped(Vec::new(), "read", e),
     };
-    let mut out = vec![0.0, read.breps.len() as f64];
+    let mut out = Vec::new();
     for b in &mut read.breps {
         if let Err(e) = measure(&mut k, b, accuracy, &mut out) {
-            return fail("measure", e);
+            return stopped(out, "measure", e);
         }
     }
-    Measured::Values(out)
+    Measured::Values {
+        records: out,
+        error: None,
+    }
 }
 
-/// The Rust side's round trip of one file, as the shim's `sc_corpus_parity_roundtrip`:
-/// every B-rep flattened (`SmBrepData::FromBrep`), written as ASCII (`WriteToFile`, which
-/// makes a lazy surface's NURB as upstream's `GetOrCreateGwNurbPointer` does), read back
-/// into a new B-rep and measured.
+/// The round trip of one file: every B-rep flattened (`SmBrepData::FromBrep`), written as
+/// ASCII (`WriteToFile`, which makes a lazy surface's NURB as upstream's
+/// `GetOrCreateGwNurbPointer` does), read back into a new B-rep and measured.
 fn measure_rust_roundtrip(path: &Path, accuracy: f64) -> Measured {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(e) => return Measured::Failed(format!("read: {e}")),
-    };
-    let fail = |stage: &str, e: SolidError| match e {
-        SolidError::Unported { upstream, unit } => Measured::Unported {
-            upstream: upstream.to_string(),
-            unit: unit.to_string(),
-        },
-        e => Measured::Failed(format!("{stage}: {e}")),
+        Err(e) => return Measured::Broken(format!("read {}: {e}", path.display())),
     };
     let mut k = Kernel::default();
     let read = match read_breps(&mut k, bytes) {
         Ok(r) => r,
-        Err(e) => return fail("read", e),
+        Err(e) => return stopped(Vec::new(), "read", e),
     };
-    let mut out = vec![0.0, read.breps.len() as f64];
+    let mut out = Vec::new();
     for (i, b) in read.breps.iter().enumerate() {
         let key = |e| key_of(i, e);
         let env = FromBrepEnv {
@@ -410,32 +356,34 @@ fn measure_rust_roundtrip(path: &Path, accuracy: f64) -> Measured {
             .and_then(|mut data| data.write_to_file_with_nurbs(&k, FileType::Ascii));
         let bytes = match written {
             Ok(bytes) => bytes,
-            Err(e) => return fail("write", e),
+            Err(e) => return stopped(out, "write", e),
         };
         let mut back = match read_breps(&mut k, bytes) {
             Ok(r) => r,
-            Err(e) => return fail("read back", e),
+            Err(e) => return stopped(out, "read back", e),
         };
         let Some(b2) = back.breps.first_mut() else {
-            return Measured::Failed("read back: no B-rep".to_string());
+            return Measured::Broken("read back: no B-rep".to_string());
         };
         if let Err(e) = measure(&mut k, b2, accuracy, &mut out) {
-            return fail("measure read back", e);
+            return stopped(out, "measure read back", e);
         }
     }
-    Measured::Values(out)
+    Measured::Values {
+        records: out,
+        error: None,
+    }
 }
 
 // ---- the child processes --------------------------------------------------------------
 
-/// `difftest --corpus-parity-child <cpp|rust|cpp-roundtrip|rust-roundtrip> <path>
-/// <accuracy>`: measures one file (or its ASCII round trip) on one side and prints one line (`CP <values..>`, `CP-UNPORTED <upstream> <unit>` or
-/// `CP-ERROR <why>`, tab separated).
+/// `difftest --corpus-parity-child <rust|rust-roundtrip> <path> <accuracy>`: measures one
+/// file (or its ASCII round trip) and prints one line, tab separated: `CP <values..>`
+/// (a complete measurement), `CP-ERROR <why> <values..>` (stopped by the kernel's error
+/// after the values), `CP-UNPORTED <upstream> <unit>` or `CP-BROKEN <why>`.
 pub fn run_child(args: &[String]) -> ExitCode {
     let (Some(side), Some(path), Some(accuracy)) = (args.first(), args.get(1), args.get(2)) else {
-        eprintln!(
-            "usage: difftest {CHILD_FLAG} <cpp|rust|cpp-roundtrip|rust-roundtrip> <path> <accuracy>"
-        );
+        eprintln!("usage: difftest {CHILD_FLAG} <rust|rust-roundtrip> <path> <accuracy>");
         return ExitCode::from(2);
     };
     let Ok(accuracy) = accuracy.parse::<f64>() else {
@@ -443,42 +391,37 @@ pub fn run_child(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
     let m = match side.as_str() {
-        "cpp" => match ffi::measure(path, accuracy) {
-            Ok(v) => Measured::Values(v),
-            Err(e) => Measured::Failed(format!("shim: {e}")),
-        },
         "rust" => measure_rust(Path::new(path), accuracy),
-        "cpp-roundtrip" => match PrivateDir::new() {
-            // (the shim writes and reads the file by name: only inside a directory of
-            // our own, never at a guessable path another user could have planted)
-            Ok(dir) => {
-                let tmp = dir.0.join("roundtrip.smb");
-                match ffi::roundtrip(path, &tmp.to_string_lossy(), accuracy) {
-                    Ok(v) => Measured::Values(v),
-                    Err(e) => Measured::Failed(format!("shim: {e}")),
-                }
-            }
-            Err(e) => Measured::Failed(format!("private temp dir: {e}")),
-        },
         "rust-roundtrip" => measure_rust_roundtrip(Path::new(path), accuracy),
         _ => {
-            eprintln!("{CHILD_FLAG}: side must be cpp, rust, cpp-roundtrip or rust-roundtrip");
+            eprintln!("{CHILD_FLAG}: side must be rust or rust-roundtrip");
             return ExitCode::from(2);
         }
     };
+    let flat = |v: &[f64]| -> String {
+        v.iter().fold(String::new(), |mut s, x| {
+            let _ = write!(s, "\t{x:e}");
+            s
+        })
+    };
+    let one_line = |s: &str| s.replace(['\n', '\t'], " ");
     match m {
-        Measured::Values(v) => {
-            let s: Vec<String> = v.iter().map(|x| format!("{x:e}")).collect();
-            println!("CP\t{}", s.join("\t"));
-        }
+        Measured::Values {
+            records,
+            error: None,
+        } => println!("CP{}", flat(&records)),
+        Measured::Values {
+            records,
+            error: Some(why),
+        } => println!("CP-ERROR\t{}{}", one_line(&why), flat(&records)),
         Measured::Unported { upstream, unit } => println!("CP-UNPORTED\t{upstream}\t{unit}"),
-        Measured::Failed(why) => println!("CP-ERROR\t{}", why.replace(['\n', '\t'], " ")),
+        Measured::Broken(why) => println!("CP-BROKEN\t{}", one_line(&why)),
     }
     ExitCode::SUCCESS
 }
 
 /// A directory only this user can reach (mode 0700 on Unix), made fresh under the
-/// system temp directory for the C++ round trip's file and removed with everything in it
+/// system temp directory for a file another runner writes and reads by name, and removed with everything in it
 /// when dropped (on every return path). `create_dir` fails on any existing entry,
 /// a planted symlink included, and the next name is tried.
 pub(super) struct PrivateDir(pub(super) PathBuf);
@@ -521,7 +464,7 @@ impl Drop for PrivateDir {
 fn measure_isolated(side: &str, path: &str) -> Measured {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
-        Err(e) => return Measured::Failed(format!("current_exe: {e}")),
+        Err(e) => return Measured::Broken(format!("current_exe: {e}")),
     };
     let child = Command::new(exe)
         .arg(CHILD_FLAG)
@@ -534,7 +477,7 @@ fn measure_isolated(side: &str, path: &str) -> Measured {
         .spawn();
     let mut child = match child {
         Ok(c) => c,
-        Err(e) => return Measured::Failed(format!("spawn: {e}")),
+        Err(e) => return Measured::Broken(format!("spawn: {e}")),
     };
     let reader = child.stdout.take().map(|mut out| {
         std::thread::spawn(move || {
@@ -559,22 +502,22 @@ fn measure_isolated(side: &str, path: &str) -> Measured {
                 break None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => return Measured::Failed(format!("wait: {e}")),
+            Err(e) => return Measured::Broken(format!("wait: {e}")),
         }
     };
     let stdout = reader.and_then(|h| h.join().ok()).unwrap_or_default();
     let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
     let Some(status) = status else {
-        return Measured::Failed(with_stderr(
+        return Measured::Broken(with_stderr(
             format!("timeout after {}s", TIMEOUT.as_secs()),
             &stderr,
         ));
     };
     if !status.success() {
-        return Measured::Failed(with_stderr(format!("crash ({status})"), &stderr));
+        return Measured::Broken(with_stderr(format!("crash ({status})"), &stderr));
     }
     match parse_child(&stdout) {
-        Measured::Failed(why) if why == NO_RESULT => Measured::Failed(with_stderr(why, &stderr)),
+        Measured::Broken(why) if why == NO_RESULT => Measured::Broken(with_stderr(why, &stderr)),
         m => m,
     }
 }
@@ -626,14 +569,32 @@ fn with_stderr(why: String, stderr: &str) -> String {
 
 /// The measurement a child printed.
 fn parse_child(stdout: &str) -> Measured {
+    let numbers = |fields: std::str::Split<'_, char>| -> Result<Vec<f64>, String> {
+        fields
+            .map(str::parse::<f64>)
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("bad child output: {e}"))
+    };
     for line in stdout.lines() {
         let mut fields = line.split('\t');
         match fields.next() {
             Some("CP") => {
-                let v: Result<Vec<f64>, _> = fields.map(str::parse::<f64>).collect();
-                return match v {
-                    Ok(v) => Measured::Values(v),
-                    Err(e) => Measured::Failed(format!("bad child output: {e}")),
+                return match numbers(fields) {
+                    Ok(records) => Measured::Values {
+                        records,
+                        error: None,
+                    },
+                    Err(why) => Measured::Broken(why),
+                };
+            }
+            Some("CP-ERROR") => {
+                let why = fields.next().unwrap_or_default().to_string();
+                return match numbers(fields) {
+                    Ok(records) => Measured::Values {
+                        records,
+                        error: Some(why),
+                    },
+                    Err(why) => Measured::Broken(why),
                 };
             }
             Some("CP-UNPORTED") => {
@@ -642,13 +603,13 @@ fn parse_child(stdout: &str) -> Measured {
                     unit: fields.next().unwrap_or_default().to_string(),
                 };
             }
-            Some("CP-ERROR") => {
-                return Measured::Failed(fields.next().unwrap_or_default().to_string());
+            Some("CP-BROKEN") => {
+                return Measured::Broken(fields.next().unwrap_or_default().to_string());
             }
             _ => {}
         }
     }
-    Measured::Failed(NO_RESULT.to_string())
+    Measured::Broken(NO_RESULT.to_string())
 }
 
 // ---- the cases ------------------------------------------------------------------------
@@ -684,36 +645,52 @@ fn model_files(dir: &Path) -> Vec<(PathBuf, String)> {
     out
 }
 
-/// The round trip's verdict on a file whose read passed (`read`, kept when the round trip
-/// passes too): each side writes every B-rep as ASCII and reads it back
-/// (`cpp-roundtrip` / `rust-roundtrip` children), and the read-back measures are compared
-/// as the read ones are. A disagreement is a `REGRESSION` (upstream's ASCII writer drops
-/// digits, so the read-back volume can move from the read one; both sides must move
-/// alike), unless it is a known C++ defect of the file.
-fn roundtrip_verdict(i: &Inputs, read: Output) -> Output {
-    let cpp = measure_isolated("cpp-roundtrip", &i.path);
-    let rust = measure_isolated("rust-roundtrip", &i.path);
-    match (cpp.breps(), rust.breps()) {
-        (Some(c), Some(r)) => match disagreement(&c, &r) {
-            None => read.diagnostic("roundtrip_pass", 1),
-            Some(why) => match known_cpp_defect(&i.file, &c, &r) {
-                Some(_) => read.diagnostic("roundtrip_cpp_defect", 1),
-                None => Output::err(format!("REGRESSION: round trip: {why}")),
-            },
-        },
-        (Some(_), None) => match rust {
-            Measured::Unported { upstream, unit } => Output::deferred(unit, upstream),
-            _ => Output::err(format!("REGRESSION: round trip: {}", rust.why())),
-        },
-        (None, Some(_)) => {
-            eprintln!(
-                "corpus.parity: rust-better {} (upstream round trip: {})",
-                i.file,
-                cpp.why()
-            );
-            read.diagnostic("roundtrip_rust_better", 1)
+/// Adds one side's records to `out`, each quantity under `prefix` (one entry per B-rep).
+fn put_records(mut out: Output, prefix: &str, records: &[f64]) -> Result<Output, HarnessError> {
+    if !records.len().is_multiple_of(PER_BREP) {
+        return Err(HarnessError::new(format!(
+            "{} values, not a whole number of {PER_BREP}-value B-rep records",
+            records.len()
+        )));
+    }
+    let column = |j: usize| -> Vec<f64> {
+        records
+            .chunks(PER_BREP)
+            .filter_map(|r| r.get(j).copied())
+            .collect()
+    };
+    for (j, name) in COUNTS.iter().enumerate() {
+        let ints: Vec<i64> = column(j).iter().map(|&x| x as i64).collect();
+        out = out.ints(&format!("{prefix}{name}"), ints);
+    }
+    Ok(out
+        .values(&format!("{prefix}area"), column(COUNTS.len()))
+        .values(&format!("{prefix}volume"), column(COUNTS.len() + 1)))
+}
+
+/// One side, run in a child, added to `out` under `prefix`; `Ok(false)` when the side
+/// stopped (an error recorded, or a deferral), so no later side runs.
+fn run_side(
+    out: &mut Output,
+    side: &str,
+    prefix: &str,
+    stage: &str,
+    path: &str,
+) -> Result<bool, HarnessError> {
+    match measure_isolated(side, path) {
+        Measured::Values { records, error } => {
+            *out = put_records(std::mem::take(out), prefix, &records)?;
+            let more = error.is_none();
+            if let Some(why) = error {
+                out.error = Some(format!("{stage}{why}"));
+            }
+            Ok(more)
         }
-        (None, None) => read.diagnostic("roundtrip_both_fail", 1),
+        Measured::Unported { upstream, unit } => {
+            *out = Output::deferred(unit, upstream);
+            Ok(false)
+        }
+        Measured::Broken(why) => Err(HarnessError::new(format!("{side}: {why}"))),
     }
 }
 
@@ -757,49 +734,13 @@ impl UnitDiff for Runner {
             .collect()
     }
 
-    /// The verdict expected of every file: no regression (the measurements run on the
-    /// Rust side, which classifies the file).
-    fn run_cpp(&self, _case: &Case) -> Result<Output, HarnessError> {
-        Ok(Output::new().int("regression", 0))
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        let cpp = measure_isolated("cpp", &i.path);
-        let rust = measure_isolated("rust", &i.path);
-        let ok = Output::new().int("regression", 0);
-        let read = match (cpp.breps(), rust.breps()) {
-            (Some(c), Some(r)) => match disagreement(&c, &r) {
-                None => ok.diagnostic("pass", 1),
-                Some(why) => match known_cpp_defect(&i.file, &c, &r) {
-                    Some(defect) => {
-                        eprintln!(
-                            "corpus.parity: rust-better {} (known C++ defect: {why}; {defect})",
-                            i.file
-                        );
-                        ok.diagnostic("rust_better", 1).diagnostic("cpp_defect", 1)
-                    }
-                    None => Output::err(format!("REGRESSION: {why}")),
-                },
-            },
-            (Some(_), None) => match rust {
-                Measured::Unported { upstream, unit } => Output::deferred(unit, upstream),
-                _ => Output::err(format!("REGRESSION: {}", rust.why())),
-            },
-            (None, Some(_)) => {
-                eprintln!(
-                    "corpus.parity: rust-better {} (upstream: {})",
-                    i.file,
-                    cpp.why()
-                );
-                ok.diagnostic("rust_better", 1)
-            }
-            (None, None) => ok.diagnostic("both_fail", 1),
-        };
-        if read.error.is_some() || read.deferred.is_some() {
-            return Ok(read);
+        let mut out = Output::new();
+        if run_side(&mut out, "rust", "", "", &i.path)? {
+            run_side(&mut out, "rust-roundtrip", "rt_", "round trip: ", &i.path)?;
         }
-        Ok(roundtrip_verdict(&i, read))
+        Ok(out)
     }
 
     fn generate(&self, _rng: &mut crate::Rng) -> Option<Value> {
