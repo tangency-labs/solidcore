@@ -1,38 +1,36 @@
-//! Runner for unit `topology.face_p3`. C++: `solidcore_ffi::units::topology_face_p3`.
+//! Runner for unit `topology.face_p3`. Ported from upstream `SmFace.cpp` (the shim
+//! `harness/cpp/shim/topology_face_p3.cpp` was the reference); checked against its golden.
 //! Rust: `solidcore::topology::face::p3`.
 //!
-//! The C++ side builds a real `SmBrep` per call from the B-rep blocks of the
-//! `topology.vertexuse` runner (an upstream `.smb` test file, optionally with rebuilt UV
-//! trim curves; a wire edge; a face from a B-spline surface or an `SmPlane`, optionally
-//! with an inner vertex loop; the wire network of `prog_test` `my_test_topology`). The
-//! Rust side builds the same B-rep itself ([`own_brep`]: the Rust kernel's builders, or
-//! the Rust `.smb` reader, renumbered into the shim's traversal order) and runs the
-//! ported functions on it, so both sides hold the native geometry and no C++ state reaches
-//! the Rust side; results are compared as flags, statuses, tolerances, edge use / vertex
-//! use states, the full UV trim curves `CreateUVTrimCurves` leaves
-//! ([`crate::util::trim_curve`]) and sampled curve points (see the FFI module docs for
-//! each op's output).
+//! The case's B-rep is one of the B-rep blocks of the `topology.vertexuse` runner (an
+//! upstream `.smb` test file, optionally with rebuilt UV trim curves; a wire edge; a face
+//! from a B-spline surface or a plane, optionally with an inner vertex loop; the wire
+//! network of `prog_test` `my_test_topology`), built by [`own_brep`] (the Rust kernel's
+//! builders, or the Rust `.smb` reader, renumbered into the shim's traversal order). The
+//! runner runs the ported functions on it and records flags, statuses, tolerances, edge
+//! use / vertex use states, the full UV trim curves `CreateUVTrimCurves` leaves
+//! ([`crate::util::trim_curve`]) and sampled curve points.
 //!
 //! `own_reader_fillet.json` runs `CreateUVTrimCurves` on every face of the `Fillet/`
 //! files of the fillet executive sweeps (e.g. `sphere_diff_3cylinders.smb`, whose face
 //! 7 trim of edge 30 diverged before #1215), as read and with rebuilt UV trim curves,
-//! each side reading the file with its own reader.
+//! read with the Rust reader.
 //!
 //! Face, loop and other-face selectors are taken modulo the B-rep's counts, so
-//! generated cases need no counts; a B-rep without faces gives `no face` on both sides.
+//! generated cases need no counts; a B-rep without faces gives `no face`.
 //!
 //! **Touching faces.** The inline `touching_*` cases ([`touching_cases`]) build one B-rep
 //! of several `CreateFaceFromSurface` faces (block kind 10: planes and canonical
-//! cylinders, spheres and tori, `CreateCanonical` on both sides) that meet at single points
+//! cylinders, spheres and tori, `CreateCanonical`) that meet at single points
 //! (a sphere on a plane, sphere on sphere, sphere on a cylinder, a torus on a plane, at
 //! interior, seam, pole and boundary points, with gaps up to and beyond the tolerance)
-//! and compare `FaceIntersect`'s touching points (`Point3DClassify` on both faces of the
-//! one B-rep) and curves with the C++.
+//! and record `FaceIntersect`'s touching points (`Point3DClassify` on both faces of the
+//! one B-rep) and curves.
 //!
 //! **Hermite edge-loop faces.** The inline `hermite_*` cases ([`hermite_degenerate_cases`])
 //! reach `IsDegenerate`'s edge-pair coincidence check: a one-face B-rep (block kind 14)
 //! whose single edge loop is an explicit list of curves, each edge with its own tolerance,
-//! built natively with `SmBrepConstructor` and on the Rust side from the same records.
+//! built from those records (upstream builds it with `SmBrepConstructor`).
 //! `SmHermiteCurve` is a curve kind without a NURB, so its curve cache measures the
 //! distance of its cubic spans and the tree the coincidence drops build depends on the
 //! edge's tolerance (a B-spline span is exact and skips that test). The cases pair a
@@ -44,8 +42,8 @@
 //! separately, and the `SmLine` control at 1e-10 against 1) and the optional
 //! `IsDegenerate` zone tolerance is `None` and explicit. `skip_quick` is forced `true`
 //! where the coincidence check is under test; the `*_quick` controls run the quick point
-//! check instead. The native `SmBrepConstructor` vertex sharing is not replicated on the
-//! Rust side (its loop uses, face-use mates and edge-use pairs are).
+//! check instead. Upstream `SmBrepConstructor`'s vertex sharing is not replicated (its
+//! loop uses, face-use mates and edge-use pairs are).
 
 
 use serde::{Deserialize, Serialize};
@@ -65,8 +63,6 @@ use solidcore::topology::loopuse as lu1;
 use solidcore::topology::topology_traverser;
 use solidcore::topology::{Brep, FaceId, LoopId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_face_p3::{self as ffi, Op, N_ARGS};
-use solidcore_ffi::units::topology_vertexuse::{self as fixture, Op as FixtureOp};
 
 use super::topology_vertexuse::{self as shared, BrepIn, SrfIn};
 use crate::runner::default_cases;
@@ -75,6 +71,25 @@ use crate::{Case, CaseContext, CaseSource, HarnessError, Output, Rng, UnitDiff};
 
 /// The difftest runner.
 pub struct Runner;
+
+/// The reference shim's operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Lamina = 1,
+    SetTol = 2,
+    Notify = 3,
+    LoopOrient = 4,
+    Degenerate = 5,
+    Composites = 6,
+    UvTrim = 7,
+    Intersect = 8,
+}
+
+/// The number of arguments every op takes.
+const N_ARGS: usize = 6;
+
+/// The `SmNotifyOperation`s of `Notify`.
+const NOTIFY_OP_COUNT: usize = 5;
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
@@ -99,7 +114,7 @@ fn native_bspline_copy(curve: &SmCurve) -> Option<SmCurve> {
 const NULL_DEREF: f64 = -2.0;
 
 /// The notifications of the `Notify` op, by index (as the shim's `NOTIFY_OPS`).
-const NOTIFY_OPS: [NotifyOperation; ffi::NOTIFY_OPS] = [
+const NOTIFY_OPS: [NotifyOperation; NOTIFY_OP_COUNT] = [
     NotifyOperation::PreEdit,
     NotifyOperation::PostEdit,
     NotifyOperation::ChangeGeometry,
@@ -284,135 +299,6 @@ fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
-/// The B-rep block (as the `topology.vertexuse` runner's).
-fn block(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut v = Vec::new();
-    let brep = match &i.brep {
-        CaseBrep::Shared(b) => b,
-        CaseBrep::Faces(FacesBrep::Faces { faces }) => {
-            v.extend([10.0, faces.len() as f64]);
-            for face in faces {
-                push_face(&mut v, face)?;
-            }
-            v.push(flag(i.validate_only));
-            v.push(flag(i.init_gaps));
-            return Ok(v);
-        }
-        CaseBrep::EdgeLoop(f) => {
-            v.push(14.0);
-            v.extend(f.o);
-            v.extend(f.n);
-            v.extend(f.dom);
-            v.push(f.face_tol);
-            v.push(f.edges.len() as f64);
-            for e in &f.edges {
-                match &e.curve {
-                    LoopCurveIn::Line { a, b } => {
-                        v.push(1.0);
-                        v.extend(a);
-                        v.extend(b);
-                    }
-                    LoopCurveIn::Hermite { p1, d1, p2, d2 } => {
-                        v.push(3.0);
-                        for q in [p1, d1, p2, d2] {
-                            v.extend(q);
-                        }
-                    }
-                }
-                v.extend(e.t);
-                v.push(e.tol);
-            }
-            v.push(flag(i.validate_only));
-            v.push(flag(i.init_gaps));
-            return Ok(v);
-        }
-    };
-    match brep {
-        BrepIn::File { rebuild, .. } => v.extend([0.0, flag(*rebuild)]),
-        BrepIn::Wire { curve, t0, t1 } => {
-            v.push(1.0);
-            shared::push_curve(&mut v, curve)?;
-            v.extend([*t0, *t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            v.push(if i.vertex_loop.is_some() { 4.0 } else { 2.0 });
-            shared::push_surface(&mut v, surface)?;
-            v.extend(dom);
-            if let Some(l) = i.vertex_loop {
-                v.extend(l);
-            }
-        }
-        BrepIn::Network => v.push(3.0),
-    }
-    v.push(flag(i.validate_only));
-    v.push(flag(i.init_gaps));
-    Ok(v)
-}
-
-/// One face of a kind-10 block.
-fn push_face(v: &mut Vec<f64>, face: &FaceIn) -> Result<(), HarnessError> {
-    match face {
-        FaceIn::Surface { surface, dom } => {
-            shared::push_surface(v, surface)?;
-            v.extend(dom);
-        }
-        FaceIn::Analytic {
-            shape,
-            scale,
-            a,
-            b,
-            c,
-            origin,
-            axis,
-            from,
-            to,
-        } => {
-            let kind = match shape {
-                Shape::Cylinder => 10.0,
-                Shape::Sphere => 11.0,
-                Shape::Torus => 12.0,
-            };
-            v.extend([kind, *scale, *a, *b, *c]);
-            v.extend(origin);
-            v.push(f64::from(*axis));
-            v.extend(from);
-            v.extend(to);
-        }
-    }
-    Ok(())
-}
-
-/// A built B-rep: its export and counts.
-struct Built {
-    path: String,
-    block: Vec<f64>,
-    export: Vec<f64>,
-    counts: [usize; 10],
-}
-
-/// Exports the case's B-rep; `Err(output)` when it could not be built.
-fn build(i: &Inputs) -> Result<Result<Built, Output>, HarnessError> {
-    let path = match &i.brep {
-        CaseBrep::Shared(b) => shared::path_of(b)?,
-        CaseBrep::Faces(_) | CaseBrep::EdgeLoop(_) => String::new(),
-    };
-    let block = block(i)?;
-    let export = crate::export_memo::export("topology_vertexuse", &[&path], &block, || {
-        fixture::eval(FixtureOp::Export, &path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some(counts) = fixture::counts(&export) else {
-        let status = export.get(1).copied().unwrap_or(0.0);
-        return Ok(Err(Output::err(format!("brep_build_status_{status}"))));
-    };
-    Ok(Ok(Built {
-        path,
-        block,
-        export,
-        counts,
-    }))
-}
-
 /// The face of a selector (`None` without faces).
 fn face_sel(s: i64, n_f: usize) -> Option<usize> {
     let x = shared::sel(s.max(0), n_f);
@@ -438,7 +324,7 @@ fn args(
         } => [f(face)?, tol, flag(only_if_larger), flag(cascade), 0.0, 0.0],
         OpIn::Notify { face, operation } => [
             f(face)?,
-            f64::from(operation % ffi::NOTIFY_OPS as u8),
+            f64::from(operation % NOTIFY_OP_COUNT as u8),
             0.0,
             0.0,
             0.0,
@@ -521,31 +407,6 @@ fn first_loop(b: &Brep, f: usize) -> Option<usize> {
     let lu = *b.faceuse(fu).ok()?.loopuses.first()?;
     let l = b.loopuse(lu).ok()?.loop_?;
     Some(l.index() as usize)
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp_case(i: &Inputs) -> Result<Output, HarnessError> {
-    let b = match build(i)? {
-        Ok(b) => b,
-        Err(out) => return Ok(out),
-    };
-    // the Rust graph of the export is read only to resolve a face's first loop (the
-    // `LoopOrient` default selector); an edge-loop face's Hermite curves are not in the
-    // shared export, so no other op imports it
-    let imported = if matches!(i.op, OpIn::LoopOrient { .. }) {
-        Some(shared::import_raw(&b.export)?)
-    } else {
-        None
-    };
-    let Some(a) = args(&i.op, b.counts, |f| {
-        imported.as_ref().and_then(|(rb, _)| first_loop(rb, f))
-    }) else {
-        return Ok(Output::err("no face"));
-    };
-    let v =
-        ffi::eval(op_of(&i.op), &b.path, &b.block, &a).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", v))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1064,17 +925,6 @@ fn analytic_face(
 
 #[allow(clippy::too_many_lines)] // one arm per op
 fn run_rust_case(i: &Inputs) -> Result<Output, HarnessError> {
-    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
-    // the shim never builds it, so the Rust side must not either. Fuzz case fuzz00127
-    // (`--fuzz 300 --seeds 24`) mutated a control point to `1e300`: the export refuses a
-    // block value above `1e150` (HANG-29) for the C++ side, while this side built the
-    // face for over 40 s. `validate_block` is the export's own block checks (pure Rust,
-    // no shim call), on the path and block `build` sends.
-    let path = match &i.brep {
-        CaseBrep::Shared(b) => shared::path_of(b)?,
-        CaseBrep::Faces(_) | CaseBrep::EdgeLoop(_) => String::new(),
-    };
-    fixture::validate_block(&path, &block(i)?).map_err(|e| harness(format!("export: {e}")))?;
     let (mut b, counts) = match own_brep(i)? {
         Ok(x) => x,
         Err(out) => return Ok(out),
@@ -1757,7 +1607,7 @@ fn gen_op(rng: &mut Rng) -> OpIn {
         },
         3 => OpIn::Notify {
             face,
-            operation: rng.below(ffi::NOTIFY_OPS as u64) as u8,
+            operation: rng.below(NOTIFY_OP_COUNT as u64) as u8,
         },
         4 => OpIn::LoopOrient {
             face,
@@ -1800,10 +1650,6 @@ fn gen_op(rng: &mut Rng) -> OpIn {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.face_p3"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp_case(&case.parse()?)
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
