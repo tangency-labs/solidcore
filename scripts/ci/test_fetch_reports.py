@@ -105,7 +105,10 @@ FAKE_GH = FAKE_GH.replace("__PYTHON__", PYTHON)
 
 
 class FetchReportsTest(unittest.TestCase):
+    """Exercise checked report publication and recovery in isolated repositories."""
+
     def setUp(self):
+        """Create an isolated repository, staging area and failure-injectable tools."""
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.repo = self.root / "repo"
@@ -138,28 +141,34 @@ class FetchReportsTest(unittest.TestCase):
             self.env.pop(name, None)
 
     def tearDown(self):
+        """Remove only this test's temporary sandbox."""
         self._tmp.cleanup()
 
     @staticmethod
     def _script(path, text):
+        """Write an executable fake tool at the requested sandbox path."""
         path.write_text(text)
         path.chmod(0o755)
 
     def git(self, *args):
+        """Run Git inside the sandbox repository and return its trimmed output."""
         return subprocess.check_output(["git", *args], cwd=self.repo, text=True).strip()
 
     def write_files(self, base, files):
+        """Create the supplied relative paths and text contents below base."""
         for name, text in files.items():
             path = base / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
 
     def stage(self, run, files=None):
+        """Prepare the fake download contents for one candidate run."""
         base = self.staging / run
         base.mkdir(parents=True, exist_ok=True)
         self.write_files(base, files or {})
 
     def run_script(self, dest=None, **env):
+        """Run the real installer against sandbox tools and capture its result."""
         script_env = dict(self.env)
         script_env.update({key: str(value) for key, value in env.items()})
         return subprocess.run(["bash", str(SCRIPT), str(dest or self.dest)],
@@ -167,6 +176,7 @@ class FetchReportsTest(unittest.TestCase):
                               capture_output=True)
 
     def test_bsd_mv_installs_reports_with_spaces_newlines_and_leading_dash(self):
+        """Portable publication preserves unusual names and unrelated entries."""
         self.write_files(self.dest, {"old.json": "old", "notes.txt": "keep",
                                      "times.tsv": "old\t1\n"})
         self.write_files(self.dest / "nested", {"keep.txt": "nested"})
@@ -186,6 +196,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertIn("workflows/ci.yml/runs?branch=main&event=push&per_page=20", log)
 
     def test_zero_reports_preserves_old_set(self):
+        """An empty artifact cannot replace the installed reports."""
         self.write_files(self.dest, {"old.json": "old", "notes.txt": "keep"})
         self.stage("101")
 
@@ -197,6 +208,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertEqual((self.dest / "notes.txt").read_text(), "keep")
 
     def test_download_failure_preserves_old_set(self):
+        """A failed download leaves installed and unrelated files intact."""
         self.write_files(self.dest, {"old.json": "old", "notes.txt": "keep"})
         self.stage("101", {"new.json": "new"})
 
@@ -208,6 +220,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "new.json").exists())
 
     def test_staging_directory_is_rejected_before_dest_is_touched(self):
+        """A staged directory named as JSON is refused before publication."""
         self.write_files(self.dest, {"old.json": "old", "notes.txt": "keep"})
         self.stage("101", {"new.json": "new"})
         (self.staging / "101/dir.json").mkdir(parents=True)
@@ -222,6 +235,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "new.json").exists())
 
     def test_destination_directory_named_json_is_preserved(self):
+        """An existing directory cannot be replaced by a staged report."""
         self.write_files(self.dest, {"old.json": "old", "notes.txt": "keep"})
         (self.dest / "new.json").mkdir()
         self.write_files(self.dest / "new.json", {"keep.txt": "subdir"})
@@ -237,6 +251,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "next.json").exists())
 
     def test_staged_times_directory_is_rejected_before_dest_is_touched(self):
+        """A timing-file directory is refused before any report is changed."""
         self.write_files(self.dest, {"old.json": "old", "times.tsv": "old\n",
                                      "notes.txt": "keep"})
         self.stage("101", {"new.json": "new", "times.tsv/child.txt": "directory"})
@@ -251,6 +266,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "new.json").exists())
 
     def test_publish_failure_rolls_back_the_previous_set(self):
+        """A late report move failure restores the previous report set."""
         self.write_files(self.dest, {"a.json": "old-a", "b.json": "old-b",
                                      "extra.txt": "keep", "times.tsv": "old\n"})
         self.stage("101", {"a-new.json": "new-a", "z-new.json": "new-z"})
@@ -268,6 +284,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "z-new.json").exists())
 
     def test_publish_failure_restores_overwritten_report_names(self):
+        """Rollback restores old content even when report filenames collide."""
         self.write_files(self.dest, {"a.json": "old-a", "b.json": "old-b",
                                      "extra.txt": "keep", "times.tsv": "old\n"})
         self.stage("101", {"a.json": "new-a", "z-new.json": "new-z",
@@ -285,6 +302,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "z-new.json").exists())
 
     def test_timing_publish_failure_restores_reports_and_timing(self):
+        """Failure publishing timing data restores reports and old timings."""
         self.write_files(self.dest, {"a.json": "old-a", "b.json": "old-b",
                                      "times.tsv": "old\n", "notes.txt": "keep"})
         self.stage("101", {"a.json": "new-a", "new.json": "new",
@@ -302,6 +320,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "new.json").exists())
 
     def test_failed_rollback_keeps_and_reports_the_backup(self):
+        """Failed restoration exits nonzero and names an intact recovery copy."""
         self.write_files(self.dest, {"old.json": "old"})
         self.stage("101", {"z-new.json": "new"})
 
@@ -317,6 +336,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertEqual((backup / "old.json").read_text(), "old")
 
     def test_failed_rollback_stops_before_next_candidate_or_history(self):
+        """An unrecovered publication failure prevents all later install attempts."""
         self.write_files(self.dest, {"hist.json": "history"})
         self.git("add", "reports/difftest/hist.json")
         self.git("-c", "user.name=Fetch test", "-c", "user.email=fetch@example.invalid",
@@ -348,6 +368,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertNotIn("committed in", result.stdout)
 
     def test_later_restore_failure_keeps_complete_backup(self):
+        """A partial restore never consumes earlier backup entries or symlinks."""
         self.write_files(self.dest, {"hist.json": "history"})
         self.git("add", "reports/difftest/hist.json")
         self.git("-c", "user.name=Fetch test", "-c", "user.email=fetch@example.invalid",
@@ -386,6 +407,7 @@ class FetchReportsTest(unittest.TestCase):
                 self.assertNotIn("committed in", result.stdout)
 
     def test_missing_times_keeps_the_previous_times_and_extra_files(self):
+        """An artifact without timings preserves old timings and unrelated files."""
         self.write_files(self.dest, {"old.json": "old", "times.tsv": "old\n",
                                      "notes.txt": "keep"})
         self.stage("101", {"new.json": "new"})
@@ -399,6 +421,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertEqual((self.dest / "notes.txt").read_text(), "keep")
 
     def test_symlinks_are_moved_as_links_and_outside_targets_are_untouched(self):
+        """Publication handles symlink entries without modifying their targets."""
         outside = self.root / "outside.json"
         outside.write_text("outside")
         self.write_files(self.dest, {"old.json": "old"})
@@ -416,6 +439,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertEqual(outside.read_text(), "outside")
 
     def test_candidate_retry_after_a_failed_download(self):
+        """A failed download allows the next available candidate to install."""
         self.write_files(self.dest, {"old.json": "old"})
         self.stage("101", {"first.json": "first"})
         self.stage("202", {"second.json": "second"})
@@ -432,6 +456,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertIn("run\tdownload\t202", log)
 
     def test_candidate_retry_after_successful_rollback(self):
+        """Complete restoration permits retry with the next candidate."""
         self.write_files(self.dest, {"old.json": "old"})
         self.stage("101", {"z-fail.json": "first"})
         self.stage("202", {"second.json": "second"})
@@ -445,6 +470,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertIn("run\tdownload\t202", (self.root / "gh.log").read_text())
 
     def test_candidate_retry_after_an_empty_artifact(self):
+        """An empty artifact permits retry without losing installed reports."""
         self.write_files(self.dest, {"old.json": "old"})
         self.stage("101")
         self.stage("202", {"second.json": "second"})
@@ -456,6 +482,7 @@ class FetchReportsTest(unittest.TestCase):
         self.assertFalse((self.dest / "old.json").exists())
 
     def test_history_fallback_installs_the_committed_set(self):
+        """The existing historical fallback uses the same checked installer."""
         self.write_files(self.repo / "reports/difftest", {"hist.json": "hist"})
         self.git("add", "reports/difftest/hist.json")
         self.git("-c", "user.name=Fetch test", "-c", "user.email=fetch@example.invalid",

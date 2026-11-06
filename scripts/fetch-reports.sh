@@ -18,6 +18,7 @@ repo=${GITHUB_REPOSITORY:-tangency-labs/solidcore}
 tmp=$(mktemp -d)
 keep_tmp=0
 
+# Remove staging on exit unless a failed rollback retained its recovery copy.
 cleanup() {
   if [ "$keep_tmp" -eq 1 ]; then
     return 0
@@ -26,6 +27,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Write a consistently prefixed diagnostic to stderr.
 warn() {
   echo "fetch-reports: $*" >&2
 }
@@ -53,6 +55,7 @@ restore_backup() {
   return 0
 }
 
+# Validate, back up and publish a report set; restore it on checked failures.
 install() {
   local src=$1 why=$2 f n=0 replaced_times=0 backup= ok=1
 
