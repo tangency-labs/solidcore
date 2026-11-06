@@ -22,13 +22,16 @@ use solidcore::surface::surface_point_solve::SurfPtSolveStepper;
 use super::surface_surf_of_revolution_p1::{
     gen_surf as gen_rev, rust_surf as rev_rust, SurfIn as RevIn,
 };
-use super::surface_surface_cache_p1::{dom_of, flag, gen_sub_dom, harness, v3, BssIn, SrfIn};
-use super::surface_surface_cache_p3::{surf_domain, surf_size, SurfIn};
+use super::surface_surface_cache_p1::{
+    dom_of, fin, flag, gen_sub_dom, harness, v3, BssIn, SrfIn, LIMITS,
+};
+use super::surface_surface_cache_p3::{sized_surface, surf_domain, surf_size, SurfIn};
 use super::surface_surface_point_solve_p1::{
-    gen_surface, gen_test, gen_uv, gen_uv_any, p2, solver_op, wrapped_of, SOLVERS,
+    gen_surface, gen_test, gen_uv, gen_uv_any, p2, solver_op, wrapped_of, OPS, SOLVERS,
     SURFACE_SMS_POINTS,
 };
 use crate::case::{CaseContext, CaseSource};
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -342,9 +345,80 @@ fn candidate(rng: &mut Rng) -> Option<Inputs> {
     Some(case)
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The surface domain of a case's geometry, if it keeps the contract: a plane with finite
+/// data, axes whose cross product is finite and non-zero, non-zero scales and a finite
+/// ordered domain (no cache-building limits: this solver builds no tree); a B-spline or
+/// curve bounded surface as `surface_cache_p3` takes it; a surface of revolution that
+/// builds with a finite, strictly ordered natural domain (of the wrapped surface when
+/// wrapped).
+fn geometry_domain(i: &Inputs) -> Option<[f64; 4]> {
+    match &i.surf {
+        Geometry::Base(SurfIn::Plane(p)) => {
+            let finite3 = |v: &[f64; 3]| v.iter().all(|c| c.is_finite());
+            let [x0, x1, x2] = p.x;
+            let [y0, y1, y2] = p.y;
+            let cross = [x1 * y2 - x2 * y1, x2 * y0 - x0 * y2, x0 * y1 - x1 * y0];
+            let ok = finite3(&p.o)
+                && finite3(&p.x)
+                && finite3(&p.y)
+                && cross.iter().any(|&c| c != 0.0)
+                && cross.iter().all(|c| c.is_finite())
+                && p.scale.iter().all(|&c| c.is_finite() && c != 0.0)
+                && contract::domain(&p.dom, LIMITS.max_coord);
+            ok.then_some(p.dom)
+        }
+        Geometry::Base(s) => sized_surface(s).map(|(d, _, _)| d),
+        Geometry::Rev { .. } => {
+            let k = Kernel::default();
+            let nd = geometry(&k, i).ok()?.natural_uv_domain_with_nurb(&k).ok()?;
+            let d = [nd.min().x, nd.min().y, nd.max().x, nd.max().y];
+            (d.iter().all(|v| v.is_finite()) && d[0] < d[2] && d[1] < d[3]).then_some(d)
+        }
+    }
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_point_solve_p3.rs`, `validate` and
+/// `validate_rev`): a [`geometry_domain`], a solver domain of non-degenerate sides inside
+/// it, a supported solver operation, finite values, a global request up to 3, and stepper
+/// iterations up to 35 with integer boundary counters up to 64 in magnitude.
+fn keeps_contract(i: &Inputs) -> bool {
+    let Some(d) = geometry_domain(i) else {
+        return false;
+    };
+    let base = matches!(i.surf, Geometry::Base(_));
+    let finite = |v: f64| if base { v.is_finite() } else { fin(v) };
+    let problem = contract::domain_in(&i.dom, &d, true, LIMITS.max_coord)
+        && OPS.contains(&i.solver)
+        && i.test.iter().all(|&c| finite(c))
+        && finite(i.tol);
+    problem
+        && match &i.op {
+            Operation::Global { target, request } => fin(target.unwrap_or(0.0)) && *request <= 3,
+            Operation::Local { guess } => guess.iter().all(|&c| fin(c)),
+            Operation::Stepper {
+                uv,
+                tight,
+                next,
+                iteration,
+                hu,
+                hv,
+                ..
+            } => {
+                uv.iter().chain(next).all(|&c| fin(c))
+                    && fin(*tight)
+                    && (0..=35).contains(iteration)
+                    && hu.unsigned_abs() <= 64
+                    && hv.unsigned_abs() <= 64
+            }
+        }
+}
+
 // Generate inputs before the engine is run; never inspect solver outputs here.
 fn generated(rng: &mut Rng) -> Option<Inputs> {
-    (0..64).find_map(|_| candidate(rng))
+    (0..64).find_map(|_| candidate(rng).filter(keeps_contract))
 }
 
 impl UnitDiff for Runner {
