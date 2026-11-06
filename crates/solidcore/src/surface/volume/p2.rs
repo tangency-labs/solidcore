@@ -55,9 +55,8 @@
 //!   driven and bounded by [`DatabaseReader::enter_nested`] (32 levels); past the
 //!   bound the read fails with [`SolidError::InvalidInput`], which the nested reads
 //!   whose statuses upstream ignores propagate rather than drop. `WriteToDB` counts
-//!   the same levels and refuses past [`MAX_GEOMETRY_NESTING`], or an orient map
-//!   the reader would read past [`MAX_READ_NESTING`], with
-//!   [`SolidError::InvalidInput`].
+//!   the same levels: a volume or an orient map the reader would read past
+//!   [`MAX_READ_NESTING`] is refused with [`SolidError::InvalidInput`].
 //! - **Writing what cannot be read.** `ReadFromDB` refuses a plain `SmVolume` and a
 //!   B-spline volume, so their records are refused when written, with the reader's
 //!   errors: a plain volume is [`SolidError::Unsupported`], a B-spline volume `SM_ERR`.
@@ -80,7 +79,6 @@ use crate::kernel::Kernel;
 use crate::math::{EFF_ZERO, EFF_ZERO_SQRT};
 use crate::surface::b_spline_volume::BSplineVolume;
 use crate::surface::bend_volume::BendVolume;
-use crate::surface::surface::p2::MAX_GEOMETRY_NESTING;
 use crate::surface::twist_volume::TwistVolume;
 use crate::surface::unbend_volume::UnbendVolume;
 use crate::topology::database_io::{
@@ -1545,16 +1543,18 @@ impl Volume {
     /// # Errors
     ///
     /// [`SolidError::Unsupported`] for a plain volume and `SM_ERR` for a B-spline
-    /// volume (the module docs); [`SolidError::InvalidInput`] past
-    /// [`MAX_GEOMETRY_NESTING`], or for an orient map the reader would read past
-    /// [`MAX_READ_NESTING`].
+    /// volume (the module docs); [`SolidError::InvalidInput`] for a volume or an
+    /// orient map the reader would read past [`MAX_READ_NESTING`].
     pub fn write_to_db(&self, db: &mut DatabaseWriter, depth: usize) -> Result<()> {
         // the reader enters a level per surface, volume and map from 1 at the top, so
         // it reads this volume at level `depth + 1` and its orient map one deeper
-        let orient_level = u32::try_from(depth + 2).unwrap_or(u32::MAX);
-        if depth > MAX_GEOMETRY_NESTING
-            || (self.orient_map.is_some() && orient_level > MAX_READ_NESTING)
-        {
+        let level = u32::try_from(depth + 1).unwrap_or(u32::MAX);
+        let deepest = if self.orient_map.is_some() {
+            level.saturating_add(1)
+        } else {
+            level
+        };
+        if deepest > MAX_READ_NESTING {
             return Err(SolidError::invalid_input(
                 OP_WRITE,
                 "geometry nested too deeply",
