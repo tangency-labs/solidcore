@@ -19,6 +19,15 @@
 //! | [`Curve::tessellate`], [`Curve::tessellate_base`] | `Tessellate` (virtual), `SmCurve::Tessellate`    |
 //!
 //! Deviations:
+//! - **Projected affine extrema.** Exact affine spans use a closed-form local
+//!   fraction and an outward-rounded objective certificate, including raw tiny
+//!   knot spans. Interior full-multiplicity upper knots are isolated right-valued
+//!   candidates beside a left span with its upper limit excluded; query bounds are intersected
+//!   exactly. Projected extrema propagate solve errors rather than publishing
+//!   uncertified partial results.
+//! - **Projected endpoint extrema.** Eligible finite boundaries are candidates
+//!   independently of the stationary-point search (#2840). Finding a stationary
+//!   point does not establish that it beats the interval endpoints.
 //! - **Out-params.** Outputs are returned: [`SpanAccuracy`], [`CurveApproximation`]
 //!   (whose `achieved_tol` is `None` where upstream leaves `rdAchievedTol` unwritten,
 //!   the degenerate curve), [`TangentPoint`] (written only for a range classified as
@@ -44,7 +53,7 @@
 //!   ray operations).
 //! - **Ignored statuses.** Where upstream ignores a status (the span end
 //!   evaluations and the closed-curve continuity of `LocalSolve`, `SolveIt` in
-//!   `GlobalPointSolve`, `GetKnots` in `TessellateByBisection`, the local intersect
+//!   non-projected `GlobalPointSolve`, `GetKnots` in `TessellateByBisection`, the local intersect
 //!   of `sm_RefineCCSolutions`, the local solves and evaluations of
 //!   `ClassifyIntersectingRangeSolution`, `Copy` and `EditParameterization` in
 //!   `ApproximateCurve`, `AngleBetween`) the error is ignored and upstream's value
@@ -963,6 +972,289 @@ fn merge_point_solution<O: Copy>(
     dst.start.parameters[0] = src.start.parameters[0];
 }
 
+// Affine definitions are solved in a local fraction, not by driving a stationary
+// residual to zero in a raw knot interval with only a few thousand f64 values.
+use crate::blend::fillet_section::interval::Ivl;
+
+/// Report that no representable parameter was certified within the requested objective tolerance.
+fn affine_refusal() -> SolidError {
+    SolidError::Upstream {
+        operation: "curve::curve::p1::projected_affine_certificate",
+        code: crate::error::SM_ERR_NOT_WITHIN_TOLERANCE,
+        entity: None,
+    }
+}
+
+// f64::next_up/next_down postdate the crate's Rust 1.85 minimum.
+/// Return the next representable parameter toward positive infinity on Rust 1.85.
+fn next_parameter_up(value: f64) -> f64 {
+    if value.is_nan() || value == f64::INFINITY {
+        value
+    } else if value == 0.0 {
+        f64::from_bits(1)
+    } else if value > 0.0 {
+        f64::from_bits(value.to_bits() + 1)
+    } else {
+        f64::from_bits(value.to_bits() - 1)
+    }
+}
+
+/// Return the next representable parameter toward negative infinity on Rust 1.85.
+fn next_parameter_down(value: f64) -> f64 {
+    -next_parameter_up(-value)
+}
+
+/// Enclose each coordinate of an exactly specified binary64 point.
+fn iv_point(p: Vec3) -> [Ivl; 3] {
+    [p.x, p.y, p.z].map(Ivl::from)
+}
+/// Enclose coordinate-wise subtraction without discarding rounding error.
+fn iv_sub(a: [Ivl; 3], b: [Ivl; 3]) -> [Ivl; 3] {
+    let [ax, ay, az] = a;
+    let [bx, by, bz] = b;
+    [ax - bx, ay - by, az - bz]
+}
+/// Enclose the cross product using the original component operation order.
+fn iv_cross(a: [Ivl; 3], b: [Ivl; 3]) -> [Ivl; 3] {
+    let [ax, ay, az] = a;
+    let [bx, by, bz] = b;
+    [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
+}
+/// Enclose the dot product with a fixed accumulation order.
+fn iv_dot(a: [Ivl; 3], b: [Ivl; 3]) -> Ivl {
+    a.into_iter()
+        .zip(b)
+        .fold(Ivl::from(0.0), |s, (x, y)| s + x * y)
+}
+/// Enclose Euclidean length, including intervals that cross zero.
+fn iv_length(a: [Ivl; 3]) -> Ivl {
+    a.into_iter()
+        .fold(Ivl::from(0.0), |s, v| {
+            s + Ivl::checked(v.mig() * v.mig(), v.mag() * v.mag())
+        })
+        .sqrt()
+}
+/// Enclose affine interpolation at an interval-valued fraction.
+fn iv_lerp(a: [Ivl; 3], b: [Ivl; 3], t: Ivl) -> [Ivl; 3] {
+    let [ax, ay, az] = a;
+    let [bx, by, bz] = b;
+    [ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t]
+}
+
+// An exact zero predicate for four products of finite binary64 inputs. A
+// product has at most 106 significand bits and exponent in [-2148, 1942].
+// Four same-sign products need at most 4198 bits above 2^-2148; 66 u64 words
+// supply 4224 bits. This fixed bound is independent of caller magnitudes.
+/// Test a signed sum of four binary64 products exactly using bounded integer storage.
+fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
+    /// Split a finite binary64 value into its sign, integer significand and exponent.
+    fn parts(value: f64) -> Option<(bool, u64, i32)> {
+        if !value.is_finite() {
+            return None;
+        }
+        let bits = value.to_bits();
+        let exponent = ((bits >> 52) & 0x7ff) as i32;
+        let fraction = bits & ((1_u64 << 52) - 1);
+        Some((
+            bits >> 63 != 0,
+            if exponent == 0 {
+                fraction
+            } else {
+                fraction | (1_u64 << 52)
+            },
+            if exponent == 0 {
+                -1074
+            } else {
+                exponent - 1075
+            },
+        ))
+    }
+    /// Accumulate one shifted word with checked access to the fixed-capacity sum.
+    fn add_word(words: &mut [u64; 66], word: u64, shift: usize) -> bool {
+        let mut index = shift / 64;
+        let mut carry = u128::from(word) << (shift % 64);
+        while carry != 0 {
+            let Some(slot) = words.get_mut(index) else {
+                return false;
+            };
+            let sum = u128::from(*slot) + (carry & u128::from(u64::MAX));
+            *slot = sum as u64;
+            carry = (carry >> 64) + (sum >> 64);
+            index += 1;
+        }
+        true
+    }
+    let mut positive = [0_u64; 66];
+    let mut negative = [0_u64; 66];
+    for (a, b, negate) in terms {
+        let Some((sa, ma, ea)) = parts(a) else {
+            return false;
+        };
+        let Some((sb, mb, eb)) = parts(b) else {
+            return false;
+        };
+        let product = u128::from(ma) * u128::from(mb);
+        let shift = (ea + eb + 2148) as usize;
+        let words = if sa ^ sb ^ negate {
+            &mut negative
+        } else {
+            &mut positive
+        };
+        if !add_word(words, product as u64, shift)
+            || !add_word(words, (product >> 64) as u64, shift + 64)
+        {
+            return false;
+        }
+    }
+    positive == negative
+}
+
+/// Test exact parallelism before rounding the difference of the two input points.
+fn exact_parallel_difference(a: [f64; 3], b: [f64; 3], normal: Vec3) -> bool {
+    let [ax, ay, az] = a;
+    let [bx, by, bz] = b;
+    // Expand N cross (B-A) without first rounding B-A. Constant positive
+    // homogeneous weights and a line's scalar speed cancel from this identity.
+    [
+        (normal.x, normal.y, ax, ay, bx, by),
+        (normal.y, normal.z, ay, az, by, bz),
+        (normal.z, normal.x, az, ax, bz, bx),
+    ]
+    .into_iter()
+    .all(|(ni, nj, ai, aj, bi, bj)| {
+        dyadic_four_products_zero([
+            (ni, bj, false),
+            (ni, aj, true),
+            (nj, bi, true),
+            (nj, ai, false),
+        ])
+    })
+}
+
+struct AffineDefinition {
+    start: [Ivl; 3],
+    end: [Ivl; 3],
+    interval: Extent1d,
+    direction_points: ([f64; 3], [f64; 3]),
+    isolated_end: Option<[Ivl; 3]>,
+}
+impl AffineDefinition {
+    /// Enclose the affine point at the caller's raw parameter.
+    fn point(&self, t: f64) -> [Ivl; 3] {
+        let fraction = (Ivl::from(t) - Ivl::from(self.interval.min()))
+            / (Ivl::from(self.interval.max()) - Ivl::from(self.interval.min()));
+        iv_lerp(self.start, self.end, fraction)
+    }
+    /// Recognize an exactly constant projected objective without a tolerance test.
+    fn constant_projection(&self, normal: Vec3) -> bool {
+        exact_parallel_difference(self.direction_points.0, self.direction_points.1, normal)
+    }
+}
+
+/// Enclose an analytic line or an equal-weight linear span, preserving isolated upper-knot values.
+fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefinition> {
+    if let CurveKind::Line(line) = curve.kind() {
+        let point = iv_point(line.line_point());
+        let vector = iv_point(line.line_vector());
+        let natural = line.natural_interval();
+        let analytic = line.step_interval();
+        let endpoint = |t: f64| {
+            let mut step = Ivl::from(t);
+            if line.is_bounded() && !is_zero(natural.length()) {
+                let fraction = if line.inside_out() {
+                    (step - Ivl::from(natural.max()))
+                        / (Ivl::from(natural.min()) - Ivl::from(natural.max()))
+                } else {
+                    (step - Ivl::from(natural.min()))
+                        / (Ivl::from(natural.max()) - Ivl::from(natural.min()))
+                };
+                step = Ivl::from(analytic.min())
+                    + fraction * (Ivl::from(analytic.max()) - Ivl::from(analytic.min()));
+            } else if !line.is_bounded() && line.inside_out() {
+                step = Ivl::from(0.0) - step;
+            }
+            let [x, y, z] = point;
+            let [dx, dy, dz] = vector;
+            let scale = step * Ivl::from(line.line_scale());
+            [x + scale * dx, y + scale * dy, z + scale * dz]
+        };
+        let v = line.line_vector();
+        return Some(AffineDefinition {
+            start: endpoint(interval.min()),
+            end: endpoint(interval.max()),
+            interval,
+            isolated_end: None,
+            direction_points: (
+                [0.0; 3],
+                if line.line_scale() == 0.0 {
+                    [0.0; 3]
+                } else {
+                    [v.x, v.y, v.z]
+                },
+            ),
+        });
+    }
+    let CurveKind::BSpline(spline) = curve.kind() else {
+        return None;
+    };
+    let nurb = spline.gw_nurb()?;
+    if nurb.degree() != 1 {
+        return None;
+    }
+    // A right-sided lookup at the lower boundary avoids rounding a tiny span's
+    // midpoint onto a knot. A leaf crossing a knot is not certified affine here.
+    let index = nurb
+        .knots()
+        .partition_point(|t| *t <= interval.min())
+        .saturating_sub(1);
+    let (&lo, &hi) = nurb.knots().get(index).zip(nurb.knots().get(index + 1))?;
+    if hi <= lo || interval.min() < lo || interval.max() > hi || index == 0 {
+        return None;
+    }
+    let (a, b) = nurb.cpts().get(index - 1).zip(nurb.cpts().get(index))?;
+    let nonrational = a.w == crate::nurbs::math::NOW && b.w == crate::nurbs::math::NOW;
+    if !(nonrational || a.w == b.w && a.w > 0.0 && a.w.is_finite()) {
+        return None;
+    }
+    let coords = |p: &crate::nurbs::math::CPoint| {
+        let z = if p.z == crate::nurbs::math::NOZ {
+            0.0
+        } else {
+            p.z
+        };
+        [p.x, p.y, z]
+    };
+    let ac = coords(a);
+    let bc = coords(b);
+    let w = Ivl::from(if nonrational { 1.0 } else { a.w });
+    // Side::Left names the span's left boundary, so evaluate_point at an
+    // interior full-multiplicity knot returns the NEXT span's first control.
+    // The natural upper endpoint is special and retains the last left value.
+    let isolated_end = if interval.max() == hi
+        && hi < spline.natural_interval().max()
+        && nurb.knots().get(index + 2) == Some(&hi)
+    {
+        let right = nurb.cpts().get(index + 1)?;
+        let weight = if right.w == crate::nurbs::math::NOW {
+            1.0
+        } else if right.w > 0.0 && right.w.is_finite() {
+            right.w
+        } else {
+            return None;
+        };
+        Some(coords(right).map(|x| Ivl::from(x) / Ivl::from(weight)))
+    } else {
+        None
+    };
+    Some(AffineDefinition {
+        start: ac.map(|x| Ivl::from(x) / w),
+        end: bc.map(|x| Ivl::from(x) / w),
+        interval: Extent1d::from_min_max(lo, hi),
+        direction_points: (ac, bc),
+        isolated_end,
+    })
+}
+
 impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
     /// `AddSortedSolution` by value (with parameter) or by first parameter.
     fn add_solution(&mut self, solution: &Solution<O>, by_value: bool) -> Result<()> {
@@ -972,6 +1264,189 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             SortKey::ByFirstParameter
         };
         self.add_sorted_solution(solution, key, true)
+    }
+
+    /// Exact affine geometry dispatch; `false` means this leaf is not affine.
+    fn projected_affine(
+        &mut self,
+        k: &Kernel,
+        curve: &Curve,
+        interval: Extent1d,
+        conts: [ContinuityType; 2],
+        point: Vec3,
+        branch: &Branch,
+        owner: Option<O>,
+    ) -> Result<bool> {
+        let Some(definition) = affine_definition(curve, interval) else {
+            return Ok(false);
+        };
+        let normal = self.opt(0)?;
+        let projected = |p| {
+            iv_cross(
+                iv_cross(iv_point(normal), iv_sub(p, iv_point(point))),
+                iv_point(normal),
+            )
+        };
+        let start = projected(definition.point(interval.min()));
+        let end = projected(definition.point(interval.max()));
+        let delta = iv_sub(end, start);
+        let constant = definition.constant_projection(normal);
+        let left_end = if definition.isolated_end.is_some() {
+            next_parameter_down(interval.max())
+        } else {
+            interval.max()
+        };
+        let maximize = self.base.operation == SolverOperation::ProjectedMaximize;
+        let operation = self.base.operation;
+        let tolerance = self.base.tolerance_3d;
+        if !tolerance.is_finite() || tolerance < 0.0 {
+            return Err(affine_refusal());
+        }
+        let make_solution = |t: f64, value: f64| {
+            let mut solution = Solution::new();
+            solution.solution_type = SolutionType::SingleValue;
+            solution.nodes[0] = branch[0];
+            solution.nodes[1] = branch[1];
+            solution.objects[0] = owner;
+            solution.num_objects = 1;
+            solution.num_variables = 1;
+            solution.start.parameters[0] = t;
+            solution.start.solution_value = value;
+            solution
+        };
+        let metric = |t: f64| -> Result<(f64, Ivl)> {
+            let value = proj_dist(k, curve, t, point, normal, true, Vec3::ZERO, operation)?;
+            let position = if t == interval.max() {
+                definition
+                    .isolated_end
+                    .unwrap_or_else(|| definition.point(t))
+            } else {
+                definition.point(t)
+            };
+            let bounds = iv_length(projected(position));
+            if !value.is_finite() || !bounds.lo.is_finite() || !bounds.hi.is_finite() {
+                return Err(affine_refusal());
+            }
+            // The enclosure certifies optimization error, not exact binary
+            // representation of a generally irrational reported distance.
+            Ok((value, bounds))
+        };
+        if constant {
+            // The exact parallel identity proves zero optimization error for
+            // every parameter, including a zero requested distance tolerance.
+            let (a, _) = metric(interval.min())?;
+            let (b, _) = metric(left_end)?;
+            if definition.isolated_end.is_some() {
+                let (value, _) = metric(interval.max())?;
+                self.add_solution(&make_solution(interval.max(), value), true)?;
+            }
+            let mut solution = make_solution(interval.min(), a);
+            if interval.min() < left_end {
+                solution.solution_type = SolutionType::RangeOfValues;
+            }
+            solution.end = solution.start;
+            solution.end.parameters[0] = left_end;
+            solution.end.solution_value = b;
+            self.add_solution(&solution, true)?;
+            return Ok(true);
+        }
+        let length = iv_length(delta);
+        if length.lo <= 0.0 || !length.hi.is_finite() {
+            return Err(affine_refusal());
+        }
+        let length_sq = length * length;
+        let foot = (Ivl::from(0.0) - iv_dot(start, delta)) / length_sq;
+        if !foot.lo.is_finite() || !foot.hi.is_finite() {
+            return Err(affine_refusal());
+        }
+        let fraction = Ivl::new(foot.lo.clamp(0.0, 1.0), foot.hi.clamp(0.0, 1.0));
+        if !maximize
+            && definition.isolated_end.is_none()
+            && ((foot.hi <= 0.0 && (conts[0] as i32) >= (ContinuityType::G1 as i32))
+                || (foot.lo >= 1.0 && (conts[1] as i32) >= (ContinuityType::G1 as i32)))
+        {
+            return Ok(true);
+        }
+        let mut optimum = iv_length(iv_lerp(start, end, fraction));
+        if let Some(position) = definition.isolated_end {
+            let isolated = iv_length(projected(position));
+            optimum.lo = optimum.lo.min(isolated.lo);
+            optimum.hi = optimum.hi.min(isolated.hi);
+        }
+        let mut parameters = Vec::new();
+        for (t, continuity) in [(interval.min(), conts[0]), (interval.max(), conts[1])] {
+            if (continuity as i32) < (ContinuityType::G1 as i32) {
+                parameters.push(t);
+            }
+        }
+        if definition.isolated_end.is_some() && !parameters.contains(&left_end) {
+            parameters.push(left_end);
+        }
+        if !maximize && fraction.mid() > 0.0 && fraction.mid() < 1.0 {
+            let t = interval.evaluate(fraction.mid());
+            for candidate in [next_parameter_down(t), t, next_parameter_up(t)] {
+                if candidate > interval.min() && candidate < interval.max() {
+                    parameters.push(candidate);
+                }
+            }
+        }
+        // Smooth joins belong to their adjoining stationary search. They need
+        // not become artificial endpoint answers of this leaf.
+        if parameters.is_empty() {
+            return Ok(true);
+        }
+        let mut candidates = Vec::new();
+        for t in parameters {
+            let (value, bound) = metric(t)?;
+            candidates.push((t, value, bound));
+        }
+        candidates.sort_by(|a, b| {
+            if maximize {
+                b.1.total_cmp(&a.1)
+            } else {
+                a.1.total_cmp(&b.1)
+            }
+        });
+        let Some(&(best_t, best_value, best_bound)) = candidates.first() else {
+            return Ok(true);
+        };
+        let proven_optimal = if definition.isolated_end.is_some() {
+            false
+        } else if maximize {
+            candidates
+                .iter()
+                .all(|(t, _, bound)| *t == best_t || bound.hi <= best_bound.lo)
+        } else {
+            (best_t == interval.min() && foot.hi < 0.0)
+                || (best_t == interval.max() && foot.lo > 1.0)
+        };
+        if !proven_optimal {
+            let gap = if maximize {
+                // Only eligible boundaries belong to this leaf's maximum search.
+                let mut upper = candidates
+                    .iter()
+                    .map(|(_, _, b)| b.hi)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                if definition.isolated_end.is_some() {
+                    upper = upper.max(iv_length(end).hi);
+                }
+                upper - best_bound.lo
+            } else {
+                best_bound.hi - optimum.lo
+            };
+            if !gap.is_finite() || gap > tolerance {
+                return Err(affine_refusal());
+            }
+        }
+        self.add_solution(&make_solution(best_t, best_value), true)?;
+        // Preserve eligible endpoint candidates for All mode, but do not emit
+        // adjacent floating-point representatives as distinct stationary roots.
+        for (t, value, _) in candidates.into_iter().skip(1) {
+            if t == interval.min() || t == interval.max() || t == left_end {
+                self.add_solution(&make_solution(t, value), true)?;
+            }
+        }
+        Ok(true)
     }
 
     /// Option vector `i` (`m_cpOptVectors[i]`, read without a `NULL` check).
@@ -1043,10 +1518,19 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
         }
 
         // trim sBezIvl to m_crInterval
-        if !bez_ivl.is_contained_by(&interval, EFF_ZERO) {
+        let projected_extremum = matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        );
+        let containment_tolerance = if projected_extremum { 0.0 } else { EFF_ZERO };
+        if !bez_ivl.is_contained_by(&interval, containment_tolerance) {
             bez_ivl = bez_ivl.intersect(&interval)?;
             // no work - zero length trimmed interval
-            if are_same(bez_ivl.max(), bez_ivl.min()) {
+            if if projected_extremum {
+                bez_ivl.max() == bez_ivl.min()
+            } else {
+                are_same(bez_ivl.max(), bez_ivl.min())
+            } {
                 return Ok(needs_more_subdivision);
             }
         }
@@ -1083,6 +1567,14 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             if is_zero(bez_ivl.max() - parent_ivl.max()) {
                 conts[1] = continuity;
             }
+        }
+
+        if matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        ) && self.projected_affine(k, curve, bez_ivl, conts, test_pnt, branch, curve_obj)?
+        {
+            return Ok(needs_more_subdivision);
         }
 
         // cull no hope minimization and SingleSolution normal situations
@@ -1254,6 +1746,41 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
             Some(&opt_vectors)
         };
 
+        let projected_extremum = matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        );
+        if projected_extremum {
+            // Constrained extrema include finite boundaries as well as stationary
+            // points. Enumerate them independently: Newton can find an interior
+            // minimum while a requested maximum lies at an endpoint (or vice versa).
+            for (parameter, continuity) in [(bez_ivl.min(), conts[0]), (bez_ivl.max(), conts[1])] {
+                if (continuity as i32) >= (ContinuityType::G1 as i32) {
+                    continue;
+                }
+                let mut endpoint = Solution::new();
+                endpoint.solution_type = SolutionType::SingleValue;
+                endpoint.nodes[0] = branch[0];
+                endpoint.nodes[1] = branch[1];
+                endpoint.num_variables = 1;
+                endpoint.num_objects = 1;
+                endpoint.objects[0] = curve_obj;
+                endpoint.start.parameters[0] = parameter;
+                // A failed evaluation is not a distance or an excluded candidate.
+                endpoint.start.solution_value = proj_dist(
+                    k,
+                    curve,
+                    parameter,
+                    test_pnt,
+                    self.opt(0)?,
+                    true,
+                    Vec3::ZERO,
+                    op,
+                )?;
+                self.add_solution(&endpoint, true)?;
+            }
+        }
+
         // for every guess point
         for i in 0..num_guesses {
             let guess = guesses.get(i).copied().unwrap_or(0.0);
@@ -1327,23 +1854,10 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
                     Err(_) => continue, // If error try another guess
                 }
 
-                // when no solution are found
-                // see if endPoints should be solutions for projected_min/max cases
-                if !found_solution
-                    && (op == SolverOperation::ProjectedMinimize
-                        || op == SolverOperation::ProjectedMaximize)
-                {
-                    if i + 2 == num_guesses && (conts[0] as i32) < (ContinuityType::G1 as i32) {
-                        // save the start point
-                        solution.start.parameters[0] = bez_ivl.evaluate(0.0);
-                    } else if i + 1 == num_guesses
-                        && (conts[1] as i32) < (ContinuityType::G1 as i32)
-                    {
-                        // save the end point
-                        solution.start.parameters[0] = bez_ivl.evaluate(1.0);
-                    } else {
-                        continue;
-                    }
+                // A missed stationary point does not rule out another guess.
+                // Boundary candidates have already been evaluated independently.
+                if !found_solution && projected_extremum {
+                    continue;
                 }
 
                 if op == SolverOperation::SignedPivotMinimize {
@@ -1655,7 +2169,11 @@ impl Curve {
     ///
     /// `SM_ERR_NULL_POINTER` when the cache cannot be built or
     /// [`SolverOperation::AtDistance`] has no target distance; those of the polishing
-    /// local solve; [`SolidError::Unported`] from unported callees. Failures of the tree solve itself are ignored, as upstream.
+    /// local solve; [`SolidError::Unported`] from unported callees. Projected
+    /// minimum/maximum queries propagate tree-solve errors, including
+    /// `SM_ERR_NOT_WITHIN_TOLERANCE` when an affine optimum cannot be certified
+    /// at a representable parameter. Other operations retain the legacy policy
+    /// of ignoring ordinary tree-solve failures unless status propagation is enabled.
     pub fn global_point_solve<O: SolutionObject>(
         &self,
         k: &Kernel,
@@ -1885,10 +2403,15 @@ impl Curve {
             best_answer_so_far_sq,
             opt_vectors: opts.opt_vectors.unwrap_or(&[]),
         };
-        ignore_or_pass_on(
-            gs.solve_it(&request, &mut solutions),
-            k.fixes.query_statuses_pass_on,
-        )?;
+        let solved = gs.solve_it(&request, &mut solutions);
+        if matches!(
+            op,
+            SolverOperation::ProjectedMinimize | SolverOperation::ProjectedMaximize
+        ) {
+            solved?;
+        } else {
+            ignore_or_pass_on(solved, k.fixes.query_statuses_pass_on)?;
+        }
 
         Ok(solutions)
     }
@@ -2238,6 +2761,70 @@ impl Curve {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn affine_parallel_identity_is_orientation_and_scale_independent() {
+        for scale in [
+            f64::from_bits(1),
+            2.0_f64.powi(-500),
+            1.0,
+            2.0_f64.powi(500),
+            f64::MAX,
+        ] {
+            assert!(exact_parallel_difference(
+                [0.0; 3],
+                [scale, -scale, scale],
+                Vec3::new(1.0, -1.0, 1.0)
+            ));
+            assert!(exact_parallel_difference(
+                [-scale, scale, -scale],
+                [scale, -scale, scale],
+                Vec3::new(1.0, -1.0, 1.0)
+            ));
+        }
+        assert!(exact_parallel_difference(
+            [3.0, -7.0, 9.0],
+            [5.0, -4.0, 14.0],
+            Vec3::new(-4.0, -6.0, -10.0)
+        ));
+        assert!(exact_parallel_difference(
+            [0.0; 3],
+            [1.0, 1.0, 0.0],
+            Vec3::new(1.0, 1.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn affine_parallel_identity_rejects_near_parallel_and_nonfinite() {
+        assert!(!exact_parallel_difference(
+            [0.0; 3],
+            [1.0, next_parameter_up(1.0), 0.0],
+            Vec3::new(1.0, 1.0, 0.0)
+        ));
+        // Ordinary products underflow here; the exact determinant is nonzero.
+        let tiny = f64::from_bits(1);
+        assert!(!exact_parallel_difference(
+            [0.0; 3],
+            [tiny, tiny * 2.0, 0.0],
+            Vec3::new(tiny, tiny, 0.0)
+        ));
+        // Ordinary products overflow; exact cancellation still establishes parallelism.
+        assert!(exact_parallel_difference(
+            [0.0; 3],
+            [f64::MAX, f64::MAX, 0.0],
+            Vec3::new(f64::MAX, f64::MAX, 0.0)
+        ));
+        assert!(!exact_parallel_difference(
+            [0.0; 3],
+            [f64::MAX, next_parameter_down(f64::MAX), 0.0],
+            Vec3::new(f64::MAX, f64::MAX, 0.0)
+        ));
+        assert!(!exact_parallel_difference(
+            [0.0; 3],
+            [f64::INFINITY, 1.0, 0.0],
+            Vec3::Z
+        ));
+    }
     use super::*;
 
     /// tangency-labs/solidcore#527 (WR-383): a forward range whose end sits 0.001 off

@@ -28,6 +28,9 @@
 //! | `EvalFunction for` [`FindCurveDistanceExtrema`]   | `SmFindCurveDistanceExtremaEFO::Evaluate` (co-ported in [`crate::curve::curve_cache`]) |
 //!
 //! Deviations:
+//! - **Projected maximum derivative (#2840).** Negating the projected
+//!   stationary equation also negates its derivative, so Newton steps use
+//!   the derivative of the function they are solving.
 //! - **Base bodies.** The virtual `IsClosed`, `IsDegenerate` and `ApproximatePolarBox`
 //!   are generic over [`CurveEvaluate`] (`*_base`), so curve kinds whose overrides
 //!   fall back to the base class (the B-spline `IsDegenerate`) can call them on
@@ -1785,6 +1788,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
 
                 if self.property == CurvePropertyType::ProjectedPointMaximize {
                     out.f = -out.f; // [B543]
+                    out.f_prime = -out.f_prime;
                 }
 
                 out.found_answer = (v_dot_v < (EFF_ZERO_SQ * 100.0))
