@@ -56,7 +56,9 @@ use solidcore_ops::boolean::{boolean, BooleanOp};
 use solidcore_ops::extend::{extend_sheet, Continuation};
 use solidcore_ops::split::{split_faces, Tool};
 use solidcore_ops::stitch::{merge_faces, stitch};
-use solidcore_ops::sweep::{extrude, loft, revolve, Curve, DraftCorner};
+use solidcore_ops::sweep::{
+    extrude, loft, revolve, sweep_stations, Affine, Curve, DraftCorner, Ends,
+};
 use solidcore_ops::untrim::{untrim_face, Holes};
 use solidcore_ops::{make_sphere, offset, session, Body, Order};
 use solidcore_record::brep::{Brep as Record, Frame, Surface as RecordSurface};
@@ -82,6 +84,7 @@ const PORTED: &[&str] = &[
     "extrude",
     "revolve",
     "loft",
+    "sweep_stations",
     "blend_dropping",
     "chamfer_sides",
     "stitch",
@@ -595,6 +598,35 @@ fn call_with_copy(
                 Ok(None) => Err("the boolean left nothing".to_owned()),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        "sweep_stations" => {
+            if !ins.is_empty() {
+                return Err(bad("no inputs"));
+            }
+            let curves = profile(&p["profile"]).ok_or_else(|| bad("profile"))?;
+            let stations = p["stations"]
+                .as_array()
+                .ok_or_else(|| bad("stations"))?
+                .iter()
+                .map(|s| {
+                    let m = s["m"].as_array()?;
+                    let [x, y, z] = m.as_slice() else {
+                        return None;
+                    };
+                    Some(Affine {
+                        m: [f64s::<3>(x)?, f64s::<3>(y)?, f64s::<3>(z)?],
+                        t: f64s::<3>(&s["t"])?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| bad("stations"))?;
+            let ends = match p["ends"].as_str().ok_or_else(|| bad("ends"))? {
+                "open" => Ends::Open,
+                "capped" => Ends::Capped,
+                "joined" => Ends::Joined,
+                other => return Err(Stop::Unsupported(format!("sweep_stations ends {other}"))),
+            };
+            made(sweep_stations(&curves, &stations, ends))
         }
         "loft" => {
             let sections = p["sections"]
@@ -1466,6 +1498,146 @@ fn untrim_point_holes_do_not_hide_missing_required_parameters() {
             "{parameter}"
         );
     }
+}
+
+fn station_sweep_step() -> Value {
+    serde_json::json!({"op": "sweep_stations", "inputs": [], "params": {
+        "profile": [{"arc": {"center": [0,0,0], "axis": [0,0,1],
+            "reference": [1,0,0], "radius": 10, "start": 0,
+            "end": std::f64::consts::TAU}}],
+        "stations": [
+            {"m": [[1,0,0],[0,1,0],[0,0,1]], "t": [7,-11,3]},
+            {"m": [[0.5,0,0],[0,0.5,0],[0,0,1]], "t": [7,-11,23]}
+        ], "ends": "capped"
+    }})
+}
+
+#[test]
+fn station_sweep_replays_all_five_captured_cases() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let names = [
+        "surfaces/cov-sweep-circle-scaled-half-is-a-frustum",
+        "sweeps/771-sweep-end-scale-cone-frustum",
+        "sweeps/771-sweep-one-guide-rail-cone-frustum",
+        "sweeps/1269-sweep-twisted-square-ninety-degrees",
+        "sweeps/2005-closed-sweep-twisted-new-body",
+    ];
+    let mut failures = Vec::new();
+    for name in names {
+        let entry = corpus().join(format!("{name}.json"));
+        let e: Value = serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+        assert_eq!(e["rig"]["status"], "pass", "{name}");
+        assert!(e["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["error"].is_null()));
+        if let Err(why) = run_case(&entry, &e) {
+            failures.push(format!("{name}: {why:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // Independent closed-form oracle.
+fn station_sweep_forwards_scale_translation_and_end_caps() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let volume = 3500.0 * std::f64::consts::PI / 3.0;
+    let wall = 15.0 * std::f64::consts::PI * 425.0_f64.sqrt();
+    for capped in [true, false] {
+        let mut step = station_sweep_step();
+        step["params"]["ends"] = serde_json::json!(if capped { "capped" } else { "open" });
+        let output = call(&step, &mut []).unwrap().unwrap();
+        assert!(output.order.is_none());
+        assert_eq!(output.body.counts().unwrap()[0], if capped { 3 } else { 1 });
+        let got = output.body.volume(1e-9).unwrap();
+        if capped {
+            assert!((got - volume).abs() <= volume * 1e-9, "{got}");
+        } else {
+            assert_eq!(got, 0.0);
+        }
+        let want_area = wall
+            + if capped {
+                125.0 * std::f64::consts::PI
+            } else {
+                0.0
+            };
+        let area = output.body.area(1e-9).unwrap();
+        assert!((area - want_area).abs() <= want_area * 1e-9, "{area}");
+    }
+}
+
+#[test]
+fn station_sweep_keeps_affine_axis_images_in_order() {
+    session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let mut step = station_sweep_step();
+    let corners = [[0, 0, 0], [2, 0, 0], [2, 3, 0], [0, 3, 0]];
+    step["params"]["profile"] = Value::Array(
+        (0..4)
+            .map(|i| serde_json::json!({"line": {"start": corners[i], "end": corners[(i+1)%4]}}))
+            .collect(),
+    );
+    for station in step["params"]["stations"].as_array_mut().unwrap() {
+        station["m"] = serde_json::json!([[0, 2, 0], [-3, 0, 0], [0, 0, 1]]);
+    }
+    let output = call(&step, &mut []).unwrap().unwrap();
+    assert_eq!(output.body.counts().unwrap(), [6, 12, 8]);
+    assert!((output.body.volume(1e-9).unwrap() - 720.0).abs() <= 720.0e-9);
+    assert!((output.body.area(1e-9).unwrap() - 592.0).abs() <= 592.0e-9);
+    let record = output.body.to_record().unwrap().0;
+    let points: Vec<_> = record.vertices.iter().map(|v| v.point).collect();
+    for (axis, low, high) in [(0, -2.0, 7.0), (1, -11.0, -7.0), (2, 3.0, 23.0)] {
+        let min = points.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min);
+        let max = points
+            .iter()
+            .map(|p| p[axis])
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!((min - low).abs() <= 1e-9, "axis {axis}: {min}");
+        assert!((max - high).abs() <= 1e-9, "axis {axis}: {max}");
+    }
+}
+
+#[test]
+fn station_sweep_metadata_is_distinct_from_operation_refusal() {
+    let step = station_sweep_step();
+    for parameter in ["profile", "stations", "ends"] {
+        let mut bad = step.clone();
+        bad["params"].as_object_mut().unwrap().remove(parameter);
+        assert!(
+            matches!(call(&bad, &mut []), Err(Stop::Fail(_))),
+            "{parameter}"
+        );
+    }
+    for matrix in [
+        serde_json::json!([[1, 0, 0], [0, 1, 0]]),
+        serde_json::json!([[1, 0], [0, 1, 0], [0, 0, 1]]),
+        serde_json::json!([[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, 0]]),
+    ] {
+        let mut bad = step.clone();
+        bad["params"]["stations"][0]["m"] = matrix;
+        assert!(matches!(call(&bad, &mut []), Err(Stop::Fail(_))));
+    }
+    for value in [
+        serde_json::json!([1, 2]),
+        serde_json::json!([1, 2, 3, 4]),
+        Value::Null,
+    ] {
+        let mut bad = step.clone();
+        bad["params"]["stations"][0]["t"] = value;
+        assert!(matches!(call(&bad, &mut []), Err(Stop::Fail(_))));
+    }
+    let mut unknown = step.clone();
+    unknown["params"]["ends"] = serde_json::json!("future_end");
+    assert!(
+        matches!(call(&unknown, &mut []), Err(Stop::Unsupported(why)) if why.contains("future_end"))
+    );
+    let mut refused = step.clone();
+    refused["params"]["stations"].as_array_mut().unwrap().pop();
+    assert!(matches!(call(&refused, &mut []), Ok(Err(_))));
+    let mut singular = step;
+    singular["params"]["stations"][0]["m"] = serde_json::json!([[0, 0, 0], [0, 1, 0], [0, 0, 1]]);
+    assert!(matches!(call(&singular, &mut []), Ok(Err(_))));
 }
 
 fn loft_step(name: &str) -> (PathBuf, Value, Value) {
