@@ -536,7 +536,7 @@ fn net_size(net: &[Vec<[f64; 4]>]) -> f64 {
 
 /// The surface block of a case's surface, whether it is curve bounded, and its size (the
 /// net's largest coordinate, or a plane's reach): a [`contract::plane`] or a [`bss_block`].
-fn sized_surface(s: &SurfIn) -> Option<([f64; 4], bool, f64)> {
+pub(crate) fn sized_surface(s: &SurfIn) -> Option<([f64; 4], bool, f64)> {
     match s {
         SurfIn::Plane(p) => {
             let max = LIMITS.max_coord;

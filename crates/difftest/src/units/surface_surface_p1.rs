@@ -55,12 +55,15 @@ use solidcore::error::SM_ERR;
 use solidcore::SolidError;
 
 use super::surface_surface_cache_p1::{
-    curve_of, dom_of, flag, gen_knots, gen_sub_dom, gvec, harness, push3, push_box,
-    push_dom, status, v3, CrvIn,
+    curve_of, dom_of, fin, flag, gen_knots, gen_sub_dom, gvec, harness, push3, push_box,
+    push_dom, status, v3, vec3, CrvIn, LIMITS,
 };
-use super::surface_surface_cache_p3::{gen_surf, surf_domain, surf_size, surface_in, SurfIn};
+use super::surface_surface_cache_p3::{
+    gen_surf, sized_surface, surf_domain, surf_size, surface_in, SurfIn,
+};
 use super::surface_surface_p2::Handle;
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -719,6 +722,171 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The smallest silhouette approximation tolerance, relative to the surface size.
+const MIN_SIL_TOL: f64 = 1e-6;
+/// The smallest silhouette angle tolerance.
+const MIN_SIL_ANG: f64 = 1e-3;
+/// The largest continuity code.
+const MAX_CONTINUITY: u8 = 13;
+/// The longest cache history of a `dom_cont` case.
+const MAX_DOM_CONT_HISTORY: u8 = 3;
+
+fn fins(vs: &[f64]) -> bool {
+    vs.iter().all(|&v| fin(v))
+}
+
+/// Whether `uv` is finite and inside `d`, or with `reach > 0` within `reach` times its sides
+/// of it.
+fn uv_within(uv: [f64; 2], d: &[f64; 4], reach: f64) -> bool {
+    let [u, v] = uv;
+    let (w, h) = (reach * (d[2] - d[0]), reach * (d[3] - d[1]));
+    fin(u) && fin(v) && u >= d[0] - w && u <= d[2] + w && v >= d[1] - h && v <= d[3] + h
+}
+
+/// An optional domain: inside the surface's when given.
+fn opt_dom(dom: Option<&[f64; 4]>, d: &[f64; 4]) -> bool {
+    dom.is_none_or(|x| contract::domain_in(x, d, false, LIMITS.max_coord))
+}
+
+/// An optional tolerance: positive when given.
+fn opt_tol(t: Option<f64>) -> bool {
+    t.is_none_or(|t| fin(t) && t > 0.0)
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_surface_p1.rs`, `validate`): a surface as
+/// `surface_cache_p3` takes it (`sized_surface`) and the op's parameters: finite values,
+/// points and domains inside the surface domain where upstream evaluates (within one side
+/// of it for the boundary queries of planes and clamping B-splines and for a `dom_cont`
+/// after a cache history), positive optional tolerances, directional derivative orders up
+/// to 7, a `b_box` asking for a box and no polar box of a wrapped or curve bounded surface
+/// (UB-84), nine `n_sect` vectors; a 2D `find_ivl` curve with an interval inside its domain
+/// and a trim domain of sides at least `1e-6`; a `sil` surface (not wrapped, not curve
+/// bounded) over a domain of non-degenerate sides inside its domain, a non-zero view vector
+/// for a parallel projection, an approximation tolerance of at least `1e-6` times the
+/// surface size and an angle tolerance in `[1e-3, pi]`.
+fn keeps_contract(i: &Inputs) -> bool {
+    let max = LIMITS.max_coord;
+    match &i.op {
+        OpIn::NSect { e, dir } => e.len() == 9 && e.iter().all(vec3) && vec3(dir),
+        OpIn::FindIvl {
+            curve,
+            ivl,
+            param,
+            dom,
+        } => {
+            let [lo, hi] = *ivl;
+            curve.dim == 2
+                && contract::curve_block(curve.dim, &curve.cpts, curve.p, &curve.u, &LIMITS)
+                && curve.u.first().is_some_and(|&c0| lo >= c0)
+                && curve.u.last().is_some_and(|&c1| hi <= c1)
+                && fin(lo)
+                && fin(hi)
+                && lo < hi
+                && fin(*param)
+                && contract::domain(dom, max)
+                && dom[2] - dom[0] >= 1e-6
+                && dom[3] - dom[1] >= 1e-6
+        }
+        op => {
+            let Some((d, bounded, size)) = sized_surface(&i.surf) else {
+                return false;
+            };
+            let d = &d;
+            match op {
+                OpIn::NSect { .. } | OpIn::FindIvl { .. } => false,
+                OpIn::Eval { uv, .. } => uv_within(*uv, d, 0.0),
+                OpIn::IsoLen { u, t } => uv_within([*u, *t], d, 0.0),
+                OpIn::Periodic { dom, .. } | OpIn::Convert { dom } => {
+                    contract::domain_in(dom, d, false, max)
+                }
+                OpIn::DegenPoint { tol, dom } => fin(*tol) && opt_dom(dom.as_ref(), d),
+                OpIn::DegenCurve { ang, dom, tol } => {
+                    fin(*ang) && fin(*tol) && opt_dom(dom.as_ref(), d)
+                }
+                OpIn::Flat { uv, ang } => uv_within(*uv, d, 0.0) && fin(*ang),
+                OpIn::OnBoundary { dom, uv, tol } | OpIn::InDomain { dom, uv, tol } => {
+                    let near = match &i.surf {
+                        SurfIn::Plane(_) => true,
+                        SurfIn::Bspline(b) => !b.oob,
+                        SurfIn::CurveBounded(_) => false,
+                    };
+                    contract::domain(dom, max)
+                        && uv_within(*uv, d, if near { 1.0 } else { 0.0 })
+                        && opt_tol(*tol)
+                }
+                OpIn::Misc { other, .. } => sized_surface(other).is_some(),
+                OpIn::Snap { uv, tol } => uv_within(*uv, d, 0.0) && fin(*tol) && *tol >= 0.0,
+                OpIn::ParamDir { uv, vec } => uv_within(*uv, d, 0.0) && vec3(vec),
+                OpIn::DirDerivs { uv, dir, h, .. } => {
+                    uv_within(*uv, d, 0.0) && fins(dir) && *h <= MAX_DIR_DERIV
+                }
+                OpIn::Size { dom } => opt_dom(dom.as_ref(), d),
+                OpIn::Sing { uv, dir, v, tol, s } => {
+                    let (a, b) = if *v { (d[1], d[3]) } else { (d[0], d[2]) };
+                    uv_within(*uv, d, 0.0)
+                        && vec3(dir)
+                        && fin(*tol)
+                        && fin(*s)
+                        && (a..=b).contains(s)
+                }
+                OpIn::Seam { prev, curr, dom } => {
+                    fins(prev) && fins(curr) && contract::domain(dom, max)
+                }
+                OpIn::Step { ivl, .. } => {
+                    let [lo, hi] = ivl.unwrap_or([0.0, 0.0]);
+                    fin(lo) && fin(hi) && lo <= hi
+                }
+                OpIn::Cache { .. } => true,
+                OpIn::BBox {
+                    dom,
+                    normal,
+                    pseudo,
+                    polar,
+                    ..
+                } => {
+                    contract::domain_in(dom, d, false, max)
+                        && (*normal || *pseudo || *polar)
+                        && !(*polar && (i.wrap || bounded))
+                }
+                OpIn::DomCont {
+                    cont,
+                    uv,
+                    vec,
+                    history,
+                } => {
+                    let reach = if *history == 0 { 0.0 } else { 1.0 };
+                    *cont <= MAX_CONTINUITY
+                        && fins(vec)
+                        && *history <= MAX_DOM_CONT_HISTORY
+                        && uv_within(*uv, d, reach)
+                }
+                OpIn::Sil {
+                    dom,
+                    eye,
+                    perspective,
+                    tol,
+                    ang,
+                    translate,
+                } => {
+                    !i.wrap
+                        && !bounded
+                        && contract::domain_in(dom, d, true, max)
+                        && vec3(eye)
+                        && (*perspective || eye.iter().any(|&x| x != 0.0))
+                        && fin(tol.unwrap_or(0.0))
+                        && tol.is_none_or(|t| t >= MIN_SIL_TOL * size)
+                        && fin(ang.unwrap_or(0.0))
+                        && ang.is_none_or(|a| (MIN_SIL_ANG..=std::f64::consts::PI).contains(&a))
+                        && vec3(&translate.unwrap_or([0.0; 3]))
+                }
+            }
+        }
+    }
+}
+
 // ---- generated cases ----------------------------------------------------------------
 
 /// A point of `d`: a corner, a point on a side, or inside.
@@ -1088,13 +1256,13 @@ fn gen_dom_hist(rng: &mut Rng) -> Result<Inputs, HarnessError> {
 
 fn generate_dom_hist(rng: &mut Rng) -> Option<Value> {
     (0..64)
-        .find_map(|_| gen_dom_hist(rng).ok())
+        .find_map(|_| gen_dom_hist(rng).ok().filter(keeps_contract))
         .and_then(|i| serde_json::to_value(i).ok())
 }
 
 fn generate_sil(rng: &mut Rng) -> Option<Value> {
     (0..64)
-        .find_map(|_| gen_sil(rng).ok())
+        .find_map(|_| gen_sil(rng).ok().filter(keeps_contract))
         .and_then(|i| serde_json::to_value(i).ok())
 }
 
@@ -1105,7 +1273,7 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         (0..64)
-            .find_map(|_| gen_case(rng).ok())
+            .find_map(|_| gen_case(rng).ok().filter(keeps_contract))
             .and_then(|i| serde_json::to_value(i).ok())
     }
 
