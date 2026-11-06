@@ -9,8 +9,7 @@
 //! allocated from a count read out of the file (lists grow as their items are read), and every
 //! refusal is an [`Error`], never a panic.
 //!
-//! Origin: SolidCraft's `crates/step/src/p21.rs` at `a5b71ca2` (MIT OR Apache-2.0), carried
-//! over with its behaviour unchanged. With the STEP merge (#2577) this becomes solidcore's one
+//! Origin: SolidCraft's `crates/step/src/p21.rs` at `a5b71ca2` (MIT OR Apache-2.0). With the STEP merge (#2577) this becomes solidcore's one
 //! Part 21 implementation; `step-import`'s `part21.rs` goes with #2585.
 //!
 //! Deviations from SolidCraft: [`Exchange::entities`] is a `BTreeMap` (was a `HashMap`), so
@@ -19,6 +18,16 @@
 //! `MAX_COMPLEX_PARTS` (was the literal 64). Otherwise only lint-driven rewrites that keep the
 //! same result (`map_or`, `u32::from`, or-patterns, the error line number counted as the
 //! newline-split pieces) and doc comments on every public item.
+//!
+//! Changed in review (#2591): a parse refuses with a typed [`Error`] (the messages are
+//! SolidCraft's); unterminated `\X2\`/`\X4\` runs decode in linear time; the parameter count is
+//! capped ([`MAX_PARAMS`]) and a repeated id counts against [`MAX_ENTITIES`]; a number with no
+//! digit and an integer beyond i64 are refused; a leading byte order mark is skipped; `\S\`
+//! before a UTF-8 character is kept as written.
+//!
+//! Limit: an ANCHOR, REFERENCE or SIGNATURE section (edition 3) is skipped to the first
+//! `ENDSEC;` in the raw text, so one inside a string in such a section ends the skip early and
+//! the rest is read as sections. No corpus file has these sections.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -610,7 +619,6 @@ pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, 
 }
 
 /// [`parse_with`] with the counts it refuses beyond given.
-
 fn parse_limited(
     text: &str,
     watch: Option<&dyn Progress>,
@@ -755,7 +763,8 @@ fn parse_limited(
                 lx.expect(b';')?;
                 return Ok(ex);
             }
-            // ANCHOR / REFERENCE / SIGNATURE sections (Part 21 edition 3): skip to ENDSEC.
+            // ANCHOR / REFERENCE / SIGNATURE sections (Part 21 edition 3): skip to the first
+            // `ENDSEC;` in the raw text (the limit in the module documentation).
             "ANCHOR" | "REFERENCE" | "SIGNATURE" => {
                 let rest = lx.s.get(lx.i..).unwrap_or(&[]);
                 match rest.windows(7).position(|w| w == b"ENDSEC;") {
