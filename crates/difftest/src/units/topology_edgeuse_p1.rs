@@ -1,29 +1,28 @@
-//! Runner for unit `topology.edgeuse_p1`. C++: `solidcore_ffi::units::topology_edgeuse_p1`.
-//! Rust: `solidcore::topology::edgeuse::p1`.
+//! Runner for unit `topology.edgeuse_p1`. Ported from upstream `SmEdgeuse.cpp` (the shim
+//! `harness/cpp/shim/topology_edgeuse_p1.cpp` was the reference); checked against its
+//! golden. Rust: `solidcore::topology::edgeuse::p1`.
 //!
-//! **B-rep ops.** The C++ side builds a real `SmBrep` per call: read from an upstream
-//! `.smb` test file (optionally rebuilding its UV trim curves), a wire edge from a
+//! **B-rep ops.** The case's B-rep is one of the reference shim's sources: read from an
+//! upstream `.smb` test file (optionally rebuilding its UV trim curves), a wire edge from a
 //! B-spline curve (`CreateWireEdgeFromCurve`), a face from a B-spline surface or a plane
 //! (`CreateFaceFromSurface`), or the wire network of `prog_test` `my_test_topology`. The
-//! Rust side builds every non-file source with the Rust kernel in the shim's call order
+//! runner builds every non-file source with the Rust kernel in the shim's call order
 //! ([`crate::own_builder`], renumbered into the shim's traversal order), and reads an
 //! `.smb` file with the Rust reader, renumbered the same way
-//! ([`crate::own_reader::brep_in_order`]): its geometry, UV trim owners, drop records and
-//! cached gap states are the Rust reader's and the Rust gap walk's, never the C++
-//! export's. Results are compared as traversal indices, and the gaps the gap ops
-//! compute by value. The graph import ([`import_with_types`]: raw members, an `SmPlane`
-//! face surface as the exact [`Plane`], an `SmSurfOfRevolution` face surface exactly
-//! through [`crate::util::read_exact_surface`], an `SmLine` edge curve as the exact
-//! [`Line`], other analytic kinds as their B-spline part) remains for the runners that
-//! share it; a case evaluating geometry such an import holds only as its B-spline part
-//! is deferred ([`inexact_geometry`]), which no Rust-built or Rust-read source triggers.
+//! ([`crate::own_reader::brep_in_order`]). Results are recorded as traversal indices, and
+//! the gaps the gap ops compute by value. The import of a native graph export
+//! ([`import_with_types`]: raw members, an `SmPlane` face surface as the exact [`Plane`],
+//! an `SmSurfOfRevolution` face surface exactly through
+//! [`crate::util::read_exact_surface`], an `SmLine` edge curve as the exact [`Line`], other
+//! analytic kinds as their B-spline part) remains for the runners that share it; a case
+//! evaluating geometry such an import holds only as its B-spline part is deferred
+//! ([`inexact_geometry`]), which no Rust-built or Rust-read source triggers.
 //!
 //! Index arguments are selectors taken modulo the entity count (so generated cases
 //! need no counts); `-1` selects null.
 //!
 //! **Geometry ops** (`SmFindStepOffENFO::Evaluate`, `sm_CalcDistAndDev`,
-//! `sm_AreSeamCurves`, verbatim copies in the shim) run on B-spline surfaces and planes
-//! (real `SmPlane`s) and B-spline curves.
+//! `sm_AreSeamCurves`) run on B-spline surfaces, planes and B-spline curves.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -58,7 +57,6 @@ use solidcore::topology::{
     ShellId, Vertex, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_edgeuse_p1::{self as ffi, Op};
 
 use crate::util::trim_curve::put_trim_curve;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -546,134 +544,6 @@ fn no_entity() -> Output {
     Output::err("no_entity_of_that_kind")
 }
 
-/// The op arguments after the B-rep block (resolved selectors).
-fn op_args(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
-    let mut v = Vec::new();
-    let code = match op {
-        OpIn::EuQuery { eu, vertex } => {
-            v.extend([*eu as f64, *vertex as f64]);
-            Op::EuQuery
-        }
-        OpIn::Connected { eu, ty, index } => {
-            v.extend([*eu as f64, *ty as f64, *index as f64]);
-            Op::Connected
-        }
-        OpIn::FuQuery {
-            fu,
-            tgt_only,
-            has_loops,
-            loops,
-        } => {
-            v.extend([
-                *fu as f64,
-                flag(*tgt_only),
-                flag(*has_loops),
-                loops.len() as f64,
-            ]);
-            v.extend(loops.iter().map(|&l| l as f64));
-            Op::FuQuery
-        }
-        OpIn::Collect { fu, threshold } => {
-            v.extend([
-                *fu as f64,
-                flag(threshold.is_some()),
-                threshold.unwrap_or(0.0),
-            ]);
-            Op::Collect
-        }
-        OpIn::TrimSample { eu, fraction } => {
-            v.extend([*eu as f64, *fraction]);
-            Op::TrimSample
-        }
-        OpIn::UvLoopGap { eu } => {
-            v.push(*eu as f64);
-            Op::UvLoopGap
-        }
-        OpIn::SetUv {
-            eu,
-            kind,
-            curve,
-            dmax,
-            delete,
-            fail,
-        } => {
-            v.extend([*eu as f64, f64::from(*kind)]);
-            if *kind == 2 || *kind == 4 {
-                push_curve(
-                    &mut v,
-                    curve.as_ref().ok_or_else(|| harness("set_uv: no curve"))?,
-                )?;
-            }
-            v.extend([
-                *dmax,
-                flag(*delete),
-                flag(fail.is_some()),
-                fail.unwrap_or(0) as f64,
-            ]);
-            Op::SetUv
-        }
-        OpIn::Gaps {
-            eu,
-            which,
-            flag: f,
-            want_out,
-        } => {
-            v.extend([*eu as f64, f64::from(*which), flag(*f), flag(*want_out)]);
-            Op::Gaps
-        }
-        OpIn::SetOrient { eu, orient } => {
-            v.extend([*eu as f64, f64::from(*orient)]);
-            Op::SetOrient
-        }
-        OpIn::StepOff {
-            surface,
-            dist,
-            p,
-            n,
-            x,
-            jac,
-        } => {
-            push_surface(&mut v, surface)?;
-            v.push(*dist);
-            v.extend(p);
-            v.extend(n);
-            v.extend(x);
-            v.push(flag(*jac));
-            Op::StepOff
-        }
-        OpIn::DistDev {
-            surface,
-            p,
-            uv,
-            value,
-            obj,
-            want_dev,
-        } => {
-            push_surface(&mut v, surface)?;
-            v.extend(p);
-            v.extend(uv);
-            v.push(*value);
-            v.push(f64::from(*obj));
-            v.push(flag(*want_dev));
-            Op::DistDev
-        }
-        OpIn::Seam {
-            curves,
-            dom,
-            called,
-        } => {
-            v.push(curves.len() as f64);
-            for c in curves {
-                push_curve(&mut v, c)?;
-            }
-            v.extend(dom);
-            v.push(flag(*called));
-            Op::Seam
-        }
-    };
-    Ok((code, v))
-}
-
 fn is_brep_op(op: &OpIn) -> bool {
     !matches!(
         op,
@@ -693,106 +563,6 @@ pub(crate) fn fixture_input(value: Value) -> Result<(String, Vec<f64>), HarnessE
         op: OpIn::SetOrient { eu: 0, orient: 0 },
     };
     Ok((path_of(inputs.brep.as_ref())?, brep_block(&inputs)?))
-}
-
-/// The C++ export of the case's B-rep.
-fn export(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let path = path_of(i.brep.as_ref())?;
-    let block = brep_block(i)?;
-    crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-        ffi::eval(Op::Export, &path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))
-}
-
-/// A build failure as an operation error.
-fn build_failure(export: &[f64]) -> Output {
-    Output::err(format!(
-        "brep_build_status_{}",
-        export.get(1).copied().unwrap_or(0.0)
-    ))
-}
-
-fn ints(v: &[f64]) -> Vec<i64> {
-    v.iter().map(|&x| x as i64).collect()
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if !is_brep_op(&i.op) {
-        let (op, args) = op_args(&i.op)?;
-        let out = ffi::eval(op, "", &args).map_err(|e| harness(format!("c++: {e}")))?;
-        return Ok(geom_output(&i.op, &out));
-    }
-    let ex = export(i)?;
-    let Some(c) = ffi::counts(&ex) else {
-        return Ok(build_failure(&ex));
-    };
-    let Some(op) = resolve(&i.op, c) else {
-        return Ok(no_entity());
-    };
-    let (code, args) = op_args(&op)?;
-    let mut input = brep_block(i)?;
-    input.extend(args);
-    let path = path_of(i.brep.as_ref())?;
-    let out = ffi::eval(code, &path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(brep_output(&op, body))
-}
-
-/// The C++ output of a geometry op, as the Rust side builds it.
-fn geom_output(op: &OpIn, out: &[f64]) -> Output {
-    match op {
-        OpIn::StepOff { .. } => {
-            let st = out.first().copied().unwrap_or(-1.0);
-            Output::new()
-                .int("failed", i64::from(st != 0.0))
-                .int("found", out.get(1).copied().unwrap_or(-1.0) as i64)
-                .values("fj", out.get(2..).unwrap_or(&[]).to_vec())
-        }
-        OpIn::DistDev { .. } => Output::new().values("dist_dev", out.to_vec()),
-        _ => Output::new().ints("seam", ints(out)),
-    }
-}
-
-/// The C++ output of a B-rep op (after the build status), as the Rust side builds it.
-fn brep_output(op: &OpIn, body: &[f64]) -> Output {
-    match op {
-        OpIn::EuQuery { .. } => {
-            let mut q = ints(body);
-            let tol = if q.len() > 15 {
-                q.remove(15) as f64
-            } else {
-                0.0
-            };
-            let tol = body.get(15).copied().unwrap_or(tol);
-            Output::new().ints("q", q).values("tol", vec![tol])
-        }
-        OpIn::FuQuery { .. } => {
-            let head = 6 + KIND_TYPES.len();
-            let q = ints(body.get(..head).unwrap_or(body));
-            let mut lists = Vec::new();
-            let mut at = head;
-            while let Some(&n) = body.get(at) {
-                let n = n as usize;
-                lists.push(ints(body.get(at + 1..at + 1 + n).unwrap_or(&[])));
-                at += 1 + n;
-            }
-            Output::new()
-                .ints("q", q)
-                .topology(crate::output::Topology::new().adjacency("lists", lists))
-        }
-        OpIn::Collect { .. } => {
-            let st = body.first().copied().unwrap_or(-1.0) as i64;
-            let list = ints(body.get(2..).unwrap_or(&[]));
-            Output::new().int("status", st).ints("list", list)
-        }
-        OpIn::TrimSample { .. } => trim_sample_output(body),
-        OpIn::UvLoopGap { .. } => Output::new().values("gap", body.to_vec()),
-        OpIn::SetUv { .. } | OpIn::Gaps { .. } => Output::new().values("state", body.to_vec()),
-        _ => Output::new().ints("q", ints(body)),
-    }
 }
 
 fn trim_sample_output(body: &[f64]) -> Output {
@@ -1057,13 +827,27 @@ pub(crate) fn import_with_types(ex: &[f64]) -> Result<(Brep, ImportTypes), Harne
     Ok((b, types))
 }
 
+/// The entity counts of a native export, in the shim's order: regions, shells, face uses,
+/// faces, loop uses, loops, edge uses, edges, vertex uses, vertices. `None` when the export
+/// is a build failure.
+fn export_counts(export: &[f64]) -> Option<[usize; 10]> {
+    if export.first() != Some(&0.0) {
+        return None;
+    }
+    let mut c = [0usize; 10];
+    for (slot, v) in c.iter_mut().zip(export.get(2..12)?) {
+        *slot = *v as usize;
+    }
+    Some(c)
+}
+
 /// [`import_with_types`] without refilling the cached gaps: they stay marked as set
 /// with `SM_UNDEF_DOUBLE` placeholder values. For the C++ side (which only resolves
 /// selectors on the import) and for Rust-side callers that change the geometry after
 /// the import (they refill the gaps themselves).
 pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<(Brep, ImportTypes), HarnessError> {
     let mut extras = ImportTypes::default();
-    let c = ffi::counts(ex).ok_or_else(|| harness("import of a failed build"))?;
+    let c = export_counts(ex).ok_or_else(|| harness("import of a failed build"))?;
     let [n_r, n_s, n_fu, n_f, n_lu, n_l, n_eu, n_e, n_vu, n_v] = c;
     let mut rd = Rd { v: ex, at: 1 };
     let validate_only = rd.num()? != 0.0;
@@ -2365,10 +2149,6 @@ impl UnitDiff for Runner {
         "topology.edgeuse_p1"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse::<Inputs>()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let k = &mut Kernel::default();
         run_rust(k, &case.parse::<Inputs>()?)
@@ -2387,6 +2167,3 @@ impl UnitDiff for Runner {
     }
 }
 
-#[cfg(test)]
-#[path = "topology_edgeuse_p1/tests.rs"]
-mod tests;
