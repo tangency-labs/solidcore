@@ -437,11 +437,10 @@ enum Graded {
     Body(String),
     /// The round returned an error.
     Round(String),
-    /// The round built: what's wrong with it, how far it lies off the ball, and its volume.
+    /// The round built: what's wrong with it and how far it lies off the ball.
     Built {
         problems: Vec<String>,
         off: f64,
-        volume: f64,
     },
 }
 
@@ -532,11 +531,7 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
     if off > allowed {
         problems.push(format!("{off:.3e} off the ball (allowed {allowed:.3e})"));
     }
-    Graded::Built {
-        problems,
-        off,
-        volume: v,
-    }
+    Graded::Built { problems, off }
 }
 
 /// A mark of the fork's.

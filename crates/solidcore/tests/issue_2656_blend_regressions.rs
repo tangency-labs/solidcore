@@ -493,7 +493,7 @@ fn block_cylinder_arc_piece_is_refused_at_the_seam() {
         "the piece ends at the seam: {ends:?}"
     );
     let r = blend(&mut k, &mut b, Kind::Round, &[at_pick], 2.0);
-    assert!(r.is_err(), "the piece's round refused at the seam, not capped");
+    assert!(r.is_err(), "refused at the seam, not capped");
 }
 
 /// tangency-labs/solidcore#2679 (the blend corner): fillets/1207 with the r3 round's end
