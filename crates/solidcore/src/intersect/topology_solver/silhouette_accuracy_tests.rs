@@ -20,6 +20,16 @@ use crate::topology::BrepId;
 
 #[test]
 fn projected_sphere_face_maximum_matches_surface_and_closed_form() {
+    check_sphere_projection(0.0, 1.0);
+}
+
+#[test]
+fn projected_tilted_sphere_face_maximum_uses_projection_metric() {
+    check_sphere_projection(45.0, 1.0);
+    check_sphere_projection(45.0, 1000.0);
+}
+
+fn check_sphere_projection(tilt: f64, scale: f64) {
     let mut k = Kernel::default();
     let mut sphere = Sphere::new(
         &k,
@@ -77,7 +87,8 @@ fn projected_sphere_face_maximum_matches_surface_and_closed_form() {
         owner_of: &|_| None,
     };
     let query = Vec3::new(0.2, 0.3, 2.0);
-    let normal = Vec3::new(0.0, 0.0, 1.0);
+    let angle = tilt.to_radians();
+    let normal = Vec3::new(angle.sin(), 0.0, angle.cos()) * scale;
     let tol = 1e-5;
     let mut solver = TopologySolver::new(
         &k,
@@ -101,14 +112,18 @@ fn projected_sphere_face_maximum_matches_surface_and_closed_form() {
     );
     let point = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(point - query).cross(normal).length();
-    let expected = 0.5 + (query.x * query.x + query.y * query.y).sqrt();
+    let expected = 0.5 * normal.length_squared()
+        + normal
+            .cross(query - Vec3::new(0.0, 0.0, -1.0))
+            .cross(normal)
+            .length();
     assert!(
         (solution.start.solution_value - expected).abs() <= tol,
         "value={}, expected={expected}",
         solution.start.solution_value
     );
     assert!(
-        (solution.start.solution_value - measured).abs() <= 1e-12,
+        (solution.start.solution_value - measured).abs() <= 8.0 * f64::EPSILON * measured.max(1.0),
         "value={}, surface measurement={measured}",
         solution.start.solution_value
     );

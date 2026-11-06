@@ -29,6 +29,8 @@
 //! Deviations:
 //! - **Silhouette measurements.** Queries evaluate trimmed UV silhouettes on the
 //!   source surface, avoiding the independent 3D fit's extra measurement error.
+//!   The tracing tolerance is expressed in geometric units using the norm of the
+//!   double-cross projection, rather than ten times the query tolerance.
 //! - **Objects.** Tree objects and solution objects are a caller-chosen handle `O`
 //!   (upstream `SmObject*`; a null pointer is `None`). Everything the solvers read
 //!   through those pointers (the curve behind a tree object, a vertex's point and
@@ -1945,7 +1947,7 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
 /// `sm_GetFaceSilhouettes`: the face's trimmed silhouette curves for the view
 /// vector `opt_vectors[0]` (3D curves and their UV trim curves), taken from the
 /// surface cache's alternate caches or made and cached there (silhouette curves of
-/// the surface to ten times `tolerance_3d` and 20 degrees, trimmed by the face).
+/// the surface to a projection-scaled tolerance and 20 degrees, trimmed by the face).
 /// The returned 3D curves evaluate the trimmed UV curves on the source surface;
 /// the fitted 3D curves remain construction/trimming aids in the cache.
 /// The surface cache is the one the caller's
@@ -1976,7 +1978,26 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         .first()
         .ok_or(null_deref(OP_FACE_SIL, "no view vector"))?;
 
-    let approx_tol = tolerance_3d * 10.0;
+    // N x d x N has operator norm |N|^2. A geometric tracing tolerance
+    // cannot be used unchanged as a tolerance in this projected metric.
+    // This sets the tracer's requested accuracy; it does not turn its sampled
+    // span checks into a certified bound on the UV trace.
+    let projection_scale = view.length_squared();
+    let approx_tol = if projection_scale == 0.0 {
+        tolerance_3d
+    } else {
+        tolerance_3d / projection_scale
+    };
+    if !projection_scale.is_finite()
+        || !approx_tol.is_finite()
+        || approx_tol < 0.0
+        || (tolerance_3d > 0.0 && approx_tol == 0.0)
+    {
+        return Err(SolidError::invalid_input(
+            OP_FACE_SIL,
+            "projection tracing tolerance is not representable",
+        ));
+    }
     let angle_tol = 20.0 * PI / 180.0;
     let key = AltCacheKey {
         vec: Some(view),
