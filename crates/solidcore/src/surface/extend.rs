@@ -1322,7 +1322,17 @@ impl Local {
                     } else {
                         cur.range()?
                     };
-                    let step = left.min(most);
+                    // a remainder shorter than the side's knot can carry would be a sliver
+                    // span the knot fixup merges or spreads (the joint moved, the net not
+                    // kept): what is left is split in two instead, where both halves can be
+                    // at least that long (a step shorter than it mirrors a span the net
+                    // already has)
+                    let least = cur.least_step()?;
+                    let mut step = left.min(most);
+                    let rest = left - step;
+                    if rest > 0.0 && rest < least && left >= 2.0 * least {
+                        step = 0.5 * left;
+                    }
                     cur = cur.mirrored(step, how == Continuity::Curvature)?;
                     left -= step;
                 }
