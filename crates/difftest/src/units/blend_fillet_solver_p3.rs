@@ -1,8 +1,8 @@
-//! Runner for unit `blend.fillet_solver_p3`. C++: `solidcore_ffi::units::blend_fillet_solver_p3`.
-//! Rust: `solidcore::blend::fillet_solver::p3`.
+//! Runner for unit `blend.fillet_solver_p3`. Ported from upstream `SmFilletSolver::StepSolve`;
+//! checked against its golden. Rust: `solidcore::blend::fillet_solver::p3`.
 //!
-//! `step` runs `SmFilletSolver::StepSolve` on both sides with the same deterministic solver
-//! (the shim's `P3FS`, mirrored by [`HarnessSolver`]): the offset/offset intersection of a
+//! `step` runs `StepSolve` with a deterministic solver
+//! ([`HarnessSolver`], the reference shim's `P3FS`): the offset/offset intersection of a
 //! floor and a wall meeting at an edge (B-spline surfaces with linear parametrisation,
 //! optionally bumped), at angles between 20 and 160 degrees and scales from `1e-3` to
 //! `1e3`, from a point on the fillet centre line (perturbed or not), stepping inside the
@@ -43,9 +43,8 @@ use solidcore::surface::offset_surface::SS_UNKNOWN;
 use solidcore::surface::surface::p1::evaluate_1st_derivatives;
 use solidcore::topology::Brep;
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_solver_p3::{self as ffi, Op};
 
-use super::topology_edgeuse_p1::{push_surface, surface_of, BssIn, SrfIn};
+use super::topology_edgeuse_p1::{surface_of, BssIn, SrfIn};
 use crate::{HarnessError, Output, Rng, UnitDiff};
 
 /// The runner.
@@ -291,37 +290,6 @@ fn b(v: bool) -> f64 {
 
 fn domain_of(d: [f64; 4]) -> Extent2d {
     Extent2d::from_bounds(d[0], d[1], d[2], d[3])
-}
-
-fn cpp_step(i: &StepIn) -> Result<Output, HarnessError> {
-    let mut v = vec![
-        f64::from(i.ty),
-        i.tol,
-        i.radius,
-        i.orient[0],
-        i.orient[1],
-        i.distance,
-        b(i.extra),
-        b(i.init_fail),
-        b(i.allow_ext),
-    ];
-    push_surface(&mut v, &i.s0)?;
-    push_surface(&mut v, &i.s1)?;
-    for a in [i.uv0, i.uv1, i.duv0, i.duv1] {
-        v.extend(a);
-    }
-    v.extend(i.crv_pos);
-    v.extend(i.crv_deriv);
-    v.push(i.step);
-    v.extend(i.dom1);
-    v.extend(i.dom2);
-    v.extend(i.next_uv0);
-    v.extend(i.next_uv1);
-    v.extend(i.next_ud);
-    match ffi::eval(Op::Step, &v) {
-        Ok(o) => Ok(Output::new().values("flat", o)),
-        Err(e) => Err(harness(e.to_string())),
-    }
 }
 
 fn rust_step(i: &StepIn) -> Result<Output, HarnessError> {
@@ -655,12 +623,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         crate::runner::default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &crate::Case) -> Result<Output, HarnessError> {
-        match case.parse()? {
-            Inputs::Step(i) => cpp_step(&i),
-        }
     }
 
     fn run_rust(&self, case: &crate::Case) -> Result<Output, HarnessError> {
