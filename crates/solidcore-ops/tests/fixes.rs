@@ -1,10 +1,11 @@
 //! The fix set, taken by name: its own test binary, as the fix set is the process kernel's.
 
-use solidcore_ops::{make_box, make_sphere, session, CheckLevel};
+use solidcore_ops::{make_box, make_sphere, session, CheckLevel, Error};
 
 /// The fixes are the ones named, by `UpstreamFixes` field name; an unknown name changes nothing.
-/// The kernel uses the selected set: a sphere's volume matches the closed form
-/// both with every fix off and with every fix on.
+/// The kernel runs with them: at upstream's behaviour (every fix off) a sphere's volume at 1e-10
+/// fails with the kernel's status 1001 (at 1e-8 it converges since the precise-properties step
+/// control), with every fix on it is the closed form.
 #[test]
 fn fixes_are_taken_by_name() {
     let names = solidcore::kernel::UpstreamFixes::NAMES;
@@ -16,12 +17,7 @@ fn fixes_are_taken_by_name() {
     session::set_fixes([]).unwrap();
     assert!(session::fixes().is_empty());
     let ball = make_sphere([0.0; 3], 2.0).unwrap();
-    let want = 32.0 / 3.0 * std::f64::consts::PI;
-    let v = ball.volume(1e-8).unwrap();
-    assert!(
-        (v - want).abs() <= 1e-8 * want,
-        "default volume {v} vs {want}"
-    );
+    assert_eq!(ball.volume(1e-10).err(), Some(Error::Status(1001)));
     session::set_fixes(names.iter().copied()).unwrap();
     let v = ball.volume(1e-8).unwrap();
     assert!((v - 32.0 / 3.0 * std::f64::consts::PI).abs() < 1e-6, "{v}");
