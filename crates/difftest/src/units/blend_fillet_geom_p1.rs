@@ -2,8 +2,8 @@
 //! use / geometry / pseudo-B-rep records of `SmFilletGeom.cpp` and its static geometry
 //! helpers.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_geom_p1` (upstream
-//! `source/SMLib/src/SmFilletGeom.cpp`). Rust: `solidcore::blend::fillet_geom::p1`.
+//! Ported from upstream `source/SMLib/src/SmFilletGeom.cpp`; checked against its golden.
+//! Rust: `solidcore::blend::fillet_geom::p1`.
 //!
 //! A case is one geometry op (`cleanup_noise`, `check_seam_out`, `check_seam_on`,
 //! `surface_closure`, `is_order_correct`, `adjust_uv_on_seam`, `interpolate`,
@@ -73,11 +73,50 @@ use solidcore::topology::{
     Brep, EdgeId, Edgeuse, EdgeuseId, FaceId, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::blend_fillet_geom_p1::{self as ffi, Op};
 
 use crate::case::CaseContext;
+use crate::cases::blend;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The upstream routine run by the shim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)]
+enum Op {
+    CleanupNoise = 0,
+    CheckSeamOut = 1,
+    CheckSeamOn = 2,
+    SurfaceClosure = 3,
+    IsOrderCorrect = 4,
+    AdjustUvOnSeam = 5,
+    Interpolate = 6,
+    SurfaceDropPoint = 7,
+    TwoPnts = 8,
+    EvaluateMate = 9,
+    Capping = 10,
+    ClassifyFacePoint = 11,
+    EvaluateMateAnalytic = 12,
+    FbExport = 20,
+    FbVertexGeoms = 21,
+    FbVuAtRailEnd = 22,
+    FbRailVertexuse = 23,
+    FbEdgeName = 24,
+    FbFindEdge = 25,
+    FbClearEdges = 26,
+    FbTrim = 27,
+    FbDeleteVertex = 28,
+    FbDeleteEdge = 29,
+    FbVertOnVert = 30,
+    FbCliff = 31,
+    FbSplitFace = 32,
+    FbExamine = 33,
+    FbSetEuGeom = 34,
+    FbSetUvCurve = 35,
+    FbOrigUvCurve = 36,
+    FbSetVuProperty = 37,
+    FbBrepEdges = 38,
+    FbRemoveEdge = 39,
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 // Keep the larger corpus canonical: it covers additional failed center trims,
@@ -732,7 +771,10 @@ fn push_query(o: &mut Vec<f64>, q: &Query) -> Result<(), HarnessError> {
     Ok(())
 }
 
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
+/// The flat program of a case (layout of the reference wrapper,
+/// `crates/solidcore-ffi/src/units/blend_fillet_geom_p1.rs`), on which [`contract`] is
+/// checked.
+fn program(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     let mut o = Vec::new();
     match i {
         Inputs::CleanupNoise { uv } => o.extend_from_slice(uv),
@@ -879,30 +921,6 @@ fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         }
     }
     Ok(o)
-}
-
-fn cpp(i: &Inputs, expected_rejection: bool) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    let result = ffi::eval(i.op(), &input);
-    if expected_rejection {
-        // A fixture that upstream cannot run (see the FFI module doc): the wrapper
-        // refuses it (`InvalidArgument`) or the shim does (`SC_ERR_ARG`: the `FbExamine`
-        // adjusting path without a solver, a face upstream will not build, a surface
-        // whose constructed v knots crash the surface cache, UB-166). Only a
-        // flagged case may be recorded as rejected.
-        return match result {
-            Err(solidcore_ffi::FfiError::InvalidArgument(reason)) => Ok(Output::rejected(reason)),
-            Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => {
-                Ok(Output::rejected("shim_rejected_args"))
-            }
-            Err(e) => Err(harness(format!(
-                "expected-rejection fixture failed in another way: {e}"
-            ))),
-            Ok(_) => Err(harness("expected-rejection fixture was not refused")),
-        };
-    }
-    let flat = result.map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 // ---- output splitting ---------------------------------------------------------------
@@ -3272,22 +3290,238 @@ fn gen_query(rng: &mut Rng, m: &Model) -> Query {
     }
 }
 
+/// The reference wrapper's input contract for `op`'s program `input`
+/// (`crates/solidcore-ffi/src/units/blend_fillet_geom_p1.rs`): clamped B-splines within
+/// the size bounds, enum codes in their upstream ranges, indices inside the block and the
+/// op's preconditions (a curve on an edge whose fillet B-rep edge is looked for, both
+/// rails on a trimmed or rail-queried geometry, a vertex-classified vertex for
+/// `FbVertOnVert`, an edge-use-classified one for `FbCliff`, a deleted vertex without
+/// edges), every value finite and, for the ops reaching the hang regimes, within their
+/// magnitude bound (HANG-29: [`blend::MAX_MAGNITUDE`]; HANG-20:
+/// [`blend::MAX_SOLVER_MAGNITUDE`]).
+fn contract(op: Op, input: &[f64]) -> bool {
+    let bound = match op {
+        Op::ClassifyFacePoint | Op::FbSplitFace => blend::MAX_MAGNITUDE,
+        Op::SurfaceDropPoint | Op::TwoPnts | Op::FbVertOnVert | Op::FbCliff => {
+            blend::MAX_SOLVER_MAGNITUDE
+        }
+        _ => f64::INFINITY,
+    };
+    let mut rd = blend::Reader::new(input, bound);
+    let ok = if (op as i32) >= 20 {
+        pseudo_contract(op, &mut rd)
+    } else {
+        geometry_contract(op, &mut rd)
+    };
+    ok.is_some() && rd.done()
+}
+
+/// The geometry ops' arguments.
+fn geometry_contract(op: Op, rd: &mut blend::Reader<'_>) -> Option<()> {
+    // `SmSurfParamType` (U ..= OUT) and `SmOrientType` (UNKNOWN, SAME, OPPOSITE) codes
+    let closure = |rd: &mut blend::Reader<'_>| rd.index(9).map(|_| ());
+    let orient = |rd: &mut blend::Reader<'_>| rd.index(2).map(|_| ());
+    match op {
+        Op::CleanupNoise => {
+            rd.finites(2)?;
+        }
+        Op::CheckSeamOut | Op::CheckSeamOn => {
+            blend::surface(rd)?;
+            rd.finite()?;
+            closure(rd)?;
+            rd.finites(2)?;
+        }
+        Op::SurfaceClosure | Op::SurfaceDropPoint => {
+            blend::surface(rd)?;
+            rd.finites(4)?;
+        }
+        Op::IsOrderCorrect => {
+            let n = rd.index(blend::MAX_LIST)?;
+            rd.finites(6 * n)?;
+            let i1 = rd.index(blend::MAX_LIST)?;
+            let i2 = rd.index(blend::MAX_LIST)?;
+            if i1 >= n || i2 >= n {
+                return None;
+            }
+        }
+        Op::AdjustUvOnSeam => {
+            blend::surface(rd)?;
+            rd.finites(5)?;
+        }
+        Op::Interpolate => {
+            rd.finites(12)?;
+            rd.index(16)?;
+        }
+        Op::TwoPnts => {
+            blend::surface(rd)?;
+            blend::surface(rd)?;
+            rd.finites(3)?;
+            rd.flag()?;
+            rd.finites(6)?;
+            rd.flag()?;
+            rd.finites(4)?;
+        }
+        Op::EvaluateMate => {
+            blend::surface(rd)?;
+            rd.finites(2)?;
+        }
+        Op::Capping => {
+            rd.finite()?;
+            blend::surface(rd)?;
+            blend::curve(rd, 2)?;
+            orient(rd)?;
+            blend::curve(rd, 2)?;
+            orient(rd)?;
+        }
+        Op::ClassifyFacePoint => {
+            blend::surface(rd)?;
+            blend::surface(rd)?;
+            rd.finites(3)?;
+        }
+        Op::EvaluateMateAnalytic => {
+            // a surface of revolution (line ends, axis point and direction, swap) or a
+            // plane (origin, axes, scales, domain, then make_nurb)
+            let k = if rd.flag()? { 12 } else { 15 };
+            rd.finites(k)?;
+            rd.flag()?;
+            rd.finites(2)?;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+/// The pseudo-B-rep ops' block and arguments.
+fn pseudo_contract(op: Op, rd: &mut blend::Reader<'_>) -> Option<()> {
+    let b = blend::block(rd)?;
+    let edge_use = |rd: &mut blend::Reader<'_>| -> Option<usize> {
+        let e = rd.some_index(b.ne())?;
+        rd.index(1)?;
+        Some(e)
+    };
+    match op {
+        Op::FbExport => {}
+        Op::FbVertexGeoms => {
+            rd.some_index(b.nv())?;
+        }
+        Op::FbVuAtRailEnd => {
+            rd.some_index(b.nv())?;
+            rd.opt_index(b.ng())?;
+            let xe = rd.opt_index(b.ne())?;
+            let xw = rd.num()?;
+            if xe.is_some() && xw != 0.0 && xw != 1.0 {
+                return None;
+            }
+            rd.opt_index(b.ne())?;
+        }
+        Op::FbRailVertexuse => {
+            let g = rd.some_index(b.ng())?;
+            rd.index(1)?;
+            rd.index(1)?;
+            if !b.geom_rails.get(g).copied().unwrap_or(false) {
+                return None;
+            }
+        }
+        Op::FbEdgeName | Op::FbBrepEdges | Op::FbOrigUvCurve | Op::FbDeleteEdge => {
+            rd.some_index(b.ne())?;
+        }
+        Op::FbFindEdge => {
+            let e = rd.some_index(b.ne())?;
+            if !b.edge_curves.get(e).copied().unwrap_or(false) {
+                return None;
+            }
+            rd.flag()?;
+            let n = rd.index(blend::MAX_LIST)?;
+            for _ in 0..n {
+                rd.some_index(b.nfb)?;
+            }
+        }
+        Op::FbClearEdges => {
+            rd.some_index(b.ne())?;
+            let n = rd.index(blend::MAX_LIST)?;
+            for _ in 0..n {
+                rd.some_index(b.nfb)?;
+            }
+        }
+        Op::FbTrim => {
+            let g = rd.some_index(b.ng())?;
+            rd.finites(2)?;
+            if !b.geom_rails.get(g).copied().unwrap_or(false) {
+                return None;
+            }
+        }
+        Op::FbDeleteVertex => {
+            let v = rd.some_index(b.nv())?;
+            if b.edge_vertices.iter().any(|&[s, e]| s == v || e == v) {
+                return None;
+            }
+        }
+        Op::FbRemoveEdge => {
+            rd.some_index(b.ne())?;
+            rd.flag()?;
+        }
+        Op::FbVertOnVert => {
+            let v = rd.some_index(b.nv())?;
+            if b.pc_kinds.get(v).copied() != Some(1) {
+                return None;
+            }
+        }
+        Op::FbCliff => {
+            let v = rd.some_index(b.nv())?;
+            blend::surface(rd)?;
+            rd.finite()?;
+            if b.pc_kinds.get(v).copied() != Some(2) {
+                return None;
+            }
+        }
+        Op::FbSplitFace => {
+            rd.some_index(b.nv())?;
+            rd.some_index(b.nf)?;
+            rd.some_index(b.nf)?;
+        }
+        Op::FbExamine => {
+            rd.some_index(b.ng())?;
+            rd.flag()?;
+            rd.some_index(b.ng())?;
+            rd.flag()?;
+            rd.some_index(b.nv())?;
+            rd.some_index(b.nv())?;
+            rd.finite()?;
+        }
+        Op::FbSetEuGeom => {
+            edge_use(rd)?;
+            rd.opt_index(b.ng())?;
+        }
+        Op::FbSetUvCurve => {
+            edge_use(rd)?;
+            if rd.flag()? {
+                blend::curve(rd, 2)?;
+            }
+            rd.flag()?;
+            rd.flag()?;
+        }
+        Op::FbSetVuProperty => {
+            edge_use(rd)?;
+            edge_use(rd)?;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.fillet_geom_p1"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let c: CaseInputs = case.parse()?;
-        cpp(&c.inputs, c.expected_rejection)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i = case.parse::<CaseInputs>()?.inputs;
-        // an input the FFI refuses is a harness error on both sides: the Rust port loops
-        // as upstream does in the guarded hang regimes (HANG-20), so it must not run them
-        // (fuzz mutations of the flagged fixtures reach them unflagged)
-        ffi::validate(i.op(), &cpp_input(&i)?).map_err(|e| harness(e.to_string()))?;
+        // an input outside the contract is refused: the Rust port loops as upstream does
+        // in the guarded hang regimes (HANG-20), so it must not run them (fuzz mutations
+        // of the flagged fixtures reach them unflagged)
+        if !contract(i.op(), &program(&i)?) {
+            return Ok(Output::err("outside the input contract"));
+        }
         let rec = match &i {
             Inputs::Fb { model, query } => rust_pseudo(model, query)?,
             _ => rust_geometry(&i)?,
@@ -3326,240 +3560,9 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// Mutates generated and fixture programs and feeds them to the FFI: every program
-    /// the guards accept must run without crashing (a crash kills the test process) or
-    /// hanging (30 s per call; 180 s for `ClassifyFacePoint` and `FbSplitFace`, whose
-    /// accepted inputs can take up to about 100 s under the HANG-29 bound). `cargo test
-    /// -p difftest --features cpp -- --ignored fuzz_guards`; `FUZZ_SEED` and
-    /// `FUZZ_CALLS` override the seed (`0xfa11ba11`) and the call count (60k). A clean
-    /// sweep is evidence, not proof: the pre-review's sweeps missed UB-166 and the slow
-    /// HANG-29 inputs that a different mutation mix found.
-    #[test]
-    #[ignore = "60k FFI calls; run on demand"]
-    fn fuzz_guards() {
-        let ctx = CaseContext {
-            root: crate::case::repo_root(),
-            seeds: 0,
-        };
-        let mut bases: Vec<(Op, Vec<f64>)> = Vec::new();
-        for case in Runner.cases(&ctx).unwrap_or_default() {
-            if let Ok(i) = case.parse::<Inputs>() {
-                if let Ok(flat) = cpp_input(&i) {
-                    bases.push((i.op(), flat));
-                }
-            }
-        }
-        for i in 0..2000 {
-            let mut rng = Rng::new(0x5eed_f00d + i);
-            if let Some(v) = Runner.generate(&mut rng) {
-                let inputs: Inputs = serde_json::from_value(v).unwrap();
-                bases.push((inputs.op(), cpp_input(&inputs).unwrap()));
-            }
-        }
-        let specials = [
-            0.0,
-            1.0,
-            -1.0,
-            2.0,
-            0.5,
-            100.0,
-            1e300,
-            -1e300,
-            1e-300,
-            f64::NAN,
-            f64::INFINITY,
-            -f64::INFINITY,
-            1e20,
-            -1e20,
-            1e-12,
-            13.0,
-            999.0,
-            // the guard boundaries: the magnitude cap, tiny positive weights, counts
-            ffi::MAX_MAGNITUDE,
-            -ffi::MAX_MAGNITUDE,
-            1e149,
-            1e-150,
-            1e-6,
-            1e-9,
-            64.0,
-            63.0,
-            -0.0,
-            // the HANG-29 slow range and the UB-166 knot fixup (scaled zero 2e-12 on [0, 1],
-            // spread tolerance 1.2e-8 and its 1.01 increment)
-            1e15,
-            -1e15,
-            1e30,
-            1e-13,
-            2e-12,
-            3e-12,
-            1e-11,
-            5e-9,
-            1e-8,
-            1.2e-8,
-            1.2e-8 * 1.01,
-            2.4e-8,
-            // the HANG-20 bound of the global-solver ops and the measured hangs above it
-            ffi::MAX_SOLVER_MAGNITUDE,
-            -ffi::MAX_SOLVER_MAGNITUDE,
-            3e307,
-            -7e307,
-            8e307,
-        ];
-        let env_u64 = |name: &str, default: u64| {
-            std::env::var(name)
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(default)
-        };
-        let seed = env_u64("FUZZ_SEED", 0xfa11_ba11);
-        let max_calls = env_u64("FUZZ_CALLS", 60_000);
-        let mut rng = Rng::new(seed);
-        let (mut accepted, mut rejected) = (0u64, 0u64);
-        let mut calls = 0u64;
-        while calls < max_calls {
-            let (op, base) = &bases[rng.below(bases.len() as u64) as usize];
-            let mut input = base.clone();
-            let n_mut = rng.below(6);
-            for _ in 0..n_mut {
-                match rng.below(9) {
-                    0 if !input.is_empty() => {
-                        let at = rng.below(input.len() as u64) as usize;
-                        input[at] = specials[rng.below(specials.len() as u64) as usize];
-                    }
-                    1 if !input.is_empty() => {
-                        let at = rng.below(input.len() as u64) as usize;
-                        input[at] *= rng.uniform(-3.0, 3.0);
-                    }
-                    2 if !input.is_empty() => {
-                        let at = rng.below(input.len() as u64) as usize;
-                        input.truncate(at);
-                    }
-                    3 => input.push(specials[rng.below(specials.len() as u64) as usize]),
-                    4 if input.len() > 1 => {
-                        let a = rng.below(input.len() as u64) as usize;
-                        let b = rng.below(input.len() as u64) as usize;
-                        input.swap(a, b);
-                    }
-                    5 if input.len() > 1 => {
-                        // a value a hair above its predecessor: inside a knot vector this
-                        // is the near-coincident pair the constructor snaps or spreads
-                        // (UB-166, both stages)
-                        let at = 1 + rng.below(input.len() as u64 - 1) as usize;
-                        let gap = [1e-13, 1e-12, 2e-12, 1e-11, 1e-9, 5e-9, 1e-8, 1.2e-8 * 1.01]
-                            [rng.below(8) as usize];
-                        input[at] = input[at - 1] + gap;
-                    }
-                    6 if input.len() > 1 => {
-                        // a run of values compressed towards its predecessor: a knot
-                        // vector whose whole range drops under the spread tolerance, the
-                        // regime where the constructor's second stage moves knots onto
-                        // the start knot (UB-166)
-                        let at = 1 + rng.below(input.len() as u64 - 1) as usize;
-                        let end = (at + 1 + rng.below(8) as usize).min(input.len());
-                        let factor = [1e-7, 1e-8, 1e-9][rng.below(3) as usize];
-                        let base = input[at - 1];
-                        for x in input.iter_mut().take(end).skip(at) {
-                            *x = base + (*x - base) * factor;
-                        }
-                    }
-                    7 if input.len() > 1 => {
-                        // a run of equal values a hair above their predecessor: an end
-                        // knot group the constructor's first stage snaps back before the
-                        // spread (UB-166's end-snap route)
-                        let at = 1 + rng.below(input.len() as u64 - 1) as usize;
-                        let end = (at + 1 + rng.below(4) as usize).min(input.len());
-                        let d = [3e-13, 5e-13, 9e-13, 2e-12][rng.below(4) as usize];
-                        let value = input[at - 1] + d;
-                        for x in input.iter_mut().take(end).skip(at) {
-                            *x = value;
-                        }
-                    }
-                    _ if !input.is_empty() => {
-                        let at = rng.below(input.len() as u64) as usize;
-                        input[at] = (input[at] + 1.0).round();
-                    }
-                    _ => {}
-                }
-            }
-            let op = if rng.chance(0.05) {
-                // the same program under a random op
-                let ops = [
-                    Op::CleanupNoise,
-                    Op::CheckSeamOut,
-                    Op::CheckSeamOn,
-                    Op::SurfaceClosure,
-                    Op::IsOrderCorrect,
-                    Op::AdjustUvOnSeam,
-                    Op::Interpolate,
-                    Op::SurfaceDropPoint,
-                    Op::TwoPnts,
-                    Op::EvaluateMate,
-                    Op::Capping,
-                    Op::ClassifyFacePoint,
-                    Op::EvaluateMateAnalytic,
-                    Op::FbExport,
-                    Op::FbVertexGeoms,
-                    Op::FbVuAtRailEnd,
-                    Op::FbRailVertexuse,
-                    Op::FbEdgeName,
-                    Op::FbFindEdge,
-                    Op::FbClearEdges,
-                    Op::FbTrim,
-                    Op::FbDeleteVertex,
-                    Op::FbDeleteEdge,
-                    Op::FbVertOnVert,
-                    Op::FbCliff,
-                    Op::FbSplitFace,
-                    Op::FbExamine,
-                    Op::FbSetEuGeom,
-                    Op::FbSetUvCurve,
-                    Op::FbOrigUvCurve,
-                    Op::FbSetVuProperty,
-                    Op::FbBrepEdges,
-                    Op::FbRemoveEdge,
-                ];
-                ops[rng.below(ops.len() as u64) as usize]
-            } else {
-                *op
-            };
-            // Each call runs on its own thread so a C++ hang fails the test with the
-            // offending program printed instead of stalling the sweep forever.
-            let (tx, rx) = std::sync::mpsc::channel();
-            let program = input.clone();
-            std::thread::spawn(move || {
-                let _ = tx.send(ffi::eval(op, &program).map(|_| ()));
-            });
-            let limit = if matches!(op, Op::ClassifyFacePoint | Op::FbSplitFace) {
-                180
-            } else {
-                30
-            };
-            match rx.recv_timeout(std::time::Duration::from_secs(limit)) {
-                Ok(Ok(()) | Err(solidcore_ffi::FfiError::Status(_))) => accepted += 1,
-                Ok(Err(_)) => rejected += 1,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!(
-                    "fuzz_guards: call {calls} (op {}) hung for {limit} s; input = {}",
-                    op as i32,
-                    serde_json::to_string(&input).unwrap()
-                ),
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!(
-                    "fuzz_guards: call {calls} (op {}) died; input = {}",
-                    op as i32,
-                    serde_json::to_string(&input).unwrap()
-                ),
-            }
-            calls += 1;
-            if calls.is_multiple_of(5000) {
-                eprintln!("fuzz_guards: {calls} calls ({accepted} ran, {rejected} rejected)");
-            }
-        }
-        eprintln!("fuzz_guards: {calls} calls, {accepted} ran, {rejected} rejected by the wrapper");
-    }
-
-    /// Runs chosen cases through one side, for memory checking: `cargo test -p difftest
-    /// --features cpp --lib --no-run`, then the test binary under valgrind with
-    /// `--ignored case_sample --nocapture`. `CASE_SIDE` is `cpp` (default) or `rust`;
-    /// `CASE_SEEDS` (default 2000) sizes the case list as `--seeds` does;
+    /// Runs chosen cases through the Rust side, for memory checking: `cargo test -p
+    /// difftest --lib --no-run`, then the test binary under valgrind with `--ignored
+    /// case_sample --nocapture`. `CASE_SEEDS` (default 2000) sizes the case list as `--seeds` does;
     /// `CASE_INDICES=<i>,..` picks cases by their index in it, otherwise
     /// `CASE_OPS=<op>,..` picks the cases of those ops (default the pseudo-B-rep ops 20 to
     /// 39), at most `CASE_PER_OP` of each (default all), leaving out `CASE_SKIP=<i>,..`
@@ -3575,7 +3578,6 @@ mod tests {
         let list = |text: String| -> Vec<i64> {
             text.split(',').map(|t| t.trim().parse().unwrap()).collect()
         };
-        let rust_side = env("CASE_SIDE").is_some_and(|s| s == "rust");
         let ctx = CaseContext {
             root: crate::case::repo_root(),
             seeds: env("CASE_SEEDS").map_or(2000, |s| s.parse().unwrap()),
@@ -3652,82 +3654,18 @@ mod tests {
         for i in indices {
             let case = &cases[i];
             let inputs: Inputs = case.parse().unwrap();
-            let r = if rust_side {
-                format!(
-                    "{:?}",
-                    Runner
-                        .run_rust(case)
-                        .map(|o| (o.error, o.deferred.map(|d| d.unit)))
-                )
-            } else {
-                format!(
-                    "{:?}",
-                    cpp_input(&inputs).map(|flat| {
-                        ffi::eval(inputs.op(), &flat)
-                            .map(|r| r.into_iter().take(2).collect::<Vec<_>>())
-                    })
-                )
-            };
+            let r = format!(
+                "{:?}",
+                Runner
+                    .run_rust(case)
+                    .map(|o| (o.error, o.deferred.map(|d| d.unit)))
+            );
             eprintln!(
                 "case_sample: {i} {} op {} -> {r}",
                 case.name,
                 inputs.op() as i32
             );
         }
-    }
-
-    /// Replays one flat program against the FFI with a timing: `REPLAY_FILE` names a
-    /// JSON `{"op": <Op as i32>, "input": [..]}` (the shape `fuzz_guards` prints for a
-    /// hang or crash, plus the op); `REPLAY_SUBST=<old>=<new>` first replaces every
-    /// value equal to `old` by `new`, `REPLAY_SET=<index>=<value>,..` sets single slots;
-    /// `REPLAY_TIMEOUT` (s, default 300) bounds the call. A crash kills the test
-    /// process, so a crashing program prints nothing (the runner reports the signal).
-    /// `cargo test -p difftest --features cpp -- --ignored replay_program --nocapture`.
-    #[test]
-    #[ignore = "replays a program named by REPLAY_FILE"]
-    fn replay_program() {
-        let Ok(file) = std::env::var("REPLAY_FILE") else {
-            return;
-        };
-        let text = std::fs::read_to_string(&file).unwrap();
-        let v: Value = serde_json::from_str(&text).unwrap();
-        let op_code = v["op"].as_i64().unwrap();
-        let op = Op::from_code(op_code).unwrap();
-        let mut input: Vec<f64> = serde_json::from_value(v["input"].clone()).unwrap();
-        if let Ok(subst) = std::env::var("REPLAY_SUBST") {
-            let (old, new) = subst.split_once('=').unwrap();
-            let (old, new): (f64, f64) = (old.parse().unwrap(), new.parse().unwrap());
-            for x in &mut input {
-                if *x == old {
-                    *x = new;
-                }
-            }
-        }
-        if let Ok(sets) = std::env::var("REPLAY_SET") {
-            for set in sets.split(',') {
-                let (at, value) = set.split_once('=').unwrap();
-                input[at.parse::<usize>().unwrap()] = value.parse().unwrap();
-            }
-        }
-        let limit: u64 = std::env::var("REPLAY_TIMEOUT")
-            .ok()
-            .and_then(|t| t.parse().ok())
-            .unwrap_or(300);
-        let (tx, rx) = std::sync::mpsc::channel();
-        let program = input.clone();
-        let t0 = std::time::Instant::now();
-        std::thread::spawn(move || {
-            let _ =
-                tx.send(ffi::eval(op, &program).map(|r| r.into_iter().take(4).collect::<Vec<_>>()));
-        });
-        let Ok(r) = rx.recv_timeout(std::time::Duration::from_secs(limit)) else {
-            eprintln!("replay_program: op {op_code} did not return within {limit} s");
-            std::process::exit(0);
-        };
-        eprintln!(
-            "replay_program: op {op_code} -> {r:?} in {:?}",
-            t0.elapsed()
-        );
     }
 
     #[test]
