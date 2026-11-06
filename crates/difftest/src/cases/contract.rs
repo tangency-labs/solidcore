@@ -345,3 +345,45 @@ pub fn domain_in(d: &[f64; 4], outer: &[f64; 4], strict: bool, max: f64) -> bool
         && d[3] <= o[3]
         && (!strict || (d[2] - d[0] >= 1e-6 * (o[2] - o[0]) && d[3] - d[1] >= 1e-6 * (o[3] - o[1])))
 }
+
+/// Whether a curve's control points stored `[x, y, z, w]` keep [`points3`], except that a
+/// 2D curve (`planar`) may store `z = NOZ` (counted as 0); the `check_points` of the
+/// `surface_p5` and `surface_p6` wrappers.
+#[must_use]
+pub fn curve_points(pts: &[[f64; 4]], planar: bool, max: f64) -> bool {
+    let mut rat = None;
+    pts.iter().all(|&[x, y, z, w]| {
+        let r = w != NOW;
+        (z != NOZ || planar)
+            && *rat.get_or_insert(r) == r
+            && (!r || (1e-3..=1e3).contains(&w))
+            && [x, y, if z == NOZ { 0.0 } else { z }]
+                .iter()
+                .all(|&c| finite(c, max))
+    })
+}
+
+/// The knot range of a B-spline curve of dimension `dim`, control points `cpts`, degree `p`
+/// and knots `u`, if it keeps the `surface_p5` / `surface_p6` wrappers' curve contract:
+/// dimension 2 or 3, `1 ≤ p ≤ n` within the limits, `n + p + 2` knots, [`curve_points`]
+/// and [`clamped`] knots within range.
+#[must_use]
+pub fn planar_curve_block(
+    dim: u64,
+    cpts: &[[f64; 4]],
+    p: usize,
+    u: &[f64],
+    lim: &Limits,
+) -> Option<(f64, f64)> {
+    let n = cpts.len().checked_sub(1)?;
+    let ok = (2..=3).contains(&dim)
+        && n <= lim.max_index
+        && (1..=n.min(lim.max_degree)).contains(&p)
+        && u.len() == n + p + 2
+        && curve_points(cpts, dim == 2, lim.max_coord)
+        && u.iter().all(|&k| finite(k, lim.max_coord));
+    if !ok {
+        return None;
+    }
+    clamped(u, p)
+}

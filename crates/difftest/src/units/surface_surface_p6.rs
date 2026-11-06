@@ -37,7 +37,7 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, SurfParamType};
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::nurbs::crv_basic::Curve;
-use solidcore::nurbs::math::{CPoint, NOW, NOZ};
+use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::srf_basic::Surface as NlSurface;
 use solidcore::surface::curve_bounded_surface::CurveBoundedSurface;
 use solidcore::surface::plane::Plane;
@@ -50,7 +50,7 @@ use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
-use crate::cases::contract;
+use crate::cases::contract::{self, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -791,19 +791,12 @@ fn nonzero3(v: &[f64; 3]) -> bool {
     contract::nonzero3(v, MAX_COORD)
 }
 
-/// Whether control points are of one rationality with weights in `[1e-3, 1e3]` and
-/// coordinates within range, 3D-stored unless `planar`.
-fn points(pts: &[[f64; 4]], planar: bool) -> bool {
-    let rat = pts.first().is_some_and(|p| p[3] != NOW);
-    pts.iter().all(|&[x, y, z, w]| {
-        (z != NOZ || planar)
-            && (w != NOW) == rat
-            && (!rat || (1e-3..=1e3).contains(&w))
-            && [x, y, if z == NOZ { 0.0 } else { z }]
-                .iter()
-                .all(|&c| fin(c))
-    })
-}
+/// The size bounds of surface and curve blocks.
+const LIMITS: Limits = Limits {
+    max_index: MAX_INDEX,
+    max_degree: MAX_DEGREE,
+    max_coord: MAX_COORD,
+};
 
 /// The distance of `p` from the axis through `o` along `a`.
 fn dist_to_axis(p: [f64; 3], o: [f64; 3], a: [f64; 3]) -> f64 {
@@ -818,8 +811,8 @@ fn dist_to_axis(p: [f64; 3], o: [f64; 3], a: [f64; 3]) -> f64 {
 }
 
 /// The natural domain (`None` when unbounded) and whether it is a plain B-spline or
-/// sphere, of a resolved surface that keeps the contract: a B-spline within the size
-/// bounds with [`points`] and clamped knots, a plane with a non-zero normal, a curve
+/// sphere, of a resolved surface that keeps the contract: a B-spline as
+/// [`contract::surface_block`] takes it with a form up to 11, a plane with a non-zero normal, a curve
 /// bounded surface over one of those (not nested), a revolution of a generator at least
 /// `1e-3` long not lying on its non-zero axis, or the sphere.
 fn surface_kind(s: &SrfIn, nested: bool) -> Option<(Option<[f64; 4]>, bool)> {
@@ -841,24 +834,8 @@ fn surface_kind(s: &SrfIn, nested: bool) -> Option<(Option<[f64; 4]>, bool)> {
         }
         SrfIn::Plane { o, n } => (vec3(o) && nonzero3(n)).then_some((None, false)),
         SrfIn::Bspline(b) => {
-            let n = b.net.len().checked_sub(1)?;
-            let cols = b.net.first()?.len();
-            let m = cols.checked_sub(1)?;
-            let ok = b.form <= 11
-                && n <= MAX_INDEX
-                && m <= MAX_INDEX
-                && (1..=n.min(MAX_DEGREE)).contains(&b.p)
-                && (1..=m.min(MAX_DEGREE)).contains(&b.q)
-                && b.u.len() == n + b.p + 2
-                && b.v.len() == m + b.q + 2
-                && b.net.iter().all(|row| row.len() == cols && points(row, false))
-                && b.u.iter().chain(&b.v).all(|&k| fin(k));
-            if !ok {
-                return None;
-            }
-            let (u0, u1) = contract::clamped(&b.u, b.p)?;
-            let (v0, v1) = contract::clamped(&b.v, b.q)?;
-            Some((Some([u0, v0, u1, v1]), true))
+            let blk = contract::surface_block(&b.net, b.p, b.q, &b.u, &b.v, &LIMITS)?;
+            (b.form <= 11).then_some((Some(blk.dom), true))
         }
     }
 }
@@ -872,7 +849,7 @@ enum Range {
 }
 
 /// The [`Range`] of a curve that keeps the contract: a line at least `1e-6` long, or a 2D
-/// or 3D B-spline within the size bounds with [`points`] and clamped knots.
+/// or 3D B-spline as [`contract::planar_curve_block`] takes it.
 fn curve_kind(c: &CrvIn) -> Option<Range> {
     match c {
         CrvIn::Line { a, b } => {
@@ -880,17 +857,7 @@ fn curve_kind(c: &CrvIn) -> Option<Range> {
             (vec3(a) && vec3(b) && len >= 1e-6).then_some(Range::Line)
         }
         CrvIn::Bspline { dim, cpts, p, u } => {
-            let n = cpts.len().checked_sub(1)?;
-            let ok = (2..=3).contains(dim)
-                && n <= MAX_INDEX
-                && (1..=n.min(MAX_DEGREE)).contains(p)
-                && u.len() == n + p + 2
-                && points(cpts, *dim == 2)
-                && u.iter().all(|&k| fin(k));
-            if !ok {
-                return None;
-            }
-            contract::clamped(u, *p).map(|(a, b)| Range::Knots(a, b))
+            contract::planar_curve_block(*dim, cpts, *p, u, &LIMITS).map(|(a, b)| Range::Knots(a, b))
         }
     }
 }
