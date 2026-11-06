@@ -102,7 +102,7 @@ seeds of each round/chamfer use the same tangent contour. Enclosure and Sensor C
 each move from six successes and two no-room refusals to eight successes. Pi's
 original and edited operands already pass all eight operations on pristine main:
 they do not reproduce its reported timeline failure. All 32 corrected controls
-pass full integrity checks and retain identical mirrored topology. Per contour and
+pass full integrity checks and retain identical mirrored face/edge/vertex counts. Per contour and
 operation, mirrored volumes spread by at most 5.7e-14 relative. These measurements
 are consistency checks, not new expected-volume goldens or proof that every reported
 application action is fixed. In particular, Pi's actual failing timeline action
