@@ -69,5 +69,17 @@ kernel; the same source still fails at the chamfer on pristine `3ed619475`.
 Generic chord certification remains expensive (the two tests took 83.08 seconds
 on this machine). A stack sample locates that work in `gn_certify_span` through
 `GnSectionFsg::build_chord`; this is not a performance improvement claim.
-The unoptimized diagnostic had exceeded 180 seconds. Broader validation is tracked
-in the PR. This fixes only the Vase action, not all eleven #2905 actions.
+The unoptimized diagnostic had exceeded 180 seconds. The existing profiler records **987 calls to `gn_certify_span` and 75,307 calls
+to `gn_enclose_over`** during construction. These are invocation counts, not the
+number of final net spans. The profiled kernel serializes the same body byte for
+byte. This identifies certificate work for a later performance investigation;
+no optimization is introduced here.
+
+On main `3ed619475` with this fix, the full kernel suite passes 5,086 tests,
+0 fail, 44 are ignored. Formatting, strict workspace all-target Clippy, wasm
+and the affected goldens in both normal and reverse order pass. The full golden
+sweep is 282/283: its sole difference, `curve.conic` / `gen2235` / `values.r[4]`,
+is reproduced unchanged on pristine main (3.776586443654626e-14 expected,
+3.552713678800501e-14 actual). It is an intersection distance with requested
+tolerance 1e-9, tracked in the discussion on #487. No golden or floor changes.
+Validation details are in the PR. This fixes only the Vase action, not all eleven #2905 actions.
