@@ -34,7 +34,7 @@ fn bases() -> &'static [Vec<u8>] {
     BASES.get_or_init(|| {
         let mut out = vec![
             include_bytes!("fixtures/discord-2026-10-30-fillet.step").to_vec(),
-            include_bytes!("../../difftest/src/units/topology_brep_constructor_tetra.stp").to_vec(),
+            include_bytes!("../../goldens/src/units/topology_brep_constructor_tetra.stp").to_vec(),
         ];
         let mut k = Kernel::default();
         let o = Point3::new(0.0, 0.0, 0.0);
