@@ -92,3 +92,42 @@ of #2967. `compute_span_deviation_base` tests finitely many span points against
 locally corrected points, and supplies no global UV-trace enclosure. The next
 construction must control that remaining error in the actual query metric,
 including the projection scale, and verify trimmed endpoints and enumeration.
+
+## Projection metric correction and executed regression
+
+The next implementation requests tracing tolerance
+`query_tolerance / max(1, |N|^2)`. The squared-normal factor converts the
+projection metric to geometric distance. The maximum with one prevents a
+contracting projection from loosening the geometric tolerance: the tracer also
+uses that tolerance to discard short geometric segments. Nonfinite or
+underflowed positive tolerance conversions return an input error.
+
+An isolated diagnostic using the geometric budget `1e-5 / |N|^2` for the
+45-degree, length-1000 normal returned `2502498.4394500777`, compared with the
+analytic `2502498.4394500786`: error about `9.3e-10`. The committed diagnostic
+reproduces the budget comparison with `-- 45 1000 metric`; the default remains
+the original `legacy` tracing tolerance to preserve the failing reproduction.
+
+At production head `14404b56f`, the prepared-face tests passed: two tests,
+four configurations (untilted/unit, tilted/0.001, tilted/unit, tilted/1000),
+zero failures. Each checks the returned scalar against the closed form at the
+original query tolerance, and against the surface evaluated at the returned
+UV parameters with a separate floating-point rounding allowance. The latter
+allowance does not loosen the query tolerance. This is evidence for these
+cases, not a global enclosure proof for the sampled tracer.
+
+The earlier lift-only head `da344d338` completed both affected-unit golden runs:
+
+| Unit | Cases | Changed from main goldens | Broken |
+|---|---:|---:|---:|
+| intersect.topology_solver_p1 | 3592 | 24 | 0 |
+| intersect.topology_solver_p2 | 2575 | 65 | 0 |
+
+Rust-only output snapshots against the validated #2840 executable isolate the
+follow-up: p1 has zero changed outputs across all 3592 common cases; p2 has 45
+changed outputs across all 2575 common cases, with no changed statuses or
+solution counts. Some differences are rounding or different equal-valued
+representatives. Sphere and torus point maxima move to their closed-form
+values. This comparison does not certify the global optimality of every local
+curve/face or face/face record. No golden was blessed. Final metric-head
+goldens, full tests, lint and wasm checks remain to be recorded.
