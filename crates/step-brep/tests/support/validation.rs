@@ -46,7 +46,7 @@ use step_import::Limits;
 /// step run at `accuracy / 10` too. It is a relative error target per step, not a proven
 /// bound on the sum, and it does not cover the trims themselves. The tests take it as the
 /// relative accuracy of the volume, as agreed on #2593; on every corpus file of #2580
-/// and #2583 the volume at 1e-9 is within 7e-11 of the volume at 1e-11 (the PRs' tables).
+/// with a volume the volume at 1e-9 is within 7e-11 of the volume at 1e-11 (#2593).
 pub const ACCURACY: f64 = 1e-9;
 
 /// One geometric validation volume of a file.
