@@ -1,8 +1,8 @@
 //! Runner for `offset.offset_executive_p2` (PR #201).
 //!
-//! Upstream: `source/SMLib/src/SmOffsetExecutive.cpp`,
-//! `source/SM_API/src/SmApiBrep.cpp`; native adapter:
-//! `harness/cpp/shim/offset_offset_executive_p2.cpp` (snapshot protocol v1).
+//! Ported from upstream `source/SMLib/src/SmOffsetExecutive.cpp` and
+//! `source/SM_API/src/SmApiBrep.cpp` into `solidcore::offset::offset_executive::p2`;
+//! checked against the unit's golden.
 //!
 //! | Rust | Upstream |
 //! |------|----------|
@@ -10,12 +10,10 @@
 //! | [`Runner`] member solid/extended | `DoSolidOffset`, `DoExtendedOffset` |
 //! | [`Runner`] API shell/offset | `SmApiShellBrepFull`, `SmApiOffsetBrepFull` |
 //!
-//! Deviations: independent serde/native DTO conversion and independent Rust input
-//! construction, not native operation replay. Ordinary operation statuses are
-//! INTEGER observations, not `Output::error` (which would suppress geometry/state
-//! comparison). ONLY `ffi::Outcome::Rejected` is a constructor rejection; all FFI
-//! guard/transport/layout errors are harness errors. Actual kernel `Unported`
-//! errors propagate unchanged, including calls before tolerance guards/copying.
+//! Ordinary operation statuses are INTEGER observations, not `Output::error` (which
+//! would suppress geometry/state recording). Input-contract errors ([`validate`]) are
+//! harness errors. Actual kernel `Unported` errors propagate unchanged, including calls
+//! before tolerance guards/copying.
 //! No topology clone stands in for the API shell's missing copy constructor.
 //!
 //! Exact current parity scope: member null (1006), API null (1007), and API shell
@@ -105,7 +103,6 @@ use solidcore::topology::{
     Vertex, VertexId, Vertexuse, VertexuseOwner,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::offset_offset_executive_p2 as ffi;
 
 use crate::runner::default_cases;
 use crate::util::{p2 as point2, v3};
@@ -113,6 +110,37 @@ use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// Minimum reproducible generated inputs, even when `--seeds 0` is requested.
 pub const MIN_GENERATED: usize = 240;
+/// Fixture limit on selected faces, including duplicate and null selections.
+const MAX_SELECTIONS: usize = 1024;
+/// Selection index bound of a [`Fixture::File`] source, whose face count is only known
+/// once it is read (a selection past its faces is then a fixture-construction error).
+const MAX_FILE_FACES: usize = 1024;
+/// The first attribute id of an attributed case's source tags (#1462).
+const ATTRIBUTE_BASE: u64 = 10007;
+/// Upstream's `SM_SUCCESS`.
+const NATIVE_SUCCESS: i32 = 1000;
+
+/// The executive state after the call, observed before its destructor runs.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq)]
+struct ExecutiveState {
+    /// The operation type after the call.
+    operation: i32,
+    /// The inset flag.
+    inset: bool,
+    /// The extend-convex flag.
+    extend_convex: bool,
+    /// The merge-results flag.
+    merge_results: bool,
+    /// The create-offset-solid flag.
+    create_offset_solid: bool,
+    /// The geometry creator's stored distance.
+    distance: f64,
+    /// The geometry creator's stored approximation tolerance.
+    approx_tol: f64,
+    /// The tangency tolerance, in degrees.
+    tangency_degrees: f64,
+}
 /// The six real native entrypoints and their Rust counterparts.
 pub struct Runner;
 
@@ -130,16 +158,6 @@ enum Operation {
     ApiOffset,
 }
 impl Operation {
-    const fn native(self) -> ffi::Operation {
-        match self {
-            Self::StaticOffset => ffi::Operation::StaticOffset,
-            Self::StaticShell => ffi::Operation::StaticShell,
-            Self::Solid => ffi::Operation::Solid,
-            Self::Extended => ffi::Operation::Extended,
-            Self::ApiShell => ffi::Operation::ApiShell,
-            Self::ApiOffset => ffi::Operation::ApiOffset,
-        }
-    }
     const fn member(self) -> bool {
         matches!(self, Self::Solid | Self::Extended)
     }
@@ -193,56 +211,6 @@ enum Fixture {
     },
 }
 impl Fixture {
-    fn native(&self) -> ffi::Fixture {
-        match *self {
-            Self::Empty => ffi::Fixture::EmptyBrep,
-            Self::Wire {
-                start,
-                end,
-                domain,
-                interval,
-            } => ffi::Fixture::Wire {
-                start,
-                end,
-                domain,
-                interval,
-            },
-            Self::PlaneSheet {
-                origin,
-                x_axis,
-                y_axis,
-                scale,
-                domain,
-            } => ffi::Fixture::PlaneSheet {
-                origin,
-                x_axis,
-                y_axis,
-                scale,
-                domain,
-            },
-            Self::Box { origin, size } => ffi::Fixture::Box { origin, size },
-            Self::Cylinder {
-                origin,
-                radius,
-                height,
-            } => ffi::Fixture::Cylinder {
-                origin,
-                radius,
-                height,
-            },
-            Self::Sphere { origin, radius } => ffi::Fixture::Sphere { origin, radius },
-            Self::File { ref path } => ffi::Fixture::File { path: path.clone() },
-            Self::CylinderSheet {
-                origin,
-                radius,
-                height,
-            } => ffi::Fixture::CylinderSheet {
-                origin,
-                radius,
-                height,
-            },
-        }
-    }
     /// Built by a native primitive constructor (and its Rust port), or read from an
     /// upstream file: projected as a solid (face, edge and vertex counts and bounds).
     const fn primitive(&self) -> bool {
@@ -263,7 +231,7 @@ impl Fixture {
             Self::PlaneSheet { .. } | Self::Sphere { .. } | Self::CylinderSheet { .. } => 1,
             Self::Box { .. } => 6,
             Self::Cylinder { .. } => 3,
-            Self::File { .. } => ffi::MAX_FILE_FACES,
+            Self::File { .. } => MAX_FILE_FACES,
         }
     }
 }
@@ -279,15 +247,6 @@ enum Selection {
     Source(usize),
     Foreign(usize),
     Null,
-}
-impl Selection {
-    const fn native(self) -> ffi::FaceSelection {
-        match self {
-            Self::Source(index) => ffi::FaceSelection::Source(index),
-            Self::Foreign(index) => ffi::FaceSelection::Foreign(index),
-            Self::Null => ffi::FaceSelection::Null,
-        }
-    }
 }
 
 // Five independent native flags, not alternatives in a state machine.
@@ -321,19 +280,6 @@ impl Default for Config {
     }
 }
 impl Config {
-    fn native(&self) -> ffi::Config {
-        ffi::Config {
-            offset_distance: self.offset_distance,
-            member_distance: self.member_distance,
-            member_approx_tol: self.member_approx_tol,
-            member_operation: self.member_operation,
-            inset: self.inset,
-            extend_convex: self.extend_convex,
-            merge_results: self.merge_results,
-            create_offset_solid: self.create_offset_solid,
-            skip_stitch_merge: self.skip_stitch_merge,
-        }
-    }
     const fn offset(&self) -> OffsetOptions {
         OffsetOptions {
             distance: self.offset_distance,
@@ -390,14 +336,6 @@ struct Inputs {
 enum VolumeQuery {
     Result,
     SourceFirst,
-}
-impl VolumeQuery {
-    const fn native(self) -> ffi::VolumeQuery {
-        match self {
-            Self::Result => ffi::VolumeQuery::Result,
-            Self::SourceFirst => ffi::VolumeQuery::SourceFirst,
-        }
-    }
 }
 /// The accuracy of the volume queries (the shim's `volume_accuracy`).
 const VOLUME_ACCURACY: f64 = 1e-6;
@@ -474,30 +412,12 @@ fn operand_state(brep: Option<&Brep>) -> HResult<Vec<f64>> {
     }
     Ok(out)
 }
-impl Inputs {
-    fn native(&self) -> ffi::Request {
-        ffi::Request {
-            operation: self.operation.native(),
-            source: self.source.as_ref().map(Fixture::native),
-            foreign: self.foreign.as_ref().map(Fixture::native),
-            faces: self.faces.iter().copied().map(Selection::native).collect(),
-            tolerance: self.tolerance,
-            config: self.config.native(),
-            attributed: self.attributed,
-        }
-    }
-}
 
 fn bad(message: impl Into<String>) -> HarnessError {
     HarnessError::new(message)
 }
 fn setup(error: impl core::fmt::Display) -> HarnessError {
     bad(format!("Rust input fixture: {error}"))
-}
-fn at<T>(slice: &[T], index: usize) -> HResult<&T> {
-    slice
-        .get(index)
-        .ok_or_else(|| bad("fixture/snapshot index outside its traversal"))
 }
 fn finite(values: &[f64]) -> HResult<()> {
     if values.iter().all(|value| value.is_finite()) {
@@ -539,7 +459,7 @@ fn validate(input: &Inputs) -> HResult<()> {
         ));
     }
 
-    if input.faces.len() > ffi::MAX_SELECTIONS {
+    if input.faces.len() > MAX_SELECTIONS {
         return Err(bad("too many selected faces"));
     }
     for selection in &input.faces {
@@ -665,7 +585,7 @@ impl From<SolidError> for RunError {
 // Unported must escape even when the static offset collapses ordinary errors.
 fn operation<T>(result: solidcore::Result<T>) -> RResult<(i32, Option<T>)> {
     match result {
-        Ok(value) => Ok((ffi::NATIVE_SUCCESS, Some(value))),
+        Ok(value) => Ok((NATIVE_SUCCESS, Some(value))),
         Err(SolidError::Upstream { code, .. }) => Ok((code, None)),
         // a failure in solidcore's terms (#2615): its C++ comparison status
         Err(e @ SolidError::Failed(_)) => Ok((e.sm_status().unwrap_or(solidcore::error::SM_ERR), None)),
@@ -694,8 +614,8 @@ fn executive(cfg: &Config) -> HResult<OffsetExecutive> {
     executive.set_create_offset_solid(cfg.create_offset_solid);
     Ok(executive)
 }
-fn executive_state(executive: &OffsetExecutive) -> ffi::ExecutiveState {
-    ffi::ExecutiveState {
+fn executive_state(executive: &OffsetExecutive) -> ExecutiveState {
+    ExecutiveState {
         operation: executive.operation() as i32,
         inset: executive.inset(),
         extend_convex: executive.extend_convex_edges(),
@@ -1175,7 +1095,7 @@ fn rust_projection(kernel: &Kernel, fixture: &Fixture, brep: &Brep) -> HResult<P
                 let normal = surface
                     .evaluate_normal(kernel, uv, Side::Left, Side::Left)
                     .map_err(setup)?;
-                result.statuses.extend([i64::from(ffi::NATIVE_SUCCESS); 2]);
+                result.statuses.extend([i64::from(NATIVE_SUCCESS); 2]);
                 result.values.extend(xyz(point));
                 result.values.extend(xyz(normal));
             }
@@ -1198,7 +1118,7 @@ fn rust_projection(kernel: &Kernel, fixture: &Fixture, brep: &Brep) -> HResult<P
             ]);
             for parameter in [edge.interval.min(), edge.interval.max()] {
                 let point = curve.evaluate_point(kernel, parameter).map_err(setup)?;
-                result.statuses.push(i64::from(ffi::NATIVE_SUCCESS));
+                result.statuses.push(i64::from(NATIVE_SUCCESS));
                 result.values.extend(xyz(point));
             }
         }
@@ -1213,196 +1133,6 @@ fn rust_projection(kernel: &Kernel, fixture: &Fixture, brep: &Brep) -> HResult<P
     Ok(result)
 }
 
-// The FFI decoder separates the protocol's integers and floats. This second,
-// bounded decoder validates the ENTIRE topology/geometry layout before selecting
-// representable input fields; dropping unsupported fields must not mask truncation.
-struct BlockReader<'a> {
-    integers: &'a [i64],
-    values: &'a [f64],
-}
-impl BlockReader<'_> {
-    fn integer(&mut self, min: i64, max: i64) -> HResult<i64> {
-        let (value, rest) = self
-            .integers
-            .split_first()
-            .ok_or_else(|| bad("truncated native topology block"))?;
-        if !(min..=max).contains(value) {
-            return Err(bad("invalid native topology integer"));
-        }
-        self.integers = rest;
-        Ok(*value)
-    }
-    fn count(&mut self) -> HResult<usize> {
-        Ok(self.integer(0, (ffi::MAX_OUTPUT_VALUES / 64) as i64)? as usize)
-    }
-    fn id(&mut self, expected: usize) -> HResult<()> {
-        self.integer(expected as i64, expected as i64).map(|_| ())
-    }
-    fn reference(&mut self, count: usize) -> HResult<()> {
-        self.integer(-2, count as i64 - 1).map(|_| ())
-    }
-    fn list(&mut self, count: usize) -> HResult<()> {
-        let length = self.count()?;
-        if length > self.integers.len() {
-            return Err(bad("truncated native adjacency list"));
-        }
-        for _ in 0..length {
-            self.reference(count)?;
-        }
-        Ok(())
-    }
-    fn numbers(&mut self, count: usize) -> HResult<Vec<f64>> {
-        let values = self
-            .values
-            .get(..count)
-            .ok_or_else(|| bad("truncated native geometry block"))?;
-        self.values = self
-            .values
-            .get(count..)
-            .ok_or_else(|| bad("truncated native geometry block"))?;
-        Ok(values.to_vec())
-    }
-    fn status(&mut self) -> HResult<i64> {
-        self.integer(i64::from(i32::MIN), i64::from(i32::MAX))
-    }
-}
-#[derive(Debug)]
-struct SampleRecord {
-    kind: i64,
-    statuses: Vec<i64>,
-    values: Vec<f64>,
-}
-#[derive(Debug)]
-struct DecodedBrep {
-    counts: [i64; 7],
-    tolerance: f64,
-    faces: Vec<SampleRecord>,
-    edges: Vec<SampleRecord>,
-    vertices: Vec<[f64; 3]>,
-}
-fn decode_block(block: &ffi::BrepSnapshot) -> HResult<DecodedBrep> {
-    if block.integers.len().saturating_add(block.values.len()) > ffi::MAX_OUTPUT_VALUES {
-        return Err(bad("native B-rep block exceeds output budget"));
-    }
-    let mut rd = BlockReader {
-        integers: &block.integers,
-        values: &block.values,
-    };
-    let mut counts = [0; 7];
-    for count in &mut counts {
-        *count = rd.count()? as i64;
-    }
-    let [regions, shells, faces, loops, edges, uses, vertices] = counts.map(|count| count as usize);
-    if counts.iter().sum::<i64>() > (ffi::MAX_OUTPUT_VALUES / 64) as i64 {
-        return Err(bad("native topology aggregate exceeds budget"));
-    }
-    rd.reference(regions)?; // Native-only infinite region: validated, not fabricated in Rust.
-    rd.integer(0, 1)?; // Native-only editing flag.
-    rd.integer(0, 1)?; // Validate-only flag; full block is still checked for purity.
-    let tolerance = *at(&rd.numbers(1)?, 0)?;
-    for index in 0..regions {
-        rd.id(index)?;
-        rd.integer(0, 1)?;
-    }
-    for index in 0..shells {
-        rd.id(index)?;
-        rd.reference(regions)?;
-    }
-    let mut face_records = Vec::new();
-    for index in 0..faces {
-        rd.id(index)?;
-        let kind = rd.integer(0, 3)?;
-        rd.reference(shells)?;
-        rd.reference(shells)?;
-        rd.integer(-1, 3)?;
-        rd.integer(-1, 3)?;
-        rd.list(loops)?;
-        let statuses = (0..6).map(|_| rd.status()).collect::<HResult<_>>()?;
-        face_records.push(SampleRecord {
-            kind,
-            statuses,
-            values: rd.numbers(27)?,
-        });
-    }
-    for index in 0..loops {
-        rd.id(index)?;
-        rd.reference(faces)?;
-        rd.list(uses)?;
-    }
-    let mut edge_records = Vec::new();
-    for index in 0..edges {
-        rd.id(index)?;
-        rd.reference(vertices)?;
-        rd.reference(vertices)?;
-        let kind = rd.integer(0, 3)?;
-        rd.list(uses)?;
-        let statuses = (0..2).map(|_| rd.status()).collect::<HResult<_>>()?;
-        edge_records.push(SampleRecord {
-            kind,
-            statuses,
-            values: rd.numbers(11)?,
-        });
-    }
-    for index in 0..uses {
-        rd.id(index)?;
-        for count in [edges, faces, shells, uses, uses] {
-            rd.reference(count)?;
-        }
-        rd.integer(-1, 3)?;
-    }
-    let mut vertex_points = Vec::new();
-    for index in 0..vertices {
-        rd.id(index)?;
-        let values = rd.numbers(4)?;
-        vertex_points.push([*at(&values, 0)?, *at(&values, 1)?, *at(&values, 2)?]);
-    }
-    if !rd.integers.is_empty() || !rd.values.is_empty() {
-        return Err(bad("trailing native B-rep snapshot fields"));
-    }
-    Ok(DecodedBrep {
-        counts,
-        tolerance,
-        faces: face_records,
-        edges: edge_records,
-        vertices: vertex_points,
-    })
-}
-fn native_projection(fixture: &Fixture, decoded: &DecodedBrep) -> HResult<Projection> {
-    let mut result = Projection {
-        counts: projected_counts(fixture, decoded.counts),
-        kinds: Vec::new(),
-        statuses: Vec::new(),
-        values: vec![decoded.tolerance],
-    };
-    for face in &decoded.faces {
-        result.kinds.push(face.kind);
-        if matches!(fixture, Fixture::PlaneSheet { .. }) {
-            result.statuses.extend(&face.statuses);
-            result.values.extend(
-                face.values
-                    .get(1..)
-                    .ok_or_else(|| bad("missing face geometry"))?,
-            );
-        }
-    }
-    if matches!(fixture, Fixture::Wire { .. }) {
-        for edge in &decoded.edges {
-            result.kinds.push(edge.kind);
-            result.statuses.extend(&edge.statuses);
-            result.values.extend(
-                edge.values
-                    .get(1..)
-                    .ok_or_else(|| bad("missing edge geometry"))?,
-            );
-        }
-    }
-    if fixture.primitive() || matches!(fixture, Fixture::Wire { .. }) {
-        result
-            .values
-            .extend(bounds(decoded.vertices.iter().copied()));
-    }
-    Ok(result)
-}
 /// What is compared of a returned B-rep or a retained offset temporary: every
 /// topology count, the face surface and edge curve kinds as sorted multisets, the
 /// B-rep tolerance and the vertex bounds. Traversal order and region/shell
@@ -1412,20 +1142,6 @@ struct ResultProjection {
     face_kinds: Vec<i64>,
     edge_kinds: Vec<i64>,
     values: Vec<f64>,
-}
-fn native_result_projection(decoded: &DecodedBrep) -> ResultProjection {
-    let mut face_kinds: Vec<i64> = decoded.faces.iter().map(|face| face.kind).collect();
-    let mut edge_kinds: Vec<i64> = decoded.edges.iter().map(|edge| edge.kind).collect();
-    face_kinds.sort_unstable();
-    edge_kinds.sort_unstable();
-    let mut values = vec![decoded.tolerance];
-    values.extend(bounds(decoded.vertices.iter().copied()));
-    ResultProjection {
-        counts: decoded.counts.to_vec(),
-        face_kinds,
-        edge_kinds,
-        values,
-    }
 }
 /// The shim's `surface_kind`: 0 null, 1 an `SmPlane`, 2 another `SmBSplineSurface`
 /// kind, 3 anything else.
@@ -1547,7 +1263,7 @@ fn scalar_output(
     lifetime: i32,
     result_origin: i32,
     doing_boolean: [bool; 2],
-    executive: Option<&ffi::ExecutiveState>,
+    executive: Option<&ExecutiveState>,
     selected_before: &[[i64; 2]],
     selected_after: &[[i64; 2]],
 ) -> Output {
@@ -1601,100 +1317,6 @@ fn scalar_output(
     }
     output
 }
-fn unchanged(before: Option<&ffi::BrepSnapshot>, after: Option<&ffi::BrepSnapshot>) -> bool {
-    match (before, after) {
-        (None, None) => true,
-        (Some(a), Some(b)) => {
-            // The gap caches count too: the Rust side's purity state is the whole
-            // B-rep, caches included, and both kernels refresh some of them on the
-            // source (`CalcVertexFaceGap` resets every same-face use's cache).
-            let same = |x: &[f64], y: &[f64]| {
-                x.len() == y.len() && x.iter().zip(y).all(|(a, b)| a.to_bits() == b.to_bits())
-            };
-            a.integers == b.integers && same(&a.values, &b.values) && same(&a.caches, &b.caches)
-        }
-        _ => false,
-    }
-}
-fn native_output(input: &Inputs, snapshot: &ffi::Snapshot) -> HResult<Output> {
-    if snapshot.selected_before.len() != input.faces.len()
-        || snapshot.selected_after.len() != input.faces.len()
-        || snapshot.executive.is_some() != input.operation.member()
-    {
-        return Err(bad("native executive/selector snapshot shape mismatch"));
-    }
-    let mut output = scalar_output(
-        snapshot.status,
-        snapshot.input_transferred,
-        snapshot.source_lifetime,
-        snapshot.result_origin,
-        snapshot.doing_boolean,
-        snapshot.executive.as_ref(),
-        &snapshot.selected_before,
-        &snapshot.selected_after,
-    )
-    .ints(
-        "input.pure",
-        vec![
-            i64::from(unchanged(
-                snapshot.source_before.as_ref(),
-                snapshot.source_after.as_ref(),
-            )),
-            i64::from(unchanged(
-                snapshot.foreign_before.as_ref(),
-                snapshot.foreign_after.as_ref(),
-            )),
-        ],
-    );
-    for (key, fixture, block) in [
-        (
-            "source.before",
-            input.source.as_ref(),
-            snapshot.source_before.as_ref(),
-        ),
-        (
-            "source.after",
-            input.source.as_ref(),
-            snapshot.source_after.as_ref(),
-        ),
-        (
-            "foreign.before",
-            input.foreign.as_ref(),
-            snapshot.foreign_before.as_ref(),
-        ),
-        (
-            "foreign.after",
-            input.foreign.as_ref(),
-            snapshot.foreign_after.as_ref(),
-        ),
-    ] {
-        let decoded = block.map(decode_block).transpose()?;
-        let projection = match (fixture, decoded.as_ref()) {
-            (Some(fixture), Some(decoded)) => Some(native_projection(fixture, decoded)?),
-            (_, None) => None,
-            (None, Some(_)) => return Err(bad("native snapshot invented an input allocation")),
-        };
-        output = project(output, key, projection);
-    }
-    for (key, block) in [
-        ("result", &snapshot.result),
-        ("executive_offset", &snapshot.executive_offset),
-    ] {
-        let projection = block
-            .as_ref()
-            .map(|block| decode_block(block).map(|decoded| native_result_projection(&decoded)))
-            .transpose()?;
-        output = project_result(output, key, projection, input.heap_ordered_vertices);
-    }
-    if input.attributed.is_some() {
-        let rows = snapshot
-            .attributes
-            .clone()
-            .ok_or_else(|| bad("native attributed snapshot without attributes"))?;
-        output = output.ints("attributes", rows);
-    }
-    Ok(output)
-}
 
 /// The shim's `tag_source`: every face (`GetFaces` order) and edge (`GetEdges` order)
 /// gets its own long attribute, id = value = `ATTRIBUTE_BASE + index` (`+ 500` for an
@@ -1715,7 +1337,7 @@ fn tag_source(brep: &mut Brep, behavior: u8) -> HResult<()> {
                 .map(|(i, e)| (EntityRef::Edge(e), 500 + i as u64)),
         );
     for (entity, offset) in tagged {
-        let id = ffi::ATTRIBUTE_BASE + offset;
+        let id = ATTRIBUTE_BASE + offset;
         let value = i64::try_from(id).map_err(|_| bad("attribute id overflow"))?;
         brep.add_attribute(entity, Attribute::long(id, value, behavior))
             .map_err(setup)?;
@@ -1761,21 +1383,6 @@ fn attribute_rows(brep: Option<&Brep>) -> HResult<Vec<i64>> {
     let mut out = vec![1, rows.len() as i64];
     out.extend(rows);
     Ok(out)
-}
-fn native_outcome(input: &Inputs, outcome: ffi::Outcome) -> HResult<Output> {
-    match outcome {
-        ffi::Outcome::Rejected { status } => Ok(Output::rejected(format!(
-            "native fixture constructor status_{status}"
-        ))),
-        // The Rust side refuses the same input (`OffsetFailure::DistanceUnresolved`); the
-        // C++ would run it for tens of seconds (HANG-53).
-        ffi::Outcome::Refused => Ok(Output::rejected(
-            "the offset distance is below the source's B-rep tolerance: the Rust kernel \
-             refuses it before building anything (HANG-53: the C++ subdivides toward it \
-             for tens of seconds), so the C++ is not run",
-        )),
-        ffi::Outcome::Built(snapshot) => native_output(input, &snapshot),
-    }
 }
 
 // Notifications use disjoint fixture namespaces, not arena-local IDs or geometry
@@ -2224,86 +1831,9 @@ fn rust_output(input: &Inputs) -> RResult<Output> {
     Ok(output)
 }
 
-/// Why the C++ side of `input` runs in a fresh child process (the crash trap), if it
-/// does: a crash there is a rejected case, not a dead run. Only a call that actually
-/// crashes is rejected; the others compare as usual.
-///
-/// - Every call that reaches `SmOffsetExecutive::DoExtendedOffset` (the extended
-///   offset, and every other operation extending convex edges, which dispatches to
-///   it): its native crashes on hostile inputs (the nightly fuzz) end that case only.
-/// - An API shell of a file sheet with merged results, where
-///   `SmOffsetExecutive::PiecewiseMerge` reaches UB-241
-///   (`SmProtoTopologyManager::GlueCoincidentBrepVertices` keeps gluing a vertex it has
-///   deleted; `AddressSanitizer`: SEGV in `sm_RmFromSpatialTree` via `SmBrep::GlueVertices`).
-fn crash_trap(input: &Inputs) -> Option<&'static str> {
-    if input.operation == Operation::ApiShell
-        && input.config.merge_results
-        && matches!(input.source, Some(Fixture::File { .. }))
-    {
-        Some(
-            "UB-241: SmApiShellBrepFull crashed in the crash trap's fresh child process \
-             (GlueCoincidentBrepVertices glues a vertex it has deleted; SIGSEGV in \
-             sm_RmFromSpatialTree)",
-        )
-    } else if input.operation == Operation::Extended || input.config.extend_convex {
-        Some(
-            "the C++ crashed in SmOffsetExecutive::DoExtendedOffset, run in the crash \
-             trap's fresh child process",
-        )
-    } else {
-        None
-    }
-}
-
-/// The C++ outcome, or the crash trap's rejection when the trapped child crashed.
-fn trapped<T>(
-    input: &Inputs,
-    in_process: impl FnOnce() -> Result<T, solidcore_ffi::FfiError>,
-    in_child: impl FnOnce() -> Result<T, solidcore_ffi::FfiError>,
-) -> HResult<Result<T, &'static str>> {
-    let Some(why) = crash_trap(input) else {
-        return in_process()
-            .map(Ok)
-            .map_err(|error| bad(format!("native p2 adapter: {error}")));
-    };
-    match in_child() {
-        Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => Ok(Err(why)),
-        other => other
-            .map(Ok)
-            .map_err(|error| bad(format!("native p2 adapter: {error}"))),
-    }
-}
-
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "offset.offset_executive_p2"
-    }
-    fn run_cpp(&self, case: &Case) -> HResult<Output> {
-        let input: Inputs = case.parse()?;
-        // FFI argument errors are NEVER constructor rejections or native statuses.
-        let request = input.native();
-        let Some(query) = input.volume_query else {
-            return match trapped(&input, || ffi::eval(&request), || ffi::eval_in_child(&request))? {
-                Ok(outcome) => native_outcome(&input, outcome),
-                Err(why) => Ok(Output::rejected(why)),
-            };
-        };
-        let measured = trapped(
-            &input,
-            || ffi::eval_measured(&request, query.native()),
-            || ffi::eval_measured_in_child(&request, query.native()),
-        )?;
-        let (outcome, volumes) = match measured {
-            Ok(measured) => measured,
-            Err(why) => return Ok(Output::rejected(why)),
-        };
-        let output = native_outcome(&input, outcome)?;
-        Ok(match volumes {
-            Some(v) => output
-                .values("volumes", [v.source_before, v.result].concat())
-                .values("operand", v.operand),
-            None => output,
-        })
     }
     fn run_rust(&self, case: &Case) -> HResult<Output> {
         match rust_output(&case.parse()?) {
@@ -2532,7 +2062,7 @@ mod tests {
     }
 
     #[test]
-    fn nonpositive_brep_tolerances_match_native_setup() {
+    fn nonpositive_brep_tolerances_build() {
         for fixture in [
             Fixture::Empty,
             wire([0.0; 3], 2.0),
@@ -2556,46 +2086,14 @@ mod tests {
                 input.source = Some(fixture.clone());
                 input.tolerance = tolerance;
                 input.config.member_distance = 0.0;
-                let case = case(&input);
-                let native = Runner.run_cpp(&case).unwrap();
-                let rust = Runner.run_rust(&case).unwrap();
-                assert!(rust.deferred.is_none());
-                assert!(
-                    crate::compare::compare(&native, &rust, Runner.abs_floors()).pass(),
-                    "{fixture:?}, tolerance={tolerance}: native={native:?}, rust={rust:?}"
-                );
+                let rust = Runner.run_rust(&case(&input)).unwrap();
+                assert!(rust.deferred.is_none(), "{fixture:?}, tolerance={tolerance}: {rust:?}");
+                assert!(rust.error.is_none(), "{fixture:?}, tolerance={tolerance}: {rust:?}");
             }
         }
     }
-    fn empty_block(tolerance: f64) -> ffi::BrepSnapshot {
-        ffi::BrepSnapshot {
-            integers: vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-            values: vec![tolerance],
-            caches: Vec::new(),
-        }
-    }
-    fn empty_snapshot(status: i32) -> ffi::Snapshot {
-        ffi::Snapshot {
-            status,
-            input_transferred: false,
-            source_lifetime: 1,
-            result_origin: 0,
-            doing_boolean: [false, false],
-            executive: None,
-            selected_before: Vec::new(),
-            selected_after: Vec::new(),
-            source_before: Some(empty_block(1e-6)),
-            source_after: Some(empty_block(1e-6)),
-            foreign_before: None,
-            foreign_after: None,
-            result: None,
-            executive_offset: None,
-            attributes: None,
-        }
-    }
-
     #[test]
-    fn serde_native_dtos_keep_all_operations_origins_and_raw_signed_distances() {
+    fn serde_dtos_keep_all_operations_origins_and_raw_signed_distances() {
         for operation in [
             Operation::StaticOffset,
             Operation::StaticShell,
@@ -2619,20 +2117,8 @@ mod tests {
                 let decoded: Inputs =
                     serde_json::from_value(serde_json::to_value(&original).unwrap()).unwrap();
                 assert_eq!(decoded, original);
-                let request = decoded.native();
-                assert_eq!(request.operation, operation.native());
-                assert_eq!(request.config.offset_distance.to_bits(), distance.to_bits());
-                assert_eq!(request.config.member_distance, 0.375);
-                assert!(request.config.inset);
-                assert_eq!(
-                    request.faces,
-                    vec![
-                        ffi::FaceSelection::Source(0),
-                        ffi::FaceSelection::Source(0),
-                        ffi::FaceSelection::Foreign(0),
-                        ffi::FaceSelection::Null
-                    ]
-                );
+                assert_eq!(decoded.operation, operation);
+                assert_eq!(decoded.config.offset_distance.to_bits(), distance.to_bits());
             }
         }
         let mut json = serde_json::to_value(input(Operation::ApiShell)).unwrap();
@@ -2806,8 +2292,6 @@ mod tests {
         let output = Runner.run_rust(&test_case).unwrap();
         assert!(output.deferred.is_none(), "{:?}", output.deferred);
         assert_eq!(output.ints["input.pure"], [1, 1]);
-        let native = Runner.run_cpp(&test_case).unwrap();
-        assert!(crate::compare::compare(&native, &output, Runner.abs_floors()).pass());
     }
 
     #[test]
@@ -2882,9 +2366,6 @@ mod tests {
 
     #[test]
     fn ordinary_statuses_remain_integer_observations_and_unported_never_becomes_1001() {
-        let mut input = input(Operation::ApiOffset);
-        input.source = Some(Fixture::Empty);
-        let mut outputs = Vec::new();
         for status in [1001, 1006, 1007] {
             let error = SolidError::Upstream {
                 operation: "test",
@@ -2892,42 +2373,27 @@ mod tests {
                 entity: None,
             };
             assert_eq!(operation::<Brep>(Err(error)).unwrap().0, status);
-            let output = native_outcome(
-                &input,
-                ffi::Outcome::Built(Box::new(empty_snapshot(status))),
-            )
-            .unwrap();
-            assert!(output.error.is_none() && output.rejected.is_none());
-            assert_eq!(output.ints["status"], [i64::from(status)]);
-            assert_eq!(output.values["source.before.geometry"], [1e-6]);
-            outputs.push(output);
         }
-        assert_ne!(outputs[0], outputs[1]);
-        assert_ne!(outputs[1], outputs[2]);
         let error = SolidError::unported("SmBrep::ShrinkGeometry", "topology.brep_p4");
         assert!(matches!(
             operation::<Brep>(Err(error)),
             Err(RunError::Kernel(SolidError::Unported { .. }))
         ));
-        let rejected = native_outcome(&input, ffi::Outcome::Rejected { status: 1007 }).unwrap();
-        assert!(rejected.rejected.is_some());
-        assert!(rejected.ints.is_empty() && rejected.values.is_empty());
     }
 
     #[test]
-    fn ffi_argument_error_is_a_harness_error_not_output_rejected() {
-        // These fail before native allocation, and do not rely on native geometry
-        // convergence or execute one of the positive operation paths.
+    fn argument_error_is_a_harness_error_not_output_rejected() {
+        // These fail the input contract before any construction.
         let mut input = input(Operation::StaticOffset);
         input.source = None;
-        assert!(Runner.run_cpp(&case(&input)).is_err());
+        assert!(Runner.run_rust(&case(&input)).is_err());
         input.operation = Operation::Solid;
         input.config.member_distance = -1.0;
-        assert!(Runner.run_cpp(&case(&input)).is_err());
+        assert!(Runner.run_rust(&case(&input)).is_err());
     }
 
     #[test]
-    fn irrelevant_extension_overflow_does_not_hide_native_early_returns() {
+    fn irrelevant_extension_overflow_does_not_hide_early_returns() {
         for operation in [
             Operation::Solid,
             Operation::Extended,
@@ -2939,11 +2405,10 @@ mod tests {
             input.config.member_distance = f64::MAX;
             input.config.offset_distance = -f64::MAX;
             input.config.extend_convex = true;
-            let case = case(&input);
-            assert_eq!(
-                Runner.run_rust(&case).unwrap(),
-                Runner.run_cpp(&case).unwrap()
-            );
+            let output = Runner.run_rust(&case(&input)).unwrap();
+            // the null source's early return: member NER, or the API's validation
+            let expected = if operation.member() { 1006 } else { 1007 };
+            assert_eq!(output.ints["status"], [expected], "{operation:?}");
             input.config.member_distance = -1.0;
             if operation.member() {
                 assert!(validate(&input).is_err());
@@ -2956,105 +2421,11 @@ mod tests {
         input.config.extend_convex = true;
         for distance in [-f64::MAX, f64::MAX] {
             input.config.offset_distance = distance;
-            let case = case(&input);
-            assert_eq!(
-                Runner.run_rust(&case).unwrap(),
-                Runner.run_cpp(&case).unwrap()
-            );
+            let output = Runner.run_rust(&case(&input)).unwrap();
+            assert_eq!(output.ints["status"], [1007]);
         }
         input.faces.push(Selection::Source(usize::MAX));
         assert!(validate(&input).is_err());
-    }
-
-    #[test]
-    fn block_decode_validates_even_fields_excluded_from_the_projection() {
-        let fixture = Fixture::Empty;
-        let block = empty_block(3e-12);
-        let projection = native_projection(&fixture, &decode_block(&block).unwrap()).unwrap();
-        let brep = build(&mut Kernel::default(), &fixture, 3e-12, NAMESPACE_SOURCE).unwrap();
-        assert_eq!(
-            projection,
-            rust_projection(&Kernel::default(), &fixture, &brep).unwrap()
-        );
-        let mut broken = block.clone();
-        broken.integers.pop(); // Missing native-only region void flag.
-        assert!(decode_block(&broken).is_err());
-        let mut broken = block.clone();
-        broken.integers[11] = 2; // Invalid flag, not silently skipped.
-        assert!(decode_block(&broken).is_err());
-        let mut broken = block.clone();
-        broken.integers[7] = 1; // Invalid infinite-region traversal id.
-        assert!(decode_block(&broken).is_err());
-        let mut broken = block.clone();
-        broken.integers[0] = i64::MAX;
-        assert!(decode_block(&broken).is_err());
-        let mut broken = block.clone();
-        broken.values.push(0.0);
-        assert!(decode_block(&broken).is_err());
-        let mut broken = block;
-        broken.integers.push(0);
-        assert!(decode_block(&broken).is_err());
-    }
-
-    #[test]
-    fn sheet_projection_keeps_domains_points_normals_kinds_and_evaluation_statuses() {
-        // A small synthetic decoder record, not a C++ operation result used by
-        // run_rust. The count/adjacency framing must be consumed in native order.
-        let mut ints = vec![
-            1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 2, 0,
-        ];
-        ints.extend([1000; 6]);
-        let mut values = vec![1e-6, 1e-6];
-        values.extend([0.0, 0.0, 2.0, 4.0]);
-        values.extend([0.0, 0.0, 2.0, 4.0]);
-        values.extend([
-            0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 0.0, 0.0, 0.0, 1.0, 2.0, 4.0, 0.0, 0.0, 0.0,
-            1.0,
-        ]);
-        let mut block = ffi::BrepSnapshot {
-            integers: ints,
-            values,
-            caches: Vec::new(),
-        };
-        let decoded = decode_block(&block).unwrap();
-        let fixture = sheet([0.0; 3], 1.0, 0);
-        let projection = native_projection(&fixture, &decoded).unwrap();
-        assert_eq!(projection.kinds, [1]);
-        assert_eq!(projection.statuses, [1000; 6]);
-        assert_eq!(projection.values.len(), 27);
-        assert_eq!(projection.values[1..5], [0.0, 0.0, 2.0, 4.0]);
-        assert_eq!(projection.values[21..27], [2.0, 4.0, 0.0, 0.0, 0.0, 1.0]);
-        block.integers[20] = 1; // A counted loop list with no valid loop traversal.
-        assert!(decode_block(&block).is_err());
-        block.integers[20] = 0;
-        block.values.pop();
-        assert!(decode_block(&block).is_err());
-    }
-
-    #[test]
-    fn native_only_input_metadata_mutations_are_detected_by_full_local_purity_check() {
-        let mut input = input(Operation::ApiOffset);
-        input.source = Some(Fixture::Empty);
-        let mut snapshot = empty_snapshot(1007);
-        let baseline = native_output(&input, &snapshot).unwrap();
-        snapshot.source_after.as_mut().unwrap().integers[8] = 1;
-        let changed = native_output(&input, &snapshot).unwrap();
-        assert_eq!(baseline.values, changed.values);
-        assert_eq!(baseline.ints["input.pure"], [1, 1]);
-        assert_eq!(changed.ints["input.pure"], [0, 1]);
-        snapshot.source_after = snapshot.source_before.clone();
-        snapshot.source_after.as_mut().unwrap().values[0] = 2e-6;
-        assert_eq!(
-            native_output(&input, &snapshot).unwrap().ints["input.pure"],
-            [0, 1]
-        );
-        // A reset gap cache alone also breaks purity, as on the Rust side.
-        snapshot.source_after = snapshot.source_before.clone();
-        snapshot.source_after.as_mut().unwrap().caches = vec![0.0; 5];
-        assert_eq!(
-            native_output(&input, &snapshot).unwrap().ints["input.pure"],
-            [0, 1]
-        );
     }
 
     /// A path that completes and returns a compared result B-rep.
@@ -3103,8 +2474,6 @@ mod tests {
                 assert_reaches(&output, RESULT);
             }
             assert_eq!(output.ints["input.pure"], [1, 1]);
-            let native = Runner.run_cpp(&test_case).unwrap();
-            assert!(crate::compare::compare(&native, &output, Runner.abs_floors()).pass());
         }
         // ShellBrep asks IsManifoldSolid before checking its strict radius guard.
         // Empty breps now have a native IsManifoldSolid implementation, so this
@@ -3123,12 +2492,6 @@ mod tests {
             assert_eq!(output.ints["ownership"], [0, 1, 0]);
             assert_eq!(output.ints["doing_boolean"], [0, 0]);
             assert_eq!(output.ints["source.after.present"], [1]);
-            let native = Runner.run_cpp(&test_case).unwrap();
-            assert!(native.deferred.is_none());
-            assert_eq!(native.ints["status"], output.ints["status"]);
-            assert_eq!(native.ints["ownership"], output.ints["ownership"]);
-            assert_eq!(native.ints["doing_boolean"], output.ints["doing_boolean"]);
-            assert!(crate::compare::compare(&native, &output, Runner.abs_floors()).pass());
         }
         // The guard is strict: exactly 2*tolerance and the adjacent value above
         // it proceed into DoSolidOffset, which completes on the empty input.
@@ -3198,160 +2561,105 @@ mod tests {
     }
 
     #[test]
-    fn empty_native_boxes_are_compared_unless_a_face_is_selected() {
+    fn empty_boxes_are_recorded_unless_a_face_is_selected() {
         let context = CaseContext {
             root: repo_root(),
             seeds: 0,
         };
-        let mut rejected = 0;
-        let mut compared = 0;
+        let mut recorded = 0;
         for case in context.fixture_cases(Runner.id()).unwrap() {
             if !case.name.starts_with("review_box_") {
                 continue;
             }
-            let cpp = Runner.run_cpp(&case).unwrap();
-            assert!(cpp.error.is_none() && cpp.deferred.is_none());
+            let rust = Runner.run_rust(&case).unwrap();
+            assert!(rust.rejected.is_none() && rust.error.is_none(), "{}", case.name);
             if case.name.ends_with("_control") {
-                let rust = Runner.run_rust(&case).unwrap();
-                for output in [&cpp, &rust] {
-                    assert!(output.rejected.is_none() && output.error.is_none());
-                    assert!(output.deferred.is_none());
-                    assert_eq!(output.ints["status"], [1007]);
-                    assert_eq!(output.ints["input.pure"], [1, 1]);
-                    assert!(!output.values.is_empty());
-                }
-                compared += 1;
-            } else if case.name.ends_with("_selected") {
-                // The smallest box the native constructor builds here has a face 0 to
-                // select: compared.
-                let rust = Runner.run_rust(&case).unwrap();
-                for output in [&cpp, &rust] {
-                    assert!(output.rejected.is_none() && output.error.is_none());
-                }
-                let comparison = crate::compare::compare(&cpp, &rust, Runner.abs_floors());
-                assert!(comparison.pass(), "{}: {comparison:?}", case.name);
-                compared += 1;
-                // The tiny box the case held before is an empty B-rep: no face 0 to
-                // select, a native fixture rejection.
-                let mut tiny = case.clone();
-                let side = if case.name.contains("foreign") {
-                    "foreign"
-                } else {
-                    "source"
-                };
-                let size = if case.name.contains("translated") {
-                    1e-3
-                } else {
-                    1e-6
-                };
-                tiny.inputs[side]["size"] = serde_json::json!([size, size, size]);
-                let cpp = Runner.run_cpp(&tiny).unwrap();
-                assert_eq!(
-                    cpp.rejected.as_deref(),
-                    Some("native fixture constructor status_1001")
-                );
-                assert!(cpp.ints.is_empty() && cpp.values.is_empty());
-                rejected += 1;
-            } else {
-                // Null selection: the empty box is built and the API status
-                // (1007) is compared against Rust.
-                let rust = Runner.run_rust(&case).unwrap();
-                for output in [&cpp, &rust] {
-                    assert!(output.rejected.is_none() && output.error.is_none());
-                    assert_eq!(output.ints["status"], [1007]);
-                }
-                let comparison = crate::compare::compare(&cpp, &rust, Runner.abs_floors());
-                assert!(comparison.pass(), "{}: {comparison:?}", case.name);
-                compared += 1;
+                assert!(rust.deferred.is_none());
+                assert_eq!(rust.ints["status"], [1007]);
+                assert_eq!(rust.ints["input.pure"], [1, 1]);
+                assert!(!rust.values.is_empty());
+            } else if !case.name.ends_with("_selected") {
+                // Null selection: the empty box is built and the API status is 1007.
+                assert_eq!(rust.ints["status"], [1007]);
             }
+            recorded += 1;
         }
-        assert_eq!((rejected, compared), (4, 10));
+        assert_eq!(recorded, 10);
     }
 
-    fn assert_native_constructor_control(case: &Case, cpp: &Output, counts: [i64; 5]) {
+    fn assert_constructor_control(case: &Case, counts: [i64; 5]) {
         let input: Inputs = case.parse().unwrap();
-        let rust = Runner.run_rust(case).unwrap();
-        for output in [cpp, &rust] {
-            assert!(output.rejected.is_none() && output.error.is_none());
-            assert!(output.deferred.is_none());
-            let status = if input.operation.member() { 1006 } else { 1007 };
-            assert_eq!(output.ints["status"], [status]);
-            assert_eq!(output.ints["input.pure"], [1, 1]);
-            assert_eq!(
-                output.ints["ownership"],
-                [0, i64::from(input.source.is_some()), 0]
-            );
-            assert_eq!(
-                output.ints["selected.before"],
-                output.ints["selected.after"]
-            );
-            for (key, fixture) in [
-                ("source", input.source.as_ref()),
-                ("foreign", input.foreign.as_ref()),
-            ] {
-                if fixture.is_some() {
-                    for when in ["before", "after"] {
-                        assert_eq!(output.ints[&format!("{key}.{when}.counts")], counts);
-                        assert!(!output.values[&format!("{key}.{when}.geometry")].is_empty());
-                    }
+        let output = Runner.run_rust(case).unwrap();
+        assert!(output.rejected.is_none() && output.error.is_none());
+        assert!(output.deferred.is_none());
+        let status = if input.operation.member() { 1006 } else { 1007 };
+        assert_eq!(output.ints["status"], [status]);
+        assert_eq!(output.ints["input.pure"], [1, 1]);
+        assert_eq!(
+            output.ints["ownership"],
+            [0, i64::from(input.source.is_some()), 0]
+        );
+        assert_eq!(
+            output.ints["selected.before"],
+            output.ints["selected.after"]
+        );
+        for (key, fixture) in [
+            ("source", input.source.as_ref()),
+            ("foreign", input.foreign.as_ref()),
+        ] {
+            if fixture.is_some() {
+                for when in ["before", "after"] {
+                    assert_eq!(output.ints[&format!("{key}.{when}.counts")], counts);
+                    assert!(!output.values[&format!("{key}.{when}.geometry")].is_empty());
                 }
             }
         }
-        let comparison = crate::compare::compare(cpp, &rust, Runner.abs_floors());
-        assert!(comparison.pass(), "{}: {comparison:?}", case.name);
-        assert!(comparison.values_compared > 0 && comparison.exact_compared > 0);
     }
 
     #[test]
-    fn degenerate_native_sheets_are_compared_alongside_valid_controls() {
+    fn degenerate_sheets_are_recorded_alongside_valid_controls() {
         let context = CaseContext {
             root: repo_root(),
             seeds: 0,
         };
-        let (rejected, mut compared) = (0, 0);
+        let mut recorded = 0;
         for case in context.fixture_cases(Runner.id()).unwrap() {
             if !case.name.starts_with("review_sheet_") {
                 continue;
             }
-            let cpp = Runner.run_cpp(&case).unwrap();
-            assert!(cpp.error.is_none() && cpp.deferred.is_none());
             if case.name.ends_with("_control") {
-                assert_native_constructor_control(&case, &cpp, [1, 1, 4, 8, 4]);
-                compared += 1;
+                assert_constructor_control(&case, [1, 1, 4, 8, 4]);
             } else {
-                // Merged/dropped-face sheets are defined native results, built
-                // and compared as is (not rejections).
+                // Merged/dropped-face sheets are defined results, built and recorded
+                // as is (not rejections).
                 let rust = Runner.run_rust(&case).unwrap();
-                assert!(cpp.rejected.is_none() && rust.rejected.is_none());
-                let comparison = crate::compare::compare(&cpp, &rust, Runner.abs_floors());
-                assert!(comparison.pass(), "{}: {comparison:?}", case.name);
-                assert!(comparison.exact_compared > 0);
-                compared += 1;
+                assert!(rust.rejected.is_none() && rust.error.is_none(), "{}", case.name);
+                assert!(!rust.ints.is_empty());
             }
+            recorded += 1;
         }
-        assert_eq!((rejected, compared), (0, 13));
+        assert_eq!(recorded, 13);
     }
 
     #[test]
-    fn stable_native_wire_controls_compare_topology_and_geometry_at_extremes() {
+    fn stable_wire_controls_record_topology_and_geometry_at_extremes() {
         let context = CaseContext {
             root: repo_root(),
             seeds: 0,
         };
-        let mut compared = 0;
+        let mut recorded = 0;
         for case in context.fixture_cases(Runner.id()).unwrap() {
             if !case.name.starts_with("review_wire_") {
                 continue;
             }
-            let cpp = Runner.run_cpp(&case).unwrap();
-            assert_native_constructor_control(&case, &cpp, [0, 0, 1, 2, 2]);
-            compared += 1;
+            assert_constructor_control(&case, [0, 0, 1, 2, 2]);
+            recorded += 1;
         }
-        assert_eq!(compared, 5);
+        assert_eq!(recorded, 5);
     }
 
     #[test]
-    fn fixed_fixtures_parse_and_case_budget_is_reproducible_without_running_cpp() {
+    fn fixed_fixtures_parse_and_case_budget_is_reproducible() {
         let context = CaseContext {
             root: repo_root(),
             seeds: 0,
@@ -3362,7 +2670,7 @@ mod tests {
         for case in &fixtures {
             let input: Inputs = case.parse().unwrap();
             validate(&input).unwrap();
-            operations.insert(input.operation.native() as i32);
+            operations.insert(format!("{:?}", input.operation));
         }
         assert_eq!(operations.len(), 6);
         let all = Runner.cases(&context).unwrap();
@@ -3386,7 +2694,7 @@ mod tests {
             let roundtrip: Inputs =
                 serde_json::from_value(serde_json::to_value(&input).unwrap()).unwrap();
             assert_eq!(roundtrip, input);
-            operations.insert(input.operation.native() as i32);
+            operations.insert(format!("{:?}", input.operation));
             let cfg = &input.config;
             flags.insert((
                 cfg.inset,
@@ -3429,8 +2737,6 @@ mod tests {
                 assert_eq!(output.ints["status"], [1007]);
                 assert_eq!(output.ints["ownership"], [0, 1, 0]);
                 assert_eq!(output.ints["result.present"], [0]);
-                let native = Runner.run_cpp(&case(&input)).unwrap();
-                assert!(crate::compare::compare(&native, &output, Runner.abs_floors()).pass());
             } else {
                 positive += 1;
                 // Nonempty geometry either reaches a missing dependency or is
