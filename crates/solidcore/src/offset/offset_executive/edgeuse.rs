@@ -1214,6 +1214,13 @@ impl CreatorExecutive<Handle> for Executive<'_> {
         self.inner.operation() == OffsetOperation::LocalOperation
     }
 
+    fn keeps_edge(&self, original: Handle) -> bool {
+        match original.object {
+            Object::Topology(Arena::Original, EntityRef::Edgeuse(u)) => self.inner.keeps_edgeuse(u),
+            _ => false,
+        }
+    }
+
     fn has_collapsed_faces(&self) -> bool {
         !self.inner.collapsed_faces.is_empty()
     }

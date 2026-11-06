@@ -31,13 +31,16 @@ use std::collections::BTreeSet;
 
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::attribute::ObjectKey;
+use crate::geom::axis2_placement::Axis2Placement;
 use crate::kernel::Kernel;
+use crate::math::Vec3;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::knots::Side;
 use crate::offset::offset_executive::p1::{OffsetExecutive, OffsetOperation};
 use crate::offset::offset_executive::p2::OffsetNotifications;
 use crate::query::brep::{calculate_bounding_box, BoundingBoxOptions};
-use crate::surface::surface::Surface;
+use crate::surface::implicit::AnalyticSupport;
+use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2;
 use crate::topology::brep::p5;
@@ -89,8 +92,18 @@ pub fn local_operation(
     let mut new_list = Vec::with_capacity(all_faces.len());
     // (WR-534) where each given surface went in the new list
     let mut placed: Vec<Option<usize>> = vec![None; given.len()];
+    // (not upstream) the faces whose surfaces move: a face given its own surface again keeps
+    // a copy of its own surface, as the faces not given one do, and so keeps its edges
+    let mut moved = Vec::new();
     for &face in &all_faces {
-        let surface = if let Some(index) = faces.iter().position(|&f| f == face) {
+        let index = faces.iter().position(|&f| f == face);
+        let own = face_ops::surface(b, face)?.ok_or_else(null)?;
+        let stays = match index.and_then(|i| given.get(i)).and_then(Option::as_ref) {
+            Some(new) => is_own_surface(own, new),
+            None => true,
+        };
+        let surface = if let (Some(index), false) = (index, stays) {
+            moved.push(face);
             if let Some(slot) = placed.get_mut(index) {
                 *slot = Some(new_list.len());
             }
@@ -102,7 +115,7 @@ pub fn local_operation(
             // (`EvaluateNormal(uv, TRUE, TRUE, ..)`: from the left)
             let new_normal =
                 new.evaluate_normal(k, domain.evaluate(0.5, 0.5), Side::Left, Side::Left)?;
-            let old = face_ops::surface(b, face)?.ok_or_else(null)?;
+            let old = own;
             let old_normal = old.evaluate_normal(
                 k,
                 b.face(face)?.uv_domain.evaluate(0.5, 0.5),
@@ -116,9 +129,7 @@ pub fn local_operation(
             new
         } else {
             // copy the face's current surface, when possible as an analytic one
-            face_ops::surface(b, face)?
-                .ok_or_else(null)?
-                .copy_and_add_analytics(k)?
+            own.copy_and_add_analytics(k)?
         };
         new_list.push(surface);
     }
@@ -154,16 +165,12 @@ pub fn local_operation(
     );
     // (the geometry creator's constructor tolerance, half a degree under WR-666's opt-in)
     executive.use_creator_tangency_tol(k);
-    executive.set_local_surfaces(&all_faces, new_list);
-    // A face's surface is extended to meet the moved surfaces, which the box is to hold
-    // (WR-534), not to meet an offset: by upstream's five half-radii of the sphere bounding
-    // it (more than its diameter, the farthest any point in it lies from a face in it).
-    // Still upstream's multiple, not a reach derived from the moved surfaces: a derived
-    // reach is zero (or rounding) beside faces where nothing moves, and the local operation
-    // has no offset to add past it, so those meetings touch their surfaces' sides and the
-    // results open (plan/findings/surface.exact-extension--difftest-cases-moved-2026-11-05.md,
-    // "The local operation's derived reach")
-    executive.set_extension_bound(Some(2.5 * radius));
+    // A face's surface is extended as far as its neighbours' new surfaces meet it, and as
+    // far again as they moved beside it (not upstream, whose margin is five half-radii of
+    // the sphere bounding the box: `local_extension_reach`). The edges whose faces and
+    // vertices' faces all keep their surfaces are kept as they are, not intersected again
+    // (`OffsetExecutive::keeps_edge`).
+    executive.set_local_surfaces(&all_faces, new_list, &moved);
     // the shell faces get copied without being offset: none
     executive.set_shell_faces(&[]);
     // extend/intersect to fill new convex edge gaps rather than adding a fillet
@@ -220,6 +227,226 @@ pub fn local_operation(
     // (not upstream: the port's cached topology fields, true again for the caller)
     b.refresh_cached_topology();
     moved
+}
+
+/// Whether `given` is the surface `own` lies on, exactly: both of one analytic kind
+/// ([`AnalyticSupport`]) with equal radii and semi-angle, and the same placement where it
+/// matters, each comparison made without rounding (error-free products and sums,
+/// [`exact`]):
+/// - a plane: the plane `own` spans (its origin and its two axes) holds the given plane's
+///   origin, and its two axes span the same plane;
+/// - a cylinder: the same axis line (either sense);
+/// - a cone: the same axis line and sense and the same origin (where its radius is the
+///   base radius), or the opposite sense with the semi-angle negated;
+/// - a sphere: the same centre;
+/// - a torus: the same centre and axis line (either sense).
+///
+/// Not a tolerance: a surface off by a rounding is another surface, and its face moves.
+/// The extent and parametrisation are not compared (a face's surface is extended as its
+/// neighbours need, whatever its extent, and its own copy keeps its own parameters).
+fn is_own_surface(own: &Surface, given: &Surface) -> bool {
+    use AnalyticSupport as A;
+    let (Some(own), Some(given)) = (AnalyticSupport::of(own), AnalyticSupport::of(given)) else {
+        return false;
+    };
+    match (own, given) {
+        (A::Plane { placement: p, .. }, A::Plane { placement: q, .. }) => same_plane(&p, &q),
+        (
+            A::Cylinder {
+                placement: p,
+                radius: r,
+            },
+            A::Cylinder {
+                placement: q,
+                radius: s,
+            },
+        ) => r == s && same_axis(&p, &q),
+        (
+            A::Cone {
+                placement: p,
+                base_radius: r,
+                semi_angle_deg: a,
+            },
+            A::Cone {
+                placement: q,
+                base_radius: s,
+                semi_angle_deg: b,
+            },
+        ) => {
+            // (the axes are parallel exactly, so their unit z axes' dot is +-1 to
+            // rounding: its sign is the sense)
+            let same_sense = p.z_axis().dot(q.z_axis()) > 0.0;
+            r == s
+                && (if same_sense { a == b } else { a == -b })
+                && same_point(p.origin(), q.origin())
+                && same_axis(&p, &q)
+        }
+        (
+            A::Sphere {
+                placement: p,
+                radius: r,
+            },
+            A::Sphere {
+                placement: q,
+                radius: s,
+            },
+        ) => r == s && same_point(p.origin(), q.origin()),
+        (
+            A::Torus {
+                placement: p,
+                major_radius: r1,
+                minor_radius: r2,
+            },
+            A::Torus {
+                placement: q,
+                major_radius: s1,
+                minor_radius: s2,
+            },
+        ) => r1 == s1 && r2 == s2 && same_point(p.origin(), q.origin()) && same_axis(&p, &q),
+        _ => false,
+    }
+}
+
+fn same_point(a: Vec3, b: Vec3) -> bool {
+    a.x == b.x && a.y == b.y && a.z == b.z
+}
+
+/// Whether `p`'s axes span a plane, exactly.
+fn spans(p: &Axis2Placement) -> bool {
+    exact::cross(p.x_axis(), p.y_axis())
+        .iter()
+        .any(|c| !exact::is_zero(c))
+}
+
+/// Whether the plane `p` spans (its origin and its two axes) is the one `q` spans: `q`'s
+/// axes lie in `p`'s and its origin on it, each determinant exact.
+fn same_plane(p: &Axis2Placement, q: &Axis2Placement) -> bool {
+    let (a, b, o) = (p.x_axis(), p.y_axis(), p.origin());
+    let (x, y, g) = (q.x_axis(), q.y_axis(), q.origin());
+    spans(p)
+        && spans(q)
+        && exact::is_zero(&exact::det3(a, b, x))
+        && exact::is_zero(&exact::det3(a, b, y))
+        && exact::is_zero(&exact::sub(&exact::det3(a, b, g), &exact::det3(a, b, o)))
+}
+
+/// Whether `p`'s z axis line (through its origin along `x × y`) is `q`'s, either sense:
+/// `q`'s axis `x' × y'` is normal to `p`'s x and y axes (so parallel to `x × y`), and the
+/// origins' difference is too, each product exact.
+fn same_axis(p: &Axis2Placement, q: &Axis2Placement) -> bool {
+    let (a, b, o) = (p.x_axis(), p.y_axis(), p.origin());
+    let (x, y, g) = (q.x_axis(), q.y_axis(), q.origin());
+    spans(p)
+        && spans(q)
+        && exact::is_zero(&exact::det3(x, y, a))
+        && exact::is_zero(&exact::det3(x, y, b))
+        && exact::is_zero(&exact::sub(&exact::dot(a, g), &exact::dot(a, o)))
+        && exact::is_zero(&exact::sub(&exact::dot(b, g), &exact::dot(b, o)))
+}
+
+/// Error-free arithmetic on doubles: a value is an expansion, a sum of doubles whose
+/// components do not overlap (Shewchuk's grow-expansion), so sums and products of doubles
+/// are held without rounding and a value's sign is read off exactly (an expansion is zero
+/// exactly when every component is). Overflow and underflow are out of range (the inputs
+/// are coordinates and unit vectors).
+mod exact {
+    use crate::math::Vec3;
+
+    /// `a + b` as `(s, e)`: `s = fl(a + b)` and its rounding error (Knuth's TwoSum).
+    fn two_sum(a: f64, b: f64) -> (f64, f64) {
+        let s = a + b;
+        let bb = s - a;
+        (s, (a - (s - bb)) + (b - bb))
+    }
+
+    /// `e + b` as an expansion (Grow-Expansion).
+    fn grow(e: &[f64], b: f64) -> Vec<f64> {
+        let mut q = b;
+        let mut out = Vec::new();
+        for &c in e {
+            let (s, err) = two_sum(q, c);
+            out.push(err);
+            q = s;
+        }
+        out.push(q);
+        out
+    }
+
+    /// `e + f` as an expansion.
+    fn add(e: &[f64], f: &[f64]) -> Vec<f64> {
+        f.iter().fold(e.to_vec(), |acc, &c| grow(&acc, c))
+    }
+
+    /// `e - f` as an expansion.
+    pub(super) fn sub(e: &[f64], f: &[f64]) -> Vec<f64> {
+        f.iter().fold(e.to_vec(), |acc, &c| grow(&acc, -c))
+    }
+
+    /// `a b` as an expansion: the product and its rounding error, `fma(a, b, -p)`.
+    fn product(a: f64, b: f64) -> Vec<f64> {
+        let p = a * b;
+        vec![a.mul_add(b, -p), p]
+    }
+
+    /// `e b` as an expansion: each component's product, summed.
+    fn scale(e: &[f64], b: f64) -> Vec<f64> {
+        e.iter()
+            .fold(Vec::new(), |acc, &c| add(&acc, &product(c, b)))
+    }
+
+    /// `u × v`, each component an expansion.
+    pub(super) fn cross(u: Vec3, v: Vec3) -> [Vec<f64>; 3] {
+        [
+            sub(&product(u.y, v.z), &product(u.z, v.y)),
+            sub(&product(u.z, v.x), &product(u.x, v.z)),
+            sub(&product(u.x, v.y), &product(u.y, v.x)),
+        ]
+    }
+
+    /// `u · v` as an expansion.
+    pub(super) fn dot(u: Vec3, v: Vec3) -> Vec<f64> {
+        add(
+            &add(&product(u.x, v.x), &product(u.y, v.y)),
+            &product(u.z, v.z),
+        )
+    }
+
+    /// `det(a, b, c) = (a × b) · c` as an expansion.
+    pub(super) fn det3(a: Vec3, b: Vec3, c: Vec3) -> Vec<f64> {
+        let [x, y, z] = cross(a, b);
+        add(&add(&scale(&x, c.x), &scale(&y, c.y)), &scale(&z, c.z))
+    }
+
+    /// Whether the expansion is zero exactly.
+    pub(super) fn is_zero(e: &[f64]) -> bool {
+        e.iter().all(|&c| c == 0.0)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_rounded_sum_is_not_zero_but_its_exact_one_is() {
+            // 0.1 + 0.2 - 0.3 rounds to 5.6e-17; exactly it is that too (the doubles are
+            // not the decimals), while 1e16 + 1 - 1e16 is 1, not the 0 or 2 of rounding
+            assert!(!is_zero(&sub(&add(&[0.1], &[0.2]), &[0.3])));
+            assert_eq!(sub(&add(&[1e16], &[1.0]), &[1e16]).iter().sum::<f64>(), 1.0);
+            assert!(is_zero(&sub(&product(3.0, 0.1), &product(0.1, 3.0))));
+        }
+
+        #[test]
+        fn a_determinant_is_zero_exactly_only_for_dependent_vectors() {
+            let a = Vec3::new(0.1, 0.7, 0.3);
+            let b = Vec3::new(0.9, 0.2, 0.4);
+            assert!(is_zero(&det3(a, b, a)));
+            assert!(!is_zero(&det3(
+                a,
+                b,
+                Vec3::new(0.1, 0.7, 0.3 + 1e-16 * 0.3)
+            )));
+        }
+    }
 }
 
 /// `RemoveFaces(GetFaces)` of `b`, then `pNewBrep->CopyFaces(GetFaces, b)`.
@@ -427,5 +654,216 @@ mod tests {
             near(e.max_at(2), 80.0) && near(e.min_at(2), 0.0) && near(e.max_at(0), 20.0),
             "{e:?}"
         );
+    }
+
+    /// The volume and whether the body is a manifold solid, with the cached topology
+    /// fields agreeing with the links.
+    fn volume_and_manifold(k: &Kernel, b: &mut Brep) -> (f64, bool) {
+        crate::topology::integrity::check(b).unwrap();
+        let volume = crate::mass::integrator::properties::brep_volume_default(k, b, 1e-6).unwrap();
+        (
+            volume,
+            crate::query::api_queries::brep_is_manifold_solid(b).unwrap(),
+        )
+    }
+
+    /// The face of `b` whose surface is not a plane (a primitive's side).
+    fn curved_face(b: &Brep) -> FaceId {
+        bp1::faces(b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                !matches!(
+                    face_ops::surface(b, f).unwrap().unwrap().kind(),
+                    SurfaceKind::Plane(_)
+                )
+            })
+            .unwrap()
+    }
+
+    /// `b`'s curved face given `surface`: Ok, a manifold solid with the input's volume to
+    /// rounding (the closed form `volume` to the integrator's accuracy, 1e-6), faces, edges,
+    /// vertices and tolerance.
+    fn given_its_own(mut k: Kernel, mut b: Brep, surface: Surface, volume: f64) {
+        let face = curved_face(&b);
+        let before = (b.faces().len(), b.edges().len(), b.vertices().len());
+        let tolerance = b.tolerance();
+        let (input, _) = volume_and_manifold(&k, &mut b);
+        assert!(
+            (input - volume).abs() <= 1e-6 * volume,
+            "{input} vs {volume}"
+        );
+        with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[face], vec![surface], notes)
+        })
+        .unwrap();
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold);
+        assert!((v - input).abs() <= 1e-12 * input, "{v} vs {input}");
+        assert_eq!(
+            (b.faces().len(), b.edges().len(), b.vertices().len()),
+            before
+        );
+        assert_eq!(b.tolerance(), tolerance);
+    }
+
+    /// Review finding 1: a cylinder's side given the same cylinder (another surface of
+    /// it, over another extent) keeps its surface and edges: the body is unchanged.
+    #[test]
+    fn a_cylinder_given_its_own_cylinder_is_unchanged() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let s = Surface::from(
+            ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -1.0), 1.0, 4.0).unwrap(),
+        );
+        given_its_own(k, b, s, 2.0 * std::f64::consts::PI);
+    }
+
+    #[test]
+    fn a_cone_given_its_own_cone_is_unchanged() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let b = ap::create_cone(&mut k, Point3::ZERO, 2.0, 1.0, 3.0).unwrap();
+        let s = Surface::from(ap::create_cone_surface(&k, Point3::ZERO, 2.0, 1.0, 3.0).unwrap());
+        given_its_own(
+            k,
+            b,
+            s,
+            std::f64::consts::PI * 3.0 / 3.0 * (4.0 + 2.0 + 1.0),
+        );
+    }
+
+    #[test]
+    fn a_sphere_given_its_own_sphere_is_unchanged() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let b = ap::create_sphere(&mut k, Point3::new(1.0, 2.0, 3.0), 1.5).unwrap();
+        let other = ap::create_sphere(&mut k, Point3::new(1.0, 2.0, 3.0), 1.5).unwrap();
+        let s = face_ops::surface(&other, curved_face(&other))
+            .unwrap()
+            .unwrap()
+            .clone();
+        given_its_own(k, b, s, 4.0 / 3.0 * std::f64::consts::PI * 1.5_f64.powi(3));
+    }
+
+    #[test]
+    fn a_torus_given_its_own_torus_is_unchanged() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let b = ap::create_torus(&mut k, Point3::ZERO, 3.0, 1.0).unwrap();
+        let s = Surface::from(ap::create_torus_surface(&k, Point3::ZERO, 3.0, 1.0).unwrap());
+        given_its_own(k, b, s, 2.0 * std::f64::consts::PI.powi(2) * 3.0);
+    }
+
+    /// A cylinder's side given the coaxial cylinder one rounding wider moves, by a reach
+    /// of rounding size: the extension of the neighbours by that tiny margin is built, and
+    /// the body is the wider cylinder.
+    #[test]
+    fn a_cylinder_given_one_a_rounding_wider_moves_by_it() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let r = f64::from_bits(1.0_f64.to_bits() + 1);
+        let s = Surface::from(
+            ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -1.0), r, 4.0).unwrap(),
+        );
+        let face = curved_face(&b);
+        let tolerance = b.tolerance();
+        let (input, _) = volume_and_manifold(&k, &mut b);
+        with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[face], vec![s], notes)
+        })
+        .unwrap();
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold);
+        // no edge is kept (each touches the side), and the body keeps the input's tolerance
+        // all the same (review finding 7)
+        assert_eq!(b.tolerance(), tolerance);
+        // the new caps' edges are re-intersected B-splines within the body's tolerance of
+        // the circles (as for any moved cylinder side), so the volume is within the
+        // tolerance times the area (2 pi r h + 2 pi r^2) of the input's
+        let bound = b.tolerance() * 6.0 * std::f64::consts::PI;
+        assert!((v - input).abs() <= bound, "{v} vs {input}");
+    }
+
+    /// Review findings 7 and 8: a box's top raised, its bottom's four edges kept (their
+    /// faces and their vertices' faces all stay). Each is the original edge in the result:
+    /// the same curve over the same interval, its tolerance and its vertices' not below
+    /// the input's; the body's tolerance is the input's; the result is a manifold solid.
+    #[test]
+    fn a_raised_top_keeps_the_bottom_edges_as_they_were() {
+        let mut k = Kernel::default();
+        let mut b = create_box(&mut k, Point3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let input = create_box(&mut k, Point3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let top = bp1::faces(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                let s = face_ops::surface(&b, f).unwrap().unwrap();
+                let p = s
+                    .evaluate_point(
+                        &k,
+                        s.natural_uv_domain_with_nurb(&k)
+                            .unwrap()
+                            .evaluate(0.5, 0.5),
+                    )
+                    .unwrap();
+                (p.z - 2.0).abs() < 1e-9
+            })
+            .unwrap();
+        let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 3.0), Vec3::Z));
+        with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[top], vec![raised], notes)
+        })
+        .unwrap();
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v - 12.0).abs() <= 1e-6 * 12.0, "{v}");
+        assert_eq!(b.tolerance(), input.tolerance());
+        // the curve's points at its interval's ends and quarters, bit for bit
+        let points = |br: &Brep, e: crate::topology::EdgeId| {
+            let c = crate::topology::edge::curve(br, e).unwrap().unwrap();
+            let i = crate::topology::edge::interval(br, e).unwrap();
+            [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| {
+                c.evaluate_point(&k, i.min() + t * (i.max() - i.min()))
+                    .unwrap()
+            })
+        };
+        let bottom: Vec<_> = input
+            .edges()
+            .iter()
+            .map(|(e, _)| e)
+            .filter(|&e| points(&input, e).iter().all(|p| p.z == 0.0))
+            .collect();
+        assert_eq!(bottom.len(), 4);
+        for e in bottom {
+            let want = points(&input, e);
+            let interval = crate::topology::edge::interval(&input, e).unwrap();
+            let kept: Vec<_> = b
+                .edges()
+                .iter()
+                .map(|(f, _)| f)
+                .filter(|&f| points(&b, f) == want)
+                .collect();
+            let &[f] = kept.as_slice() else {
+                panic!("edge {e:?}: {} copies", kept.len());
+            };
+            let got = crate::topology::edge::interval(&b, f).unwrap();
+            assert_eq!(
+                (got.min().to_bits(), got.max().to_bits()),
+                (interval.min().to_bits(), interval.max().to_bits())
+            );
+            assert!(b.edge(f).unwrap().tolerance >= input.edge(e).unwrap().tolerance);
+            let (s0, s1) = crate::topology::edge::start_end_vertices(&input, e).unwrap();
+            let (t0, t1) = crate::topology::edge::start_end_vertices(&b, f).unwrap();
+            for (s, t) in [(s0, t0), (s1, t1)] {
+                let (s, t) = (
+                    input.vertex(s.unwrap()).unwrap(),
+                    b.vertex(t.unwrap()).unwrap(),
+                );
+                assert_eq!(s.point, t.point);
+                assert!(t.tolerance >= s.tolerance);
+            }
+        }
     }
 }
