@@ -85,9 +85,11 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
 /// 8.6e-5 long (the top tube's wall cut by the seat's end plane) whose NURB lies 2.1e-5
 /// off its ellipse (`SmExtent1d::ContainsPeriodicValue`, a separate defect the fork's
 /// commit also leaves). The numbers are deterministic.
+/// Its tolerance is upstream's point term plus the rounding the ellipse's evaluation carries
+/// (WR-741).
 const ELLIPSE_1518: &str = "SmEllipse::Test #2 Bad Nurb to STEP Approx: \
 Dist(NurbPt, EvalSTEP(STEPInversion(NurbPt)) greater than tol \
-(offset=2.1419823e-05, tolerance=8.2099963e-08) [owner SmEllipse]";
+(offset=2.1419823e-05, tolerance=8.2100185e-08) [owner SmEllipse]";
 
 /// The union with the fix set to `fixed`: the result's volume when it is one manifold
 /// solid whose check reports exactly #1518's ellipse ([`ELLIPSE_1518`]), else what went

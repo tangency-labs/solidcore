@@ -56,6 +56,10 @@
 //!   when linear) instead of reusing `dThetaXRad`, and aligns a full-turn STEP
 //!   domain with the projected NURB seam before `SetUpPolarConversion`. Default
 //!   behavior stays pinned C++.
+//! - **Rounding of the analytic form (#2539, WR-741).** `AssertValid`'s tests 1 and 2 also
+//!   allow `gamma_11 max(|rx|, |ry|) (1 + |t|)` (`t` in radians), the rounding the angle
+//!   and the evaluation of `o + rx cos(t) X + ry sin(t) Y` carry: a near-degenerate
+//!   ellipse (radii 1.8e7 and 8) makes it larger than `100 SM_EFF_ZERO (1 + |p|)`.
 //! - **Circle class.** `SmCircle` derives from `SmEllipse` without data of its own;
 //!   it is an [`Ellipse`] whose `circle` flag is set ([`Ellipse::is_circle_class`]),
 //!   which picks the circle's type, its `IsKindOf`, `IsArc`, `CreateSimpleOffset` and
@@ -140,6 +144,7 @@ use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::crv_basic::ConicType;
 use crate::nurbs::crv_common::{elliptical_arc_tol, EllipseArc};
 use crate::nurbs::index::at;
+use crate::nurbs::math::gamma;
 use crate::nurbs::nurbs_crv::to_euclid;
 use crate::surface::surface::Surface;
 use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream};
@@ -1217,7 +1222,8 @@ impl Ellipse {
     /// converter ([`PolarConversion::assert_valid`], about `polar_key`), only circles
     /// inside out (report 0 of `SmEllipse`), and at 5 STEP samples the NURB point of
     /// the converted parameter on the STEP point (report 1) and on the ellipse
-    /// (report 2) within `100 SM_EFF_ZERO` scaled. Reports name `key`.
+    /// (report 2) within `100 SM_EFF_ZERO` scaled and, beyond upstream, the rounding the
+    /// evaluation carries, `gamma_11 max(|rx|, |ry|) (1 + |t|)` (WR-741). Reports name `key`.
     ///
     /// # Errors
     ///
@@ -1347,6 +1353,22 @@ impl Ellipse {
         )?;
 
         // Check that the BsplineCurve shape is the same as the analytic shape
+        // Not upstream (WR-741): beyond the point term, the STEP point `o + rx cos(t) X +
+        // ry sin(t) Y` carries rounding that grows with the radii, and an angle off by `d`
+        // moves it by up to `max(|rx|, |ry|) d`. Counted in roundings (units of `u`):
+        // - the angle, relative to `|t|` in radians: test 2's is the longer chain, 11:
+        //   `atan2` (within an ulp, 2), `+ 2 pi` (2), `* (180 / pi)` (3), the periodic map
+        //   into the domain (1) and `t * pi / 180` back (3); test 1's is the last 3;
+        // - the evaluation, at most 10 relative to `max(|rx|, |ry|)`: `cos` or `sin` (within
+        //   an ulp, 2), the products with the radius and the axis (2) and the two sums (6:
+        //   they round the axis terms, at most `sqrt(2) max r`, and `o`, at most that beyond
+        //   `|p|`, whose share is the point term's).
+        // Test 1's NURB point is found from its STEP point (kept within `SM_EFF_ZERO (1 +
+        // |p|)` of it, or inverted onto the NURB). So each test also allows
+        // `gamma_11 max(|rx|, |ry|) (1 + |t|)`.
+        let max_radius = self.radius_x.abs().max(self.radius_y.abs());
+        let rounding =
+            |step_deg: f64| gamma(11) * max_radius * (1.0 + (step_deg * PI / 180.0).abs());
         let smp_count = 5u32;
         for ii in 0..smp_count {
             // get equivalent Nurb and STEP params
@@ -1367,7 +1389,8 @@ impl Ellipse {
             // Evaluate the points (status ignored)
             let nurb_point = ignored(self.base.evaluate_point(nurb_t))?.unwrap_or(Vec3::UNDEF);
             let step_point = self.step_point(step_t);
-            let scaled_zero = EFF_ZERO * 100.0 * (1.0 + nurb_point.max_dimension());
+            let point_zero = EFF_ZERO * 100.0 * (1.0 + nurb_point.max_dimension());
+            let scaled_zero = point_zero + rounding(step_t);
 
             // Points are equal - others vary by a small amount
             let dist = (nurb_point - step_point).length();
@@ -1386,14 +1409,15 @@ impl Ellipse {
             let step_param = self.step_inversion(k, nurb_point, false, 0.0).0;
             let check_point = self.step_point(step_param);
             let check_dist = (check_point - nurb_point).length();
+            let check_zero = point_zero + rounding(step_param);
             rtn &= report(
                 &mut list,
                 key,
                 (labels::ELLIPSE_TYPE, self.class_string()),
                 0,
                 2,
-                check_dist < scaled_zero,
-                scaled_zero,
+                check_dist < check_zero,
+                check_zero,
                 check_dist,
             )?;
         }
