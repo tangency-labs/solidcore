@@ -472,6 +472,77 @@ mod tests {
     }
 
     #[test]
+    fn a_value_past_its_floor_fails() {
+        let floors = [AbsFloor {
+            key: "v",
+            abs: 1e-6,
+            why: "test",
+        }];
+        let g = encode("c", &out(&[0.0]));
+        let c = diff(&g, &encode("c", &out(&[2e-6])), &floors).unwrap();
+        assert!(c.details[0].starts_with("values.v[0]"));
+    }
+
+    #[test]
+    fn sixteen_entries_are_full_and_seventeen_one_block() {
+        let base: Vec<f64> = (1..=17).map(f64::from).collect();
+        let full = encode("c", &out(&base[..FULL]));
+        assert_eq!(full["values"]["v"].as_array().map(Vec::len), Some(FULL));
+        let g = encode("c", &out(&base));
+        assert_eq!(g["values"]["v"]["n"], json!(17));
+        assert_eq!(g["values"]["v"]["blocks"].as_array().map(Vec::len), Some(1));
+        let mut moved = base;
+        moved[16] += 1e-6;
+        let c = diff(&g, &encode("c", &out(&moved)), &[]).unwrap();
+        assert!(c.details[0].starts_with("values.v.block[0]"));
+    }
+
+    /// A unit whose cases are `names`, each producing `out(&[1.0])`.
+    struct Named(Vec<&'static str>);
+
+    impl UnitDiff for Named {
+        fn id(&self) -> &'static str {
+            "golden.test"
+        }
+        fn cases(&self, _ctx: &CaseContext) -> Result<Vec<crate::Case>, HarnessError> {
+            Ok(self
+                .0
+                .iter()
+                .map(|n| crate::Case {
+                    unit: self.id().into(),
+                    name: (*n).into(),
+                    source: crate::case::CaseSource::Inline,
+                    inputs: json!({}),
+                })
+                .collect())
+        }
+        fn run_rust(&self, _case: &crate::Case) -> Result<Output, HarnessError> {
+            Ok(out(&[1.0]))
+        }
+    }
+
+    #[test]
+    fn check_unit_reports_added_and_missing_cases() {
+        let ctx = CaseContext {
+            root: std::env::temp_dir(),
+            seeds: 0,
+        };
+        let opts = RunOptions::default();
+        let mut g = Golden::new();
+        for n in ["a", "b"] {
+            g.insert(n.into(), encode(n, &out(&[1.0])));
+        }
+        let same = check_unit(&Named(vec!["a", "b"]), &ctx, &opts, &g, true);
+        assert!(same.passed(), "{same:?}");
+        assert_eq!(same.cases(), 2);
+        let res = check_unit(&Named(vec!["a", "c"]), &ctx, &opts, &g, false);
+        assert!(!res.passed());
+        assert_eq!(res.added, ["c"]);
+        assert_eq!(res.removed, ["b"]);
+        assert!(res.changed.is_empty() && res.broken.is_empty());
+    }
+
+    #[test]
     fn files_round_trip_sorted() {
         let dir = std::env::temp_dir().join(format!("goldens-test-{}", std::process::id()));
         let mut g = Golden::new();
