@@ -1,4 +1,9 @@
-//! Differential checks for the accessible rollover branches. Single-interval
+//! Runner for unit `blend.fillet_solver_p5`: the fillet solver's rollover branches.
+//!
+//! Ported from upstream `SmFilletSolver`'s rollover (`TestRollOver`); checked against its
+//! golden. Rust: `solidcore::blend::fillet_solver::p5`.
+//!
+//! Checks for the accessible rollover branches. Single-interval
 //! classifications are supplied directly; these checks do not claim to exercise
 //! surface repair. `TestRollOver` with two real rails runs the real `reset`; its
 //! remaining dependencies are reported by the differential run. The
@@ -26,7 +31,6 @@ use solidcore::surface::{surface::Surface, volume::Volume};
 use solidcore::topology::{
     Brep, EdgeId, Edgeuse, EdgeuseId, FaceId, LoopId, VertexId, VertexuseId,
 };
-use solidcore_ffi::units::blend_fillet_solver_p5 as ffi;
 
 /// Accessible rollover branches and their post-call classification state.
 pub struct Runner;
@@ -44,26 +48,6 @@ struct Inputs {
     corner: i32,
     adjusted: Vec<i32>,
     rails: [Option<Vec<Interval>>; 2],
-}
-impl Inputs {
-    fn flat(&self) -> Vec<f64> {
-        let mut result = vec![
-            f64::from(self.op),
-            f64::from(self.kind),
-            f64::from(self.corner),
-            self.adjusted.len() as f64,
-        ];
-        result.extend(self.adjusted.iter().copied().map(f64::from));
-        for rail in &self.rails {
-            result.push(rail.as_ref().map_or(-1., |r| r.len() as f64));
-            if let Some(r) = rail {
-                for ivl in r {
-                    result.extend([ivl.min, ivl.max, f64::from(ivl.class)]);
-                }
-            }
-        }
-        result
-    }
 }
 fn harness(e: impl std::fmt::Display) -> HarnessError {
     HarnessError::new(e.to_string())
@@ -502,16 +486,6 @@ fn run(i: &Inputs) -> Result<Output, HarnessError> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.fillet_solver_p5"
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match ffi::eval(&i.flat()) {
-            Ok(state) => output(&state),
-            Err(solidcore_ffi::FfiError::InvalidArgument(_)) => {
-                Ok(Output::rejected("incomplete recovery fixture"))
-            }
-            Err(e) => Err(harness(e)),
-        }
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run(&case.parse()?)
