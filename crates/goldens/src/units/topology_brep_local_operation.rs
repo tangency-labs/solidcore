@@ -213,14 +213,18 @@ fn with_notifications<R>(
 }
 
 /// How a case's edit ends: before or without an edit (the case's whole output), or with
-/// the edited B-rep and its record.
+/// the edited B-rep and its record (boxed: a kernel and a B-rep are large beside an
+/// output).
 enum Edited {
     Ended(Output),
-    Done {
-        k: Kernel,
-        b: Brep,
-        record: Vec<f64>,
-    },
+    Done(Box<Done>),
+}
+
+/// An edit's kernel, edited B-rep and record.
+struct Done {
+    k: Kernel,
+    b: Brep,
+    record: Vec<f64>,
 }
 
 /// Reads the case's solid and runs `local_operation` on it ([`Runner`]'s edit).
@@ -255,7 +259,7 @@ fn edited(case: &Case) -> Result<Edited, HarnessError> {
     };
     match run() {
         Ok(None) => Ok(Edited::Ended(Output::new())),
-        Ok(Some(record)) => Ok(Edited::Done { k, b, record }),
+        Ok(Some(record)) => Ok(Edited::Done(Box::new(Done { k, b, record }))),
         Err(e) => Output::unported(&e)
             .map(Edited::Ended)
             .ok_or_else(|| herr(e)),
@@ -270,7 +274,10 @@ fn edited(case: &Case) -> Result<Edited, HarnessError> {
 /// The case's inputs are bad, or it has no edited B-rep.
 pub fn result_breps(case: &Case) -> Result<super::surface_surface_p2::Drawn, HarnessError> {
     match edited(case)? {
-        Edited::Done { k, b, .. } => Ok((k, vec![("edited", b)])),
+        Edited::Done(d) => {
+            let Done { k, b, .. } = *d;
+            Ok((k, vec![("edited", b)]))
+        }
         Edited::Ended(_) => Err(herr(format!(
             "case {}: cannot be drawn: it ends before the edit (replacements not built, \
              or the read deferred)",
@@ -287,7 +294,10 @@ impl UnitDiff for Runner {
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let (mut k, mut b, record) = match edited(case)? {
             Edited::Ended(o) => return Ok(o),
-            Edited::Done { k, b, record } => (k, b, record),
+            Edited::Done(d) => {
+                let Done { k, b, record } = *d;
+                (k, b, record)
+            }
         };
         // (a probe's measure, before the export strips the body: capture off, none)
         crate::soundness::measure(&mut b);
