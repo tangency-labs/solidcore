@@ -511,43 +511,13 @@ fn call_with_copy(
                 return Err(bad("one input"));
             }
             let mut source = first()?;
-            if source.order.is_none() {
-                let (_, order) = source
-                    .body
-                    .to_record()
-                    .map_err(|e| Stop::Fail(format!("order before fillet_variable: {e}")))?;
-                source.order = Some(order);
-            }
+            ensure_order(&mut source, "fillet_variable")?;
             let s = copy_for_edit(&source)?;
             let order = s
                 .order
                 .as_ref()
                 .ok_or_else(|| Stop::Fail("fillet_variable: missing copied order".to_owned()))?;
-            if p["edge"]["kind"].as_str() != Some("edge") {
-                return Err(bad("edge pick kind"));
-            }
-            let picked = p["edge"]["picked"]
-                .as_array()
-                .ok_or_else(|| bad("edge picked"))?;
-            let [pick] = picked.as_slice() else {
-                return Err(bad("exactly one edge"));
-            };
-            if let Some(miss) = pick.get("miss") {
-                let why = miss.as_str().ok_or_else(|| bad("edge miss"))?;
-                if pick.get("index").is_some() {
-                    return Err(bad("edge pick must hit or miss"));
-                }
-                return Err(Stop::Unsupported(format!(
-                    "fillet_variable: edge pick missed: {why}"
-                )));
-            }
-            let edge = pick["index"]
-                .as_u64()
-                .and_then(|i| usize::try_from(i).ok())
-                .ok_or_else(|| bad("edge index"))?;
-            if order.edges.get(edge).is_none() {
-                return Err(bad("edge outside record order"));
-            }
+            let edge = record_pick("fillet_variable", &p["edge"], "edge", order.edges.len())?;
             let start = f64s::<3>(&p["start"]).ok_or_else(|| bad("start"))?;
             let degree = p["degree"]
                 .as_u64()
