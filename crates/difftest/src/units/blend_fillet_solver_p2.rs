@@ -1,5 +1,5 @@
-//! Runner for unit `blend.fillet_solver_p2`. C++: `solidcore_ffi::units::blend_fillet_solver_p2`.
-//! Rust: `solidcore::blend::fillet_solver::p2`.
+//! Runner for unit `blend.fillet_solver_p2`. Ported from upstream
+//! `source/SMLib/src/SmFilletSolver.cpp`; checked against its golden. Rust: `solidcore::blend::fillet_solver::p2`.
 //!
 //! The solves and the analytic fillet builders call the solver's virtuals
 //! (`GetJacobianSize`, `LoadInitialValues`, `LoadJacobian`, `SetupOffsetValues`), which the
@@ -72,14 +72,17 @@ use solidcore::topology::{
     edge, vertex, Brep, EdgeId, Edgeuse, EdgeuseId, VertexId, Vertexuse, VertexuseOwner,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_solver_p2::{self as ffi, Op};
-use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, gen_surface, import, path_of, push_surface, sel, surface_of, BrepIn, BssIn,
-    CrvIn, SrfIn, FILES,
+    gen_surface, sel, surface_of, BrepIn, BssIn, CrvIn, SrfIn, FILES,
 };
 use crate::{HarnessError, Output, Rng, UnitDiff};
+
+/// Largest `extra` (unknowns beyond the two UV points) of the shim's solver.
+const MAX_EXTRA: usize = 5;
+
+/// Largest number of tsect points the reference wrapper accepts.
+const MAX_TSECTS: usize = 16;
 
 /// The runner.
 pub struct Runner;
@@ -193,35 +196,10 @@ fn b(v: bool) -> f64 {
     }
 }
 
-fn push_cfg(o: &mut Vec<f64>, c: &Cfg) {
-    o.extend([
-        c.tol,
-        c.extra as f64,
-        c.radius,
-        c.slope,
-        c.target,
-        c.gu,
-        c.gv,
-    ]);
-}
-
-fn push_surfs(o: &mut Vec<f64>, s: &Surfs) -> Result<(), HarnessError> {
-    push_surface(o, &s.base[0])?;
-    push_surface(o, &s.base[1])?;
-    for (h, d) in s.has.iter().zip(&s.off) {
-        o.push(b(*h));
-        o.push(*d);
-    }
-    o.extend(s.orient);
-    Ok(())
-}
-
 // ---- B-rep cases -------------------------------------------------------------------------
 
 /// The case's B-rep: the C++ export's counts and the imported Rust B-rep.
 struct BrepCase {
-    path: String,
-    block: Vec<f64>,
     counts: [usize; 10],
     brep: Brep,
 }
@@ -231,35 +209,12 @@ struct BrepCase {
 /// imported from the C++ export; `Err(output)` when the Rust build fails, as
 /// [`brep_case`] reports the shim's failed build.
 fn own_case(brep: &BrepIn) -> Result<Result<BrepCase, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
     let brep = match crate::own_reader::edgeuse_graph_brep(&mut Kernel::default(), brep)? {
         Ok(b) => b,
         Err(e) => return Ok(Err(crate::own_builder::failed_output(&e))),
     };
     Ok(Ok(BrepCase {
-        path,
-        block,
         counts: crate::own_builder::counts(&brep),
-        brep,
-    }))
-}
-
-/// Builds the case's B-rep on both sides; `Err(output)` when it cannot be built.
-fn brep_case(brep: &BrepIn) -> Result<Result<BrepCase, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
-    let ex = ffi1::eval(ffi1::Op::Export, &path, &block)
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some(counts) = ffi1::counts(&ex) else {
-        let st = ex.get(1).copied().unwrap_or(0.0);
-        return Ok(Err(Output::err(format!("brep_build_status_{st}"))));
-    };
-    let brep = import(&ex)?;
-    Ok(Ok(BrepCase {
-        path,
-        block,
-        counts,
         brep,
     }))
 }
@@ -276,16 +231,6 @@ impl Inputs {
             _ => None,
         }
     }
-
-    fn op(&self) -> Op {
-        match self {
-            Inputs::Plane { .. } => Op::Plane,
-            Inputs::RailEu { .. } => Op::RailEu,
-            Inputs::RailRail { .. } => Op::RailRail,
-            Inputs::Geom { .. } => Op::Geom,
-            Inputs::Corner { .. } | Inputs::Record { .. } => Op::Misc,
-        }
-    }
 }
 
 /// The edge uses of a wire edge (`CreateWireEdgeFromCurve`): the primary and its mate.
@@ -296,134 +241,8 @@ fn n_eu(c: &BrepCase) -> usize {
     c.counts[6]
 }
 
-fn cpp_input(i: &Inputs, c: Option<&BrepCase>) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    let block = || -> Result<&BrepCase, HarnessError> { c.ok_or_else(|| harness("no B-rep")) };
-    match i {
-        Inputs::Plane {
-            cfg,
-            surfs,
-            orig,
-            normal,
-            dom1,
-            dom2,
-            uv1,
-            uv2,
-        } => {
-            push_cfg(&mut o, cfg);
-            push_surfs(&mut o, surfs)?;
-            o.extend(orig);
-            o.extend(normal);
-            o.extend(dom1);
-            o.extend(dom2);
-            o.extend(uv1);
-            o.extend(uv2);
-        }
-        Inputs::RailEu {
-            cfg,
-            surfs,
-            side,
-            frac,
-            rail,
-            ptype,
-            ..
-        } => {
-            let c = block()?;
-            push_cfg(&mut o, cfg);
-            push_surfs(&mut o, surfs)?;
-            o.extend_from_slice(&c.block);
-            o.extend([
-                sel(*side, n_eu(c)) as f64,
-                *frac,
-                *rail as f64,
-                f64::from(*ptype),
-            ]);
-        }
-        Inputs::RailRail {
-            cfg,
-            surfs,
-            uv,
-            rail,
-            other,
-        } => {
-            for (c, s) in cfg.iter().zip(surfs) {
-                push_cfg(&mut o, c);
-                push_surfs(&mut o, s)?;
-            }
-            o.extend(uv);
-            o.extend([*rail as f64, *other as f64]);
-        }
-        Inputs::Geom {
-            which,
-            cfg,
-            surfs,
-            fsg,
-            before,
-            after,
-            factor,
-            eu,
-            tsects,
-            analytic,
-            rails,
-            ..
-        } => {
-            o.push(f64::from(*which));
-            push_cfg(&mut o, cfg);
-            push_surfs(&mut o, surfs)?;
-            o.extend([f64::from(*fsg), b(*before), b(*after), *factor]);
-            match rails {
-                Some(r) => {
-                    o.push(1.0);
-                    o.extend(r.iter().flatten());
-                }
-                None => o.push(0.0),
-            }
-            let n_eus = match analytic {
-                Some(AnalyticEdge::Line { a, b }) => {
-                    o.push(1.0);
-                    o.extend(a);
-                    o.extend(b);
-                    WIRE_EDGEUSES
-                }
-                Some(AnalyticEdge::Circle { radius, span }) => {
-                    o.push(2.0);
-                    o.extend([*radius, *span]);
-                    WIRE_EDGEUSES
-                }
-                None => {
-                    let c = block()?;
-                    o.push(0.0);
-                    o.extend_from_slice(&c.block);
-                    n_eu(c)
-                }
-            };
-            o.push(sel(eu[0], n_eus) as f64);
-            o.push(sel(eu[1], n_eus) as f64);
-            o.push(tsects.len() as f64);
-            for t in tsects {
-                o.extend(t.uv0);
-                o.extend(t.uv1);
-                o.push(t.cparam);
-            }
-        }
-        Inputs::Corner { cfg, index } => {
-            o.push(0.0);
-            push_cfg(&mut o, cfg);
-            o.push(*index as f64);
-        }
-        Inputs::Record { cfg, eu, .. } => {
-            let c = block()?;
-            o.push(1.0);
-            push_cfg(&mut o, cfg);
-            o.extend_from_slice(&c.block);
-            o.push(sel(*eu, n_eu(c)) as f64);
-        }
-    }
-    Ok(o)
-}
-
 /// Rejects (on both sides) the solver sizes the FFI refuses: `extra` above
-/// [`ffi::MAX_EXTRA`] and more than [`ffi::MAX_TSECTS`] tsect points (the Rust test
+/// [`MAX_EXTRA`] and more than [`MAX_TSECTS`] tsect points (the Rust test
 /// solver would allocate intervals of that size).
 fn check_sizes(i: &Inputs) -> Result<(), HarnessError> {
     let cfgs: Vec<&Cfg> = match i {
@@ -434,30 +253,15 @@ fn check_sizes(i: &Inputs) -> Result<(), HarnessError> {
         | Inputs::Record { cfg, .. } => vec![cfg],
         Inputs::RailRail { cfg, .. } => cfg.iter().collect(),
     };
-    if cfgs.iter().any(|c| c.extra > ffi::MAX_EXTRA) {
+    if cfgs.iter().any(|c| c.extra > MAX_EXTRA) {
         return Err(harness("extra above MAX_EXTRA"));
     }
     if let Inputs::Geom { tsects, .. } = i {
-        if tsects.len() > ffi::MAX_TSECTS {
+        if tsects.len() > MAX_TSECTS {
             return Err(harness("more tsect points than MAX_TSECTS"));
         }
     }
     Ok(())
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    check_sizes(i)?;
-    let case = match i.brep() {
-        Some(brep) => match brep_case(brep)? {
-            Ok(c) => Some(c),
-            Err(out) => return Ok(out),
-        },
-        None => None,
-    };
-    let path = case.as_ref().map(|c| c.path.clone()).unwrap_or_default();
-    let input = cpp_input(i, case.as_ref())?;
-    let flat = ffi::eval(i.op(), &path, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(Output::new().values("flat", flat))
 }
 
 // ---- Rust side ------------------------------------------------------------------------
@@ -1906,10 +1710,6 @@ impl UnitDiff for Runner {
             }
         }
         Ok(cases)
-    }
-
-    fn run_cpp(&self, case: &crate::Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &crate::Case) -> Result<Output, HarnessError> {
