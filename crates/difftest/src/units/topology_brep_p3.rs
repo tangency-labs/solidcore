@@ -1,39 +1,34 @@
-//! Runner for unit `topology.brep_p3`. C++: `solidcore_ffi::units::topology_brep_p3`.
-//! Rust: `solidcore::topology::brep::p3`.
+//! Runner for unit `topology.brep_p3`: `solidcore::topology::brep::p3`, ported from
+//! upstream `SmBrep` (`SmBrep.cpp`) and `SmApiBrepCopy`; checked against its golden.
 //!
-//! The C++ side builds a real `SmBrep` per call with the shared topology fixture (an
-//! upstream `.smb` file, a wire edge, a one-face B-rep or the `my_test_topology` wire
-//! network), as the `topology.brep_p2` shim builds it, and runs one member of the unit
-//! (the constructors and `SmApiBrepCopy` too) on its real geometry, analytic surfaces
-//! and curves included. The Rust side builds a wire edge, face or network source itself
-//! ([`crate::own_builder`] under the `topology.brep_p2` shim's conventions) and reads an
-//! `.smb` file with the Rust reader, renumbered the same way; the B-rep tolerance,
-//! infinite region, region list head, editing flag, each vertex's vertex use order, the
-//! geometry owners and each face's upward face use are the Rust build's own. No C++
-//! export reaches the Rust side. It runs the port and writes the same output layout
-//! (`out`).
+//! The case builds a wire edge, face or network source itself ([`crate::own_builder`]
+//! under the `topology.brep_p2` runner's conventions) or reads an `.smb` file with the
+//! Rust reader, renumbered into the upstream test fixture's walk order; the B-rep
+//! tolerance, infinite region, region list head, editing flag, each vertex's vertex use
+//! order, the geometry owners and each face's upward face use are the build's own. It
+//! runs one member of the unit (the constructors and `SmApiBrepCopy` too) and records
+//! its output (`out`). A case outside the input contract ([`in_contract`]) is a harness
+//! error.
 //!
 //! Entity selectors are taken modulo the matching entity count (`-1` selects null);
-//! an op that needs an entity the B-rep lacks is skipped on both sides (`no target`).
-//! `Merge` / `CopyVertices` target a second build of the same B-rep (a second build
-//! on the Rust side), whose objects the Rust side notifies under identities of their
-//! own ([`source_key_of`]). `DeleteFace` always passes a deleted list
-//! (`pOptDeletedEdgesVertices`); the header default `NULL` only skips its `Add`s and
-//! is not compared. `CopyVertices` also appends the source and existing destination
-//! vertex coordinates before/after copying, then the returned vertices' destination
-//! walk indices and coordinates in returned order.
+//! an op that needs an entity the B-rep lacks records `no target`. `Merge` /
+//! `CopyVertices` target a second build of the same B-rep, whose objects are notified
+//! under identities of their own ([`source_key_of`]). `DeleteFace` always passes a
+//! deleted list (`pOptDeletedEdgesVertices`). `CopyVertices` also appends the source and
+//! existing destination vertex coordinates before/after copying, then the returned
+//! vertices' destination walk indices and coordinates in returned order.
 //!
 //! `Orient` outputs three values ([`split_orient`]): `out` (status, flag, face domains
 //! and upward face uses, counts), `swapped` (each face's `SmFace::SwapUV` `POST_EDIT`
 //! count, from that side's own tracker events) and `tracker` (the tracker's lists and
-//! events), all compared. A swap's surface edit is in `tracker`: upstream the surface's
+//! events), all recorded. A swap's surface edit is in `tracker`: upstream the surface's
 //! own `SwapUV` notifies `SM_NO_PRE_EDIT` / `SM_NO_POST_EDIT` on the surface
 //! (`SmBSplineSurface::SwapUV` through `SetCanonical`, `SmBSplineSurface.cpp:4585`/`:4592`;
 //! `SmOffsetSurface` through its base surface; `SmSrfInVolume` itself), which the
-//! tracker records and turns into a `Chg` of the owning face. The Rust side issues each
+//! tracker records and turns into a `Chg` of the owning face. The runner issues each
 //! pre-op face surface its identity on the tracked context with the face as its owner,
 //! and the port's `SwapUV` (`face::p1::swap_uv_with_notifications`) sends the surface's
-//! notifications under it; a surface is other geometry (`-30 n`) on both sides.
+//! notifications under it; a surface is other geometry (`-30 n`).
 
 use std::collections::BTreeMap;
 
@@ -67,9 +62,6 @@ use solidcore::topology::{
     LoopuseStart, RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_brep_p2 as ffi2;
-use solidcore_ffi::units::topology_brep_p3::{self as ffi, Op};
-use solidcore_ffi::units::topology_vertexuse::counts;
 
 use super::topology_vertexuse::{
     gen_brep, gen_curve, path_of, push_curve, push_surface, BrepIn, CrvIn,
@@ -348,49 +340,143 @@ fn op_args(op: &OpIn, c: &[usize; 10]) -> Result<Option<(Op, Vec<f64>)>, Harness
     }))
 }
 
-fn ffi_err(e: &solidcore_ffi::FfiError) -> HarnessError {
-    harness(e.to_string())
-}
-
 /// Whether the op runs without a fixture B-rep.
 const fn standalone(op: &OpIn) -> bool {
     matches!(op, OpIn::Construct { .. } | OpIn::ApiCopyNull)
 }
 
-/// `(path, head, counts)` of a built B-rep, or the build failure's output.
-type Prepared = Result<(String, Vec<f64>, [usize; 10]), Output>;
-
-fn prepare(i: &Inputs) -> Result<Prepared, HarnessError> {
-    let path = path_of(&i.brep)?;
-    let h = head(i)?;
-    let export = ffi2::eval(ffi2::Op::Export, &path, &h).map_err(|e| ffi_err(&e))?;
-    match counts(&export) {
-        Some(c) => Ok(Ok((path, h, c))),
-        None => Ok(Err(Output::new().values("out", export))),
-    }
+/// The operations, as their arguments are laid out after the B-rep head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Construct,
+    Copy,
+    Merge,
+    CopyVertices,
+    DeleteFace,
+    Wire,
+    Orient,
+    Squeeze,
+    TurnNurbs,
+    ApiCopyNull,
+    TurnNurbsOffset,
+    AttributedCopy,
+    AttributedMerge,
 }
 
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if standalone(&i.op) {
-        let Some((op, args)) = op_args(&i.op, &[0; 10])? else {
-            return Ok(Output::err("no target"));
-        };
-        let out = ffi::eval(op, "", &args).map_err(|e| ffi_err(&e))?;
-        return Ok(Output::new().values("out", out));
+/// Largest magnitude of a value of a case's head and arguments (HANG-16: geometry beyond
+/// it overflows the squared distances of `SmCurve::GlobalCoincidenceChecker`, reached by
+/// the UV trim curve builds of `OrientTrimmedSurfaces` / `TurnToNURBS`, which then never
+/// returns). `-f64::MAX` is the non-rational weight `NOW`.
+const MAX_GEOMETRY: f64 = 1.0e150;
+
+/// Largest offset distance of a `TurnNurbsOffset`.
+const MAX_OFFSET: f64 = 1.0e3;
+
+/// Largest vertex list of a `CopyVertices` or face list of an `Orient`.
+const MAX_LIST: usize = 32;
+
+/// The input contract of a case (upstream's members dereference what it excludes, or
+/// hang on it): `input` is the standalone op's arguments (`Construct`: two finite values;
+/// `ApiCopyNull`: `0`), else the head (a B-rep block keeping
+/// [`contract::Values::brep_block`], `editing` of `-1`, `0` or `1`, no value beyond
+/// [`MAX_GEOMETRY`]) and the op's arguments, checked against the B-rep's counts `c` and
+/// whether it has an infinite region: indices inside the B-rep, lists of at most
+/// [`MAX_LIST`], a null region only with an infinite region, the end vertex
+/// `MakeWireEdge` needs, a 3D wire curve over a sub-interval of its range (`t0 < t1`),
+/// an offset within [`MAX_OFFSET`]; nothing may follow.
+fn in_contract(op: Op, path: &str, input: &[f64], c: &[usize; 10], has_infinite: bool) -> bool {
+    use crate::cases::contract::{self, Values};
+    let max = contract::BREP_BLOCK.max_coord;
+    let mut rd = Values::new(input, 0);
+    match op {
+        Op::Construct => {
+            return rd.finite(max).is_some() && rd.finite(max).is_some() && rd.done();
+        }
+        Op::ApiCopyNull => return rd.int(0, 0).is_some() && rd.done(),
+        _ => {}
     }
-    let (path, mut input, c) = match prepare(i)? {
-        Ok(x) => x,
-        Err(o) => return Ok(o),
-    };
-    let Some((op, args)) = op_args(&i.op, &c)? else {
-        return Ok(Output::err("no target"));
-    };
-    input.extend(args);
-    let out = ffi::eval(op, &path, &input).map_err(|e| ffi_err(&e))?;
-    if matches!(i.op, OpIn::Orient { .. }) {
-        return Ok(split_orient(out));
+    if rd.brep_block(path).is_none() || rd.int(-1, 1).is_none() {
+        return false;
     }
-    Ok(Output::new().values("out", out))
+    if input
+        .iter()
+        .any(|&x| x.is_finite() && x.abs() > MAX_GEOMETRY && x != -f64::MAX)
+    {
+        return false;
+    }
+    let [n_r, _, _, n_f, _, _, _, n_e, _, n_v] = *c;
+    let args = (|| -> Option<()> {
+        match op {
+            Op::Construct | Op::ApiCopyNull | Op::TurnNurbs => {}
+            Op::TurnNurbsOffset => {
+                if rd.finite(max)?.abs() > MAX_OFFSET {
+                    return None;
+                }
+            }
+            Op::Copy => {
+                rd.flag()?;
+                rd.flag()?;
+            }
+            Op::Merge => {
+                rd.flag()?;
+            }
+            Op::AttributedCopy => {
+                rd.int(0, 4)?;
+            }
+            Op::AttributedMerge => {
+                rd.flag()?;
+                rd.int(0, 4)?;
+            }
+            Op::CopyVertices => {
+                for _ in 0..rd.index(MAX_LIST)? {
+                    rd.below(n_v)?;
+                }
+            }
+            Op::DeleteFace => {
+                rd.below(n_f)?;
+                rd.flag()?;
+                rd.flag()?;
+                rd.opt_below(n_r)?;
+            }
+            Op::Wire => {
+                let which = rd.index(1)?;
+                if rd.opt_below(n_r)?.is_none() && !has_infinite {
+                    return None;
+                }
+                rd.below(n_v)?;
+                let v2 = rd.opt_below(n_v)?;
+                if which == 0 && v2.is_none() {
+                    return None;
+                }
+                // a 3D curve
+                if rd.input.get(rd.at) != Some(&3.0) {
+                    return None;
+                }
+                let (a, b) = rd.brep_curve(contract::BREP_BLOCK.max_index)?;
+                let t0 = rd.finite(max)?;
+                let t1 = rd.finite(max)?;
+                if !(a <= t0 && t0 < t1 && t1 <= b) {
+                    return None;
+                }
+                rd.index(2)?;
+                rd.vec3(max)?;
+            }
+            Op::Orient => {
+                rd.flag()?;
+                rd.flag()?;
+                for _ in 0..rd.int(-1, MAX_LIST as i64)?.max(0) {
+                    rd.below(n_f)?;
+                }
+            }
+            Op::Squeeze => {
+                rd.below(n_e)?;
+                rd.index(2)?;
+                rd.opt_below(n_v)?;
+            }
+        }
+        Some(())
+    })();
+    args.is_some() && rd.done()
 }
 
 // ---- Rust side ----------------------------------------------------------------------------
@@ -1748,8 +1834,10 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         let Some((op, args)) = op_args(&i.op, &[0; 10])? else {
             return Ok(Output::err("no target"));
         };
-        // an input the FFI refuses is a harness error on both sides
-        ffi::validate(op, "", &args, &[0; 10], false).map_err(|e| ffi_err(&e))?;
+        // an input outside the contract is a harness error (PR #502's convention)
+        if !in_contract(op, "", &args, &[0; 10], false) {
+            return Err(harness("invalid argument: outside the input contract"));
+        }
         let mut b = Brep::new();
         return match run_rust_op(&mut k, &mut b, None, &i.op, &args) {
             Ok(out) => Ok(Output::new().values("out", out)),
@@ -1764,21 +1852,22 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     let Some((op, args)) = op_args(&i.op, &c)? else {
         return Ok(Output::err("no target"));
     };
-    // an input the FFI refuses is a harness error on both sides: the Rust port works
-    // through the guarded hang regimes as upstream does (HANG-16: a `TurnNurbsOffset` of
-    // 1e300 kept it busy for 25 s in the UV trim curve rebuild, nightly fuzz00282), so it
-    // must not run them (fuzz mutations reach them with the C++ side refused). The
-    // checks see the same input vector as the C++ side and this B-rep's own counts.
+    // an input outside the contract is a harness error (PR #502's convention): the port
+    // works through the excluded hang regimes as upstream does (HANG-16: a
+    // `TurnNurbsOffset` of 1e300 kept it busy for 25 s in the UV trim curve rebuild,
+    // nightly fuzz00282). The checks see the case's head and arguments and this B-rep's
+    // own counts.
     let mut input = head(i)?;
     input.extend(&args);
-    ffi::validate(
+    if !in_contract(
         op,
         &path_of(&i.brep)?,
         &input,
         &c,
         b.infinite_region().is_some(),
-    )
-    .map_err(|e| ffi_err(&e))?;
+    ) {
+        return Err(harness("invalid argument: outside the input contract"));
+    }
     let mut second = match i.op {
         OpIn::Merge { .. } | OpIn::AttributedMerge { .. } | OpIn::CopyVertices { .. } => {
             Some(own_brep(&mut k, i)?.map_err(
@@ -1910,10 +1999,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse()?)
     }
@@ -1960,10 +2045,8 @@ mod tests {
             "editing": -1, "op": "copy_vertices", "vertices": [1, 0, 1]
         }))
         .unwrap();
-        let cpp = run_cpp(&i).unwrap();
-        let mut rust = run_rust(&i).unwrap();
-        assert!(crate::compare::compare(&cpp, &rust, &[]).pass());
-        let out = rust.values.get_mut("out").unwrap();
+        let rust = run_rust(&i).unwrap();
+        let out = &rust.values["out"];
         let tail = &out[out.len() - 13..];
         assert_eq!(tail[0], 3.0);
         assert_eq!(&tail[2..5], &[7.0, 11.0, -13.0]);
@@ -1973,16 +2056,8 @@ mod tests {
             tail[1], tail[9],
             "repeated input must yield distinct copies"
         );
-        // A wrong copied coordinate must fail independently of counts and graph.
-        *out.last_mut().unwrap() += 1.0;
-        assert!(!crate::compare::compare(&cpp, &rust, &[]).pass());
     }
 
-    /// Classifies the passing cases of the committed report by op and C++ status
-    /// (`out[0]` the build status, `out[1]` the op's), the split the PR and the
-    /// plan notes quote. Run from the repository with the C++ reference:
-    /// `cargo test --profile difftest -p difftest --features cpp classify_passes --
-    /// --ignored --nocapture`.
     /// The tracker serialisation tells geometry objects apart by an anchor of their
     /// own (an edge's curve before or after the op), not by the output: swapping the
     /// new and old curve of one `SM_NO_CHANGE_GEOMETRY` changes the output.
@@ -2037,97 +2112,12 @@ mod tests {
         );
     }
 
-    /// Prints both sides' outputs of one fixture case from its tail (`DUMP=<file>#<i>`,
-    /// `DUMP_TAIL=<n>` values, default 120), for debugging a disagreement: `DUMP=...
-    /// cargo test --profile difftest -p difftest --features cpp dump_case -- --ignored
-    /// --nocapture`.
+    /// Geometry beyond 1e150 is outside the input contract (HANG-16; fuzz case 1124: one
+    /// control point at z = 1e300, Orient by rays): the port works through the regime for
+    /// tens of seconds (nightly fuzz00282, a 1e300 `TurnNurbsOffset`), so the case is refused
+    /// before it runs; the non-rational weight `-f64::MAX` is accepted.
     #[test]
-    #[ignore = "needs the C++ reference and a DUMP=<fixture>#<index> case"]
-    fn dump_case() {
-        std::env::set_current_dir("../..").unwrap();
-        let spec = std::env::var("DUMP").unwrap();
-        let tail: usize = std::env::var("DUMP_TAIL")
-            .ok()
-            .and_then(|x| x.parse().ok())
-            .unwrap_or(120);
-        let (file, idx) = spec.split_once('#').unwrap();
-        let j: Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
-        let i: Inputs =
-            serde_json::from_value(j["cases"][idx.parse::<usize>().unwrap()]["inputs"].clone())
-                .unwrap();
-        for (side, o) in [
-            ("cpp", run_cpp(&i).unwrap()),
-            ("rust", run_rust(&i).unwrap()),
-        ] {
-            let out = o.values.get("out").cloned().unwrap_or_default();
-            let from = out.len().saturating_sub(tail);
-            println!(
-                "DUMP {side} len={} err={:?} deferred={:?}",
-                out.len(),
-                o.error,
-                o.deferred
-            );
-            println!("DUMP {side} [{from}..] {:?}", &out[from..]);
-        }
-    }
-
-    #[test]
-    #[ignore = "needs the C++ reference and reports/difftest/topology.brep_p3.json"]
-    fn classify_passes() {
-        std::env::set_current_dir("../..").unwrap();
-        let r: Value = serde_json::from_str(
-            &std::fs::read_to_string("reports/difftest/topology.brep_p3.json").unwrap(),
-        )
-        .unwrap();
-        let mut counts = BTreeMap::<String, usize>::new();
-        for c in r["cases"].as_array().unwrap() {
-            if c["outcome"] != "pass" {
-                continue;
-            }
-            let src = c["source"].as_str().unwrap();
-            let v: Value = if let Some(seed) = src.strip_prefix("generated:seed=") {
-                let mut rng = Rng::new(seed.parse().unwrap());
-                Runner.generate(&mut rng).unwrap()
-            } else {
-                let f = src
-                    .strip_prefix("fixture:")
-                    .unwrap()
-                    .split(' ')
-                    .next()
-                    .unwrap();
-                let (file, idx) = f.split_once('#').unwrap();
-                let j: Value =
-                    serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
-                j["cases"][idx.parse::<usize>().unwrap()]["inputs"].clone()
-            };
-            let op = v["op"].as_str().unwrap().to_string();
-            let i: Inputs = serde_json::from_value(v.clone()).unwrap();
-            let o = run_cpp(&i).unwrap();
-            let out = o.values.get("out").cloned().unwrap_or_default();
-            let st = (out.first().copied(), out.get(1).copied());
-            let extra = match (&i.op, st) {
-                (OpIn::Orient { unify, faces, .. }, (Some(0.0), Some(0.0))) => format!(
-                    " unify={unify} swaplist={}",
-                    faces.as_ref().map_or(-1, |f| f.len() as i64)
-                ),
-                (OpIn::CopyVertices { vertices }, _) => format!(" n={}", vertices.len()),
-                (OpIn::Squeeze { which, .. }, _) => format!(" which={which}"),
-                (OpIn::DeleteFace { .. }, _) => format!(" editing={}", i.editing),
-                _ => String::new(),
-            };
-            let key = format!("{op} {st:?} err={:?}{extra}", o.error);
-            *counts.entry(key).or_default() += 1;
-        }
-        for (k, n) in counts {
-            println!("CLASS {n} {k}");
-        }
-    }
-
-    /// Geometry beyond 1e150 hangs the C++ in `SmCurve::GlobalCoincidenceChecker`
-    /// (HANG-16; fuzz case 1124: one control point at z = 1e300, Orient by rays): the
-    /// FFI must reject it before calling in, and still accept the non-rational weight.
-    #[test]
-    fn huge_geometry_is_rejected() {
+    fn huge_geometry_is_refused() {
         let case = |z: f64| -> Inputs {
             let w = -f64::MAX;
             let v = serde_json::json!({
@@ -2138,13 +2128,9 @@ mod tests {
             });
             serde_json::from_value(v).unwrap()
         };
-        let err = run_cpp(&case(1e300)).unwrap_err().to_string();
-        assert!(err.contains("HANG-16"), "{err}");
-        // the Rust side applies the same guard (`ffi::validate`): the port works through
-        // the regime for tens of seconds (nightly fuzz00282, a 1e300 TurnNurbsOffset)
         let err = run_rust(&case(1e300)).unwrap_err().to_string();
-        assert!(err.contains("HANG-16"), "{err}");
-        assert!(run_cpp(&case(0.5)).is_ok());
+        assert!(err.contains("outside the input contract"), "{err}");
+        assert!(run_rust(&case(0.5)).is_ok());
     }
 
     /// The `nurbs_off_*` cases the exact surface extension moves (land-me/split-ext;
@@ -2325,18 +2311,16 @@ mod tests {
     }
 
     /// Nightly fuzz case `topology.brep_p3/fuzz00282` (`nurbs_off_box_with_large_fillet_-0.05`
-    /// with `/offset = 1e+300`): the FFI refuses the C++ side (HANG-16) and the Rust side
-    /// must be refused the same way instead of running the operation (it took 25 s).
+    /// with `/offset = 1e+300`): the offset is outside the input contract (HANG-16), so the
+    /// case is refused instead of running the operation (it took 25 s).
     #[test]
-    fn huge_offset_is_refused_on_both_sides() {
+    fn huge_offset_is_refused() {
         let v = serde_json::json!({
             "brep": {"kind": "file", "file": "box_with_large_fillet.smb", "rebuild": false},
             "editing": -1, "op": "turn_nurbs_offset", "offset": 1e300
         });
         let i: Inputs = serde_json::from_value(v).unwrap();
-        let cpp = run_cpp(&i).unwrap_err().to_string();
         let rust = run_rust(&i).unwrap_err().to_string();
-        assert!(cpp.contains("HANG-16"), "{cpp}");
-        assert_eq!(cpp, rust);
+        assert!(rust.contains("outside the input contract"), "{rust}");
     }
 }
