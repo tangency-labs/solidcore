@@ -20,7 +20,10 @@ mod common;
 
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
-use common::{edge_at, rel, volume};
+use common::{edge_at, kernel_copy, rel, volume};
+use solidcore::query::api_queries::surface_closest_point;
+use solidcore::topology::face;
+use solidcore::Vec3;
 use solidcore_ops::sweep::{loft, Curve};
 use solidcore_ops::{blend, Blend, Body, CheckLevel, Corners, PointClass};
 
@@ -99,6 +102,19 @@ fn at_each(b: &Body, p: [f64; 3], class: PointClass, what: &str) {
     }
 }
 
+/// The distance from `p` to the nearest of `b`'s faces' surfaces (untrimmed).
+fn to_nearest_surface(b: &Body, p: [f64; 3]) -> f64 {
+    let (k, brep) = kernel_copy(b);
+    let q = Vec3::new(p[0], p[1], p[2]);
+    brep.face_list()
+        .iter()
+        .map(|&f| {
+            let s = face::p2::surface(&brep, f).unwrap().unwrap();
+            surface_closest_point(&k, s, q).map_or(f64::INFINITY, |c| c.closest.distance)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// The rim of a fresh loft blended by `kind` of size `size`: one closed valid solid with less
 /// than the loft and more than the loft less the band; it and its volume.
 fn blended(kind: Blend, size: f64) -> (Body, f64) {
@@ -151,7 +167,12 @@ fn the_round_of_the_rim_is_one_solid_with_the_balls_section_at_each_sides_middle
         // along the ball's radius towards the rim's corner (10, 0, 30)
         let along = |t: f64| [c[0] + t * r * k / n, 0.0, c[2] + t * r / n];
         let m = along(1.0);
-        at_each(&b, m, PointClass::OnBoundary, "the section's middle");
+        // the section's middle: the default round's section is a polynomial approximation of
+        // the ball's circle, 5.2e-5 r off it there (measured, the same on every side)
+        for q in 0..4 {
+            let d = to_nearest_surface(&b, turned(m, q));
+            assert!(d < 1e-4 * r, "the section's middle, quarter {q}: {d}");
+        }
         at_each(
             &b,
             [c[0], 0.0, 30.0],
