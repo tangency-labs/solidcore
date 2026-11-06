@@ -37,9 +37,16 @@ pub type P3 = [f64; 3];
 /// ISO 10303-42 makes the local axes from these: Z is `axis` (+Z when absent), X is
 /// `ref_direction` made orthogonal to Z (a chosen perpendicular when absent), Y is Z × X. That
 /// construction, with its checks (a zero or parallel reference direction), is the kernel's.
+///
+/// Directions have one form everywhere in the record, here, in [`Axis1`] and in
+/// [`Vector::orientation`]: the ratios the file writes, never multiplied by a unit factor, in
+/// model space and in a surface's parameter space alike. A direction ratio has no unit. In a
+/// parameter space a placement belongs to a conic, whose two parameters must have equal unit
+/// factors (the reader refuses it otherwise), so the ratios as written point the same way in
+/// millimetres and radians as in file units. Only `origin` is converted.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
-    /// The location, in millimetres (or the parameter space's units).
+    /// The location, in millimetres (or the parameter space's units, mm and radians).
     pub origin: P3,
     /// Local Z as the file gives it (not normalised); `None` when the file omits it and for an
     /// `AXIS2_PLACEMENT_2D`, which ISO 10303-42 defines as +Z.

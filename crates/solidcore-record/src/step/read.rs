@@ -20,9 +20,8 @@
 //! Deviations from SolidCraft, each without a geometric computation in its place (the kernel
 //! takes those over in slice 4):
 //! - Directions are not normalised (was `unit`): a direction is refused when every ratio is
-//!   exactly 0 (was: when its length is at most 1e-12). Model-space directions are the ratios
-//!   as written; in a surface's parameter space each ratio is times its parameter's unit, so it
-//!   points the way the file's direction does in millimetres and radians.
+//!   exactly 0 (was: when its length is at most 1e-12). Directions are the ratios as written in
+//!   every space, model or parameter (see [`super::geom::Placement`]).
 //! - A placement keeps `axis` and `ref_direction` as given, each optional (was: the reference
 //!   direction made orthogonal to the axis, or `any_perpendicular` when it is absent or
 //!   parallel; neither refused a file).
@@ -96,14 +95,12 @@ enum ParamKind {
     Plain,
 }
 
-/// The space an entity is read in: the unit factors of its coordinates and of its direction
-/// ratios, and its dimension.
+/// The space an entity is read in: the unit factors of its coordinates, and its dimension.
+/// Direction ratios take no factor in any space (see [`Placement`]).
 #[derive(Clone, Copy, Debug)]
 struct Space {
     /// Factor per coordinate of a point (and of a vector's components).
     pts: [f64; 3],
-    /// Factor per direction ratio: 1 in model space, the parameter's unit in a parameter space.
-    dirs: [f64; 3],
     /// 3 for model space, 2 for a parameter space or a 2D placement.
     dim: usize,
 }
@@ -113,17 +110,12 @@ impl Space {
     fn model(l: f64, dim: usize) -> Self {
         Space {
             pts: [l, l, l],
-            dirs: [1.0; 3],
             dim,
         }
     }
     /// A surface's parameter space whose parameters have the factors `s`.
     fn parameters(s: [f64; 3]) -> Self {
-        Space {
-            pts: s,
-            dirs: s,
-            dim: 2,
-        }
+        Space { pts: s, dim: 2 }
     }
 }
 
@@ -511,9 +503,9 @@ impl<'a> Reader<'a> {
         self.point_in(id, Space::model(self.units.len, 3))
     }
 
-    /// The ratios of a `DIRECTION`, each times `s`. Refused when every ratio is exactly zero:
-    /// that needs no arithmetic. A direction too short to normalise is the kernel's to refuse.
-    fn ratios(&self, id: u64, s: [f64; 3], dim: usize) -> R<P3> {
+    /// The ratios of a `DIRECTION` as written. Refused when every ratio is exactly zero: that
+    /// needs no arithmetic. A direction too short to normalise is the kernel's to refuse.
+    fn ratios(&self, id: u64, dim: usize) -> R<P3> {
         let e = entity(self.ex, id)?;
         if e.name() != "DIRECTION" {
             return Err(format!("#{id}: expected DIRECTION, found {}", e.name()));
@@ -533,12 +525,7 @@ impl<'a> Reader<'a> {
                 Ok(0.0)
             }
         };
-        let [sx, sy, sz] = s;
-        let d = [
-            g(0)? * sx,
-            g(1)? * sy,
-            if dim == 3 { g(2)? * sz } else { 0.0 },
-        ];
+        let d = [g(0)?, g(1)?, if dim == 3 { g(2)? } else { 0.0 }];
         if d == [0.0; 3] {
             return Err(format!("#{id}: zero direction"));
         }
@@ -547,7 +534,7 @@ impl<'a> Reader<'a> {
 
     /// A `DIRECTION` in model space: its ratios as written (not normalised).
     pub fn direction(&self, id: u64) -> R<P3> {
-        self.ratios(id, [1.0; 3], 3)
+        self.ratios(id, 3)
     }
 
     /// `AXIS2_PLACEMENT_3D` in 3D, or `AXIS2_PLACEMENT_2D` (no axis) in 2D.
@@ -558,7 +545,7 @@ impl<'a> Reader<'a> {
         let (axis, rf) = match (e.name(), sp.dim) {
             ("AXIS2_PLACEMENT_3D", 3) => {
                 let z = match optional_reference(p.get(2), "placement axis")? {
-                    Some(d) => Some(self.ratios(d, sp.dirs, sp.dim)?),
+                    Some(d) => Some(self.ratios(d, sp.dim)?),
                     None => None,
                 };
                 (z, optional_reference(p.get(3), "placement ref_direction")?)
@@ -570,7 +557,7 @@ impl<'a> Reader<'a> {
             (n, _) => return Err(format!("#{id}: unexpected placement {n} in {}D", sp.dim)),
         };
         let ref_direction = match rf {
-            Some(d) => Some(self.ratios(d, sp.dirs, sp.dim)?),
+            Some(d) => Some(self.ratios(d, sp.dim)?),
             None => None,
         };
         Ok(Placement {
@@ -622,8 +609,7 @@ impl<'a> Reader<'a> {
             return Err(format!("#{id}: expected VECTOR, found {}", e.name()));
         }
         let p = e.params();
-        let orientation =
-            self.ratios(reference(p.get(1), "vector orientation")?, [1.0; 3], sp.dim)?;
+        let orientation = self.ratios(reference(p.get(1), "vector orientation")?, sp.dim)?;
         let magnitude = num(p.get(2), "vector magnitude")?;
         if magnitude < 0.0 {
             return Err("negative vector magnitude".into());
