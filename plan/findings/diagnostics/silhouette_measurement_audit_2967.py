@@ -12,14 +12,21 @@ from pathlib import Path
 
 
 def number(value):
+    """Write a fixture number as a round-trippable Rust floating-point literal."""
     return repr(float(value))
 
 
 def vector(value):
+    """Emit a Vec3 constructor preserving the fixture's coordinate order."""
     return "Vec3::new(" + ",".join(map(number, value)) + ")"
 
 
 def surface(spec):
+    """Rebuild the analytic fixture using the runner's constructors and UV maps.
+
+    Converting the same surface kind to NURBS is essential: returned parameters
+    refer to that rational form, not to angles in the analytic constructor.
+    """
     kind = spec["kind"]
     x, y = vector(spec["x"]), vector(spec["y"])
     if kind == "cylinder":
@@ -49,6 +56,7 @@ def surface(spec):
 
 
 def records(path):
+    """Index the runner's tab-separated digest-debug records by fixture name."""
     return dict(line.split("\t", 1) for line in Path(path).read_text().splitlines())
 
 
