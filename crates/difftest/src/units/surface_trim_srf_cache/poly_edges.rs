@@ -236,6 +236,12 @@ pub(super) fn cases() -> Result<Vec<Case>, HarnessError> {
             calls,
             remap: index % 3 == 0,
         };
+        // Generated data outside the contract is a generator bug, never silently dropped.
+        if !keeps_contract(&input) {
+            return Err(harness(format!(
+                "poly_edges_gen{index:04} is outside the input contract"
+            )));
+        }
         cases.push(Case {
             unit: "surface.trim_srf_cache".into(),
             name: format!("poly_edges_gen{index:04}"),
@@ -246,8 +252,37 @@ pub(super) fn cases() -> Result<Vec<Case>, HarnessError> {
     Ok(cases)
 }
 
+/// Whether a case keeps the input contract of the C++ reference wrapper's
+/// `ImplantPoly` (`crates/solidcore-ffi/src/units/surface_trim_srf_cache.rs`): surface
+/// blocks as [`super::surface_block`] takes them, a cache domain inside the surface's of
+/// non-degenerate sides, a factor in `[1, 32]`, a [`super::tree_ok`], up to 8 polygon
+/// edges of finite points and tolerances on nodes in range, and up to 8 ownerless
+/// [`super::curve_2d`] calls on nodes in range.
+fn keeps_contract(i: &Input) -> bool {
+    let n = i.tree.len();
+    let Some(sd) = super::surface_block(&i.srf, super::MAX_COORD) else {
+        return false;
+    };
+    let fin = |v: f64| crate::cases::contract::finite(v, super::MAX_COORD);
+    super::domain_in(&i.dom, &sd, true, super::MAX_COORD)
+        && fin(i.factor)
+        && (1.0..=32.0).contains(&i.factor)
+        && super::tree_ok(&i.tree, &sd, super::MAX_COORD)
+        && super::surface_block(&i.original_srf, super::MAX_COORD).is_some()
+        && i.edges.len() <= 8
+        && i.edges.iter().all(|e| {
+            e.start.iter().chain(&e.end).all(|&c| fin(c)) && fin(e.tolerance) && e.node < n
+        })
+        && i.calls.len() <= 8
+        && i.calls.iter().all(|c| {
+            c.owner_tol.is_none()
+                && super::curve_2d(&c.crv, super::MAX_COORD)
+                && super::link_in(c.node, n)
+        })
+}
+
 /// The shared surface generator can repeat an interior knot even for degree one;
-/// redraw the NURBs the Rust constructor refuses.
+/// redraw the surfaces outside the wrapper's surface contract ([`super::surface_block`]).
 fn valid_surface(rng: &mut Rng) -> Result<InlineSrf, HarnessError> {
     for _ in 0..64 {
         let s = gen_srf(rng, 2);
@@ -256,7 +291,7 @@ fn valid_surface(rng: &mut Rng) -> Result<InlineSrf, HarnessError> {
             form: 11,
             srf: SrfIn::Inline(s.clone()),
         };
-        if bss_of(&b).is_ok() {
+        if super::surface_block(&b, super::MAX_COORD).is_some() {
             return Ok(s);
         }
     }

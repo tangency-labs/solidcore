@@ -47,6 +47,7 @@ use solidcore::surface::trim_srf_cache::{EdgeuseInput, TrimSrfCache};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::contract::{self, Limits};
 use crate::runner::default_cases;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -511,6 +512,176 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     })
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest control point index.
+const MAX_INDEX: usize = 24;
+/// The largest degree.
+const MAX_DEGREE: usize = 5;
+/// The largest magnitude of a scalar, and of a coordinate outside `implant_eu`.
+const MAX_COORD: f64 = 1e6;
+/// The largest magnitude of a coordinate (points, knots, domains) of an `implant_eu` case,
+/// which admits large UV data to expose Bezier-decomposition roundoff.
+const MAX_IMPLANT_UV_COORD: f64 = 1e11;
+/// The most subdivision tree nodes.
+const MAX_NODES: usize = 256;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+/// A finite domain within `coord`, ordered, inside `outer` (sides of at least `1e-6` of
+/// `outer`'s when `strict`).
+fn domain_in(d: &[f64; 4], outer: &[f64; 4], strict: bool, coord: f64) -> bool {
+    contract::domain_in(d, outer, strict, coord)
+}
+
+/// The domain of a surface block that keeps the contract: a form up to 11 and a B-spline
+/// as [`contract::surface_block`] takes it with coordinates within `coord` (`z` within
+/// [`MAX_COORD`]).
+fn surface_block(b: &BssIn, coord: f64) -> Option<[f64; 4]> {
+    let s = srf(&b.srf).ok()?;
+    let lim = Limits {
+        max_index: MAX_INDEX,
+        max_degree: MAX_DEGREE,
+        max_coord: coord,
+    };
+    let blk = contract::surface_block(&s.net, s.p, s.q, &s.u, &s.v, &lim)?;
+    let z_ok = s.net.iter().flatten().all(|c| fin(c[2]));
+    (b.form <= 11 && z_ok).then_some(blk.dom)
+}
+
+/// Whether a 2D curve keeps the contract: `1 ≤ p ≤ n` within the size bounds,
+/// `n + p + 2` knots, points of one rationality (weights in `[1e-3, 1e3]`) and clamped
+/// knots, all within `coord`.
+fn curve_2d(c: &Crv2In, coord: f64) -> bool {
+    let Some(n) = c.cpts.len().checked_sub(1) else {
+        return false;
+    };
+    let rat = c.cpts.first().is_some_and(|p| p[2] != NOW);
+    n <= MAX_INDEX
+        && (1..=n.min(MAX_DEGREE)).contains(&c.p)
+        && c.u.len() == n + c.p + 2
+        && c.cpts.iter().all(|&[x, y, w]| {
+            contract::finite(x, coord)
+                && contract::finite(y, coord)
+                && (w != NOW) == rat
+                && (!rat || (1e-3..=1e3).contains(&w))
+        })
+        && c.u.iter().all(|&k| contract::finite(k, coord))
+        && contract::clamped(&c.u, c.p).is_some()
+}
+
+/// Whether `i` is a node index or `-1` (none) for a tree of `n` nodes.
+fn link_in(i: i64, n: usize) -> bool {
+    i >= -1 && i < n as i64
+}
+
+/// Whether a subdivision tree keeps the contract: 1 to [`MAX_NODES`] surface subdivision
+/// nodes (aux 3, 4 or 6) with links in range, split up to 2, class up to 3, domains
+/// inside the surface's, node 0 the root, child pairs of distinct nodes pointing back,
+/// every node reached once.
+fn tree_ok(t: &[NodeIn], srf: &[f64; 4], coord: f64) -> bool {
+    let n = t.len();
+    let nodes_ok = (1..=MAX_NODES).contains(&n)
+        && t.iter().all(|k| {
+            link_in(k.parent, n)
+                && link_in(k.c1, n)
+                && link_in(k.c2, n)
+                && matches!(k.aux, 3 | 4 | 6)
+                && k.split <= 2
+                && k.class <= 3
+                && domain_in(&k.dom, srf, false, coord)
+        });
+    if !nodes_ok || t.first().map(|k| k.parent) != Some(-1) {
+        return false;
+    }
+    let mut seen = vec![false; n];
+    let mut stack = vec![0usize];
+    while let Some(k) = stack.pop() {
+        let (Some(s), Some(node)) = (seen.get_mut(k), t.get(k)) else {
+            return false;
+        };
+        if *s {
+            return false;
+        }
+        *s = true;
+        match (node.c1, node.c2) {
+            (-1, -1) => {}
+            (a, b) if a >= 0 && b >= 0 && a != b => {
+                for c in [a as usize, b as usize] {
+                    if t.get(c).map(|l| l.parent) != Some(k as i64) {
+                        return false;
+                    }
+                    stack.push(c);
+                }
+            }
+            _ => return false,
+        }
+    }
+    seen.iter().all(|&s| s)
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_trim_srf_cache.rs`, `validate`): a
+/// [`surface_block`] and the op's parameters: finite values, up to 16 type codes in
+/// `[0, 1e6]`, `point_test` without a face only where it does not classify (testing off
+/// or the face modified; upstream dereferences the null face otherwise); for
+/// `implant_eu` coordinates within `1e11`, a cache domain inside the surface's of
+/// non-degenerate sides, a factor of at least 1, a [`tree_ok`] and up to 8 [`curve_2d`]
+/// calls on nodes in range with non-negative owner tolerances; up to 16 face points
+/// with positive tolerances.
+fn keeps_contract(i: &Inputs) -> bool {
+    let coord = if matches!(i.op, OpIn::ImplantEu { .. }) {
+        MAX_IMPLANT_UV_COORD
+    } else {
+        MAX_COORD
+    };
+    let Some(sd) = surface_block(&i.srf, coord) else {
+        return false;
+    };
+    match &i.op {
+        OpIn::New { opts, kinds } => {
+            opts.iter().all(|&o| fin(o))
+                && kinds.len() <= 16
+                && kinds.iter().all(|k| (0..=1_000_000).contains(k))
+        }
+        OpIn::PointTest {
+            enabled,
+            modified,
+            uv,
+            tol,
+        } => (!*enabled || *modified) && uv.iter().all(|&c| fin(c)) && fin(tol.unwrap_or(0.0)),
+        OpIn::ImplantEu {
+            dom,
+            factor,
+            tree,
+            fe,
+            calls,
+        } => {
+            domain_in(dom, &sd, true, coord)
+                && fin(*factor)
+                && *factor >= 1.0
+                && tree_ok(tree, &sd, coord)
+                && fe
+                    .unwrap_or([0.0; 4])
+                    .iter()
+                    .all(|&c| contract::finite(c, coord))
+                && calls.len() <= 8
+                && calls.iter().all(|c| {
+                    let tol = c.owner_tol.unwrap_or(0.0);
+                    curve_2d(&c.crv, coord) && link_in(c.node, tree.len()) && fin(tol) && tol >= 0.0
+                })
+        }
+        OpIn::Face { points, .. } => {
+            points.len() <= 16
+                && points
+                    .iter()
+                    .all(|p| p.uv.iter().all(|&c| fin(c)) && fin(p.tol) && p.tol > 0.0)
+        }
+    }
+}
+
 // ---- generated cases ----------------------------------------------------------------
 
 fn gen_knots(rng: &mut Rng, p: usize, n: usize, ends: (f64, f64)) -> Vec<f64> {
@@ -908,7 +1079,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        for _ in 0..64 {
+            let i = gen_case(rng);
+            if keeps_contract(&i) {
+                return serde_json::to_value(i).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -944,6 +1121,9 @@ mod tests {
         for seed in 0..2000u64 {
             let mut rng = Rng::new(0x5eed_1000 + seed);
             let i = gen_case(&mut rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             let out = rust(&i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.unit)
