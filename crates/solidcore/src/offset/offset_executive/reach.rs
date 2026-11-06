@@ -1416,10 +1416,21 @@ fn edge_interval_maximum(
     Ok(Some((found, apart)))
 }
 
-/// A certified upper bound on the distance from the vertex `p` of the meeting nearest it of
-/// the line where the planes `a` and `b` meet with the quadric `q` (the corner of the three
-/// surfaces, [`plan_of`]); `Some(None)` where they meet in no point near (the planes
-/// parallel, or the line apart from the quadric); `None` where nothing is bounded.
+/// How the line where two planes meet passes a quadric at a corner
+/// ([`corner_with_quadric`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CornerMeeting {
+    /// A certified upper bound on the distance from the vertex of the meeting nearest it.
+    Within(f64),
+    /// No meeting near: the planes parallel, or their line apart from the quadric.
+    Nowhere,
+    /// Nothing is bounded: the meeting is not decided on the enclosures.
+    Uncertified,
+}
+
+/// How the line where the planes `a` and `b` meet passes the quadric `q` (the corner of the
+/// three surfaces, [`plan_of`]), from the vertex `p`: within a certified distance of it at
+/// the meeting nearest it, nowhere near, or not decided ([`CornerMeeting`]).
 fn corner_with_quadric(
     p: Vec3,
     a: Tangent,
@@ -1427,22 +1438,24 @@ fn corner_with_quadric(
     q: &Implicit,
     tangent_sine: f64,
     tolerance: f64,
-) -> Option<Option<f64>> {
+) -> CornerMeeting {
     let Some(line) = planes_line(p, a, b, tangent_sine) else {
-        return Some(None);
+        return CornerMeeting::Nowhere;
     };
-    let along = along_line(q, &line)?;
+    let Some(along) = along_line(q, &line) else {
+        return CornerMeeting::Uncertified;
+    };
     let plan = plan_of(&line, &along, q, tolerance);
     if plan == Plan::Apart {
-        return Some(None);
+        return CornerMeeting::Nowhere;
     }
-    let upper = planned(&plan, &line, &along)?
-        .iter()
-        .map(|g| g.v.hi)
-        .fold(f64::INFINITY, f64::min);
-    upper
-        .is_finite()
-        .then(|| Some(round_up(crate::geom::vector3d::sqrt(upper.max(0.0)))))
+    let upper = planned(&plan, &line, &along)
+        .and_then(|found| found.iter().map(|g| g.v.hi).reduce(f64::min))
+        .filter(|upper| upper.is_finite());
+    match upper {
+        Some(upper) => CornerMeeting::Within(round_up(sqrt(upper.max(0.0)))),
+        None => CornerMeeting::Uncertified,
+    }
 }
 
 /// How far past its face the surface of `faceuse` must be extended in a local operation
@@ -1699,8 +1712,14 @@ fn corner(
             let reach = match (planes.as_slice(), quadrics.as_slice()) {
                 (&[x, y, z], []) => corner_of(x, y, z, at.tangent_sine)
                     .map(|meeting| corner_distance(p, meeting, [x, y, z])),
-                (&[x, y], [q]) => corner_with_quadric(p, x, y, q, at.tangent_sine, at.tolerance)
-                    .ok_or_else(refuse)?,
+                (&[x, y], [q]) => {
+                    let meeting = corner_with_quadric(p, x, y, q, at.tangent_sine, at.tolerance);
+                    match meeting {
+                        CornerMeeting::Within(reach) => Some(reach),
+                        CornerMeeting::Nowhere => None,
+                        CornerMeeting::Uncertified => return Err(refuse()),
+                    }
+                }
                 _ => return Err(refuse()),
             };
             if let Some(reach) = reach {
@@ -2258,12 +2277,12 @@ mod tests {
         let floor = plane(Vec3::ZERO, Vec3::Z);
         let cut = |x: f64| plane(Vec3::new(x, 0.0, 0.0), Vec3::X);
         let at = |a: Tangent| corner_with_quadric(Vec3::ZERO, floor, a, &sphere, 1e-3, 1e-9);
-        let Some(Some(r)) = at(cut(0.2)) else {
+        let CornerMeeting::Within(r) = at(cut(0.2)) else {
             panic!("no corner");
         };
         assert!((r - 1.0).abs() < 1e-12, "{r}");
-        assert_eq!(at(cut(1.1)), Some(None));
-        assert_eq!(at(plane(Vec3::new(0.0, 0.0, 1.0), Vec3::Z)), Some(None));
+        assert_eq!(at(cut(1.1)), CornerMeeting::Nowhere);
+        assert_eq!(at(plane(Vec3::new(0.0, 0.0, 1.0), Vec3::Z)), CornerMeeting::Nowhere);
     }
 
     /// A 60 x 40 x 20 block whose top is imprinted along x = 30, the piece x < 30 raised
