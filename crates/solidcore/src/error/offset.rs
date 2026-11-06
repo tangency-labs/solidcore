@@ -16,6 +16,8 @@
 //! | [`OffsetFailure::ToleranceUnresolved`] | `SM_ERR_INVALID_INPUT` (solidcore-native, WR-749) |
 //! | [`OffsetFailure::SeamOpened`]          | `SM_ERR` (solidcore-native)               |
 //! | [`OffsetFailure::ExactCurveUncut`]     | `SM_ERR` (solidcore-native)               |
+//! | [`OffsetFailure::FacesApart`]          | `SM_ERR` (solidcore-native)               |
+//! | [`OffsetFailure::ReachUncertified`]    | `SM_ERR` (solidcore-native)               |
 //! | [`OffsetFailure::Unsound`]             | `SM_ERR` (solidcore-native)               |
 //!
 //! Deviations: not upstream. Entity ids are those of the operation's input B-rep.
@@ -111,6 +113,27 @@ pub enum OffsetFailure {
     /// ([`crate::surface::surface::SurfaceIntersection::clip_exact_curves`]; the failure's
     /// cause says why). The edge's offsets cannot be mated on it.
     ExactCurveUncut,
+    /// In a local operation, the new surfaces of `face` and of its neighbour across an
+    /// edge meet nowhere near the edge (proved on their exact equations: a plane parallel
+    /// to its tangent neighbour and apart, or curving away from it), so no extension of
+    /// either makes them meet there and the edge cannot be found again. Refused before
+    /// anything changes, unless the step walls between parallel faces are asked for
+    /// (`Kernel::fixes.local_operation_step_walls`), which close such a gap with a wall.
+    FacesApart {
+        /// The face, of the operation's input.
+        face: FaceId,
+    },
+    /// In a local operation, the new surfaces of `face` and of its neighbour across an
+    /// edge are tangent there (within the tangency tolerance) and apart (beyond the B-rep
+    /// tolerance), and are not both of exact classes whose meeting can be found exactly
+    /// (one a plane, the other a plane, cylinder, cone or sphere): where they meet, if at
+    /// all, is set by how they curve away from each other, which is not bounded here, so
+    /// how far the surfaces must be extended is not known. Refused before anything
+    /// changes, unless the step walls are asked for (as [`Self::FacesApart`]).
+    ReachUncertified {
+        /// The face, of the operation's input.
+        face: FaceId,
+    },
     /// A local operation built a body that fails what its input did not
     /// ([`crate::topology::brep::validation::soundness`] of both): refused, the input B-rep
     /// left as it came in.
@@ -187,9 +210,11 @@ impl OffsetFailure {
     #[must_use]
     pub fn entity(&self) -> Option<EntityRef> {
         match *self {
-            Self::Folds { face, .. } | Self::Collapses { face, .. } | Self::SeamOpened { face } => {
-                Some(EntityRef::Face(face))
-            }
+            Self::Folds { face, .. }
+            | Self::Collapses { face, .. }
+            | Self::SeamOpened { face }
+            | Self::FacesApart { face }
+            | Self::ReachUncertified { face } => Some(EntityRef::Face(face)),
             Self::WallsTouch { face, .. } | Self::LoopsCross { face, .. } => {
                 face.map(EntityRef::Face)
             }
@@ -209,6 +234,8 @@ impl OffsetFailure {
             Self::Folds { .. }
             | Self::Collapses { .. }
             | Self::SeamOpened { .. }
+            | Self::FacesApart { .. }
+            | Self::ReachUncertified { .. }
             | Self::ExactCurveUncut
             | Self::Unsound { .. } => SM_ERR,
             Self::WallsTouch { .. } => SM_ERR_OFFSET_WALLS_TOUCH,
@@ -229,9 +256,11 @@ impl OffsetFailure {
             Self::WallsTouch { .. } => ErrorKind::OffsetWallsTouch,
             Self::LoopsCross { .. } => ErrorKind::OffsetLoopsCross,
             Self::EdgeVanishes { .. } => ErrorKind::OffsetEdgeVanishes,
-            Self::SeamOpened { .. } | Self::ExactCurveUncut | Self::Unsound { .. } => {
-                ErrorKind::Unsupported
-            }
+            Self::SeamOpened { .. }
+            | Self::FacesApart { .. }
+            | Self::ReachUncertified { .. }
+            | Self::ExactCurveUncut
+            | Self::Unsound { .. } => ErrorKind::Unsupported,
             Self::DistanceUnresolved { .. } | Self::ToleranceUnresolved { .. } => {
                 ErrorKind::InvalidInput
             }
@@ -364,6 +393,19 @@ impl core::fmt::Display for OffsetFailure {
                 f,
                 "face {} meets itself across seams in more directions than the surface it \
                  is given is closed in: a seam has no edge on a surface open across it",
+                face.index()
+            ),
+            Self::FacesApart { face } => write!(
+                f,
+                "the new surfaces of face {} and of a neighbour meet nowhere near their \
+                 edge: no extension makes them meet there",
+                face.index()
+            ),
+            Self::ReachUncertified { face } => write!(
+                f,
+                "the new surfaces of face {} and of a neighbour are tangent and apart at \
+                 their edge, and how far they must be extended to meet is not bounded for \
+                 their kinds",
                 face.index()
             ),
             Self::Unsound { what } => match what {

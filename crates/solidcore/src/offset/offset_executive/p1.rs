@@ -624,7 +624,9 @@ impl OffsetExecutive {
     /// # Errors
     ///
     /// Those of [`super::reach::extension_reach`] and
-    /// [`super::reach::local_extension_reach`].
+    /// [`super::reach::local_extension_reach`] (in a local operation, its refusals of
+    /// faces that meet nowhere near an edge, or whose meeting is not bounded, unless
+    /// `Kernel::fixes.local_operation_step_walls` closes such gaps with walls).
     pub(super) fn record_extension_reach(
         &mut self,
         kernel: &Kernel,
@@ -652,15 +654,13 @@ impl OffsetExecutive {
             )?
             .map_or(0.0, |reach| reach + self.offset_distance.abs())
         } else {
-            let mut moved = Vec::new();
-            for f in &self.moved_faces {
-                let surface = self
-                    .local_faces
-                    .iter()
-                    .position(|g| g == f)
-                    .and_then(|i| self.local_surfaces.get(i));
-                if let Some(surface) = surface {
+            // the moved faces' new surfaces, and the copies the others keep
+            let (mut moved, mut kept) = (Vec::new(), Vec::new());
+            for (f, surface) in self.local_faces.iter().zip(&self.local_surfaces) {
+                if self.moved_faces.contains(f) {
                     moved.push((*f, surface));
+                } else {
+                    kept.push((*f, surface));
                 }
             }
             super::reach::local_extension_reach(
@@ -668,7 +668,9 @@ impl OffsetExecutive {
                 original,
                 faceuse,
                 &moved,
+                &kept,
                 self.tangency_tol_radians,
+                kernel.fixes.local_operation_step_walls,
             )?
             // A new edge must cross each neighbouring surface's boundary, not sit on it:
             // the mate and the intersection identify points within the body's tolerance,
