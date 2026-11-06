@@ -213,7 +213,10 @@ fn strings_escape_quotes_backslashes_control_characters_and_non_ascii() {
         // Control characters as their ISO 10646 code in a `\X2\` run, the one form Part 21
         // gives every code (the module's deviations).
         ("a\nb", "'a\\X2\\000A\\X0\\b'"),
-        ("\t\u{1f}\u{7f}", "'\\X2\\0009\\X0\\\\X2\\001F\\X0\\\\X2\\007F\\X0\\'"),
+        (
+            "\t\u{1f}\u{7f}",
+            "'\\X2\\0009\\X0\\\\X2\\001F\\X0\\\\X2\\007F\\X0\\'",
+        ),
     ];
     for (s, t) in cases {
         assert_eq!(string(s), t, "{s:?}");

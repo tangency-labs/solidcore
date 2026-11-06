@@ -17,8 +17,9 @@
 //! Deterministic: the same calls give the same text, byte for byte. Shared entities are found
 //! by their text in a `BTreeMap`, which is only looked up, never iterated; the text is written
 //! from a `Vec` in insertion order. Every refusal is an error message, never a panic: a value
-//! Part 21 cannot write (a non-finite real, a malformed keyword), and data that cannot be written
-//! in millimetres and radians without a computation (below).
+//! Part 21 cannot write (a non-finite real, a malformed keyword), geometry nested deeper than the
+//! reader reads ([`MAX_GEOM_DEPTH`]), and data that cannot be written in millimetres and radians
+//! without a computation (below).
 //!
 //! Origin: SolidCraft's `crates/step/src/write.rs` at `a5b71ca2` (MIT OR Apache-2.0), without
 //! its `topology` module (a schema 4 record's solids: brep to STEP geometry with transformations,
@@ -51,8 +52,25 @@
 //!   product, and a norm where the factors differ, so the writer refuses it: converting it is
 //!   the kernel's (#2578, slice 4). Geometry an export takes from the kernel comes back to the
 //!   record in millimetres, its factors 1.
-//! - [`string`] writes an ASCII control character as `\X\hh` (was: dropped), so every string
-//!   reads back as it was.
+//! - [`string`] writes an ASCII control character (`U+0000` to `U+001F`, and `U+007F`) as a
+//!   `\X2\00hh\X0\` run (was: dropped), so every string reads back as it was. Not as `\X\hh`:
+//!   the public descriptions of Part 21's string encoding give `\X\hh` as an 8-bit code of
+//!   ISO 8859-1 and print the graphic characters (`U+0020` to `U+007E`) as themselves, and none
+//!   we may read settles whether `\X\` covers the control codes below `U+0020` (the standard's
+//!   own text is not freely available). A `\X2\` run is a sequence of ISO 10646 code units,
+//!   which covers every code, so that form is valid whichever way `\X\` is read.
+//! - Nesting is bounded as the reader bounds it: a curve or surface more than
+//!   [`MAX_GEOM_DEPTH`] links below the entity asked for (a trim's or an offset's basis, a
+//!   surface curve's 3D curve or associated geometry, a swept surface's profile, an offset or
+//!   trimmed surface's basis; a pcurve's surface and 2D curve at the pcurve's own depth) is
+//!   refused with the reader's message (was: unbounded recursion, a stack overflow for a deep
+//!   enough record). So everything the reader reads in one call is written, and an in-memory
+//!   record deeper than that is an error, not a crash (on wasm32, which has no stack guard,
+//!   silent corruption).
+//! - [`Writer::file`] leaves `FILE_NAME`'s `time_stamp` empty (as SolidCraft did), so the file
+//!   is the same bytes for the same entities: a library that must be deterministic and build
+//!   for wasm32 reads no clock. A caller that needs a stamp (a strict validator) is the export
+//!   that writes the header for a product, which comes with the AP242 product structure (#2579).
 //! - Shared entities are found in a `BTreeMap` (was a `HashMap`, seeded at random; only looked
 //!   up there too). Ids are counted with checked arithmetic.
 //! - [`Writer::file`] names `solidcore` as the originating system (was `SolidCraft`).
@@ -66,6 +84,7 @@ use super::geom::{
     Vector,
 };
 use super::p21::Param;
+use super::read::MAX_GEOM_DEPTH;
 
 /// A result whose error is a message.
 pub type R<T> = Result<T, String>;
@@ -87,20 +106,18 @@ pub fn real(x: f64) -> Option<String> {
     })
 }
 
-/// A string literal: the apostrophe doubled, the backslash doubled, an ASCII control character
-/// as `\X\hh`, and every character outside ASCII as a `\X2\…\X0\` run of its UTF-16 code units
-/// (a surrogate pair for one beyond the basic plane), so the text is plain ASCII and reads back
-/// as it was.
+/// A string literal: the apostrophe doubled, the backslash doubled, and every other character
+/// that is not printable ASCII (a control character, or one outside ASCII) as a `\X2\…\X0\` run
+/// of its UTF-16 code units (a surrogate pair for one beyond the basic plane), so the text is
+/// plain ASCII and reads back as it was. A control character is `\X2\000A\X0\`, not `\X\0A`:
+/// the module's deviations say why.
 pub fn string(s: &str) -> String {
     let mut o = String::from("'");
     for c in s.chars() {
         match c {
             '\'' => o.push_str("''"),
             '\\' => o.push_str("\\\\"),
-            c if c.is_ascii_control() => {
-                let _ = write!(o, "\\X\\{:02X}", u32::from(c));
-            }
-            c if c.is_ascii() => o.push(c),
+            c if c.is_ascii() && !c.is_ascii_control() => o.push(c),
             c => {
                 o.push_str("\\X2\\");
                 let mut buf = [0u16; 2];
@@ -261,8 +278,8 @@ impl Writer {
     }
 
     /// A whole exchange file around the entities written so far: the HEADER with the file's
-    /// `name` and `schema` (no time stamp, so the text depends on the entities alone), and the
-    /// DATA section.
+    /// `name` and `schema`, and the DATA section. `FILE_NAME`'s `time_stamp` is empty, so the
+    /// text depends on the entities alone (the module's deviations).
     pub fn file(&self, name: &str, schema: &str) -> String {
         format!(
             "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\nFILE_NAME({},'',(''),(''),'solidcore','solidcore','');\nFILE_SCHEMA(({}));\nENDSEC;\nDATA;\n{}ENDSEC;\nEND-ISO-10303-21;\n",
@@ -459,10 +476,15 @@ impl<'w> GeomWriter<'w> {
 
     /// A curve in model space.
     pub fn curve(&mut self, c: &Curve) -> R<u64> {
-        self.curve_in(c, Dim::Three)
+        self.curve_in(c, Dim::Three, 0)
     }
 
-    fn curve_in(&mut self, c: &Curve, dim: Dim) -> R<u64> {
+    /// A curve `depth` links below the entity the caller asked for, counted as the reader counts
+    /// them ([`MAX_GEOM_DEPTH`]).
+    fn curve_in(&mut self, c: &Curve, dim: Dim, depth: usize) -> R<u64> {
+        if depth > MAX_GEOM_DEPTH {
+            return Err("curve definitions nested too deeply".into());
+        }
         match c {
             Curve::Line { origin, vector } => {
                 let p = self.point_in(*origin, dim)?;
@@ -513,7 +535,7 @@ impl<'w> GeomWriter<'w> {
                 sense,
                 preference,
             } => {
-                let b = self.curve_in(basis, dim)?;
+                let b = self.curve_in(basis, dim, depth + 1)?;
                 let t1 = self.trims(trim_1, dim)?;
                 let t2 = self.trims(trim_2, dim)?;
                 let pref = e(match preference {
@@ -530,13 +552,13 @@ impl<'w> GeomWriter<'w> {
                 associated,
                 master,
             } if dim == Dim::Three => {
-                let c3 = self.curve_in(curve_3d, Dim::Three)?;
+                let c3 = self.curve_in(curve_3d, Dim::Three, depth + 1)?;
                 let items = associated
                     .iter()
                     .map(|a| {
                         Ok(r(match a {
-                            Associated::Pcurve(pc) => self.pcurve(pc)?,
-                            Associated::Surface(sf) => self.surface(sf)?,
+                            Associated::Pcurve(pc) => self.pcurve_in(pc, depth + 1)?,
+                            Associated::Surface(sf) => self.surface_in(sf, depth + 1)?,
                         }))
                     })
                     .collect::<R<_>>()?;
@@ -559,7 +581,7 @@ impl<'w> GeomWriter<'w> {
                 self_intersect,
                 ref_direction,
             } if dim == Dim::Three => {
-                let b = self.curve_in(basis, Dim::Three)?;
+                let b = self.curve_in(basis, Dim::Three, depth + 1)?;
                 let d = self.direction(*ref_direction)?;
                 self.w.add(
                     "OFFSET_CURVE_3D",
@@ -576,8 +598,14 @@ impl<'w> GeomWriter<'w> {
     /// millimetres and radians), the `DEFINITIONAL_REPRESENTATION` holding the curve, and the
     /// one 2D parametric context every pcurve of this writer shares.
     pub fn pcurve(&mut self, pc: &Pcurve) -> R<u64> {
-        let surf = self.surface(&pc.surface)?;
-        let c2 = self.curve_in(&pc.curve, Dim::Two)?;
+        self.pcurve_in(pc, 0)
+    }
+
+    /// A pcurve `depth` links down: its surface and its 2D curve at the same depth, as the
+    /// reader reads them.
+    fn pcurve_in(&mut self, pc: &Pcurve, depth: usize) -> R<u64> {
+        let surf = self.surface_in(&pc.surface, depth)?;
+        let c2 = self.curve_in(&pc.curve, Dim::Two, depth)?;
         let ctx = self.pcurve_context()?;
         let rep = self.w.add(
             "DEFINITIONAL_REPRESENTATION",
@@ -653,6 +681,14 @@ impl<'w> GeomWriter<'w> {
 
     /// A surface.
     pub fn surface(&mut self, sf: &Surface) -> R<u64> {
+        self.surface_in(sf, 0)
+    }
+
+    /// A surface `depth` links down ([`MAX_GEOM_DEPTH`]).
+    fn surface_in(&mut self, sf: &Surface, depth: usize) -> R<u64> {
+        if depth > MAX_GEOM_DEPTH {
+            return Err("surface definitions nested too deeply".into());
+        }
         match sf {
             Surface::Plane { position } => {
                 let p = self.placement(position)?;
@@ -706,12 +742,12 @@ impl<'w> GeomWriter<'w> {
             }
             Surface::BSpline(b) => self.bspline_surface(b),
             Surface::Revolution { profile, axis } => {
-                let c = self.curve(profile)?;
+                let c = self.curve_in(profile, Dim::Three, depth + 1)?;
                 let a = self.axis1(axis)?;
                 self.w.add("SURFACE_OF_REVOLUTION", &[s(), r(c), r(a)])
             }
             Surface::Extrusion { profile, vector } => {
-                let c = self.curve(profile)?;
+                let c = self.curve_in(profile, Dim::Three, depth + 1)?;
                 let v = self.vector_in(vector, Dim::Three)?;
                 self.w
                     .add("SURFACE_OF_LINEAR_EXTRUSION", &[s(), r(c), r(v)])
@@ -721,7 +757,7 @@ impl<'w> GeomWriter<'w> {
                 distance,
                 self_intersect,
             } => {
-                let b = self.surface(basis)?;
+                let b = self.surface_in(basis, depth + 1)?;
                 self.w.add(
                     "OFFSET_SURFACE",
                     &[s(), r(b), f(*distance), logical(*self_intersect)],
@@ -736,7 +772,7 @@ impl<'w> GeomWriter<'w> {
                 u_sense,
                 v_sense,
             } => {
-                let b = self.surface(basis)?;
+                let b = self.surface_in(basis, depth + 1)?;
                 self.w.add(
                     "RECTANGULAR_TRIMMED_SURFACE",
                     &[
