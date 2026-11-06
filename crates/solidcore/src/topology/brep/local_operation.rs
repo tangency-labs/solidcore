@@ -303,13 +303,15 @@ fn local_operation_on(
 
 /// (not upstream) The local operation's final gate: the body it built is refused when it
 /// fails what its input did not ([`validation::soundness`] of both, `input` measured
-/// before the edit, the body on a private copy):
+/// before the edit, the body on a private copy), in this order:
 ///
+/// - the body's pointer check failed, so its geometry was not checked (`AssertValid` is
+///   skipped then), even where the input's pointer check failed alike: first, as a
+///   comparison of failure lines between checks that skipped the geometry says nothing
+///   of the geometry;
 /// - the check at `SM_LEVEL_2` has more failure lines of some class (the failed test and
 ///   the type of the object it is about, [`FailureClass`]) than the input's check had
 ///   ([`BrepCheck::failures_beyond`](validation::BrepCheck::failures_beyond));
-/// - the body's pointer check failed, so its geometry was not checked (`AssertValid` is
-///   skipped then), even where the input's pointer check failed alike;
 /// - the input was a manifold solid and the body is not;
 /// - the body is a manifold solid whose volume is not positive (the input's volume is
 ///   not measured).
@@ -339,7 +341,11 @@ fn refuse_unsound(k: &mut Kernel, b: &Brep, input: &validation::Standing) -> Res
     let mut copy = b.clone_standing_for_self()?;
     let found = validation::standing(k, &mut copy)?;
     let added = found.check.failures_beyond(&input.check);
-    let what = if let Some(&(class, _)) = added.first() {
+    let what = if found.check.assert_valid.is_none() {
+        // the pointer check failed, so `AssertValid` did not run: the body's geometry is
+        // not checked at all, whatever the input's pointer failures were
+        Unsoundness::GeometryUnchecked
+    } else if let Some(&(class, _)) = added.first() {
         Unsoundness::Check {
             failures: added.iter().fold(0, |n, &(_, more)| n.saturating_add(more)),
             first: match class {
@@ -351,10 +357,6 @@ fn refuse_unsound(k: &mut Kernel, b: &Brep, input: &validation::Standing) -> Res
                 _ => None,
             },
         }
-    } else if found.check.assert_valid.is_none() {
-        // the pointer check failed, so `AssertValid` did not run: the body's geometry is
-        // not checked at all, whatever the input's pointer failures were
-        Unsoundness::GeometryUnchecked
     } else if input.manifold && !found.manifold {
         Unsoundness::NotManifoldSolid
     } else if found.manifold
