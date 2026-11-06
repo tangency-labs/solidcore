@@ -174,27 +174,6 @@ fn flag(b: bool) -> f64 {
     }
 }
 
-/// The B-rep block (`validate_only` and `init_gaps` off).
-pub(super) fn brep_block(b: &BrepIn) -> Result<Vec<f64>, HarnessError> {
-    let mut out = Vec::new();
-    match b {
-        BrepIn::File { rebuild, .. } => out.extend([0.0, flag(*rebuild)]),
-        BrepIn::Wire { curve, t0, t1 } => {
-            out.push(1.0);
-            shared::push_curve(&mut out, curve)?;
-            out.extend([*t0, *t1]);
-        }
-        BrepIn::Face { surface, dom } => {
-            out.push(2.0);
-            shared::push_surface(&mut out, surface)?;
-            out.extend(dom);
-        }
-        BrepIn::Network => out.push(3.0),
-    }
-    out.extend([0.0, 0.0]);
-    Ok(out)
-}
-
 /// The edges of a face (`GetEdges`), for the `Sector` selectors.
 fn face_edges(b: &Brep, f: FaceId) -> Result<Vec<EdgeId>, HarnessError> {
     fp4::edges(b, f, None, false, None).map_err(|e| harness(format!("face edges: {e}")))

@@ -3,13 +3,14 @@
 //! (`SmLoopuse::IsLoopuseSideInSurface`) and `topology.edgeuse_p2`
 //! (`SmEdgeuse::HasDogLegNearPole`, `SmEdgeuse::IsEdgeuseSideInSurface`).
 //!
-//! A case is `{"level0": <op>, "brep": <BrepIn>}`: the C++ shim builds the B-rep from the
-//! B-rep block of unit `topology.vertexuse` and records the helper on every entity of the
-//! kind in its traversal order; the Rust side builds the same B-rep itself
-//! ([`super::super::topology_face_p1::own_brep`], arena ids in that traversal order) and
-//! records the port the same way. `-2` marks a call the shim skips because upstream
-//! dereferences null or reads out of bounds there (see the shims); the Rust side skips
-//! the same calls on the same conditions.
+//! A case is `{"level0": <op>, "brep": <BrepIn>}`: the runner builds the B-rep of unit
+//! `topology.vertexuse`'s B-rep block ([`super::super::topology_face_p1::own_brep`], arena
+//! ids in the reference shim's traversal order) and records the helper on every entity of
+//! the kind in that order. `-2` marks a call skipped because upstream dereferences null or
+//! reads out of bounds there (as the reference shims skipped it).
+//!
+//! Ported from upstream `SmVertex.cpp`, `SmLoopuse.cpp` and `SmEdgeuse.cpp`; checked
+//! against the goldens of the three units.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,15 +18,16 @@ use serde_json::Value;
 use solidcore::kernel::Kernel;
 use solidcore::topology::{Brep, EdgeuseId, LoopuseId, VertexId};
 use solidcore::SolidError;
-use solidcore_ffi::units::{topology_edgeuse_p2 as ffi_eu, topology_loopuse as ffi_lu};
-use solidcore_ffi::units::topology_vertex as ffi_v;
 
 use super::super::topology_vertexuse::{self as shared, BrepIn};
-use super::{brep_block, FACE37_FILES, FILES};
+use super::{FACE37_FILES, FILES};
 use crate::{Case, HarnessError, Output, Rng};
 
 /// A skipped call (see the module docs).
 const SKIPPED: f64 = -2.0;
+
+/// Largest `smp_count` of an [`Level0Op::EdgeuseSide`] case.
+const MAX_POLE_SAMPLES: u64 = 64;
 
 /// The helper a level-0 case records.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,33 +72,6 @@ fn flag(b: bool) -> f64 {
 
 fn periodic_of(p: i64) -> Option<bool> {
     (p >= 0).then_some(p == 1)
-}
-
-/// The C++ side of a level-0 case.
-pub(crate) fn run_cpp(case: &Case) -> Result<Output, HarnessError> {
-    let i: Level0In = case.parse()?;
-    let path = shared::path_of(&i.brep)?;
-    let block = brep_block(&i.brep)?;
-    let r = match i.level0 {
-        Level0Op::CheckPointers => ffi_v::check_pointers(&path, &block),
-        Level0Op::LoopuseSide {
-            periodic_u,
-            periodic_v,
-        } => ffi_lu::side_in_surface(&path, periodic_u as f64, periodic_v as f64, &block),
-        Level0Op::EdgeuseSide {
-            smp_count,
-            periodic_u,
-            periodic_v,
-        } => ffi_eu::pole(
-            &path,
-            usize::try_from(smp_count).map_err(|_| harness("sample count"))?,
-            periodic_u as f64,
-            periodic_v as f64,
-            &block,
-        ),
-    };
-    let v = r.map_err(|e| harness(format!("c++ level-0 helper: {e}")))?;
-    Ok(Output::new().values("out", v))
 }
 
 /// A Rust-side failure: an unported callee defers the case, anything else is the
@@ -207,28 +182,13 @@ fn rust_record(op: &Level0Op, b: &Brep, c: [usize; 10]) -> Result<Vec<f64>, Soli
 /// The Rust side of a level-0 case.
 pub(crate) fn run_rust(case: &Case) -> Result<Output, HarnessError> {
     let i: Level0In = case.parse()?;
-    if let Level0Op::EdgeuseSide {
-        smp_count,
-        periodic_u,
-        periodic_v,
-    } = i.level0
-    {
-        // an input the FFI refuses is a harness error on both sides (PR #502's
-        // convention): the shim never runs it, so the Rust side must not either. Nightly
-        // fuzz case topology.edgeuse_p2/fuzz00237 mutated `smp_count` to 2^31: the FFI
-        // refuses more than `MAX_POLE_SAMPLES` for the C++ side, while the port samples
-        // each edge use's trim curve `smp_count` times (as upstream) and ran past the fuzz
-        // time limit. The checks see the same arguments and B-rep block as `run_cpp`.
-        let path = shared::path_of(&i.brep)?;
-        let block = brep_block(&i.brep)?;
-        ffi_eu::validate_pole(
-            &path,
-            usize::try_from(smp_count).map_err(|_| harness("sample count"))?,
-            periodic_u as f64,
-            periodic_v as f64,
-            &block,
-        )
-        .map_err(|e| harness(format!("level-0 helper: {e}")))?;
+    // the sample count is bounded (the reference wrapper's bound): nightly fuzz case
+    // topology.edgeuse_p2/fuzz00237 mutated `smp_count` to 2^31, and the port samples each
+    // edge use's trim curve `smp_count` times (as upstream), past the fuzz time limit
+    if let Level0Op::EdgeuseSide { smp_count, .. } = i.level0 {
+        if smp_count > MAX_POLE_SAMPLES {
+            return Err(harness("level-0 helper: invalid argument: too many samples"));
+        }
     }
     let (b, c) = match super::super::topology_face_p1::own_brep(&i.brep, false, false)? {
         Ok(x) => x,
@@ -318,24 +278,18 @@ mod tests {
     }
 
     /// Nightly fuzz case `topology.edgeuse_p2/fuzz00237` (run 41040730716): an
-    /// `smp_count` of 2^31. The FFI refuses more than `MAX_POLE_SAMPLES` samples for the
-    /// C++ side, and the Rust side must be refused the same way instead of sampling every
-    /// edge use's trim curve 2^31 times.
+    /// `smp_count` of 2^31 is refused instead of sampling every edge use's trim curve 2^31
+    /// times.
     #[test]
-    fn huge_sample_count_is_refused_on_both_sides() {
-        let case = edgeuse_side_case(2_147_483_648);
-        let cpp = run_cpp(&case).unwrap_err().to_string();
-        let rust = run_rust(&case).unwrap_err().to_string();
-        assert_eq!(cpp, "c++ level-0 helper: invalid argument: too many samples");
-        assert_eq!(rust, cpp.trim_start_matches("c++ "));
+    fn huge_sample_count_is_refused() {
+        let rust = run_rust(&edgeuse_side_case(2_147_483_648)).unwrap_err().to_string();
+        assert_eq!(rust, "level-0 helper: invalid argument: too many samples");
     }
 
-    /// The largest `smp_count` the FFI accepts still runs on both sides.
+    /// The largest `smp_count` accepted still runs.
     #[test]
-    fn max_sample_count_runs_on_both_sides() {
-        let case = edgeuse_side_case(ffi_eu::MAX_POLE_SAMPLES as u64);
-        let cpp = run_cpp(&case).unwrap();
-        let rust = run_rust(&case).unwrap();
-        assert!(crate::compare(&cpp, &rust, &[]).mismatches.is_empty());
+    fn max_sample_count_runs() {
+        let rust = run_rust(&edgeuse_side_case(MAX_POLE_SAMPLES));
+        assert!(rust.is_ok(), "{rust:?}");
     }
 }
