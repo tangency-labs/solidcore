@@ -1,5 +1,5 @@
-//! Runner for unit `blend.fillet_geom_p6`. C++: `solidcore_ffi::units::blend_fillet_geom_p6`.
-//! Rust: `solidcore::blend::fillet_geom::p6`.
+//! Runner for unit `blend.fillet_geom_p6`. Ported from upstream
+//! `source/SMLib/src/SmFilletGeom.cpp`; checked against its golden. Rust: `solidcore::blend::fillet_geom::p6`.
 //!
 //! Every case builds a target B-rep from a B-rep block of unit `topology.edgeuse_p1` (an
 //! upstream `.smb` solid, a face or a wire network; the Rust side reads or builds it itself
@@ -70,12 +70,9 @@ use solidcore::topology::{
     Brep, EdgeId, Edgeuse, EdgeuseId, FaceId, VertexId, Vertexuse, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::blend_fillet_geom_p6::{self as ffi, Op};
-use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, bspline_of, clamped_knots, import_with_types, path_of, push_curve, push_surface,
-    sel, surface_of, BrepIn, BssIn, CrvIn, ImportTypes, SrfIn,
+    bspline_of, clamped_knots, sel, surface_of, BrepIn, BssIn, CrvIn, ImportTypes, SrfIn,
 };
 use crate::{HarnessError, Output, Rng, UnitDiff};
 
@@ -470,8 +467,6 @@ struct Inputs {
 /// The case's target B-rep: the C++ export's counts, the imported Rust B-rep and the
 /// upstream types of its geometry.
 struct Target {
-    path: String,
-    block: Vec<f64>,
     counts: [usize; 10],
     brep: Brep,
     types: ImportTypes,
@@ -492,8 +487,6 @@ const HARNESS_ANALYTIC_IMPORT: &str = "harness:analytic-geometry-export";
 /// never imported from the C++ export, so all of its geometry is held exactly;
 /// `Err(output)` when the Rust build fails, as [`target`] reports the shim's.
 fn own_target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
     let brep = match crate::own_reader::edgeuse_graph_brep(&mut Kernel::default(), brep)? {
         Ok(b) => b,
         Err(e) => {
@@ -503,31 +496,9 @@ fn own_target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
         }
     };
     Ok(Ok(Target {
-        path,
-        block,
         counts: crate::own_builder::counts(&brep),
         brep,
         types: ImportTypes::default(),
-    }))
-}
-
-/// Builds the target on the C++ side (its selectors resolve on the shim's B-rep); `Err(output)` when it cannot be built.
-fn target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
-    let ex = ffi1::eval(ffi1::Op::Export, &path, &block)
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some(counts) = ffi1::counts(&ex) else {
-        let st = ex.get(1).copied().unwrap_or(0.0);
-        return Ok(Err(Output::new().values("flat", vec![1.0, st])));
-    };
-    let (brep, types) = import_with_types(&ex)?;
-    Ok(Ok(Target {
-        path,
-        block,
-        counts,
-        brep,
-        types,
     }))
 }
 
@@ -723,240 +694,6 @@ fn b(v: bool) -> f64 {
     } else {
         0.0
     }
-}
-
-fn push_offsets(o: &mut Vec<f64>, offs: &[Option<OffIn>; 2]) -> Result<(), HarnessError> {
-    for off in offs {
-        match off {
-            Some(off) => {
-                o.push(1.0);
-                push_surface(o, &off.base)?;
-                o.push(off.dist);
-            }
-            None => o.push(0.0),
-        }
-    }
-    Ok(())
-}
-
-fn push_opt_curve(o: &mut Vec<f64>, c: Option<&CrvIn>) -> Result<(), HarnessError> {
-    if let Some(c) = c {
-        o.push(1.0);
-        push_curve(o, c)
-    } else {
-        o.push(0.0);
-        Ok(())
-    }
-}
-
-/// The input after the B-rep block (layout in the FFI wrapper).
-#[allow(clippy::too_many_lines)]
-fn model_input(i: &Inputs, tg: &Target) -> Result<Vec<f64>, HarnessError> {
-    let m = &i.model;
-    let mut o = tg.block.clone();
-
-    o.push(m.solvers.len() as f64);
-    for s in &m.solvers {
-        o.extend([s.tol, s.ang, s.tang]);
-        for &e in &s.eus {
-            o.push(sel(e, tg.n_eu()) as f64);
-        }
-        push_offsets(&mut o, &s.surfs)?;
-        o.extend([b(s.exec), b(s.reverse_trim)]);
-    }
-
-    o.push(m.corners.len() as f64);
-    for c in &m.corners {
-        o.extend([sel(c.vertex, tg.n_v()) as f64, c.ctype as f64, c.tol]);
-    }
-
-    o.push(m.vertices.len() as f64);
-    for v in &m.vertices {
-        let r = resolve_vertex(v, tg)?;
-        o.extend(r.point);
-        o.extend([
-            v.vtype as f64,
-            v.status as f64,
-            v.corner as f64,
-            v.pc_class as f64,
-        ]);
-        o.extend([r.pc_kind as f64, r.pc_index as f64, r.pc_face as f64]);
-        o.extend([r.t, r.uv[0], r.uv[1]]);
-    }
-
-    o.push(m.geoms.len() as f64);
-    for g in &m.geoms {
-        o.extend([g.gtype as f64, g.status as f64, g.solver as f64]);
-        match &g.surface {
-            Some(s) => {
-                o.push(1.0);
-                push_surface(&mut o, s)?;
-            }
-            None => o.push(0.0),
-        }
-        push_opt_curve(&mut o, g.center.as_ref())?;
-        o.extend(g.devs);
-        push_offsets(&mut o, &g.offs)?;
-    }
-
-    o.push(m.edges.len() as f64);
-    for e in &m.edges {
-        o.extend([
-            e.vs as f64,
-            e.ve as f64,
-            e.etype as f64,
-            e.status as f64,
-            e.corner as f64,
-        ]);
-        push_opt_curve(&mut o, e.curve.as_ref())?;
-        match e.interval {
-            Some([a, c]) => o.extend([1.0, a, c]),
-            None => o.push(0.0),
-        }
-        o.push(sel(e.orig_edge, tg.n_e()) as f64);
-        o.push(sel(e.orig_face, tg.n_f()) as f64);
-        for eu in &e.eus {
-            push_opt_curve(&mut o, eu.uv_curve.as_ref())?;
-            o.push(eu.geom as f64);
-            o.extend(eu.vu_uv);
-            let t = &eu.tsect;
-            o.push(t.ptype as f64);
-            o.extend(t.uv[0]);
-            o.extend(t.uv[1]);
-            o.extend(t.crv);
-            o.extend(t.deriv);
-            o.push(t.cparam);
-        }
-    }
-
-    for g in &m.geoms {
-        o.extend([g.rails[0] as f64, g.rails[1] as f64]);
-        o.push(g.other1.len() as f64);
-        o.extend(g.other1.iter().map(|&x| x as f64));
-        o.push(g.other2.len() as f64);
-        o.extend(g.other2.iter().map(|&x| x as f64));
-        o.push(g.sides.len() as f64);
-        for &[e, w] in &g.sides {
-            o.extend([e as f64, w as f64]);
-        }
-    }
-
-    for v in &m.vertices {
-        o.extend([v.mates[0] as f64, v.mates[1] as f64]);
-    }
-
-    match &i.op {
-        OpIn::Export => {}
-        OpIn::BlendingRail { e } => o.extend([*e as f64, 0.0]),
-        OpIn::EdgeOnEdge { e, use_corner }
-        | OpIn::FilletEnd { e, use_corner }
-        | OpIn::SetBackRail { e, use_corner } => o.extend([*e as f64, b(*use_corner)]),
-        OpIn::ShouldSwap { e, f1, f2 } => o.extend([
-            *e as f64,
-            sel(*f1, tg.n_f()) as f64,
-            sel(*f2, tg.n_f()) as f64,
-        ]),
-        OpIn::Join {
-            g,
-            vs,
-            ve,
-            uv_tol,
-            start,
-        } => {
-            o.extend([*g as f64, *vs as f64, *ve as f64, *uv_tol]);
-            o.push(start.len() as f64);
-            for s in start {
-                o.extend([s.e as f64, s.which as f64, b(s.with_uv), s.orient as f64]);
-            }
-        }
-        OpIn::Copy { g, other } => o.extend([*g as f64, *other as f64]),
-        OpIn::FindTangent { g, rail, end } | OpIn::RailVertex { g, rail, end } => {
-            o.extend([*g as f64, *rail as f64, *end as f64]);
-        }
-        OpIn::RailIndexSideEu { g, eu } => o.extend([*g as f64, sel(*eu, tg.n_eu()) as f64]),
-        OpIn::RailIndexVu { g, e, which } => o.extend([*g as f64, *e as f64, *which as f64]),
-        OpIn::SetUpRailPoint {
-            g,
-            rail,
-            end,
-            param,
-            pc,
-        } => {
-            o.extend([
-                *g as f64,
-                *rail as f64,
-                *end as f64,
-                *param,
-                b(pc.is_some()),
-            ]);
-            let (class, kind, index, t) = match pc {
-                Some(p) => {
-                    let (k, i) = tg.pc(p.kind, p.index);
-                    (p.class, k, i, p.t)
-                }
-                None => (100, 0, -1, 0.0),
-            };
-            o.extend([class as f64, kind as f64, index as f64, t]);
-        }
-        OpIn::MoveTsp { pnts, from, to } => {
-            o.push(pnts.len() as f64);
-            for [c, d] in pnts {
-                o.extend(c);
-                o.extend(d);
-            }
-            o.extend([*from as f64, *to as f64]);
-        }
-        OpIn::RailEuIntersect { g, rail, eu, guess } => {
-            o.extend([*g as f64, *rail as f64, sel(*eu, tg.n_eu()) as f64, *guess]);
-        }
-        OpIn::RecordError { g, etype } => o.extend([*g as f64, *etype as f64]),
-    }
-    Ok(o)
-}
-
-fn op_of(op: &OpIn) -> Op {
-    match op {
-        OpIn::Export => Op::Export,
-        OpIn::BlendingRail { .. } => Op::BlendingRail,
-        OpIn::EdgeOnEdge { .. } => Op::EdgeOnEdge,
-        OpIn::FilletEnd { .. } => Op::FilletEnd,
-        OpIn::SetBackRail { .. } => Op::SetBackRail,
-        OpIn::ShouldSwap { .. } => Op::ShouldSwap,
-        OpIn::Join { .. } => Op::Join,
-        OpIn::Copy { .. } => Op::Copy,
-        OpIn::FindTangent { .. } => Op::FindTangent,
-        OpIn::RailIndexSideEu { .. } => Op::RailIndexSideEu,
-        OpIn::RailIndexVu { .. } => Op::RailIndexVu,
-        OpIn::RailVertex { .. } => Op::RailVertex,
-        OpIn::SetUpRailPoint { .. } => Op::SetUpRailPoint,
-        OpIn::MoveTsp { .. } => Op::MoveTsp,
-        OpIn::RailEuIntersect { .. } => Op::RailEuIntersect,
-        OpIn::RecordError { .. } => Op::RecordError,
-    }
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let tg = match target(&i.brep)? {
-        Ok(t) => t,
-        Err(out) => return Ok(out),
-    };
-    let input = model_input(i, &tg)?;
-    let result = ffi::eval(op_of(&i.op), &tg.path, &input);
-    if i.expected_rejection {
-        // Only a flagged case may be recorded as rejected.
-        return match result {
-            Err(solidcore_ffi::FfiError::InvalidArgument(reason)) => Ok(Output::rejected(reason)),
-            Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_ARG)) => {
-                Ok(Output::rejected("shim_rejected_model"))
-            }
-            Err(e) => Err(harness(format!(
-                "expected-rejection fixture failed in another way: {e}"
-            ))),
-            Ok(_) => Err(harness("expected-rejection fixture was not refused")),
-        };
-    }
-    let flat = result.map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("flat", flat))
 }
 
 // ---- Rust --------------------------------------------------------------------------------
@@ -2713,10 +2450,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         crate::runner::default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &crate::Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &crate::Case) -> Result<Output, HarnessError> {
