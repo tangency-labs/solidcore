@@ -2463,6 +2463,21 @@ impl OffsetExecutive {
                     .map_err(|_| SolidError::invalid_input(OP, "loop count exceeds usize"))?,
             );
         }
+        // Not upstream: a moved face of a local operation keeps its loops' topology, one
+        // edge per original edge use, each mapped to it and rebuilt where the new surfaces
+        // meet. A UV gap the copy fills (a pole: two edge uses ending at one vertex at two
+        // parameters) is no edge: on the face's own surface its line lifts to that vertex
+        // and the face constructor drops it, but on the new surface it lifts to a curve.
+        // The constructor is told so: the gap's line closes the UV loop and stands for the
+        // vertex, made no edge, and its neighbours meet at one vertex there, as the
+        // original's edge uses do.
+        let vertex_slots = if self.operation == OffsetOperation::LocalOperation
+            && self.moved_faces.contains(&face_id)
+        {
+            curves.filled_gaps.clone()
+        } else {
+            Vec::new()
+        };
         let input = FaceCurvesInput {
             loops,
             curves_3d: None,
@@ -2475,7 +2490,8 @@ impl OffsetExecutive {
         let region = brep.infinite_region();
         // Only success continues; a failed constructor leaves no face to relate.
         // The surface moves into the face constructor and is dropped on failure.
-        let made = match bp7::make_face_with_curves(
+        let mut owners = Vec::new();
+        let made = match bp7::make_face_with_curve_owners_at_vertices(
             kernel,
             brep,
             region,
@@ -2485,6 +2501,8 @@ impl OffsetExecutive {
             orientation,
             None,
             &this_face,
+            &vertex_slots,
+            &mut owners,
             &mut offset_env(notifications, offset_key_of),
         ) {
             Ok(made) => made,

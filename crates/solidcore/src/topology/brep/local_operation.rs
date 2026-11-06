@@ -27,7 +27,7 @@
 //! refreshed before the operation returns ([`Brep::refresh_cached_topology`]), as every
 //! public operation leaves them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::offset::OffsetFailure;
 use crate::error::{EntityRef, Failure, Result, SolidError};
@@ -40,8 +40,10 @@ use crate::nurbs::knots::Side;
 use crate::offset::offset_executive::p1::{OffsetExecutive, OffsetOperation};
 use crate::offset::offset_executive::p2::OffsetNotifications;
 use crate::query::brep::{calculate_bounding_box, BoundingBoxOptions};
-use crate::surface::implicit::AnalyticSupport;
+use crate::surface::implicit::{self, AnalyticSupport};
+use crate::surface::plane::Plane;
 use crate::surface::surface::Surface;
+use crate::surface::surface::SurfaceKind;
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2;
 use crate::topology::brep::p5;
@@ -59,7 +61,9 @@ fn null() -> SolidError {
 /// `SmBrep::LocalOperation(rFaces, rNewSurfaces)`: `surfaces[i]` becomes the surface of
 /// `faces[i]` (turned about if its normal opposes the old one's), every other face
 /// keeping a copy of its surface (as an analytic one when possible), and the faces are
-/// rebuilt by an extended offset that extends the surfaces to intersect.
+/// rebuilt by an extended offset that extends the surfaces to intersect. (Not upstream) a
+/// face whose B-spline surface has a pole at a vertex of a moved face, and lies on a plane,
+/// continues as that plane (`continued_planes`).
 ///
 /// To find where `surfaces[i]` went, mark `faces[i]` before the call
 /// ([`Brep::add_attribute`], [`Behavior::Copy`](crate::geom::attribute::Behavior::Copy))
@@ -98,22 +102,38 @@ pub fn local_operation(
     // (not upstream) the faces whose surfaces move: a face given its own surface again keeps
     // a copy of its own surface, as the faces not given one do, and so keeps its edges
     let mut moved = Vec::new();
+    // (not upstream) the faces given another surface, and the planes faces that keep
+    // theirs continue as beside them (`continued_planes`)
+    let mut moving = Vec::new();
     for &face in &all_faces {
         let index = faces.iter().position(|&f| f == face);
         let own = face_ops::surface(b, face)?.ok_or_else(null)?;
-        let stays = match index.and_then(|i| given.get(i)).and_then(Option::as_ref) {
-            Some(new) => is_own_surface(own, new),
-            None => true,
-        };
-        let surface = if let (Some(index), false) = (index, stays) {
-            moved.push(face);
-            if let Some(slot) = placed.get_mut(index) {
-                *slot = Some(new_list.len());
+        if let Some(new) = index.and_then(|i| given.get(i)).and_then(Option::as_ref) {
+            if !is_own_surface(own, new) {
+                moving.push(face);
             }
-            let mut new = given
-                .get_mut(index)
-                .and_then(Option::take)
-                .ok_or_else(null)?;
+        }
+    }
+    let mut continued = continued_planes(k, b, &all_faces, &moving)?;
+    for &face in &all_faces {
+        let index = faces.iter().position(|&f| f == face);
+        let own = face_ops::surface(b, face)?.ok_or_else(null)?;
+        let replacement = match index {
+            Some(index) if moving.contains(&face) => {
+                if let Some(slot) = placed.get_mut(index) {
+                    *slot = Some(new_list.len());
+                }
+                Some(
+                    given
+                        .get_mut(index)
+                        .and_then(Option::take)
+                        .ok_or_else(null)?,
+                )
+            }
+            _ => continued.remove(&face),
+        };
+        let surface = if let Some(mut new) = replacement {
+            moved.push(face);
             // (not upstream) a face that meets itself across an edge cannot take an open
             // surface: refused before anything is changed
             if meets_itself(b, face)? && !is_closed_surface(k, &new, b.tolerance())? {
@@ -235,6 +255,64 @@ pub fn local_operation(
     // (not upstream: the port's cached topology fields, true again for the caller)
     b.refresh_cached_topology();
     moved
+}
+
+/// (not upstream) The planes faces that keep their surfaces continue as: a face whose
+/// B-spline surface has a pole (a side collapsed to a point) at a vertex of a moved face
+/// (one of `moving`), and whose net lies on a plane ([`implicit::plane_of_net`],
+/// certified to the rounding of its stored points), takes that plane, and moves with
+/// the moved faces (its edges are intersected again, as those of a face given its own
+/// plane are). The patch cannot be extended across its pole: a side's extension is a
+/// strip of parameters whose width in space goes to nothing at the pole, so where the
+/// moved faces split the vertex there (four faces at a pyramid's apex no longer meet in
+/// one point, and two of them meet in a new edge), the split's vertices next to the pole
+/// lie on no extension of it, and its edges to them stopped where they left the strip:
+/// a vertex too many, and edges on one face alone. The plane holds them. A face that
+/// meets itself across an edge (a seam), whose surface is closed, is left as it is.
+///
+/// # Errors
+///
+/// Those of the topology queries, [`crate::topology::vertexuse::is_on_pole`] and
+/// [`implicit::plane_of_net`].
+fn continued_planes(
+    k: &Kernel,
+    b: &mut Brep,
+    all_faces: &[FaceId],
+    moving: &[FaceId],
+) -> Result<BTreeMap<FaceId, Surface>> {
+    use crate::topology::{face::p4 as face4, vertex, vertexuse};
+    let mut out = BTreeMap::new();
+    for &face in all_faces {
+        if moving.contains(&face)
+            || !matches!(
+                face_ops::surface(b, face)?.map(Surface::kind),
+                Some(SurfaceKind::BSpline(_))
+            )
+            || meets_itself(b, face)?
+        {
+            continue;
+        }
+        let mut pole = false;
+        for v in face4::vertices(b, face, None, false, None)? {
+            if pole || !vertex::faces(b, v)?.iter().any(|f| moving.contains(f)) {
+                continue;
+            }
+            for vu in vertex::vertexuses_of_face(b, v, Some(face), None)? {
+                pole |= vertexuse::is_on_pole(k, b, vu)?;
+            }
+        }
+        if !pole {
+            continue;
+        }
+        let Some(SurfaceKind::BSpline(form)) = face_ops::surface(b, face)?.map(Surface::kind)
+        else {
+            continue;
+        };
+        if let Some(implicit::Implicit::Plane { origin, normal }) = implicit::plane_of_net(form)? {
+            out.insert(face, Surface::from(Plane::from_normal(origin, normal)));
+        }
+    }
+    Ok(out)
 }
 
 /// Whether `face` meets itself across one of its edges: more edge uses of the edge on
@@ -1031,7 +1109,9 @@ mod tests {
     /// edges (its middle point and normal there, so the same plane to rounding). Nothing
     /// moves, and the neighbours' new edges must still cross the extended surfaces'
     /// boundaries: the body is a sound manifold solid with the input's volume, the same
-    /// faces, edges and vertices, and its B-spline surfaces' knot vectors are valid.
+    /// faces, edges and vertices, and its B-spline surfaces' knot vectors are valid. The
+    /// side's two edges end at the apex at two parameters (its collapsed row, a pole): the
+    /// plane's face has no edge there, where it had one of no length on that face alone.
     #[test]
     fn a_pyramid_side_given_the_plane_through_its_edges_stays_sound() {
         use crate::topology::brep::validation::{check_brep, CheckLevel};
@@ -1087,5 +1167,87 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// gen0091 of the difftest unit: a pyramid's side given the plane through its edges and
+    /// the side across its apex from it moved out. The four sides no longer meet in one point:
+    /// the apex splits into two vertices and a new edge between the two sides the moved one
+    /// parts (with the four-face split on). The new vertex is next to the apex, a pole of the
+    /// fourth side's B-spline patch, and on no extension of it (a side's extension narrows to
+    /// nothing at the pole): the side, which lies on a plane, continues as that plane. The
+    /// body is the convex solid of the five planes, a sound manifold of nine edges and six
+    /// vertices.
+    #[test]
+    fn a_pyramid_side_moved_past_its_apex_splits_it_on_the_planes_beside() {
+        use crate::topology::brep::validation::{check_brep, CheckLevel};
+        let mut k = Kernel::default();
+        k.fixes.offset_closes_loop_gaps = true;
+        k.fixes.offset_splits_corner_vertices = true;
+        k.fixes.offset_four_face_vertex_split = true;
+        let mut b = bicubic_pyramid(&mut k);
+        let all = bp1::faces(&b, None).unwrap();
+        // the planes of the faces, each as (point, outward unit normal)
+        let centre = Vec3::new(0.0, 0.0, 25.0);
+        let planes: Vec<(Vec3, Vec3)> = all
+            .iter()
+            .map(|&f| {
+                let s = face_ops::surface(&b, f).unwrap().unwrap();
+                let uv = b.face(f).unwrap().uv_domain.evaluate(0.5, 0.5);
+                let p = s.evaluate_point(&k, uv).unwrap();
+                let n = s.evaluate_normal(&k, uv, Side::Left, Side::Left).unwrap();
+                (p, if n.dot(p - centre) > 0.0 { n } else { n * -1.0 })
+            })
+            .collect();
+        // faces: the base, then the sides along y = -y0, x = x0, y = y0, x = -x0
+        let (kept, moved, distance) = (2_usize, 1_usize, 0.407_738_046_172_282_6);
+        let mut given = planes.clone();
+        given[moved].0 = given[moved].0 + given[moved].1 * distance;
+        let surfaces = [kept, moved]
+            .map(|i| Surface::from(Plane::from_normal(given[i].0, given[i].1)))
+            .to_vec();
+        with_notifications(&mut b, |b, notes| {
+            local_operation(&mut k, b, &[all[kept], all[moved]], surfaces, notes)
+        })
+        .unwrap();
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold);
+        assert_eq!(
+            (b.faces().len(), b.edges().len(), b.vertices().len()),
+            (5, 9, 6)
+        );
+        b.use_arena_naming().unwrap();
+        let lines = check_brep(&mut k, &mut b, CheckLevel::Level2)
+            .unwrap()
+            .lines();
+        assert!(lines.is_empty(), "{lines:?}");
+        // the convex solid of the five planes: its corners, and its volume from its faces'
+        // fans about the base's centre
+        let meet = |[i, j, l]: [usize; 3]| {
+            let [(p, a), (q, c), (r, e)] = [given[i], given[j], given[l]];
+            let det = a.dot(c.cross(e));
+            (c.cross(e) * a.dot(p) + e.cross(a) * c.dot(q) + a.cross(c) * e.dot(r)) * (1.0 / det)
+        };
+        let corner = |i: usize, j: usize| meet([0, i, j]);
+        let (b0, b1, b2, b3) = (corner(4, 1), corner(1, 2), corner(2, 3), corner(3, 4));
+        let (apex, top) = (meet([2, 3, 4]), meet([1, 2, 4]));
+        let faces: [&[Vec3]; 5] = [
+            &[b0, b3, b2, b1],
+            &[b0, b1, top],
+            &[b1, b2, apex, top],
+            &[b2, b3, apex],
+            &[b3, b0, top, apex],
+        ];
+        let o = (b0 + b2) * 0.5;
+        let want: f64 = faces
+            .iter()
+            .map(|f| {
+                f.iter()
+                    .skip(1)
+                    .zip(f.iter().skip(2))
+                    .map(|(&p, &q)| (f[0] - o).dot((p - o).cross(q - o)) / 6.0)
+                    .sum::<f64>()
+            })
+            .sum();
+        assert!((v - want).abs() <= 1e-9 * want, "{v} vs {want}");
     }
 }
