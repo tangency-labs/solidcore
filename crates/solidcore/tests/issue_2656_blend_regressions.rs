@@ -30,6 +30,7 @@
     clippy::indexing_slicing
 )] // test helpers
 
+use solidcore::blend::blend_corner::end::RUNS_ON_ACROSS_SEAM;
 use solidcore::blend::blend_corner::BlendCornerEvent;
 use solidcore::blend::fillet_executive::p1::{FilletLaw, FilletLawKind};
 use solidcore::blend::fillet_executive::session::FilletSession;
@@ -110,8 +111,8 @@ enum Kind {
     Curvature,
 }
 
-/// The refusal's error code.
-type Refused = i32;
+/// The refusal's error code and comment.
+type Refused = (i32, String);
 
 /// SolidCraft's `blend_edges` (one call, no setbacks): the edges at `at` blended `size`,
 /// the corners made, filleted, stitched.
@@ -147,7 +148,7 @@ fn blend(
         prepared
             .and_then(|()| s.create_corners(k, None))
             .and_then(|()| s.do_filleting(k, None))
-            .map_err(|_| s.error_info().code)
+            .map_err(|_| (s.error_info().code, s.error_info().comment.to_string()))
     };
     done?;
     stitch_and_orient(k, b, &StitchAndOrientOptions::default()).unwrap();
@@ -493,7 +494,7 @@ fn block_cylinder_arc_piece_is_refused_at_the_seam() {
         "the piece ends at the seam: {ends:?}"
     );
     let r = blend(&mut k, &mut b, Kind::Round, &[at_pick], 2.0);
-    assert!(r.is_err(), "refused at the seam, not capped");
+    assert_eq!(r.unwrap_err().1, RUNS_ON_ACROSS_SEAM, "refused at the seam, not capped");
 }
 
 /// tangency-labs/solidcore#2679 (the blend corner): fillets/1207 with the r3 round's end
