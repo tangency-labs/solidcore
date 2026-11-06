@@ -285,6 +285,14 @@ fn made(b: solidcore_ops::Result<Body>) -> Result<Slot, String> {
 /// change units from the trace's degrees to the record's radians.
 fn split_tool(t: &Value) -> Result<Tool, Stop> {
     let bad = |field: &str| Stop::Fail(format!("split_faces: tool parameter {field}"));
+    let object = t.as_object().ok_or_else(|| bad("object"))?;
+    if object.len() != 1 {
+        return Err(bad("exactly one named kind"));
+    }
+    let kind = object.keys().next().ok_or_else(|| bad("kind"))?;
+    if kind.is_empty() {
+        return Err(bad("kind name"));
+    }
     let v3 = |p: &Value, key: &str| f64s::<3>(&p[key]).ok_or_else(|| bad(key));
     let v2 = |p: &Value, key: &str| f64s::<2>(&p[key]).ok_or_else(|| bad(key));
     if let Some(p) = t.get("plane") {
@@ -313,9 +321,9 @@ fn split_tool(t: &Value) -> Result<Tool, Stop> {
             ],
         });
     }
-    Err(Stop::Unsupported(
-        "split_faces: tool kind not ported".to_owned(),
-    ))
+    Err(Stop::Unsupported(format!(
+        "split_faces: tool kind {kind} not ported"
+    )))
 }
 
 /// Runs one traced call: its output, or the operation's error as text.
@@ -1499,6 +1507,25 @@ fn split_faces_forwards_the_tool_and_record_face_order() {
             assert_eq!(body.to_record().unwrap().0, before);
         }
     }
+}
+
+/// Malformed metadata cannot be counted as unsupported coverage; a named unknown kind can.
+#[test]
+fn split_faces_bad_tool_metadata_is_a_replay_failure() {
+    for tool in [
+        serde_json::json!(null),
+        serde_json::json!([]),
+        serde_json::json!(7),
+        serde_json::json!("plane"),
+        serde_json::json!({}),
+        serde_json::json!({"plane": null}),
+        serde_json::json!({"cylinder": null}),
+        serde_json::json!({"plane": {}, "cylinder": {}}),
+    ] {
+        assert!(matches!(split_tool(&tool), Err(Stop::Fail(_))), "{tool}");
+    }
+    assert!(matches!(split_tool(&serde_json::json!({"sphere": {}})),
+        Err(Stop::Unsupported(why)) if why.contains("sphere")));
 }
 
 /// Non-default cylindrical frame, radius, angular subdomain and height survive trace parsing.
