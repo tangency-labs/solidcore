@@ -26,13 +26,22 @@ setting `SOLIDCORE_2349_WRITE_FIXTURE` and running only the reachability test wi
 one test thread; the committed ASCII copy has trailing spaces stripped.
 
 ```sh
-cargo test --profile difftest -p solidcore --test issue_2349_closed_angle
-cargo run --profile difftest -p difftest --features cpp -- \
-  --unit blend.fillet_executive_p3 --filter issue-2349
+export PATH=/home/karlvonrichter/.cargo/bin:$PATH
+export CARGO_BUILD_JOBS=2
+if command -v sccache >/dev/null 2>&1; then
+  export RUSTC_WRAPPER=sccache
+else
+  unset RUSTC_WRAPPER
+fi
+nice -n 10 cargo test --profile goldens -p solidcore --test issue_2349_closed_angle
+nice -n 10 cargo run --profile goldens -p goldens -- \
+  --unit blend.fillet_executive_p3 --filter issue-2349 --goldens
 ```
 
-Run in Ubuntu WSL with `CARGO_BUILD_JOBS=2`, Cargo under `nice -n 10`, and the
-existing shared `SOLIDCORE_CPP_DIR`; do not rebuild the shared C++ library.
+Run in Ubuntu WSL from this worktree's `/mnt/c` path. Since the goldens migration,
+the runner neither builds nor runs C++. Eight intermediate checkpoints have goldens;
+the two full-body cases remain known failures rather than blessing an incorrect
+closed-angle construction. The native comparisons below are historical evidence.
 
 ## Resolved allocation mismatch
 
