@@ -583,7 +583,6 @@ crates/solidcore/src/nurbs/b_spline_surface/p1.rs	BSplineSurface::from_data	copy
 crates/solidcore/src/nurbs/b_spline_surface/p1.rs	BSplineSurface::from_data	copy_from_slice	2	open	copy_from_slice(src_v)	
 crates/solidcore/src/nurbs/b_spline_surface/p1.rs	BSplineSurface::read_from_db	int-div	1	proven	u64::MAX / (4 * 32)	constant non-zero divisor
 crates/solidcore/src/nurbs/b_spline_surface/p1.rs	BSplineSurface::read_from_db	int-div	2	open	max_cpoints / (n as u64 + 1)	
-crates/solidcore/src/nurbs/b_spline_surface/p1.rs	euclidean_net	with_capacity	1	open	Vec::with_capacity(count)	
 crates/solidcore/src/nurbs/b_spline_surface/p2.rs	BSplineSurface::analytic_or_exact_copy	with_capacity	1	proven	Vec::with_capacity(49)	constant capacity
 crates/solidcore/src/nurbs/b_spline_surface/p2.rs	BSplineSurface::create_sphere_from_arcs	int-rem	1	open	(gen_curve_index + 1) % total_curves	
 crates/solidcore/src/nurbs/b_spline_surface/p2.rs	BSplineSurface::create_sphere_from_arcs	int-rem	2	open	((gen_curve_index + total_curves) - 1) % total_curves	
@@ -606,7 +605,6 @@ crates/solidcore/src/nurbs/b_spline_surface_n_lib/p2.rs	corner_blend_n	with_capa
 crates/solidcore/src/nurbs/b_spline_surface_n_lib/p2.rs	project_coons_side_rows	with_capacity	1	proven	Vec::with_capacity(2)	constant capacity
 crates/solidcore/src/nurbs/b_spline_surface_n_lib/p2.rs	project_coons_side_rows	with_capacity	2	proven	Vec::with_capacity(2)	constant capacity
 crates/solidcore/src/nurbs/b_spline_surface_n_lib/p2.rs	refine_to_spans	windows	1	proven	windows(2)	constant non-zero size
-crates/solidcore/src/nurbs/basis_adv.rs	insert_knots	with_capacity	1	open	Vec::with_capacity(r.len() + x.len())	
 crates/solidcore/src/nurbs/basis_basic.rs	compatible_knot_vectors_to_tol	with_capacity	1	open	Vec::with_capacity(knots.len())	
 crates/solidcore/src/nurbs/bezier.rs	band_matrix_into	int-div	1	proven	n / 2	constant non-zero divisor
 crates/solidcore/src/nurbs/bezier.rs	reduce_degree	int-rem	1	proven	p % 2	constant non-zero divisor
@@ -621,7 +619,6 @@ crates/solidcore/src/nurbs/crv_fit/p3.rs	approx_closed_conditions	int-div	1	prov
 crates/solidcore/src/nurbs/crv_fit/p3.rs	interp_end_derivs	copy_from_slice	1	proven	copy_from_slice(&pw)	returns Err when the lengths differ
 crates/solidcore/src/nurbs/crv_fit/p3.rs	interp_end_derivs	copy_from_slice	2	open	copy_from_slice(&uk)	
 crates/solidcore/src/nurbs/crv_geom.rs	Curve::approx_with_polyline	int-div	1	proven	(p + 1) / 2	constant non-zero divisor
-crates/solidcore/src/nurbs/crv_nurb.rs	Curve::derivs_on	with_capacity	1	open	Vec::with_capacity(to_len(der))	
 crates/solidcore/src/nurbs/crv_nurb.rs	Curve::reverse	int-div	1	proven	n / 2	constant non-zero divisor
 crates/solidcore/src/nurbs/crv_nurb.rs	pascal	int-div	1	proven	k / 2	constant non-zero divisor
 crates/solidcore/src/nurbs/crv_offset.rs	Curve::offset_pt_sampling_cancellable	with_capacity	1	open	Vec::with_capacity(bez.len())	
@@ -648,8 +645,6 @@ crates/solidcore/src/nurbs/geom.rs	dist_cpolygon	windows	1	proven	windows(2)	con
 crates/solidcore/src/nurbs/geom.rs	dist_polygon	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/nurbs/geom.rs	vectors_angle	f64::clamp	1	proven	clamp(-1.0, 1.0)	constant bounds, min <= max
 crates/solidcore/src/nurbs/geom.rs	vectors_cos_angle	f64::clamp	1	proven	clamp(-1.0, 1.0)	constant bounds, min <= max
-crates/solidcore/src/nurbs/iges.rs	clamp_dir	with_capacity	1	open	Vec::with_capacity(len_q)	
-crates/solidcore/src/nurbs/iges.rs	clamp_dir	with_capacity	2	open	Vec::with_capacity(len_uq)	
 crates/solidcore/src/nurbs/iges.rs	validate	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/nurbs/knots.rs	KnotVector::find_span	int-div	1	proven	(low + high) / 2	constant non-zero divisor
 crates/solidcore/src/nurbs/knots.rs	KnotVector::find_span	int-div	2	proven	(low + high) / 2	constant non-zero divisor
@@ -672,8 +667,6 @@ crates/solidcore/src/nurbs/nurbs_crv.rs	crv_remove_knots	int-rem	2	proven	(p + s
 crates/solidcore/src/nurbs/nurbs_crv.rs	crv_remove_knots	int-rem	3	proven	(p + s) % 2	constant non-zero divisor
 crates/solidcore/src/nurbs/nurbs_srf.rs	compute_net_constants	int-div	1	open	m / ii	
 crates/solidcore/src/nurbs/nurbs_srf.rs	compute_net_constants	int-div	2	open	n / ii	
-crates/solidcore/src/nurbs/nurbs_srf.rs	decompose_srf	with_capacity	1	open	Vec::with_capacity(nsu)	
-crates/solidcore/src/nurbs/nurbs_srf.rs	decompose_srf	with_capacity	2	open	Vec::with_capacity(nsv)	
 crates/solidcore/src/nurbs/nurbs_srf.rs	turn	f64::clamp	1	proven	clamp(-1.0, 1.0)	constant bounds, min <= max
 crates/solidcore/src/nurbs/srf_adv/p1.rs	create_skin_spine	split_at	1	open	split_at_mut(k)	
 crates/solidcore/src/nurbs/srf_adv/p1.rs	create_skin_spine	with_capacity	1	open	Vec::with_capacity(k + 1)	
