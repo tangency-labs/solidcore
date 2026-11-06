@@ -76,8 +76,8 @@ fn null() -> SolidError {
 ///
 /// # Errors
 ///
-/// `SM_ERR` when the extended offset fails (its own status with
-/// `Kernel::fixes.local_operation_offset_status`); `InvalidInput` where upstream dereferences
+/// The extended offset's own error, its status and reason, when it fails (not upstream,
+/// which returns `SM_ERR`); `InvalidInput` where upstream dereferences
 /// null (a surface list shorter than the face list, a face without surface);
 /// [`OffsetFailure::SeamOpened`] (not upstream) when a face that meets itself across
 /// edges (seams) is given a surface its seams' two UV lines do not lift to one curve on
@@ -88,7 +88,8 @@ fn null() -> SolidError {
 /// positive); those of the callees ([`crate::offset::offset_executive::p2`], the surfaces'
 /// normals, reversal and analytic copy, the bounding box). On every error `b` is as it
 /// came in, the caches its surfaces had included (the operation edits a copy of it), and
-/// so are `notifications.records` and `notifications.attributes`.
+/// so are `notifications.records` and `notifications.attributes`; a panic puts them all
+/// back before it goes on.
 pub fn local_operation(
     k: &mut Kernel,
     b: &mut Brep,
@@ -96,23 +97,35 @@ pub fn local_operation(
     surfaces: Vec<Surface>,
     notifications: &mut OffsetNotifications<'_>,
 ) -> Result<()> {
+    use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
     if surfaces.len() < faces.len() {
         return Err(null());
     }
     // (not upstream) a refusal or a failure leaves `b` as it came in, the caches its
     // surfaces had included (the operation runs on its copy), and the caller's
-    // notification stores as they were
+    // notification stores as they were; a panic puts them back too before it goes on, as
+    // `with_rollback_untouched` puts the body back
     let records = notifications.records.clone();
     let attributes = notifications.attributes.clone();
-    let done = b.with_rollback_untouched(
-        |b| local_operation_on(k, b, faces, surfaces, notifications),
-        Result::is_ok,
-    );
-    if done.is_err() {
-        *notifications.records = records;
-        *notifications.attributes = attributes;
+    let done = catch_unwind(AssertUnwindSafe(|| {
+        b.with_rollback_untouched(
+            |b| local_operation_on(k, b, faces, surfaces, &mut *notifications),
+            Result::is_ok,
+        )
+    }));
+    match done {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            *notifications.records = records;
+            *notifications.attributes = attributes;
+            Err(e)
+        }
+        Err(panic) => {
+            *notifications.records = records;
+            *notifications.attributes = attributes;
+            resume_unwind(panic)
+        }
     }
-    done
 }
 
 /// [`local_operation`] on the copy of `b` it edits.
@@ -253,28 +266,10 @@ fn local_operation_on(
         notifications.original_key_of,
     )?;
 
-    // Build a new Brep by merging in all the faces with their new surfaces
-    let offset = executive
-        .do_extended_offset(k, Some(&mut *b), notifications)
-        .map_err(|e| {
-            // (not upstream) the reach's refusals, made before the faces are rebuilt, are
-            // the operation's own reason
-            let reach_refusal = matches!(
-                e.failure().map(|f| &f.reason),
-                Some(crate::error::Reason::Offset(
-                    OffsetFailure::FacesApart { .. } | OffsetFailure::ReachUncertified { .. }
-                ))
-            );
-            if e.is_unported_or_cancelled()
-                || k.fixes.local_operation_offset_status
-                || reach_refusal
-            {
-                e
-            } else {
-                // status `SM_ERR`, as upstream; the offset's own error is kept (#2615)
-                SolidError::failed_after(OP, "the offset of the moved faces could not be built", e)
-            }
-        });
+    // Build a new Brep by merging in all the faces with their new surfaces; (not upstream,
+    // whose status is then `SM_ERR`) the offset's error is the operation's, with its own
+    // status and reason, as the reach's and the final gate's refusals are
+    let offset = executive.do_extended_offset(k, Some(&mut *b), notifications);
     drop(executive);
     let new_brep = offset.and_then(|mut new_brep| {
         // the offset B-rep's objects carry what the offset gave them
@@ -625,7 +620,10 @@ fn seam_gap(
         return Ok(None);
     };
     let clamped = knots.len() > degree.saturating_mul(2).saturating_add(1)
-        && knots.iter().take(degree.saturating_add(1)).all(|&t| t == first)
+        && knots
+            .iter()
+            .take(degree.saturating_add(1))
+            .all(|&t| t == first)
         && knots
             .iter()
             .rev()
@@ -864,8 +862,11 @@ fn keeps_seams(k: &Kernel, b: &mut Brep, face: FaceId, surface: &Surface) -> Res
 /// - a torus: the same centre and axis line (either sense).
 ///
 /// Not a tolerance: a surface off by a rounding is another surface, and its face moves.
-/// The extent and parametrisation are not compared (a face's surface is extended as its
-/// neighbours need, whatever its extent, and its own copy keeps its own parameters).
+/// A placement whose products fall out of the exact range (a subnormal coordinate, or a
+/// product that could underflow: [`exact`]) is not shown the same either, and its face
+/// moves to the given surface. The extent and parametrisation are not compared (a face's
+/// surface is extended as its neighbours need, whatever its extent, and its own copy keeps
+/// its own parameters).
 fn is_own_surface(own: &Surface, given: &Surface) -> bool {
     use AnalyticSupport as A;
     let (Some(own), Some(given)) = (AnalyticSupport::of(own), AnalyticSupport::of(given)) else {
@@ -933,46 +934,74 @@ fn same_point(a: Vec3, b: Vec3) -> bool {
     a.x == b.x && a.y == b.y && a.z == b.z
 }
 
-/// Whether `p`'s axes span a plane, exactly.
-fn spans(p: &Axis2Placement) -> bool {
-    exact::cross(p.x_axis(), p.y_axis())
-        .iter()
-        .any(|c| !exact::is_zero(c))
+/// Whether `p`'s axes span a plane, exactly; `None` when a product is out of the exact
+/// range ([`exact`]).
+fn spans(p: &Axis2Placement) -> Option<bool> {
+    Some(
+        exact::cross(p.x_axis(), p.y_axis())?
+            .iter()
+            .any(|c| !exact::is_zero(c)),
+    )
 }
 
 /// Whether the plane `p` spans (its origin and its two axes) is the one `q` spans: `q`'s
-/// axes lie in `p`'s and its origin on it, each determinant exact.
+/// axes lie in `p`'s and its origin on it, each determinant exact. A product out of the
+/// exact range ([`exact`]: a subnormal coordinate, or one that underflows) is not shown
+/// the same: false.
 fn same_plane(p: &Axis2Placement, q: &Axis2Placement) -> bool {
     let (a, b, o) = (p.x_axis(), p.y_axis(), p.origin());
     let (x, y, g) = (q.x_axis(), q.y_axis(), q.origin());
-    spans(p)
-        && spans(q)
-        && exact::is_zero(&exact::det3(a, b, x))
-        && exact::is_zero(&exact::det3(a, b, y))
-        && exact::is_zero(&exact::sub(&exact::det3(a, b, g), &exact::det3(a, b, o)))
+    let same = || {
+        Some(
+            spans(p)?
+                && spans(q)?
+                && exact::is_zero(&exact::det3(a, b, x)?)
+                && exact::is_zero(&exact::det3(a, b, y)?)
+                && exact::is_zero(&exact::sub(&exact::det3(a, b, g)?, &exact::det3(a, b, o)?)),
+        )
+    };
+    same().unwrap_or(false)
 }
 
 /// Whether `p`'s z axis line (through its origin along `x × y`) is `q`'s, either sense:
 /// `q`'s axis `x' × y'` is normal to `p`'s x and y axes (so parallel to `x × y`), and the
-/// origins' difference is too, each product exact.
+/// origins' difference is too, each product exact. A product out of the exact range
+/// ([`exact`]) is not shown the same: false.
 fn same_axis(p: &Axis2Placement, q: &Axis2Placement) -> bool {
     let (a, b, o) = (p.x_axis(), p.y_axis(), p.origin());
     let (x, y, g) = (q.x_axis(), q.y_axis(), q.origin());
-    spans(p)
-        && spans(q)
-        && exact::is_zero(&exact::det3(x, y, a))
-        && exact::is_zero(&exact::det3(x, y, b))
-        && exact::is_zero(&exact::sub(&exact::dot(a, g), &exact::dot(a, o)))
-        && exact::is_zero(&exact::sub(&exact::dot(b, g), &exact::dot(b, o)))
+    let same = || {
+        Some(
+            spans(p)?
+                && spans(q)?
+                && exact::is_zero(&exact::det3(x, y, a)?)
+                && exact::is_zero(&exact::det3(x, y, b)?)
+                && exact::is_zero(&exact::sub(&exact::dot(a, g)?, &exact::dot(a, o)?))
+                && exact::is_zero(&exact::sub(&exact::dot(b, g)?, &exact::dot(b, o)?)),
+        )
+    };
+    same().unwrap_or(false)
 }
 
 /// Error-free arithmetic on doubles: a value is an expansion, a sum of doubles whose
 /// components do not overlap (Shewchuk's grow-expansion), so sums and products of doubles
 /// are held without rounding and a value's sign is read off exactly (an expansion is zero
-/// exactly when every component is). Overflow and underflow are out of range (the inputs
-/// are coordinates and unit vectors).
+/// exactly when every component is).
+///
+/// A sum (`two_sum`) is error-free at any magnitude short of overflow, which leaves an
+/// infinite or NaN component, never a zero. A product (`product`) is error-free only in
+/// range: a product that could underflow, or of a subnormal or non-finite factor, is
+/// `None`, and so is every value built from it. A caller reads `None` as not shown zero.
 mod exact {
     use crate::math::Vec3;
+
+    /// `2^-968`: the least rounded product of two normal doubles whose rounding error
+    /// `fma(a, b, -a b)` is exact. The error is a multiple of `ulp(a) ulp(b) =
+    /// 2^(ea + eb - 104)` (`ea`, `eb` the exponents) of at most 53 bits, so exact when
+    /// that unit is not below the least subnormal `2^-1074`, `ea + eb >= -970`; a rounded
+    /// product of at least `2^-968` has `|a b| > 2^-969` and, as `|a b| < 2^(ea + eb + 2)`,
+    /// `ea + eb >= -970`.
+    const LEAST_EXACT_PRODUCT: f64 = f64::MIN_POSITIVE * 18_014_398_509_481_984.0;
 
     /// `a + b` as `(s, e)`: `s = fl(a + b)` and its rounding error (Knuth's `TwoSum`).
     fn two_sum(a: f64, b: f64) -> (f64, f64) {
@@ -1004,39 +1033,50 @@ mod exact {
         f.iter().fold(e.to_vec(), |acc, &c| grow(&acc, -c))
     }
 
-    /// `a b` as an expansion: the product and its rounding error, `fma(a, b, -p)`.
-    fn product(a: f64, b: f64) -> Vec<f64> {
+    /// `a b` as an expansion: the product and its rounding error, `fma(a, b, -p)`; zero
+    /// exactly when `a` or `b` is. `None` out of range: `a` or `b` subnormal or not
+    /// finite, or the rounded product not finite or below [`LEAST_EXACT_PRODUCT`] (where
+    /// the error, or the product itself, could underflow).
+    fn product(a: f64, b: f64) -> Option<Vec<f64>> {
+        if a == 0.0 || b == 0.0 {
+            return (a.is_finite() && b.is_finite()).then(|| vec![0.0]);
+        }
         let p = a * b;
-        vec![a.mul_add(b, -p), p]
+        let in_range =
+            a.is_normal() && b.is_normal() && p.is_finite() && p.abs() >= LEAST_EXACT_PRODUCT;
+        in_range.then(|| vec![a.mul_add(b, -p), p])
     }
 
     /// `e b` as an expansion: each component's product, summed.
-    fn scale(e: &[f64], b: f64) -> Vec<f64> {
+    fn scale(e: &[f64], b: f64) -> Option<Vec<f64>> {
         e.iter()
-            .fold(Vec::new(), |acc, &c| add(&acc, &product(c, b)))
+            .try_fold(Vec::new(), |acc, &c| Some(add(&acc, &product(c, b)?)))
     }
 
     /// `u × v`, each component an expansion.
-    pub(super) fn cross(u: Vec3, v: Vec3) -> [Vec<f64>; 3] {
-        [
-            sub(&product(u.y, v.z), &product(u.z, v.y)),
-            sub(&product(u.z, v.x), &product(u.x, v.z)),
-            sub(&product(u.x, v.y), &product(u.y, v.x)),
-        ]
+    pub(super) fn cross(u: Vec3, v: Vec3) -> Option<[Vec<f64>; 3]> {
+        Some([
+            sub(&product(u.y, v.z)?, &product(u.z, v.y)?),
+            sub(&product(u.z, v.x)?, &product(u.x, v.z)?),
+            sub(&product(u.x, v.y)?, &product(u.y, v.x)?),
+        ])
     }
 
     /// `u · v` as an expansion.
-    pub(super) fn dot(u: Vec3, v: Vec3) -> Vec<f64> {
-        add(
-            &add(&product(u.x, v.x), &product(u.y, v.y)),
-            &product(u.z, v.z),
-        )
+    pub(super) fn dot(u: Vec3, v: Vec3) -> Option<Vec<f64>> {
+        Some(add(
+            &add(&product(u.x, v.x)?, &product(u.y, v.y)?),
+            &product(u.z, v.z)?,
+        ))
     }
 
     /// `det(a, b, c) = (a × b) · c` as an expansion.
-    pub(super) fn det3(a: Vec3, b: Vec3, c: Vec3) -> Vec<f64> {
-        let [x, y, z] = cross(a, b);
-        add(&add(&scale(&x, c.x), &scale(&y, c.y)), &scale(&z, c.z))
+    pub(super) fn det3(a: Vec3, b: Vec3, c: Vec3) -> Option<Vec<f64>> {
+        let [x, y, z] = cross(a, b)?;
+        Some(add(
+            &add(&scale(&x, c.x)?, &scale(&y, c.y)?),
+            &scale(&z, c.z)?,
+        ))
     }
 
     /// Whether the expansion is zero exactly.
@@ -1054,19 +1094,38 @@ mod exact {
             // not the decimals), while 1e16 + 1 - 1e16 is 1, not the 0 or 2 of rounding
             assert!(!is_zero(&sub(&add(&[0.1], &[0.2]), &[0.3])));
             assert_eq!(sub(&add(&[1e16], &[1.0]), &[1e16]).iter().sum::<f64>(), 1.0);
-            assert!(is_zero(&sub(&product(3.0, 0.1), &product(0.1, 3.0))));
+            let (p, q) = (product(3.0, 0.1).unwrap(), product(0.1, 3.0).unwrap());
+            assert!(is_zero(&sub(&p, &q)));
         }
 
         #[test]
         fn a_determinant_is_zero_exactly_only_for_dependent_vectors() {
             let a = Vec3::new(0.1, 0.7, 0.3);
             let b = Vec3::new(0.9, 0.2, 0.4);
-            assert!(is_zero(&det3(a, b, a)));
-            assert!(!is_zero(&det3(
-                a,
-                b,
-                Vec3::new(0.1, 0.7, 0.3 + 1e-16 * 0.3)
-            )));
+            assert!(is_zero(&det3(a, b, a).unwrap()));
+            let c = Vec3::new(0.1, 0.7, 0.3 + 1e-16 * 0.3);
+            assert!(!is_zero(&det3(a, b, c).unwrap()));
+        }
+
+        /// A product whose rounding error is not a double is out of range: one that
+        /// underflows (rounded to zero, its `fma` error zero too, so it read as zero), one
+        /// of a subnormal factor, one that overflows. A zero factor's product is zero, and
+        /// one just in range is exact.
+        #[test]
+        fn a_product_that_could_underflow_is_out_of_range() {
+            assert_eq!(LEAST_EXACT_PRODUCT, 2.0_f64.powi(-968));
+            assert!(product(1e-200, 1e-200).is_none());
+            assert!(product(1e-160, 1e-160).is_none());
+            assert!(product(1e-310, 1.0).is_none());
+            assert!(product(1.0, -5e-324).is_none());
+            assert!(product(f64::MAX, 2.0).is_none());
+            assert!(product(f64::NAN, 1.0).is_none());
+            assert_eq!(product(0.0, 1e-310), Some(vec![0.0]));
+            let h = 2.0_f64.powi(-484);
+            assert_eq!(product(h, h), Some(vec![0.0, LEAST_EXACT_PRODUCT]));
+            assert!(product(1e-140, 1e-140).is_some());
+            let z = Vec3::new(0.0, 0.0, 1e-310);
+            assert!(det3(Vec3::X, Vec3::Y, z).is_none());
         }
     }
 }
@@ -1484,6 +1543,29 @@ mod tests {
         let b = ap::create_torus(&mut k, Point3::ZERO, 3.0, 1.0).unwrap();
         let s = Surface::from(ap::create_torus_surface(&k, Point3::ZERO, 3.0, 1.0).unwrap());
         given_its_own(k, b, s, 2.0 * std::f64::consts::PI.powi(2) * 3.0);
+    }
+
+    /// A plane through the origin with normal `(0, -t, 1)` (axes `x`, `(0, 1, t)`), and the
+    /// parallel plane through `(0, s, 0)`, apart by `t s` along the normal. With `s`
+    /// subnormal, or `t s` below the least normal, the products `t s` round to zero and
+    /// so do their `fma` errors: rounded, the origin read as on the plane. Out of the
+    /// exact range, the planes are not shown the same, so the face moves; the plane is
+    /// still its own.
+    #[test]
+    fn a_plane_a_subnormal_coordinate_apart_is_not_its_own() {
+        let plane = |t: f64, s: f64| {
+            Axis2Placement::from_stored(
+                Point3::new(0.0, s, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, t),
+            )
+        };
+        for (t, s) in [(1e-14, 1e-310), (1e-14, 5e-324), (1e-30, 1e-300)] {
+            let own = plane(t, 0.0);
+            assert!(same_plane(&own, &own));
+            assert!(!same_plane(&own, &plane(t, s)), "t = {t}, s = {s}");
+            assert!(!same_plane(&plane(t, s), &own), "t = {t}, s = {s}");
+        }
     }
 
     /// A cylinder's side given the coaxial cylinder one rounding wider moves, by a reach
