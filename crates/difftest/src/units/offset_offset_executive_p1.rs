@@ -1,7 +1,7 @@
 //! Runner for `offset.offset_executive_p1` (PR #175).
 //!
-//! C++: `solidcore_ffi::units::offset_offset_executive_p1`; Rust:
-//! `solidcore::offset::offset_executive::p1`. Native statuses remain unmodified
+//! Ported from upstream `SmOffsetExecutive` into `solidcore::offset::offset_executive::p1`;
+//! checked against the unit's golden. Native statuses remain unmodified
 //! (`SM_SUCCESS = 1000`); the snapshot's leading zero is only a fixture tag.
 //!
 //! Deviations: private `GetSeconds` arrays are parsed for snapshot-layout validation
@@ -68,7 +68,6 @@ use solidcore::topology::{
     VertexuseOwner,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::offset_offset_executive_p1 as ffi;
 
 use crate::runner::default_cases;
 use crate::util::{flag, p2, v3};
@@ -76,6 +75,12 @@ use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// Minimum deterministic generated cases, even with `--seeds 0`.
 pub const MIN_GENERATED: usize = 600;
+/// `NL_MAXDEG` (`NL_Nurbsdef.h`): the largest NURBS degree.
+const MAX_DEGREE: usize = 17;
+/// The largest control net a fixture holds.
+const MAX_CONTROL_POINTS: usize = 65_536;
+/// Upstream's `SM_SUCCESS`.
+const NATIVE_SUCCESS: i32 = 1000;
 /// Offset executive runner, automatically registered by the build script.
 pub struct Runner;
 
@@ -95,7 +100,7 @@ enum Inputs {
 }
 
 /// `ReplaceImplicitOffsets` on one face whose surface is an owning
-/// `SmOffsetSurface(offset_distance, base)` (see [`ffi::Replace`]).
+/// `SmOffsetSurface(offset_distance, base)`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReplaceIn {
@@ -120,34 +125,9 @@ enum OffsetBaseIn {
     },
 }
 
-impl ReplaceIn {
-    fn ffi(&self) -> ffi::Replace {
-        ffi::Replace {
-            base: match &self.base {
-                OffsetBaseIn::Surface { surface } => ffi::OffsetBase::Surface(surface.ffi()),
-                OffsetBaseIn::Extrusion {
-                    generator,
-                    origin,
-                    direction,
-                    domain,
-                    swap_uv,
-                } => ffi::OffsetBase::Extrusion {
-                    generator: generator.ffi(),
-                    origin: *origin,
-                    direction: *direction,
-                    domain: *domain,
-                    swap_uv: *swap_uv,
-                },
-            },
-            offset_distance: self.offset_distance,
-            approx_tol: self.approx_tol,
-            samples: self.samples.clone(),
-        }
-    }
-}
 
 /// `BuildOffsetOfFaceuse` of a unit-square plane face onto the plane
-/// `z = offset_distance` (see [`ffi::FaceTail`]).
+/// `z = offset_distance`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)] // Independent upstream settings.
 #[serde(deny_unknown_fields)]
@@ -166,24 +146,9 @@ struct FaceTailIn {
     second_uv: Option<[f64; 4]>,
 }
 
-impl FaceTailIn {
-    fn ffi(&self) -> ffi::FaceTail {
-        ffi::FaceTail {
-            offset_distance: self.offset_distance,
-            approx_tol: self.approx_tol,
-            domain: self.domain,
-            local: self.local,
-            extend_convex: self.extend_convex,
-            merge_results: self.merge_results,
-            mate: self.mate,
-            self_intersection: self.self_intersection,
-            second_uv: self.second_uv,
-        }
-    }
-}
 
 /// `MapEdgeuses` alone, between the rectangle face `original` at `z = 0` and the
-/// rectangle face `offset` at `z = offset_distance` (see [`ffi::MapTwin`]). The
+/// rectangle face `offset` at `z = offset_distance`. The
 /// Rust twin faces are hand-built with the same UV trim lines the native
 /// `MakeFaceWithCurves` faces carry, so no UV evaluation needs a surface drop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,18 +167,6 @@ struct MapTwinIn {
     split_bottom: Option<f64>,
 }
 
-impl MapTwinIn {
-    fn ffi(&self) -> ffi::MapTwin {
-        ffi::MapTwin {
-            offset_distance: self.offset_distance,
-            original: self.original,
-            offset: self.offset,
-            flip: self.flip,
-            mate: self.mate,
-            split_bottom: self.split_bottom,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)] // Independent upstream settings.
@@ -240,26 +193,6 @@ fn default_tangency() -> f64 {
     2.0 * PI / 180.0
 }
 
-impl Config {
-    fn ffi(&self) -> ffi::Config {
-        ffi::Config {
-            offset_distance: self.offset_distance,
-            approx_tol: self.approx_tol,
-            tangency_tol_radians: self.tangency_tol_radians,
-            operation: self.operation,
-            inset: self.inset,
-            extend_convex: self.extend_convex,
-            merge_results: self.merge_results,
-            create_solid: self.create_solid,
-            install_offset_brep: self.install_offset_brep,
-            original_edges: self.original_edges,
-            offset_edges: self.offset_edges,
-            face_count: self.face_count,
-            shell_face_sets: self.shell_face_sets.clone(),
-            relations: self.relations.clone(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -277,24 +210,6 @@ enum CurveIn {
 }
 
 impl CurveIn {
-    fn ffi(&self) -> ffi::CurveFixture {
-        match self {
-            Self::Line { start, end, domain } => ffi::CurveFixture::Line {
-                start: *start,
-                end: *end,
-                domain: *domain,
-            },
-            Self::Bspline {
-                degree,
-                control_points,
-                knots,
-            } => ffi::CurveFixture::BSpline {
-                degree: *degree,
-                control_points: control_points.clone(),
-                knots: knots.clone(),
-            },
-        }
-    }
 
     fn rust(&self) -> HResult<Curve> {
         match self {
@@ -346,24 +261,6 @@ struct Synchronize {
     null_other: bool,
 }
 
-impl Synchronize {
-    fn ffi(&self) -> ffi::Synchronize {
-        let edges = |list: &[EdgeIn]| {
-            list.iter()
-                .map(|edge| ffi::EdgeFixture {
-                    curve: edge.curve.ffi(),
-                    interval: edge.interval,
-                })
-                .collect()
-        };
-        ffi::Synchronize {
-            first: edges(&self.first),
-            second: edges(&self.second),
-            null_original: self.null_original,
-            null_other: self.null_other,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -387,40 +284,6 @@ enum SurfaceIn {
 }
 
 impl SurfaceIn {
-    fn ffi(&self) -> ffi::SurfaceFixture {
-        match self {
-            Self::Plane {
-                origin,
-                x_axis,
-                y_axis,
-                scale,
-                domain,
-            } => ffi::SurfaceFixture::Plane {
-                origin: *origin,
-                x_axis: *x_axis,
-                y_axis: *y_axis,
-                scale: *scale,
-                domain: *domain,
-            },
-            Self::Bspline {
-                u_degree,
-                v_degree,
-                u_count,
-                v_count,
-                control_points,
-                u_knots,
-                v_knots,
-            } => ffi::SurfaceFixture::BSpline {
-                u_degree: *u_degree,
-                v_degree: *v_degree,
-                u_count: *u_count,
-                v_count: *v_count,
-                control_points: control_points.clone(),
-                u_knots: u_knots.clone(),
-                v_knots: v_knots.clone(),
-            },
-        }
-    }
 
     fn rust(&self) -> HResult<Surface> {
         match self {
@@ -480,21 +343,6 @@ struct Extension {
     samples: Vec<[f64; 2]>,
 }
 
-impl Extension {
-    fn ffi(&self) -> ffi::Extension {
-        ffi::Extension {
-            surfaces: self.surfaces.iter().map(SurfaceIn::ffi).collect(),
-            offset_distance: self.offset_distance,
-            approx_tol: self.approx_tol,
-            actions: self
-                .actions
-                .iter()
-                .map(|&key| ffi::CacheAction::Get(Some(key)))
-                .collect(),
-            samples: self.samples.clone(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -518,23 +366,6 @@ struct VertexStrut {
     map_mate: bool,
 }
 
-impl VertexFixture {
-    fn ffi(&self) -> ffi::VertexFixture {
-        ffi::VertexFixture {
-            point: self.point,
-            offset_distance: self.offset_distance,
-            approx_tol: self.approx_tol,
-            original_tolerance: self.original_tolerance,
-            result_tolerance: self.result_tolerance,
-            strut: self.strut.as_ref().map(|strut| ffi::VertexStrut {
-                radius: strut.radius,
-                height: strut.height,
-                map_mate: strut.map_mate,
-            }),
-            samples: self.samples.clone(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -554,39 +385,415 @@ enum Probe {
     EdgeusesUnmapped,
 }
 
-impl Probe {
-    fn ffi(self) -> ffi::Probe {
-        match self {
-            Self::ReplaceEmpty => ffi::Probe::ReplaceEmpty,
-            Self::RemoveNoMerge => ffi::Probe::RemoveNoMerge,
-            Self::RemoveEmpty => ffi::Probe::RemoveEmpty,
-            Self::SideWallNull => ffi::Probe::SideWallNull,
-            Self::SideWallUnmapped => ffi::Probe::SideWallUnmapped,
-            Self::FillEmpty => ffi::Probe::FillEmpty,
-            Self::VertexNull => ffi::Probe::VertexNull,
-            Self::VertexIsolated => ffi::Probe::VertexIsolated,
-            Self::FaceuseNull => ffi::Probe::FaceuseNull,
-            Self::FaceuseNoSurface => ffi::Probe::FaceuseNoSurface,
-            Self::PiecewiseEmpty => ffi::Probe::PiecewiseEmpty,
-            Self::MapPlane => ffi::Probe::MapPlane,
-            Self::EdgeusesUnmapped => ffi::Probe::EdgeusesUnmapped,
-        }
-    }
-}
 
 fn bad(message: impl Into<String>) -> HarnessError {
     HarnessError::new(message)
 }
 
-// The Rust side refuses exactly what the FFI refuses by running the FFI packers'
-// own checks (counts, finiteness, selector ranges, fixture geometry validation and
-// the packed-size budgets) before any construction, so a fuzzed input the native
-// guard turns away never reaches a port that would loop, allocate or hang on it
-// (the C++ side then reports a harness error, not a fixture rejection, and Rust
-// still runs). Only the shim's own native-safety checks are beyond this.
-fn guard(check: Result<(), solidcore_ffi::FfiError>) -> HResult<()> {
-    check.map_err(|error| bad(error.to_string()))
+// ---- the input contract --------------------------------------------------------------
+//
+// The reference wrapper's input checks (counts, finiteness, selector ranges, fixture
+// geometry and the packed-size budgets), run before any construction, so a fuzzed input
+// never reaches a port that would loop, allocate or hang on it: counts past
+// `MAX_ITEMS` would allocate 2^32 wires, a negative extension distance runs into
+// `CreateExtendedSurface`'s doubling loop (HANG-16), a control point above
+// `MAX_COORDINATE` keeps the extension busy (HANG-37).
+
+/// Fixture resource bound on edges, faces, surfaces, actions and relation pairs.
+const MAX_ITEMS: usize = 4096;
+/// Largest control point coordinate magnitude (also after dividing by the weight).
+const MAX_COORDINATE: f64 = 1e154;
+/// Largest aggregate fixture size, in values.
+const MAX_PACKED_VALUES: usize = 1_048_576;
+/// Aggregate synchronization-edge budget, bounding the quadratic split expansion.
+const MAX_SYNC_EDGES: usize = 128;
+
+fn contract_bad(message: &str) -> HarnessError {
+    bad(format!("offset.offset_executive_p1: {message}"))
 }
+
+fn finite_all(values: &[f64]) -> HResult<()> {
+    if values.iter().all(|v| v.is_finite()) {
+        Ok(())
+    } else {
+        Err(contract_bad("non-finite fixture value"))
+    }
+}
+
+fn item_count(n: usize) -> HResult<()> {
+    if n <= MAX_ITEMS {
+        Ok(())
+    } else {
+        Err(contract_bad("fixture count exceeds MAX_ITEMS"))
+    }
+}
+
+fn interval_ok([a, b]: [f64; 2], positive: bool) -> HResult<()> {
+    finite_all(&[a, b, b - a])?;
+    if a > b || (positive && a == b) {
+        return Err(contract_bad("invalid parameter interval"));
+    }
+    Ok(())
+}
+
+/// A knot vector of degree `degree` over `n` control points: degree `1..=MAX_DEGREE`,
+/// `n + degree + 1` finite non-decreasing knots, every basis support of positive width;
+/// its domain.
+fn knots_ok(degree: usize, n: usize, values: &[f64]) -> HResult<[f64; 2]> {
+    if !(1..=MAX_DEGREE).contains(&degree)
+        || n <= degree
+        || n > MAX_CONTROL_POINTS
+        || n.checked_add(degree).and_then(|v| v.checked_add(1)) != Some(values.len())
+    {
+        return Err(contract_bad("NURBS degree/count/knot length mismatch"));
+    }
+    finite_all(values)?;
+    if values.windows(2).any(|v| matches!(v, [a, b] if a > b)) {
+        return Err(contract_bad("decreasing knots"));
+    }
+    for (a, b) in values.iter().zip(values.iter().skip(degree + 1)) {
+        if a >= b || !(b - a).is_finite() {
+            return Err(contract_bad("zero-width NURBS basis support"));
+        }
+    }
+    let domain = [
+        *values.get(degree).ok_or_else(|| contract_bad("missing start knot"))?,
+        *values.get(n).ok_or_else(|| contract_bad("missing end knot"))?,
+    ];
+    interval_ok(domain, true)?;
+    Ok(domain)
+}
+
+/// Homogeneous control points with positive weights and coordinates within
+/// [`MAX_COORDINATE`], weighted and Euclidean.
+fn points_ok(values: &[[f64; 4]]) -> HResult<()> {
+    if values.len() > MAX_CONTROL_POINTS {
+        return Err(contract_bad("control net exceeds MAX_CONTROL_POINTS"));
+    }
+    for &[x, y, z, w] in values {
+        finite_all(&[x, y, z, w, x / w, y / w, z / w])?;
+        if w <= 0.0 {
+            return Err(contract_bad("fixture homogeneous weights must be positive"));
+        }
+        if [x, y, z, x / w, y / w, z / w]
+            .iter()
+            .any(|v| v.abs() > MAX_COORDINATE)
+        {
+            return Err(contract_bad("control point magnitude exceeds MAX_COORDINATE"));
+        }
+    }
+    Ok(())
+}
+
+/// The aggregate fixture size budget: what the reference wrapper packs, counted.
+#[derive(Default)]
+struct Budget(usize);
+
+impl Budget {
+    fn add(&mut self, n: usize) -> HResult<()> {
+        match self.0.checked_add(n) {
+            Some(total) if total <= MAX_PACKED_VALUES => {
+                self.0 = total;
+                Ok(())
+            }
+            _ => Err(contract_bad("aggregate fixture exceeds MAX_PACKED_VALUES")),
+        }
+    }
+
+    /// A curve (a line of finite points over a positive domain, or a B-spline); its
+    /// domain.
+    fn curve(&mut self, curve: &CurveIn) -> HResult<[f64; 2]> {
+        match curve {
+            CurveIn::Line { start, end, domain } => {
+                finite_all(start)?;
+                finite_all(end)?;
+                interval_ok(*domain, true)?;
+                for (a, b) in start.iter().zip(end) {
+                    finite_all(&[b - a])?;
+                }
+                self.add(9)?;
+                Ok(*domain)
+            }
+            CurveIn::Bspline {
+                degree,
+                control_points,
+                knots,
+            } => {
+                let domain = knots_ok(*degree, control_points.len(), knots)?;
+                self.add(3)?;
+                points_ok(control_points)?;
+                for _ in control_points {
+                    self.add(4)?;
+                }
+                self.add(knots.len())?;
+                Ok(domain)
+            }
+        }
+    }
+
+    /// An edge: its curve and an ordered interval inside the curve's domain.
+    fn edge(&mut self, edge: &EdgeIn) -> HResult<()> {
+        let [a, b] = self.curve(&edge.curve)?;
+        interval_ok(edge.interval, false)?;
+        let [min, max] = edge.interval;
+        if min < a || max > b {
+            return Err(contract_bad("edge interval is outside the curve domain"));
+        }
+        self.add(2)
+    }
+
+    /// A surface: a plane of finite data over a positive domain, or a B-spline net.
+    fn surface(&mut self, surface: &SurfaceIn) -> HResult<()> {
+        match surface {
+            SurfaceIn::Plane {
+                origin,
+                x_axis,
+                y_axis,
+                scale,
+                domain,
+            } => {
+                finite_all(origin)?;
+                finite_all(x_axis)?;
+                finite_all(y_axis)?;
+                finite_all(scale)?;
+                let [a, b, c, d] = *domain;
+                interval_ok([a, c], true)?;
+                interval_ok([b, d], true)?;
+                // zero axes are admitted: upstream's Unitize has a defined fallback
+                self.add(16)
+            }
+            SurfaceIn::Bspline {
+                u_degree,
+                v_degree,
+                u_count,
+                v_count,
+                control_points,
+                u_knots,
+                v_knots,
+            } => {
+                if u_count.checked_mul(*v_count) != Some(control_points.len()) {
+                    return Err(contract_bad("surface control net length mismatch/overflow"));
+                }
+                knots_ok(*u_degree, *u_count, u_knots)?;
+                knots_ok(*v_degree, *v_count, v_knots)?;
+                self.add(5)?;
+                points_ok(control_points)?;
+                for _ in control_points {
+                    self.add(4)?;
+                }
+                self.add(u_knots.len())?;
+                self.add(v_knots.len())
+            }
+        }
+    }
+
+    fn samples(&mut self, samples: &[[f64; 2]]) -> HResult<()> {
+        self.add(1)?;
+        for sample in samples {
+            finite_all(sample)?;
+            if sample.iter().any(|v| !(0.0..=1.0).contains(v)) {
+                return Err(contract_bad("surface sample fractions must be in [0, 1]"));
+            }
+            self.add(2)?;
+        }
+        Ok(())
+    }
+}
+
+/// A `config` case: finite scalars, an operation up to 4, item counts within
+/// [`MAX_ITEMS`], shell face selectors below the face count and relation selectors
+/// below the edge use counts.
+fn config_contract(input: &Config) -> HResult<()> {
+    finite_all(&[
+        input.offset_distance,
+        input.approx_tol,
+        input.tangency_tol_radians,
+    ])?;
+    if input.operation > 4 {
+        return Err(contract_bad("invalid offset operation"));
+    }
+    for n in [
+        input.original_edges,
+        input.offset_edges,
+        input.face_count,
+        input.shell_face_sets.len(),
+        input.relations.len(),
+    ] {
+        item_count(n)?;
+    }
+    let mut budget = Budget::default();
+    budget.add(13)?;
+    for selectors in &input.shell_face_sets {
+        item_count(selectors.len())?;
+        budget.add(1)?;
+        for &id in selectors {
+            if id >= input.face_count {
+                return Err(contract_bad("shell face selector out of range"));
+            }
+            budget.add(1)?;
+        }
+    }
+    budget.add(1)?;
+    for &[a, b] in &input.relations {
+        if a >= input.original_edges * 2 || b >= input.offset_edges * 2 {
+            return Err(contract_bad("relation EU selector out of range"));
+        }
+        budget.add(2)?;
+    }
+    Ok(())
+}
+
+/// A `synchronize` case: at most [`MAX_SYNC_EDGES`] edges in all, each [`Budget::edge`].
+fn sync_contract(input: &Synchronize) -> HResult<()> {
+    item_count(input.first.len())?;
+    item_count(input.second.len())?;
+    if input
+        .first
+        .len()
+        .checked_add(input.second.len())
+        .is_none_or(|n| n > MAX_SYNC_EDGES)
+    {
+        return Err(contract_bad("synchronization exceeds MAX_SYNC_EDGES"));
+    }
+    let mut budget = Budget::default();
+    budget.add(2)?;
+    for edges in [&input.first, &input.second] {
+        budget.add(1)?;
+        for edge in edges {
+            budget.edge(edge)?;
+        }
+    }
+    Ok(())
+}
+
+/// An `extend` case: a finite non-negative distance (five times it finite too), item
+/// counts within [`MAX_ITEMS`], a snapshot within [`MAX_PACKED_VALUES`], surfaces,
+/// samples in `[0, 1]^2` and surface keys in range.
+fn extension_contract(input: &Extension) -> HResult<()> {
+    finite_all(&[
+        input.offset_distance,
+        input.offset_distance * 5.0,
+        input.approx_tol,
+    ])?;
+    if input.offset_distance < 0.0 {
+        return Err(contract_bad("extension offset distance must be nonnegative"));
+    }
+    for n in [
+        input.surfaces.len(),
+        input.actions.len(),
+        input.samples.len(),
+    ] {
+        item_count(n)?;
+    }
+    // every action is a get
+    let gets = input.actions.len();
+    let output_bound = input
+        .samples
+        .len()
+        .checked_mul(8)
+        .and_then(|n| n.checked_add(11))
+        .and_then(|n| n.checked_mul(gets))
+        .and_then(|n| n.checked_add(input.actions.len() * 3 + 2));
+    if output_bound.is_none_or(|n| n > MAX_PACKED_VALUES) {
+        return Err(contract_bad("extension snapshot exceeds MAX_PACKED_VALUES"));
+    }
+    let mut budget = Budget::default();
+    budget.add(3)?;
+    for surface in &input.surfaces {
+        budget.surface(surface)?;
+    }
+    budget.samples(&input.samples)?;
+    budget.add(1)?;
+    for &key in &input.actions {
+        if key >= input.surfaces.len() {
+            return Err(contract_bad("surface key out of range"));
+        }
+        budget.add(2)?;
+    }
+    Ok(())
+}
+
+/// A `face_tail` case: finite scalars, a strictly increasing domain, and a second UV
+/// curve only with a finite self-intersection segment.
+fn face_tail_contract(input: &FaceTailIn) -> HResult<()> {
+    let [u0, v0, u1, v1] = input.domain;
+    finite_all(&[input.offset_distance, input.approx_tol])?;
+    finite_all(&input.domain)?;
+    if !(u0 < u1 && v0 < v1) {
+        return Err(contract_bad("offset domain must be strictly increasing"));
+    }
+    if input.self_intersection.is_none() && input.second_uv.is_some() {
+        return Err(contract_bad("second UV curve without a self-intersection"));
+    }
+    for segment in [input.self_intersection, input.second_uv]
+        .into_iter()
+        .flatten()
+    {
+        finite_all(&segment)?;
+    }
+    Ok(())
+}
+
+fn rectangle_ok([x0, y0, x1, y1]: [f64; 4]) -> HResult<()> {
+    finite_all(&[x0, y0, x1, y1])?;
+    if !(x0 < x1 && y0 < y1) {
+        return Err(contract_bad("rectangle must be strictly increasing"));
+    }
+    Ok(())
+}
+
+/// A `map_twin` case: a finite distance, strictly increasing rectangles and a bottom
+/// split strictly inside the offset rectangle.
+fn map_twin_contract(input: &MapTwinIn) -> HResult<()> {
+    finite_all(&[input.offset_distance])?;
+    rectangle_ok(input.original)?;
+    rectangle_ok(input.offset)?;
+    if let Some(x) = input.split_bottom {
+        finite_all(&[x])?;
+        let [x0, _, x1, _] = input.offset;
+        if !(x0 < x && x < x1) {
+            return Err(contract_bad(
+                "bottom split must lie strictly inside the offset rectangle",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A `replace` case: finite scalars, at most 64 samples in `[0, 1]^2`, and a surface base
+/// or an extrusion of a curve along a finite direction over a positive domain.
+fn replace_contract(input: &ReplaceIn) -> HResult<()> {
+    finite_all(&[input.offset_distance, input.approx_tol])?;
+    if input.samples.len() > 64 {
+        return Err(contract_bad("at most 64 replace samples"));
+    }
+    let mut budget = Budget::default();
+    match &input.base {
+        OffsetBaseIn::Surface { surface } => {
+            budget.add(1)?;
+            budget.surface(surface)?;
+        }
+        OffsetBaseIn::Extrusion {
+            generator,
+            origin,
+            direction,
+            domain,
+            ..
+        } => {
+            finite_all(origin)?;
+            finite_all(direction)?;
+            let [a, b, c, d] = *domain;
+            interval_ok([a, c], true)?;
+            interval_ok([b, d], true)?;
+            budget.add(1)?;
+            budget.curve(generator)?;
+            budget.add(11)?;
+        }
+    }
+    budget.add(2)?;
+    budget.samples(&input.samples)
+}
+
 fn setup(error: impl std::fmt::Display) -> HarnessError {
     bad(format!("Rust fixture construction: {error}"))
 }
@@ -707,8 +914,8 @@ fn decode_vertex(snapshot: &mut Snapshot<'_>, mut output: Output) -> HResult<Out
             let [n, m, p, q, r, s]: [usize; 6] = dims
                 .try_into()
                 .map_err(|_| bad("invalid vertex NURBS shape"))?;
-            if p > ffi::MAX_DEGREE
-                || q > ffi::MAX_DEGREE
+            if p > MAX_DEGREE
+                || q > MAX_DEGREE
                 || n < p
                 || m < q
                 || n.checked_add(p).and_then(|v| v.checked_add(1)) != Some(r)
@@ -719,7 +926,7 @@ fn decode_vertex(snapshot: &mut Snapshot<'_>, mut output: Output) -> HResult<Out
             let net_len = n
                 .checked_add(1)
                 .and_then(|u| m.checked_add(1).and_then(|v| u.checked_mul(v)))
-                .filter(|&count| count <= ffi::MAX_CONTROL_POINTS)
+                .filter(|&count| count <= MAX_CONTROL_POINTS)
                 .and_then(|count| count.checked_mul(4))
                 .ok_or_else(|| bad("vertex NURBS net exceeds snapshot budget"))?;
             output = output
@@ -763,7 +970,7 @@ fn decode(input: &Inputs, raw: &[f64]) -> HResult<Output> {
     if tag == -1 {
         let status = snapshot.integer()?;
         snapshot.done()?;
-        if status == i64::from(ffi::NATIVE_SUCCESS) {
+        if status == i64::from(NATIVE_SUCCESS) {
             return Err(bad("success tagged as rejected fixture"));
         }
         return Ok(Output::rejected(format!(
@@ -833,7 +1040,7 @@ fn decode(input: &Inputs, raw: &[f64]) -> HResult<Output> {
                         integers.extend(snapshot.integers(4)?);
                         let status = *at(&integers, 1)?;
                         output = output.ints(&format!("{key}.result"), integers);
-                        if status == i64::from(ffi::NATIVE_SUCCESS) {
+                        if status == i64::from(NATIVE_SUCCESS) {
                             output = output
                                 .int(&format!("{key}.kind"), snapshot.integer()?)
                                 .values(&format!("{key}.domain"), snapshot.take(4)?.to_vec());
@@ -1039,7 +1246,7 @@ impl From<SolidError> for RunError {
 type RResult<T> = Result<T, RunError>;
 fn operation<T>(result: solidcore::Result<T>) -> RResult<(i64, Option<T>)> {
     match result {
-        Ok(value) => Ok((i64::from(ffi::NATIVE_SUCCESS), Some(value))),
+        Ok(value) => Ok((i64::from(NATIVE_SUCCESS), Some(value))),
         Err(SolidError::Upstream { code, .. }) => Ok((i64::from(code), None)),
         // a failure in solidcore's terms (#2615): its C++ comparison status
         Err(e @ SolidError::Failed(_)) => Ok((i64::from(e.sm_status().unwrap_or(solidcore::error::SM_ERR)), None)),
@@ -1450,7 +1657,7 @@ fn loop_fixture(k: &Kernel, brep: &mut Brep, input: &EdgeIn) -> HResult<(EdgeId,
 }
 
 fn rust_config(k: &Kernel, input: &Config) -> HResult<Output> {
-    guard(ffi::validate_config(&input.ffi()))?;
+    config_contract(input)?;
     let mut original = Brep::new();
     let mut offset = Brep::new();
     let mut face_owner = Brep::new();
@@ -1501,7 +1708,7 @@ fn rust_config(k: &Kernel, input: &Config) -> HResult<Output> {
     let mut statuses = Vec::new();
     for &[first, second] in &input.relations {
         executive.relate_edgeuses(*at(&originals, first)?, *at(&offsets, second)?);
-        statuses.push(i64::from(ffi::NATIVE_SUCCESS));
+        statuses.push(i64::from(NATIVE_SUCCESS));
     }
     Ok(output
         .int("original_edgeuse_count", originals.len() as i64)
@@ -1555,7 +1762,7 @@ fn measured_traversal(brep: &Brep, supports: &[EdgeId]) -> RResult<(Vec<EdgeId>,
 }
 
 fn rust_sync(k: &Kernel, input: &Synchronize) -> RResult<Output> {
-    guard(ffi::validate_synchronize(&input.ffi()))?;
+    sync_contract(input)?;
     let mut kernel = Kernel::default();
     let mut original = Brep::new();
     let edge_a = unit_wire(k, &mut original, 0.0)?;
@@ -1687,7 +1894,7 @@ fn rust_sync(k: &Kernel, input: &Synchronize) -> RResult<Output> {
 }
 
 fn rust_extend(input: &Extension) -> RResult<Output> {
-    guard(ffi::validate_extend(&input.ffi()))?;
+    extension_contract(input)?;
     let kernel = Kernel::default();
     let bases = input
         .surfaces
@@ -2103,7 +2310,7 @@ fn rust_vertex(k: &Kernel, input: &VertexFixture) -> RResult<Output> {
     Ok(decode(&Inputs::Vertex(input.clone()), &raw)?)
 }
 
-/// The measured state after `BuildOffsetOfFaceuse` (see [`ffi::FaceTail`]).
+/// The measured state after `BuildOffsetOfFaceuse` (see [`FaceTailIn`]).
 struct FaceTailRecord {
     domains: Vec<f64>,
     edge_counts: Vec<i64>,
@@ -2195,7 +2402,7 @@ fn curve_face(
 }
 
 fn rust_face_tail(input: &FaceTailIn) -> RResult<Output> {
-    guard(ffi::validate_face_tail(&input.ffi()))?;
+    face_tail_contract(input)?;
     let mut kernel = Kernel::default();
     let mut original = Brep::new_with_infinite_region().map_err(setup)?;
     let mut records = solidcore::topology::topology::NotifyRecords::new();
@@ -2359,7 +2566,7 @@ fn mapped_offset_uses(
 /// (the shim builds both with `MakeFaceWithCurves`). Notifications are recorded
 /// but, as in [`rust_face_tail`], not compared.
 fn rust_map_twin(input: &MapTwinIn) -> RResult<Output> {
-    guard(ffi::validate_map_twin(&input.ffi()))?;
+    map_twin_contract(input)?;
     let kernel = Kernel::default();
     let mut original = Brep::new();
     let (_, upward) = rect_face(&kernel, &mut original, input.original, 0.0, false, true)?;
@@ -2397,7 +2604,7 @@ fn rust_map_twin(input: &MapTwinIn) -> RResult<Output> {
 
 /// The shim's `replace`: the same record, built from the port.
 fn rust_replace(input: &ReplaceIn) -> RResult<Output> {
-    guard(ffi::validate_replace(&input.ffi()))?;
+    replace_contract(input)?;
     let mut kernel = Kernel::default();
     let base = match &input.base {
         OffsetBaseIn::Surface { surface } => surface.rust()?,
@@ -2457,7 +2664,7 @@ fn rust_replace(input: &ReplaceIn) -> RResult<Output> {
                 (1.0 - fv) * n.min().y + fv * n.max().y,
             );
             match surface.evaluate_point(&kernel, uv) {
-                Ok(p) => raw.extend([f64::from(ffi::NATIVE_SUCCESS), p.x, p.y, p.z]),
+                Ok(p) => raw.extend([f64::from(NATIVE_SUCCESS), p.x, p.y, p.z]),
                 Err(SolidError::Upstream { code, .. }) => {
                     raw.extend([f64::from(code), 0.0, 0.0, 0.0]);
                 }
@@ -2670,21 +2877,6 @@ fn rust_probe(k: &Kernel, branch: Probe, tolerance: f64) -> RResult<Output> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "offset.offset_executive_p1"
-    }
-    fn run_cpp(&self, case: &Case) -> HResult<Output> {
-        let input: Inputs = case.parse()?;
-        let raw = match &input {
-            Inputs::Config(input) => ffi::config(&input.ffi()),
-            Inputs::Synchronize(input) => ffi::synchronize(&input.ffi()),
-            Inputs::Extend(input) => ffi::extend(&input.ffi()),
-            Inputs::Vertex(input) => ffi::vertex(&input.ffi()),
-            Inputs::Probe { branch, approx_tol } => ffi::probe(branch.ffi(), *approx_tol),
-            Inputs::FaceTail(input) => ffi::face_tail(&input.ffi()),
-            Inputs::MapTwin(input) => ffi::map_twin(&input.ffi()),
-            Inputs::Replace(input) => ffi::replace(&input.ffi()),
-        }
-        .map_err(|error| bad(format!("native adapter: {error}")))?;
-        decode(&input, &raw)
     }
     fn run_rust(&self, case: &Case) -> HResult<Output> {
         let k = &Kernel::default();
@@ -3090,8 +3282,8 @@ mod tests {
     }
 
     /// Issue #1476: every `replace` fixture (extrusion, plane and B-spline bases)
-    /// replaces its offset surface by a B-spline approximation on both sides, and the
-    /// sides agree; an extrusion base was refused with `SM_ERR` before.
+    /// replaces its offset surface by a B-spline approximation; an extrusion base was
+    /// refused with `SM_ERR` before.
     #[test]
     fn replace_fixtures_build_bspline_approximations() {
         let context = CaseContext {
@@ -3104,10 +3296,7 @@ mod tests {
                 continue;
             };
             extrusions += usize::from(matches!(input.base, OffsetBaseIn::Extrusion { .. }));
-            let native = Runner.run_cpp(fixture).unwrap();
             let rust = Runner.run_rust(fixture).unwrap();
-            let diff = compare(&native, &rust, &[]);
-            assert!(diff.pass(), "{}: {diff:?}", fixture.name);
             assert_eq!(rust.ints["replace.status"], [1000], "{}", fixture.name);
             assert_eq!(rust.ints["replace.face_count"], [1], "{}", fixture.name);
             assert_eq!(
@@ -3139,21 +3328,12 @@ mod tests {
             } else {
                 isolated += 1;
             }
-            let native = Runner.run_cpp(fixture).unwrap();
             let rust = Runner.run_rust(fixture).unwrap();
-            assert!(
-                native.rejected.is_none(),
-                "{}: {:?}",
-                fixture.name,
-                native.rejected
-            );
             assert!(
                 rust.deferred.is_none() && rust.error.is_none(),
                 "{}: {rust:?}",
                 fixture.name
             );
-            let diff = compare(&native, &rust, &[]);
-            assert!(diff.pass(), "{}: {diff:?}", fixture.name);
             assert_eq!(rust.ints["vertex.status"], [1000]);
             assert_eq!(
                 rust.values["vertex.tolerances"],
@@ -3341,10 +3521,6 @@ mod tests {
         };
         let radians = default_tangency();
         assert_eq!(config.tangency_tol_radians.to_bits(), radians.to_bits());
-        assert_eq!(
-            config.ffi().tangency_tol_radians.to_bits(),
-            radians.to_bits()
-        );
         let executive = OffsetExecutive::new(OffsetOperation::SolidOffset, 0.125, 1e-6);
         assert_eq!(
             executive.tangency_tol_degrees().to_bits(),
@@ -3353,7 +3529,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_tangency_reaches_ffi_and_both_scalar_snapshot_phases_in_native_order() {
+    fn custom_tangency_reaches_both_scalar_snapshot_phases_in_native_order() {
         let mut config = generated_config(&mut Rng::new(175));
         config.original_edges = 0;
         config.offset_edges = 0;
@@ -3383,10 +3559,6 @@ mod tests {
                 unreachable!()
             };
             assert_eq!(roundtrip.tangency_tol_radians.to_bits(), radians.to_bits());
-            assert_eq!(
-                roundtrip.ffi().tangency_tol_radians.to_bits(),
-                radians.to_bits()
-            );
             let output = Runner.run_rust(&case(&input)).unwrap();
             let expected = radians * 180.0 / PI;
             for phase in ["default", "final"] {
@@ -3490,7 +3662,7 @@ mod tests {
             let actual = Runner.run_rust(fixture).unwrap();
             assert!(actual.error.is_none() && actual.deferred.is_none());
             assert!(actual.rejected.is_none());
-            assert_eq!(actual.ints["operation"][0], i64::from(ffi::NATIVE_SUCCESS));
+            assert_eq!(actual.ints["operation"][0], i64::from(NATIVE_SUCCESS));
             assert_eq!(actual.ints["matched_first"], matched_first, "{name}");
             assert_eq!(actual.ints["matched_second"], matched_second, "{name}");
             assert!(actual.ints["gaps_first"].is_empty());
@@ -3532,46 +3704,7 @@ mod tests {
                     brep.vertex(measured.vertices[0]).unwrap().point,
                 );
             }
-            #[cfg(feature = "cpp")]
-            {
-                let native = Runner.run_cpp(fixture).unwrap();
-                assert!(native.rejected.is_none(), "{name}: {:?}", native.rejected);
-                assert!(
-                    native.error.is_none() && native.deferred.is_none(),
-                    "{name}"
-                );
-                assert!(compare(&native, &actual, &[]).pass(), "{name}");
-            }
         }
-    }
-
-    #[cfg(feature = "cpp")]
-    #[test]
-    fn coincident_analytic_line_remains_a_native_rejection_not_parity() {
-        let context = CaseContext {
-            root: crate::case::repo_root(),
-            seeds: 0,
-        };
-        let fixtures = context.fixture_cases(Runner.id()).unwrap();
-        let fixture = fixtures
-            .iter()
-            .find(|case| case.name == "shortest_buildable_analytic_line")
-            .unwrap();
-        // The fixture's 1e-12 line is built natively and compared.
-        let native = Runner.run_cpp(fixture).unwrap();
-        assert!(native.rejected.is_none() && native.deferred.is_none());
-        // The coincident line it held before (end at the start) is still refused by the
-        // native constructor, not compared.
-        let mut coincident = fixture.clone();
-        coincident.name = "coincident_analytic_line_constructor_rejection".into();
-        coincident.inputs["first"][0]["curve"]["end"] = serde_json::json!([0.0, 0.0, 0.0]);
-        let native = Runner.run_cpp(&coincident).unwrap();
-        assert_eq!(
-            native.rejected.as_deref(),
-            Some("native fixture constructor status_1007"),
-        );
-        assert!(native.ints.is_empty() && native.values.is_empty());
-        assert!(native.error.is_none() && native.deferred.is_none());
     }
 
     #[test]
@@ -3715,20 +3848,20 @@ mod tests {
             .unwrap();
             let output = Runner.run_rust(&case(&input)).unwrap();
             assert!(output.deferred.is_none(), "{:?}", output.deferred);
-            assert_eq!(output.ints["status"], vec![i64::from(ffi::NATIVE_SUCCESS)]);
+            assert_eq!(output.ints["status"], vec![i64::from(NATIVE_SUCCESS)]);
             assert_eq!(output.ints["mapped"], vec![mapped; 4]);
         }
     }
 
     #[test]
-    fn rust_side_refuses_what_the_ffi_guard_refuses() {
+    fn rust_side_refuses_inputs_outside_the_contract() {
         // The `--fuzz 2000` failures of the face-tail PR, recorded as inputs: counts
         // past MAX_ITEMS made rust_config allocate 2^32 wires, a negative extension
         // distance ran into CreateExtendedSurface's doubling loop (HANG-16), and a
         // 1e300 control point kept the native extension busy past the fuzz timeout.
         // They cannot be fixtures (a harness error always fails a case), so this
-        // test keeps them: both sides now refuse each by the FFI's own checks, with
-        // its message, before any construction.
+        // test keeps them: the input contract refuses each, with its message, before
+        // any construction.
         let recorded: Value = serde_json::from_str(include_str!(
             "../../tests/fuzz_regressions/offset.offset_executive_p1.json"
         ))
@@ -3748,11 +3881,6 @@ mod tests {
             };
             let error = Runner.run_rust(&case(&input)).unwrap_err().to_string();
             assert!(error.ends_with(expected), "{}: {error}", recorded["name"]);
-            #[cfg(feature = "cpp")]
-            {
-                let native = Runner.run_cpp(&case(&input)).unwrap_err().to_string();
-                assert!(native.ends_with(expected), "{}: {native}", recorded["name"]);
-            }
         }
     }
 
