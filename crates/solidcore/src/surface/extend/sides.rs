@@ -85,9 +85,11 @@ pub struct ExtendedSides {
     pub surface: Surface,
     /// What was done at each side of the source's box, in [`BoxSide::ALL`]'s order.
     pub sides: [SideExtension; 4],
+    /// How far the result over the source's box is from the source: the sum of the sides'
+    /// [`Extended::source`], each on the one before.
+    pub source: f64,
     /// The largest construction bound of the sides' extensions ([`Extended::extension`]):
-    /// the result over the source's box is the source (bound 0), each extension within this
-    /// of its construction.
+    /// each extension is within this of its construction.
     pub extension: f64,
 }
 
@@ -153,7 +155,7 @@ impl Surface {
         // the side of the current result each side of the source's box is on
         let mut on = BoxSide::ALL;
         let mut sides = [SideExtension::NotAsked; 4];
-        let mut extension = 0.0_f64;
+        let (mut source, mut extension) = (0.0_f64, 0.0_f64);
         for ((&source_side, done), at) in BoxSide::ALL.iter().zip(sides.iter_mut()).zip(0..) {
             if !asked.contains(&source_side) {
                 continue;
@@ -196,6 +198,7 @@ impl Surface {
             for s in &mut on {
                 *s = grown.side_of(*s);
             }
+            source += grown.source;
             extension = extension.max(grown.extension);
             *done = SideExtension::Extended(grown.across);
             current = Some(grown);
@@ -209,6 +212,7 @@ impl Surface {
         Ok(ExtendedSides {
             surface,
             sides,
+            source,
             extension,
         })
     }
