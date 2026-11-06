@@ -125,3 +125,42 @@ unchanged by this diff. Rerunning `observe.py` on this base with the nodal
 correction reproduces the corrected measurements above exactly, and the close
 render is byte-identical to the attached after image. The earlier base named at
 the top remains the control for the tests-first failures and before measurements.
+
+## Final validation
+
+The final integration base is
+`4926f2859e97018a97c903e4fa64a3268febfe8e`, including the subsequent Join-offset
+refusal and Part 21 reader merges. Validation used six build jobs and eight test
+processes, as authorized by the machine's user, with `nice -n 10` and upstream
+fixtures required (`SOLIDCORE_REQUIRE_UPSTREAM=1`).
+
+- Complete workspace nextest run on the preceding b34bb3e37 integration:
+  **6,524 passed, 98 ignored**, plus workspace doctests, fmt, strict workspace
+  clippy and wasm check, all passing.
+- After the final rebase: **3,621 kernel unit tests passed** (four ignored),
+  **28 exact-round and Join-chamfer integration tests passed**, all
+  `solidcore-record` tests passed (37 tests, one ignored), and the four selected
+  ops chamfer regressions passed.
+- On that final base, fmt, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo check -p solidcore --target wasm32-unknown-unknown`, record identifiers,
+  frozen archives, diff whitespace and the panic-site inventory against the base
+  all passed.
+- The nodal kernel case was run separately with `kernel_cases --exact --ignored`
+  and `KERNEL_CASES_CASE=cov-fillet-exact-cylinders-touching-at-a-point-r1`:
+  one case passed, no known failure.
+- Rebuilt diagnostics and reran `observe.py` on the final base. Both corrected
+  errors above are unchanged, Level-2 validity is clean, and the close render is
+  byte-identical to the committed after image.
+
+The affected goldens were checked again after the final rebase, without blessing
+or changing any expected output:
+
+```text
+PASS blend.fillet_solver_p4 cases=651 changed=0 added=0 removed=0 broken=0 known_failing=0
+PASS blend.fillet_geom_p3 cases=325 changed=0 added=0 removed=0 broken=0 known_failing=0
+PASS blend.fillet_executive_p3 cases=798 changed=0 added=0 removed=0 broken=0 known_failing=3
+goldens: 3 unit(s), 3 passed, 0 failed
+```
+
+The three existing known failures remain visible: the two teardrop cases and
+the high-corner setback-eight case. This change neither removes nor blesses them.
