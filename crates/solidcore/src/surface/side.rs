@@ -521,8 +521,8 @@ fn support_meets(k: &[f64], deg: usize, lo: f64, hi: f64) -> std::ops::RangeIncl
 }
 
 impl Rounding {
-    /// [`Rounding::of`] for the pieces of the iso at `fixed` (constant v for `along_u`)
-    /// over `[from, to]` alone: the knots read are only those near them. Knot insertion and
+    /// The rounding of the pieces of the iso at `fixed` (constant v for `along_u`) over
+    /// `[from, to]` alone: the knots read are only those near them. Knot insertion and
     /// the Bezier decomposition are local: a segment's points are combinations whose
     /// coefficients take the knots from its start's segment's start to `p` past its end
     /// (`(t - u_i) / (u_(i+p) - u_i)`, i from the segment's start index), and the iso's
@@ -553,35 +553,9 @@ impl Rounding {
         Self::with_ratio_in(nurb, ratio, op, &|i, j| window.keeps(i, j))
     }
 
-    fn of(form: &BSplineSurface, extra: &[f64], op: &'static str) -> Result<Self> {
-        let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(op))?;
-        let (mut kmax, mut smin) = (0.0_f64, f64::INFINITY);
-        for kv in [nurb.u_knots(), nurb.v_knots()] {
-            for (&a, &b) in kv.iter().zip(kv.iter().skip(1)) {
-                kmax = kmax.max(a.abs()).max(b.abs());
-                if b > a {
-                    smin = smin.min(b - a);
-                }
-            }
-        }
-        for &x in extra {
-            kmax = kmax.max(x.abs());
-        }
-        Self::with_ratio(nurb, kmax / smin, op)
-    }
-
     /// The rounding of a net whose coefficients' knots and parameters are at most `ratio`
-    /// times the least span they divide by (`K / S`).
-    fn with_ratio(
-        nurb: &crate::nurbs::srf_basic::Surface,
-        ratio: f64,
-        op: &'static str,
-    ) -> Result<Self> {
-        Self::with_ratio_in(nurb, ratio, op, &|_, _| true)
-    }
-
-    /// [`Rounding::with_ratio`] over the control points `keep` names (`[i along u][j along
-    /// v]`): the pieces' points are combinations of those alone.
+    /// times the least span they divide by (`K / S`), over the control points `keep` names
+    /// (`[i along u][j along v]`): the pieces' points are combinations of those alone.
     fn with_ratio_in(
         nurb: &crate::nurbs::srf_basic::Surface,
         ratio: f64,
@@ -868,8 +842,9 @@ impl Surface {
     /// - **Lower:** the largest distance between the curve's points at the pieces' ends and
     ///   at the side's middle (SolidCraft's three points are among them).
     ///
-    /// Both are widened by the rounding of making the pieces ([`Rounding`]) and, for a
-    /// procedural blend measured on its net, twice its bound.
+    /// Both are widened by the rounding of making the pieces ([`Rounding::local`]: of the
+    /// knots and control points the side's pieces are made of alone) and, for a procedural
+    /// blend measured on its net, twice its bound.
     ///
     /// # Errors
     ///
@@ -885,7 +860,15 @@ impl Surface {
         };
         let mid = 0.5 * (from + to);
         let fixed = side.at(dom);
-        let rounding = Rounding::of(&form, &[fixed, from, to], OP_DIAMETER)?;
+        // the rounding of the side's own pieces ([`Rounding::local`]): sized on the knots and
+        // points they are made of, not the whole net's: sized on a far end of the net (an
+        // earlier side's extension, `a_huge_extension_of_a_bilinear_sheet_extends_every_side`)
+        // its rounding passed the side's own diameter and the side read as a point
+        let nurb = form
+            .gw_nurb()
+            .ok_or_else(|| SolidError::sm_err(OP_DIAMETER))?;
+        let window = Window::of(nurb, !side.is_u(), fixed, from, to);
+        let rounding = Rounding::local(&form, &window, fixed, from, to, OP_DIAMETER)?;
         let mut pieces = Vec::new();
         let mut levels = 0;
         for (a, b) in [(from, mid), (mid, to)] {
