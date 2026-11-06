@@ -1,7 +1,7 @@
 //! Native comparison fixtures for actual executive solver loading.
 
 use super::{
-    box_access, constant_radius_from_edgeuse, edge, error_output, executive, ffi, flag, harness,
+    box_access, constant_radius_from_edgeuse, edge, error_output, executive, flag, harness,
     missing, missing_error, status_of, Access, BoxIn, ConstantRadiusAssistedFs, Deserialize,
     EdgeId, Extent1d, FilletExecutive, FilletSolverId, Handle, HarnessError, Kernel, Op, Output,
     Point3, Serialize, SolidResult,
@@ -45,10 +45,6 @@ fn loader_record(i: &LoaderScript) -> Vec<f64> {
     }
     out.push(i.drop_pending_after.map_or(0, |index| index + 1) as f64);
     out
-}
-
-pub(crate) fn loader_cpp(i: &LoaderScript) -> Result<Vec<f64>, solidcore_ffi::FfiError> {
-    ffi::eval(Op::LoadSolver, &loader_record(i))
 }
 
 fn loader_edgeuse_label(access: &Access, handle: Handle) -> SolidResult<f64> {
@@ -129,7 +125,9 @@ fn loader_snapshot(
 }
 
 pub(crate) fn loader_rust(i: &LoaderScript) -> Result<Output, HarnessError> {
-    ffi::validate(Op::LoadSolver, &loader_record(i)).map_err(|e| harness(e.to_string()))?;
+    if !super::contract(Op::LoadSolver, &loader_record(i)) {
+        return Err(harness("input outside the contract"));
+    }
     let bx = BoxIn {
         origin: [0.0; 3],
         size: [i.scale, 2.0 * i.scale, 3.0 * i.scale],

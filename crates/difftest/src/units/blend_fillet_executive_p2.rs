@@ -1,12 +1,12 @@
-//! Runner for unit `blend.fillet_executive_p2`. C++:
-//! `solidcore_ffi::units::blend_fillet_executive_p2`. Rust:
-//! `solidcore::blend::fillet_executive::p2`.
+//! Runner for unit `blend.fillet_executive_p2`. Ported from upstream
+//! `source/SMLib/src/SmFilletExecutive.cpp`; checked against its golden. Rust:
+//! `solidcore::blend::fillet_executive::p2`. A record that breaks the reference wrapper's
+//! input contract ([`contract`]) is a harness error.
 //!
 //! The fillet-law constructors are compared on every value (edge map, radii and arc
 //! length of a linear law; the degree, control points and knots of the elliptical
 //! B-spline law curve). The executive members run on an `SmApiCreateBox` box built by
-//! the C++ side and imported into a Rust [`Brep`] through `heal.stitch_p2`'s export
-//! (`topology.brep_p1`'s import), with the executive state the C++ constructor leaves
+//! the Rust kernel ([`crate::own_builder`]), with the executive state the constructor leaves
 //! (the executive constructor belongs to `blend.fillet_executive_p1`). Their output is
 //! one float array (`out`): the status, then the switches, solver count and error code
 //! (`SetFilletParameters`) or the sequence and list lengths. `-2` in the status slot
@@ -46,9 +46,35 @@ use solidcore::math::Point3;
 use solidcore::topology::proto_topology::p1::CopyBrepMap;
 use solidcore::topology::{edge, Brep, EdgeId, EdgeuseId};
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::blend_fillet_executive_p2::{self as ffi, Op};
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Shim operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)]
+pub(crate) enum Op {
+    LawLinear = 0,
+    LawElliptic = 1,
+    SetParams = 2,
+    Exec = 3,
+    TempRadius = 4,
+    LoadSolver = 5,
+}
+
+/// Largest accepted magnitude of a numeric parameter.
+const MAX_VALUE: f64 = 1.0e6;
+
+/// Most entries of a type, value, edge or law list.
+const MAX_LIST: usize = 13;
+
+/// Edges of an `SmApiCreateBox` box.
+const BOX_EDGES: usize = 12;
+
+/// Largest `SmFilletSurfaceGeneratorType` code (`SM_FSG_BLEND_CURVE`).
+const MAX_FSG_TYPE: usize = 3;
+
+/// Largest `SmFilletSolverType` code (`SM_FS_CONST_RADIUS_ASSISTED`).
+const MAX_SOLVER_TYPE: usize = 6;
 
 /// The difftest runner.
 pub struct Runner;
@@ -229,18 +255,6 @@ fn values_output(o: Vec<f64>) -> Output {
         Some(&s) if s == SHORT_BOX => Output::err("box_edge_count"),
         _ => Output::new().values("out", o),
     }
-}
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (op, rec) = record(i);
-    let o = ffi::eval(op, &rec).map_err(|e| harness(format!("c++: {e}")))?;
-    if let Inputs::LawElliptic { .. } = i {
-        // has_curve after the status and the edge map
-        if o.get(3) == Some(&0.0) {
-            return Ok(Output::err("law_without_curve"));
-        }
-    }
-    Ok(values_output(o))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1501,7 +1515,7 @@ fn box_access(bx: &BoxIn) -> Result<Result<Access, Output>, HarnessError> {
         Some(Built::Failed(e)) => return Ok(Err(crate::own_builder::failed_output(&e))),
         None => return Err(harness("box source not built")),
     };
-    if b.edges().len() != ffi::BOX_EDGES {
+    if b.edges().len() != BOX_EDGES {
         // The shim reports the same box as `-4 n_edges`.
         return Ok(Err(Output::err("box_edge_count")));
     }
@@ -2056,10 +2070,163 @@ fn temp_radius(variable: bool, start: f64, end: f64, bx: &BoxIn) -> Result<Outpu
     }
 }
 
+/// A reader over a record of the reference wrapper's layout
+/// (`crates/solidcore-ffi/src/units/blend_fillet_executive_p2.rs`); every read is `None`
+/// once the record breaks the contract.
+struct Reader<'a> {
+    input: &'a [f64],
+    at: usize,
+}
+
+impl Reader<'_> {
+    fn num(&mut self) -> Option<f64> {
+        let v = *self.input.get(self.at)?;
+        self.at += 1;
+        Some(v)
+    }
+    /// An integer in `0..=max`.
+    fn index(&mut self, max: usize) -> Option<usize> {
+        let v = self.num()?;
+        (v.fract() == 0.0 && v >= 0.0 && v <= max as f64).then_some(v as usize)
+    }
+    fn flag(&mut self) -> Option<bool> {
+        Some(self.index(1)? == 1)
+    }
+    /// A finite value of magnitude at most [`MAX_VALUE`].
+    fn value(&mut self) -> Option<f64> {
+        let v = self.num()?;
+        (v.is_finite() && v.abs() <= MAX_VALUE).then_some(v)
+    }
+    /// `P[3] l w h` with sides in `[1e-3, 1e6]`.
+    fn box_block(&mut self) -> Option<()> {
+        for _ in 0..3 {
+            self.value()?;
+        }
+        for _ in 0..3 {
+            if !(1e-3..=1e6).contains(&self.value()?) {
+                return None;
+            }
+        }
+        Some(())
+    }
+    /// `n x*n` with each `x` an integer in `0..=max`.
+    fn codes(&mut self, max: usize) -> Option<()> {
+        let n = self.index(MAX_LIST)?;
+        for _ in 0..n {
+            self.index(max)?;
+        }
+        Some(())
+    }
+}
+
+/// The reference wrapper's input contract for `op`'s record `input`: finite values of
+/// magnitude at most [`MAX_VALUE`], box sides in `[1e-3, 1e6]`, edge indices of the box,
+/// enum codes inside `SmFilletSurfaceGeneratorType` / `SmFilletSolverType`, law kinds `0`
+/// and `1`, lists of at most [`MAX_LIST`] entries, the edge map only without solvers and
+/// a split-edge smooth sequence with two solvers at least; a loader record's box and
+/// solver pool within their bounds.
+pub(crate) fn contract(op: Op, input: &[f64]) -> bool {
+    let mut rd = Reader { input, at: 0 };
+    let ok = (|| -> Option<()> {
+        let rd = &mut rd;
+        match op {
+            Op::LawLinear => {
+                rd.value()?;
+                rd.value()?;
+                rd.flag()?;
+                rd.value()?;
+                rd.value()?;
+            }
+            Op::LawElliptic => {
+                for _ in 0..6 {
+                    rd.value()?;
+                }
+                rd.flag()?;
+                rd.value()?;
+                rd.value()?;
+            }
+            Op::SetParams => {
+                rd.flag()?;
+                rd.box_block()?;
+                let n = rd.index(MAX_LIST)?;
+                for _ in 0..n {
+                    if rd.index(BOX_EDGES)? == BOX_EDGES {
+                        return None;
+                    }
+                }
+                rd.codes(MAX_FSG_TYPE)?;
+                rd.codes(MAX_SOLVER_TYPE)?;
+                let nv = rd.index(MAX_LIST)?;
+                for _ in 0..nv {
+                    rd.value()?;
+                }
+                rd.flag()?;
+                let nl = rd.index(MAX_LIST)?;
+                for _ in 0..nl {
+                    if rd.index(1)? == 1 {
+                        rd.value()?;
+                        rd.value()?;
+                    }
+                }
+                for _ in 0..4 {
+                    rd.value()?;
+                }
+                rd.index(3)?;
+                rd.value()?;
+            }
+            Op::Exec => {
+                let sub = rd.index(5)?;
+                let k = rd.index(BOX_EDGES)?;
+                // the edge map reads the rails of each solver's fillet geometry, which
+                // only CalcFilletGeom builds
+                if (sub == 0 && k > 0) || (sub >= 3 && k < 2) {
+                    return None;
+                }
+                rd.box_block()?;
+            }
+            Op::LoadSolver => {
+                let scale = rd.value()?;
+                if [scale, 2.0 * scale, 3.0 * scale]
+                    .iter()
+                    .any(|d| !(1e-3..=1e6).contains(d))
+                {
+                    return None;
+                }
+                rd.flag()?;
+                let count = rd.index(6)?;
+                for _ in 0..count {
+                    rd.index(BOX_EDGES + 1)?;
+                    rd.index(3)?;
+                    rd.flag()?;
+                    rd.flag()?;
+                }
+                let loads = rd.index(16)?;
+                for _ in 0..loads {
+                    rd.index(0)?;
+                    if rd.index(count)? >= count {
+                        return None;
+                    }
+                }
+                rd.index(loads)?;
+            }
+            Op::TempRadius => {
+                rd.flag()?;
+                rd.value()?;
+                rd.value()?;
+                rd.box_block()?;
+            }
+        }
+        Some(())
+    })();
+    ok.is_some() && rd.at == input.len()
+}
+
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    // Only what the shim may see runs on either side (counts and codes bounded).
+    // Only what keeps the contract runs (counts and codes bounded).
     let (op, rec) = record(i);
-    ffi::validate(op, &rec).map_err(|e| harness(format!("rejected: {e}")))?;
+    if !contract(op, &rec) {
+        return Err(harness("rejected: input outside the contract"));
+    }
     match i {
         Inputs::LawLinear { start, end, map } => Ok(law_linear(*start, *end, *map)),
         Inputs::LawElliptic {
@@ -2146,9 +2313,6 @@ impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.fillet_executive_p2"
     }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse::<Inputs>()?)
-    }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse::<Inputs>()?)
     }
@@ -2177,7 +2341,7 @@ impl UnitDiff for Runner {
 
 #[path = "blend_fillet_executive_p2/loader.rs"]
 mod loader;
-pub(crate) use loader::{loader_cpp, loader_rust, LoaderScript};
+pub(crate) use loader::{loader_rust, LoaderScript};
 
 #[cfg(test)]
 mod tests {
