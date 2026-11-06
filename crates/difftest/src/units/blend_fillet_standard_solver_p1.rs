@@ -5,8 +5,8 @@
 //! `SmConstantDistanceFS` `SetupOffsetValues`, `LoadJacobian` and `LoadInitialValues`
 //! and the `SmVariableRadiusFS` queries and `SetupOffsetValues`.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_standard_solver_p1` (upstream
-//! `source/SMLib/src/SmFilletStandardSolver.cpp`). Rust:
+//! Ported from upstream `source/SMLib/src/SmFilletStandardSolver.cpp`; checked against
+//! its golden. Rust:
 //! `solidcore::blend::fillet_standard_solver::p1`.
 //!
 //! A case is one op with its inputs. Both sides produce the same flat record (layout in
@@ -65,7 +65,6 @@ use solidcore::surface::surface::Surface;
 use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::{Brep, EdgeuseId, FaceId};
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_standard_solver_p1::{self as ffi, Op};
 
 use super::topology_edgeuse_p1::{
     brep_block_of, gen_brep, path_of, sel, BrepIn, FILES,
@@ -75,6 +74,42 @@ use super::topology_edgeuse_p2::{inexact_geometry, put_eu_state, Setup};
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The upstream routine run by the shim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    /// `SmCircularCrossSectionFSG::CreateSurfaceFromCurves`.
+    Circ,
+    /// `SmBlendCurveCrossSectionFSG::CreateSurfaceFromCurves`.
+    Blend,
+    /// `SmLinearCrossSectionFSG::CreateSurface`.
+    Linear,
+    /// `SmCurveBasedFS::EvaluateBaseCurve`.
+    Base,
+    /// `SmSurfaceSurfaceFS::SetupOffsetExtension`.
+    SsExt,
+    /// The `SmConstantRadiusFS` surface constructor, `SetupOffsetValues` and queries.
+    Cr,
+    /// `SmConstantRadiusFS::LoadJacobian`.
+    CrJac,
+    /// `SmConstantDistanceFS::SetupOffsetValues` and queries.
+    CdSetup,
+    /// `SmConstantDistanceFS::LoadJacobian`.
+    CdJac,
+    /// `SmConstantDistanceFS::LoadInitialValues`.
+    CdInit,
+    /// The `SmVariableRadiusFS` queries.
+    Vr,
+    /// `SmVariableRadiusFS::SetupOffsetValues`.
+    VrSetup,
+}
+
+/// Largest array length (`x`, `f`, guesses, intervals, Jacobian sides, type codes)
+/// the reference wrapper accepts.
+const MAX_ARRAY: usize = 32;
+
+/// Largest derivative count of an `EvaluateBaseCurve` call the reference wrapper accepts.
+const MAX_DERIV: usize = 3;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 480;
@@ -391,298 +426,6 @@ pub(crate) fn push_crv(o: &mut Vec<f64>, c: &InlineCrv) {
     o.extend_from_slice(&c.u);
 }
 
-fn push_curve(o: &mut Vec<f64>, c: &CurveIn) {
-    match c {
-        CurveIn::Bspline { oob, c } => {
-            o.extend([0.0, flag(*oob)]);
-            push_crv(o, c);
-        }
-        CurveIn::Line { start, end } => {
-            o.push(1.0);
-            o.extend_from_slice(start);
-            o.extend_from_slice(end);
-        }
-        CurveIn::Hermite { p1, d1, p2, d2 } => {
-            o.push(2.0);
-            for v in [p1, d1, p2, d2] {
-                o.extend_from_slice(v);
-            }
-        }
-    }
-}
-
-fn shape(net: &[Vec<[f64; 4]>]) -> Result<(usize, usize), HarnessError> {
-    let n = net
-        .len()
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net"))?;
-    let cols = net.first().map_or(0, Vec::len);
-    let m = cols
-        .checked_sub(1)
-        .ok_or_else(|| harness("empty net row"))?;
-    if net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
-fn push_srf(o: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
-    match s {
-        SrfIn::Bspline { net, p, q, u, v } => {
-            let (n, m) = shape(net)?;
-            o.push(0.0);
-            o.extend(
-                [
-                    n,
-                    m,
-                    *p,
-                    *q,
-                    u.len().saturating_sub(1),
-                    v.len().saturating_sub(1),
-                ]
-                .map(|x| x as f64),
-            );
-            for row in net {
-                for pt in row {
-                    o.extend_from_slice(pt);
-                }
-            }
-            o.extend_from_slice(u);
-            o.extend_from_slice(v);
-        }
-        SrfIn::Plane {
-            o: org,
-            x,
-            y,
-            scale,
-            domain,
-        } => {
-            o.push(1.0);
-            o.extend_from_slice(org);
-            o.extend_from_slice(x);
-            o.extend_from_slice(y);
-            o.extend_from_slice(scale);
-            o.extend_from_slice(domain);
-        }
-    }
-    Ok(())
-}
-
-fn push_kinds(o: &mut Vec<f64>, kinds: &[i64]) {
-    o.push(kinds.len() as f64);
-    o.extend(kinds.iter().map(|&k| k as f64));
-}
-
-fn push_cr(o: &mut Vec<f64>, s: &CrIn) -> Result<(), HarnessError> {
-    o.push(flag(s.b.is_none()));
-    push_srf(o, &s.a)?;
-    if let Some(b) = &s.b {
-        push_srf(o, b)?;
-    }
-    o.extend([s.r[0], s.r[1], flag(s.o[0]), flag(s.o[1])]);
-    Ok(())
-}
-
-fn push_cd(o: &mut Vec<f64>, s: &CdIn) -> Result<(), HarnessError> {
-    o.push(flag(s.b.is_none()));
-    push_srf(o, &s.a)?;
-    if let Some(b) = &s.b {
-        push_srf(o, b)?;
-    }
-    o.extend([s.d[0], s.d[1], s.o[0], s.o[1], s.dist, s.ext]);
-    Ok(())
-}
-
-fn push_vr(o: &mut Vec<f64>, s: &VrIn) -> Result<(), HarnessError> {
-    push_srf(o, &s.a)?;
-    push_srf(o, &s.b)?;
-    o.extend(s.o);
-    push_curve(o, &s.center);
-    match &s.law {
-        LawIn::Linear { r0, r1 } => o.extend([0.0, *r0, *r1]),
-        LawIn::Bspline { c, map } => {
-            o.push(1.0);
-            push_crv(o, c);
-            o.extend(map);
-        }
-    }
-    o.extend([flag(s.orient), s.fsg as f64]);
-    Ok(())
-}
-
-fn push_jac(o: &mut Vec<f64>, j: &JacIn) {
-    o.extend([j.rail, j.ne, j.np, j.sel1, j.off1, j.sel2, j.off2].map(|v| v as f64));
-    o.push(j.x.len() as f64);
-    o.extend_from_slice(&j.x);
-    o.push(j.f.len() as f64);
-    o.extend_from_slice(&j.f);
-    let [rows, cols] = j.jac.unwrap_or([0, 0]);
-    o.extend([flag(j.jac.is_some()), rows as f64, cols as f64]);
-}
-
-#[allow(clippy::too_many_lines)]
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match i {
-        Inputs::Circ {
-            approx,
-            tolpct,
-            mirror,
-            complement,
-            tol,
-            g1,
-            center,
-            rail1,
-            rail2,
-        } => {
-            o.extend([
-                flag(*approx),
-                *tolpct,
-                flag(*mirror),
-                flag(*complement),
-                *tol,
-                flag(*g1),
-            ]);
-            push_crv(&mut o, center);
-            push_crv(&mut o, rail1);
-            push_crv(&mut o, rail2);
-        }
-        Inputs::Blend {
-            cont,
-            scale,
-            tol,
-            g1,
-            center,
-            rail1,
-            rail2,
-            sides,
-        } => {
-            o.extend([*cont as f64, *scale, *tol, flag(*g1)]);
-            push_crv(&mut o, center);
-            push_crv(&mut o, rail1);
-            push_crv(&mut o, rail2);
-            o.push(flag(sides.is_some()));
-            if let Some(s) = sides {
-                push_srf(&mut o, &s.s1)?;
-                push_crv(&mut o, &s.uv1);
-                push_srf(&mut o, &s.s2)?;
-                push_crv(&mut o, &s.uv2);
-            }
-        }
-        Inputs::Linear { rail1, rail2 } => {
-            push_crv(&mut o, rail1);
-            push_crv(&mut o, rail2);
-        }
-        Inputs::Base {
-            curve,
-            calls,
-            kinds,
-        } => {
-            push_curve(&mut o, curve);
-            o.push(calls.len() as f64);
-            for (t, n) in calls {
-                o.extend([*t, *n as f64]);
-            }
-            push_kinds(&mut o, kinds);
-        }
-        Inputs::SsExt {
-            ext,
-            surface,
-            domain,
-        } => {
-            o.push(*ext);
-            push_srf(&mut o, surface)?;
-            o.extend_from_slice(domain);
-            push_kinds(&mut o, &[]);
-        }
-        Inputs::Cr {
-            solver,
-            set,
-            setup,
-            kinds,
-        } => {
-            push_cr(&mut o, solver)?;
-            let [d0, d1] = set.unwrap_or([0.0, 0.0]);
-            o.extend([flag(set.is_some()), d0, d1]);
-            o.extend([flag(setup.is_some()), setup.unwrap_or(0.0)]);
-            push_kinds(&mut o, kinds);
-        }
-        Inputs::CrJac { solver, jac } => {
-            push_cr(&mut o, solver)?;
-            push_jac(&mut o, jac);
-        }
-        Inputs::CdSetup {
-            solver,
-            user,
-            kinds,
-        } => {
-            push_cd(&mut o, solver)?;
-            o.push(*user);
-            push_kinds(&mut o, kinds);
-        }
-        Inputs::CdJac { solver, jac } => {
-            push_cd(&mut o, solver)?;
-            push_jac(&mut o, jac);
-        }
-        Inputs::CdInit {
-            solver,
-            do2,
-            rail,
-            sel1,
-            s1_index,
-            s2_index,
-            intervals,
-            per,
-            guess,
-        } => {
-            push_cd(&mut o, solver)?;
-            o.extend([
-                flag(*do2),
-                *rail as f64,
-                *sel1 as f64,
-                *s1_index as f64,
-                *s2_index as f64,
-            ]);
-            o.push(intervals.len() as f64);
-            for iv in intervals {
-                o.extend_from_slice(iv);
-            }
-            o.push(per.len() as f64);
-            o.extend(per.iter().map(|&b| flag(b)));
-            o.push(guess.len() as f64);
-            o.extend_from_slice(guess);
-        }
-        Inputs::Vr { solver, set } => {
-            push_vr(&mut o, solver)?;
-            let [e0, e1] = set.unwrap_or([0.0, 0.0]);
-            o.extend([flag(set.is_some()), e0, e1]);
-            push_kinds(&mut o, &[]);
-        }
-        Inputs::VrSetup { solver, user } => {
-            push_vr(&mut o, solver)?;
-            o.push(*user);
-        }
-        Inputs::CrEu { .. } => return Err(harness("the edge-use op has its own input")),
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let Some(op) = i.ffi() else {
-        return cpp_edgeuse(i);
-    };
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    if flat.first().copied() == Some(-1.0) {
-        return Ok(Output::rejected(
-            "the shim's dry run: upstream would read out of bounds (ruled/revolved \
-             circular sections with a second pass, or a blend-curve skin through a point \
-             section) or loop forever",
-        ));
-    }
-    Ok(to_output(&flat))
-}
-
 /// Splits a flat record into `status` and `out`.
 fn to_output(flat: &[f64]) -> Output {
     let (status, rest) = flat
@@ -956,7 +699,7 @@ fn he(e: &SolidError) -> HarnessError {
 /// above `MAX_ARRAY` is refused there, so it is never allocated here).
 fn jac_matrix(jac: &JacIn) -> Result<Option<solidcore::geom::matrix::Matrix>, HarnessError> {
     match jac.jac {
-        Some([r, c]) if r > ffi::MAX_ARRAY || c > ffi::MAX_ARRAY => {
+        Some([r, c]) if r > MAX_ARRAY || c > MAX_ARRAY => {
             Err(harness("jacobian: matrix size above the FFI bound"))
         }
         Some([r, c]) => Ok(Some(solidcore::geom::matrix::Matrix::new(r, c))),
@@ -1121,7 +864,7 @@ fn rust_record(i: &Inputs) -> Result<Rec, HarnessError> {
             for &(t, n) in calls {
                 // (bounded as the FFI validator bounds it: `Curve::evaluate` allocates
                 // `n + 1` vectors)
-                if n > ffi::MAX_DERIV {
+                if n > MAX_DERIV {
                     return Err(harness("base: derivative count above the FFI bound"));
                 }
                 match fs.evaluate_base_curve(&k, t, n) {
@@ -1517,42 +1260,6 @@ fn eu_output(body: &[f64]) -> Output {
     Output::new()
         .int("status", first as i64)
         .values("out", body.get(1..).unwrap_or(&[]).to_vec())
-}
-
-fn cpp_edgeuse(i: &Inputs) -> Result<Output, HarnessError> {
-    let Inputs::CrEu {
-        brep,
-        eu,
-        tol,
-        ang,
-        tan,
-        r,
-        r2,
-        fu,
-        fv,
-    } = i
-    else {
-        return Err(harness("not the edge-use op"));
-    };
-    let s = match eu_setup(brep, *eu, false)? {
-        Ok(s) => s,
-        Err(o) => return Ok(o),
-    };
-    let mut input = s.block.clone();
-    input.extend([
-        f64::from(s.eu.index()),
-        *tol,
-        *ang,
-        *tan,
-        *r,
-        flag(r2.is_some()),
-        r2.unwrap_or(0.0),
-        *fu,
-        *fv,
-    ]);
-    let out = ffi::eval_edgeuse(&s.path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    let body = out.get(1..).ok_or_else(|| harness("c++: empty output"))?;
-    Ok(eu_output(body))
 }
 
 /// Whether the edge use has the edge's primary edge use (`GetMate` / `GetRadial`).
@@ -2484,10 +2191,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -2589,16 +2292,5 @@ mod tests {
             kinds: vec![],
         };
         assert!(rust(&base).is_err());
-    }
-
-    /// A solver's plane with a reversed domain is refused (decreasing NURB knots: the
-    /// C++ segfaults extending it when reversed by `1e10`); an ordered one is accepted.
-    #[cfg(feature = "cpp")]
-    #[test]
-    fn reversed_plane_domain_of_a_solver_is_refused() {
-        let bad = cr_jac_planes([0.0, 0.0, 1.0, -1e10], Some([4, 12]));
-        let e = cpp(&bad).err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(e.contains("reversed domain"), "{e}");
-        assert!(cpp(&cr_jac_planes([0.0, 0.0, 1.0, 1e10], Some([4, 12]))).is_ok());
     }
 }
