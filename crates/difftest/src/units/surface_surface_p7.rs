@@ -6,6 +6,8 @@
 //!
 //! Ported from upstream `source/SMLib/src/SmSurface.cpp` (on B-spline surfaces and planes);
 //! checked against its golden. Rust: `solidcore::surface::surface::p7`.
+//! Generated inputs outside the C++ reference wrapper's input contract
+//! ([`keeps_contract`]) are redrawn.
 //!
 //! A case is one `op` on a `surface` (`{"bspline": {oob, form, net, p, q, u, v}}` with
 //! control points as stored `[x, y, z, w]`, rows in u, or `{"plane": {o, n}}`). The Rust
@@ -40,7 +42,7 @@ use solidcore::nurbs::b_spline_surface::{
 };
 use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::knots::Side;
-use solidcore::nurbs::math::{CPoint, NOW};
+use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::nurbs::srf_basic::Surface as NlSurface;
 use solidcore::surface::curve_bounded_surface::CurveBoundedSurface;
 use solidcore::surface::plane::Plane;
@@ -58,6 +60,7 @@ use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::contract::{self, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -875,6 +878,341 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     }
 }
 
+// ---- input contract -----------------------------------------------------------------
+//
+// A Rust port of the C++ reference wrapper's input contract
+// (`crates/solidcore-ffi/src/units/surface_surface_p7.rs`, shared by `surface_p3` and
+// `surface_p4`): the generators redraw until it holds, so their cases stay on the working
+// path; hostile data is covered by the fixture files.
+
+/// The largest control point index.
+const MAX_INDEX: usize = 32;
+/// The largest degree.
+const MAX_DEGREE: usize = 5;
+/// The largest magnitude of a coordinate, knot or scalar.
+const MAX_COORD: f64 = 1e6;
+/// The most vectors of a solve.
+const MAX_VECS: usize = 16;
+
+/// `SM_SO_INTERSECT`.
+pub(crate) const SO_INTERSECT: u8 = 0;
+/// `SM_SO_MINIMIZE`.
+pub(crate) const SO_MINIMIZE: u8 = 3;
+/// `SM_SO_MAXIMIZE`.
+pub(crate) const SO_MAXIMIZE: u8 = 4;
+/// `SM_SO_NORMALIZE`.
+pub(crate) const SO_NORMALIZE: u8 = 5;
+/// `SM_SO_AT_DISTANCE`.
+pub(crate) const SO_AT_DISTANCE: u8 = 6;
+/// `SM_SO_3D_SIGNED_DIRECTED_MINIMIZE`.
+pub(crate) const SO_SIGNED_MIN: u8 = 9;
+
+/// The parameter domain `[u0, v0, u1, v1]` of a surface, `None` where it is not a
+/// B-spline's (a plane, a surface of revolution, or a curve-bounded surface over one).
+pub(crate) type Domain = Option<[f64; 4]>;
+
+/// Whether `v` is finite within [`MAX_COORD`].
+pub(crate) fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+/// Whether every value is [`fin`].
+pub(crate) fn fins(vs: &[f64]) -> bool {
+    vs.iter().all(|&v| fin(v))
+}
+
+/// Whether `v` is [`fin`] and positive.
+pub(crate) fn positive(v: f64) -> bool {
+    fin(v) && v > 0.0
+}
+
+/// The size and coordinate bounds of the wrapper's B-spline blocks.
+const LIMITS: Limits = Limits {
+    max_index: MAX_INDEX,
+    max_degree: MAX_DEGREE,
+    max_coord: MAX_COORD,
+};
+
+/// Whether a curve's stored control points are of one rationality with weights in
+/// `[1e-3, 1e3]` and stored coordinates within range; `z = NOZ` (2D data) only when
+/// `planar` (the wrapper's `check_points`, which unlike [`contract::points3`] takes 2D
+/// curve data).
+fn curve_points(pts: &[[f64; 4]], planar: bool) -> bool {
+    let rat = pts.first().is_some_and(|p| p[3] != NOW);
+    pts.iter().all(|&[x, y, z, w]| {
+        (planar || z != NOZ)
+            && (w != NOW) == rat
+            && (!rat || (1e-3..=1e3).contains(&w))
+            && fins(&[x, y, if z == NOZ { 0.0 } else { z }])
+    })
+}
+
+/// The domain of a B-spline surface with a form up to 11 that keeps
+/// [`contract::surface_block`].
+fn bss_domain(b: &BssIn) -> Option<[f64; 4]> {
+    if b.form > 11 {
+        return None;
+    }
+    contract::surface_block(&b.net, b.p, b.q, &b.u, &b.v, &LIMITS).map(|s| s.dom)
+}
+
+/// A surface that keeps the contract: its [`Domain`] and whether it is a plain B-spline
+/// (or a surface of revolution, a B-spline subclass). A B-spline as [`bss_domain`], a
+/// plane with a finite origin and a non-zero normal, a curve-bounded surface over one of
+/// these (never over another curve-bounded surface), and a surface of revolution only
+/// when `revolution` (only `surface_p3`'s wrapper builds one): finite points and a
+/// non-zero axis.
+pub(crate) fn surface_kind(s: &SrfIn, nested: bool, revolution: bool) -> Option<(Domain, bool)> {
+    match resolve(s).ok()? {
+        SrfIn::Bspline(b) => Some((Some(bss_domain(&b)?), true)),
+        SrfIn::Sms(_) => None,
+        SrfIn::Plane { o, n } => {
+            (contract::vec3(&o, MAX_COORD) && contract::nonzero3(&n, MAX_COORD))
+                .then_some((None, false))
+        }
+        SrfIn::Bounded { basis, .. } => {
+            if nested {
+                return None;
+            }
+            let (dom, _) = surface_kind(&basis, true, revolution)?;
+            Some((dom, false))
+        }
+        SrfIn::Revolution { a, b, p, axis, .. } => (revolution
+            && [a, b, p].iter().all(|v| contract::vec3(v, MAX_COORD))
+            && contract::nonzero3(&axis, MAX_COORD))
+        .then_some((None, true)),
+    }
+}
+
+/// The [`Domain`] of a surface that keeps the contract (no surface of revolution).
+pub(crate) fn surface_domain(s: &SrfIn) -> Option<Domain> {
+    surface_kind(s, false, false).map(|(d, _)| d)
+}
+
+/// The parameter range of a 2D or 3D B-spline curve within the size bounds, with
+/// [`curve_points`] (2D data only for a 2D curve) and clamped knots within range.
+pub(crate) fn curve_range(c: &CrvIn) -> Option<(f64, f64)> {
+    let n = c.cpts.len().saturating_sub(1);
+    let ok = (2..=3).contains(&c.dim)
+        && n <= MAX_INDEX
+        && (1..=n.min(MAX_DEGREE)).contains(&c.p)
+        && c.u.len() == n + c.p + 2
+        && curve_points(&c.cpts, c.dim == 2)
+        && fins(&c.u);
+    if !ok {
+        return None;
+    }
+    contract::clamped(&c.u, c.p)
+}
+
+/// The bounds of the `(u, v)` parameters of a surface: one domain length around its
+/// domain, or `[-1e4, 1e4]` without one.
+pub(crate) fn uv_bounds(dom: Domain) -> [(f64, f64); 2] {
+    match dom {
+        Some([u0, v0, u1, v1]) => [
+            (u0 - (u1 - u0), u1 + (u1 - u0)),
+            (v0 - (v1 - v0), v1 + (v1 - v0)),
+        ],
+        None => [(-1e4, 1e4), (-1e4, 1e4)],
+    }
+}
+
+/// Whether `x` is [`fin`] and within `[lo, hi]`.
+pub(crate) fn within(x: f64, (lo, hi): (f64, f64)) -> bool {
+    fin(x) && x >= lo && x <= hi
+}
+
+/// Whether `uv` is within one domain length of `dom` (anywhere within `1e4` without one).
+pub(crate) fn uv_ok(uv: [f64; 2], dom: Domain) -> bool {
+    let [bu, bv] = uv_bounds(dom);
+    within(uv[0], bu) && within(uv[1], bv)
+}
+
+/// Whether `d` is an ordered domain inside `dom` (within `1e4` without one).
+pub(crate) fn domain_ok(d: [f64; 4], dom: Domain) -> bool {
+    let [a, b, c, e] = d;
+    let inside = match dom {
+        Some([u0, v0, u1, v1]) => a >= u0 && c <= u1 && b >= v0 && e <= v1,
+        None => d.iter().all(|x| x.abs() <= 1e4),
+    };
+    fins(&d) && a < c && b < e && inside
+}
+
+/// Whether there are at most [`MAX_VECS`] vectors, each finite within range.
+pub(crate) fn vecs_ok(vs: &[[f64; 3]]) -> bool {
+    vs.len() <= MAX_VECS && vs.iter().all(|v| contract::vec3(v, MAX_COORD))
+}
+
+/// Whether an optional target value is [`fin`] (an absent one is written as `0`).
+pub(crate) fn target_ok(t: Option<f64>) -> bool {
+    fin(t.unwrap_or(0.0))
+}
+
+/// Whether a solve with operation `sop` (from `allowed`) has the vector a signed directed
+/// solve reads.
+pub(crate) fn sop_ok(sop: u8, allowed: &[u8], vecs: &[[f64; 3]]) -> bool {
+    allowed.contains(&sop) && (sop != SO_SIGNED_MIN || !vecs.is_empty())
+}
+
+/// Whether a case keeps the input contract (`validate` of the wrapper): a surface as
+/// [`surface_kind`] and the op's parameters within the surface's domain, bounded orders,
+/// codes and vector counts, positive tolerances and angles up to 90 degrees, the solver
+/// operations each function supports (the signed directed ones with a vector,
+/// `AT_DISTANCE` with a target, intersect exactly with `SM_SR_NODES`), B-spline surfaces
+/// for the global and local solves and the projection, curve intervals inside the
+/// curve's range, and a positive projection distance; the projection vector may have a
+/// NaN component.
+fn keeps_contract(i: &Inputs) -> bool {
+    let Some((dom, is_bspline)) = surface_kind(&i.surface, false, false) else {
+        return false;
+    };
+    let bspline = dom.filter(|_| is_bspline);
+    let p3 = |p: &[f64; 3]| contract::vec3(p, MAX_COORD);
+    match &i.op {
+        OpIn::Eval1 { uv, .. }
+        | OpIn::Eval2 { uv, .. }
+        | OpIn::Normal { uv, .. }
+        | OpIn::Inward { uv } => uv_ok(*uv, dom),
+        OpIn::DirDeriv { uv, dir, h, .. } => uv_ok(*uv, dom) && fins(dir) && *h <= 4,
+        OpIn::IsClosed { dom: d, param, tol, .. } => {
+            domain_ok(*d, dom) && *param <= 3 && fin(tol.unwrap_or(1.0))
+        }
+        OpIn::IsPlanar { tol, .. } => fin(*tol),
+        OpIn::ApproxLen { dom: d } => domain_ok(*d, dom),
+        OpIn::Higher { uv, g1, .. } => uv_ok(*uv, dom) && fins(g1),
+        OpIn::DropPts { uv, pts: vs, .. } | OpIn::DropVecs { uv, vecs: vs, .. } => {
+            uv_ok(*uv, dom) && vecs_ok(vs)
+        }
+        OpIn::Degen {
+            uv, dir, sdir, tol, ..
+        } => uv_ok(*uv, dom) && p3(dir) && *sdir <= 1 && positive(*tol),
+        OpIn::Flat { angle, .. } => positive(*angle) && *angle <= 90.0,
+        OpIn::Brep => true,
+        OpIn::Gps0 {
+            dom: d,
+            sop,
+            p,
+            tol,
+            target,
+            req,
+        } => {
+            let ops = [SO_INTERSECT, SO_MINIMIZE, SO_MAXIMIZE, SO_NORMALIZE, SO_AT_DISTANCE];
+            bspline.is_some()
+                && domain_ok(*d, bspline)
+                && ops.contains(sop)
+                && p3(p)
+                && positive(*tol)
+                && target_ok(*target)
+                && (target.is_some() || *sop != SO_AT_DISTANCE)
+                && *req <= 1
+        }
+        OpIn::Gcs {
+            dom: d,
+            curve,
+            ivl,
+            sop,
+            tol,
+            vecs,
+            ..
+        }
+        | OpIn::Lcs {
+            dom: d,
+            curve,
+            ivl,
+            sop,
+            tol,
+            vecs,
+            ..
+        } => {
+            let ops = [SO_MINIMIZE, SO_MAXIMIZE, SO_NORMALIZE, SO_SIGNED_MIN];
+            let tail = match &i.op {
+                OpIn::Gcs { target, req, .. } => target_ok(*target) && *req <= 1,
+                OpIn::Lcs {
+                    guess_uv, guess_t, ..
+                } => uv_ok(*guess_uv, bspline) && fin(*guess_t),
+                _ => false,
+            };
+            let [x, y] = *ivl;
+            bspline.is_some()
+                && domain_ok(*d, bspline)
+                && curve_range(curve)
+                    .is_some_and(|(a, b)| fin(x) && fin(y) && x >= a && y <= b && x < y)
+                && sop_ok(*sop, &ops, vecs)
+                && positive(*tol)
+                && vecs_ok(vecs)
+                && tail
+        }
+        OpIn::Gss {
+            dom: d,
+            other,
+            dom2,
+            sop,
+            tol,
+            vecs,
+            target,
+            req,
+        } => {
+            let ops = [SO_INTERSECT, SO_MINIMIZE, SO_MAXIMIZE, SO_NORMALIZE, SO_SIGNED_MIN];
+            let d2 = surface_kind(other, false, false)
+                .and_then(|(d2, b2)| d2.filter(|_| b2));
+            bspline.is_some()
+                && domain_ok(*d, bspline)
+                && d2.is_some()
+                && domain_ok(*dom2, d2)
+                && sop_ok(*sop, &ops, vecs)
+                && positive(*tol)
+                && vecs_ok(vecs)
+                && target_ok(*target)
+                && *req <= 3
+                && (*sop == SO_INTERSECT) == (*req == 3)
+        }
+        OpIn::Proj {
+            dom: d,
+            curve,
+            vec,
+            dist,
+        } => {
+            bspline.is_some()
+                && domain_ok(*d, bspline)
+                && curve_range(curve).is_some()
+                && (vec.iter().any(|c| c.is_nan()) || p3(vec))
+                && target_ok(*dist)
+                && dist.is_none_or(|t| t > 0.0)
+        }
+        OpIn::LoadGuesses { dom: d, p, sop } => {
+            let ops = [SO_INTERSECT, SO_MINIMIZE, SO_MAXIMIZE, SO_NORMALIZE];
+            domain_ok(*d, dom) && p3(p) && ops.contains(sop)
+        }
+        OpIn::PassSc { uv, curve, t } => {
+            uv_ok(*uv, dom)
+                && curve_range(curve).is_some_and(|(a, b)| within(*t, (a - (b - a), b + (b - a))))
+        }
+        OpIn::PassSs { uv, other, uv2 } => {
+            uv_ok(*uv, dom) && surface_domain(other).is_some_and(|d2| uv_ok(*uv2, d2))
+        }
+        OpIn::GoodDrop {
+            dom: d,
+            p,
+            guess,
+            value,
+            sol,
+        } => domain_ok(*d, dom) && p3(p) && uv_ok(*guess, dom) && fin(*value) && uv_ok(*sol, dom),
+        OpIn::CheckSeam {
+            uv,
+            dom: d,
+            other,
+            uv2,
+            dom2,
+            loc,
+        } => {
+            uv_ok(*uv, dom)
+                && domain_ok(*d, dom)
+                && surface_domain(other).is_some_and(|d2| uv_ok(*uv2, d2) && domain_ok(*dom2, d2))
+                && *loc <= 5
+        }
+    }
+}
+
 // ---- generator --------------------------------------------------------------------
 
 pub(crate) fn gen_knots(rng: &mut Rng, p: usize, n: usize) -> Vec<f64> {
@@ -1457,6 +1795,9 @@ impl UnitDiff for Runner {
         let k = &Kernel::default();
         for _ in 0..64 {
             let i = gen_case(k, rng);
+            if !keeps_contract(&i) {
+                continue;
+            }
             // keep the global solves and the projection off extreme scales, where the
             // subdivision of both sides runs for minutes (checked before the Rust run
             // below, which runs the solve too)
