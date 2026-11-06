@@ -4,8 +4,8 @@
 //! split-face update and the pseudo-B-rep builders (`MakeFilletEdge`, `MakeRailEdge`,
 //! `MakeRailEdgeuse`, `CreateEndCurve`).
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_geom_p5` (upstream
-//! `source/SMLib/src/SmFilletGeom.cpp`). Rust: `solidcore::blend::fillet_geom::p5`.
+//! Ported from upstream `source/SMLib/src/SmFilletGeom.cpp`; checked against its golden.
+//! Rust: `solidcore::blend::fillet_geom::p5`.
 //!
 //! A case is `blend.fillet_geom_p1`'s pseudo-B-rep model (built the same way on both
 //! sides), `blend.fillet_geom_p4`'s base fillet solvers on its geometries (tolerances
@@ -45,6 +45,12 @@
 //! build (a real fillet corner, a solver or rail it needs, a type-confused classification
 //! object; the list is in the FFI module docs); the generator keeps only inputs both sides
 //! accept. Every run has at least [`MIN_GENERATED`] generated cases.
+//!
+//! The generator redraws until the reference wrapper's input contract holds ([`contract`]:
+//! the block, solvers and arguments; [`block_builds`]: a block the case can build).
+//! The wrapper's shim also refused inputs on which upstream dereferences what the harness
+//! cannot provide (opaque corner tags, missing solvers, rails or curves): those existed
+//! only because the C++ crashes there, so the kernel's own result on them is compared.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -58,7 +64,8 @@ use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::nurbs::math::NOW;
 use solidcore::topology::{edge, edgeuse::p1 as eu1};
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_geom_p5::{self as ffi, Op};
+
+use crate::cases::blend;
 
 use super::blend_fillet_geom_p1::{
     curve_of, dump_bcurve, gen_model, gen_surface, push_model, scale_of, status, surface_of, Crv,
@@ -67,6 +74,22 @@ use super::blend_fillet_geom_p1::{
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// The shim's ops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)]
+enum Op {
+    IntFillet = 0,
+    CrossSection = 1,
+    SideFace = 2,
+    ExtEdge = 3,
+    TrimRails = 4,
+    SplitFace = 5,
+    MakeEdge = 6,
+    RailEdge = 7,
+    EndCurve = 8,
+    RailEdgeuse = 9,
+}
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 300;
@@ -178,7 +201,10 @@ fn geom_solver(i: &Inputs, g: usize) -> i64 {
     i.geom_solvers.get(g).copied().unwrap_or(-1)
 }
 
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
+/// The flat program of a case (layout of the reference wrapper,
+/// `crates/solidcore-ffi/src/units/blend_fillet_geom_p5.rs`), on which [`contract`] is
+/// checked.
+fn program(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     let mut o = Vec::new();
     push_model(&mut o, &i.model)?;
     o.push(i.solvers.len() as f64);
@@ -216,12 +242,6 @@ fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         ]),
     }
     Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(i.query.op(), &input).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
 }
 
 // ---- output splitting ---------------------------------------------------------------
@@ -1052,20 +1072,75 @@ fn gen_topology(rng: &mut Rng) -> Inputs {
     }
 }
 
+/// The reference wrapper's input contract for `op`'s program `input`: the block, the
+/// solvers and the op's arguments (objects inside the block, enum codes in range), every
+/// value finite and within [`blend::MAX_SOLVER_MAGNITUDE`].
+fn contract(op: Op, input: &[f64]) -> bool {
+    let mut rd = blend::Reader::new(input, blend::MAX_SOLVER_MAGNITUDE);
+    let args = |rd: &mut blend::Reader<'_>| -> Option<()> {
+        let b = blend::block_and_solvers(rd)?;
+        match op {
+            Op::IntFillet => {
+                rd.some_index(b.nv())?;
+            }
+            Op::CrossSection | Op::SideFace | Op::ExtEdge => {
+                rd.some_index(b.ne())?;
+            }
+            Op::TrimRails => {
+                rd.some_index(b.ng())?;
+            }
+            Op::SplitFace => {
+                rd.some_index(b.ng())?;
+                rd.some_index(b.nf)?;
+                rd.some_index(b.nf)?;
+                for _ in 0..b.ne() {
+                    rd.opt_index(b.nf)?;
+                }
+            }
+            Op::MakeEdge => {
+                rd.opt_index(b.nv())?;
+                rd.opt_index(b.nv())?;
+            }
+            Op::RailEdge => {
+                rd.some_index(b.ng())?;
+                rd.index(2)?;
+            }
+            Op::EndCurve => {
+                rd.some_index(b.ng())?;
+                rd.index(2)?;
+                rd.index(5)?;
+            }
+            Op::RailEdgeuse => {
+                rd.some_index(b.ng())?;
+                rd.index(2)?;
+                rd.opt_index(b.nv())?;
+                rd.index(3)?;
+                rd.opt_index(b.ne())?;
+            }
+        }
+        Some(())
+    };
+    args(&mut rd).is_some() && rd.done()
+}
+
+/// The reference wrapper's refusal of a pseudo-B-rep block it cannot build (a target
+/// face or edge, a fillet edge or an edge use it cannot make, a classification object
+/// past the target's): the block must build as the case builds it.
+fn block_builds(i: &Inputs) -> bool {
+    RustModel::build(&i.model).is_ok()
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.fillet_geom_p5"
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let c: CaseInputs = case.parse()?;
-        cpp(&c.inputs)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i = case.parse::<CaseInputs>()?.inputs;
-        // an input the FFI refuses is a harness error on both sides
-        ffi::validate(i.query.op(), &cpp_input(&i)?).map_err(|e| harness(e.to_string()))?;
+        // an input outside the contract is a harness error
+        if !contract(i.query.op(), &program(&i)?) {
+            return Err(harness("input outside the contract"));
+        }
         match rust(&i)? {
             Rec::Flat(flat) => to_output(&i, &flat),
             Rec::Deferred(e) => {
@@ -1075,8 +1150,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        // keep only inputs the shim runs (it refuses those upstream would dereference a
-        // corner, solver or rail the harness cannot provide for)
+        // keep only inputs that keep the contract
         for _ in 0..64 {
             let inputs = match rng.below(24) {
                 0..=9 => match gen_trim(rng) {
@@ -1097,10 +1171,10 @@ impl UnitDiff for Runner {
                 },
                 _ => gen_topology(rng),
             };
-            let Ok(flat) = cpp_input(&inputs) else {
+            let Ok(flat) = program(&inputs) else {
                 continue;
             };
-            if ffi::eval(inputs.query.op(), &flat).is_ok() {
+            if contract(inputs.query.op(), &flat) && block_builds(&inputs) {
                 return serde_json::to_value(inputs).ok();
             }
         }
