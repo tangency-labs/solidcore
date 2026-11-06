@@ -5,6 +5,7 @@
 //! 5f1547971e2f487323aa5aabd47e0dc9c2ced9b52871e32d3c691e0ae0448bd9.
 //! The archived recipe order is X, Y, Z; each axis has its central cut followed
 //! by the eight off-center grid cuts. Times are observations, not performance gates.
+//! Add `--features profile` for phase counts; profiled timings include instrumentation.
 use solidcore::boolean::api_brep::boolean_difference;
 use solidcore::geom::assert_array::AssertArray;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
@@ -15,6 +16,30 @@ use solidcore::topology::brep::p3::brep_copy;
 use solidcore::topology::brep::validation::{check_brep, contains_coincident_topology, CheckLevel};
 use solidcore::{Kernel, Point3};
 use std::time::Instant;
+
+#[cfg(feature = "profile")]
+fn coincidence_profile(kernel: &Kernel) -> serde_json::Value {
+    let profile = kernel.take_profile();
+    let rows: Vec<_> = profile
+        .scopes
+        .iter()
+        .filter(|scope| scope.name.starts_with("validation::coincidence"))
+        .map(|scope| {
+            let counts: std::collections::BTreeMap<_, _> = solidcore::profile::Counter::ALL
+                .iter()
+                .zip(scope.counters)
+                .map(|(counter, value)| (counter.name(), value))
+                .collect();
+            serde_json::json!({"phase": scope.name, "calls": scope.calls, "counts": counts})
+        })
+        .collect();
+    serde_json::json!(rows)
+}
+
+#[cfg(not(feature = "profile"))]
+fn coincidence_profile(_kernel: &Kernel) -> serde_json::Value {
+    serde_json::Value::Null
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut kernel = Kernel::default();
@@ -84,7 +109,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "boolean_seconds": boolean_seconds, "validation_seconds": validation_seconds,
                     "coincidence_seconds": coincidence_seconds, "valid": check.is_valid(),
                     "validation_failures": check.lines(), "coincidence_pairs": pairs,
-                    "coincidence_candidate_counts": serde_json::Value::Null,
+                    "validation_coincidence_profile": coincidence_profile(&check_kernel),
+                    "standalone_coincidence_profile": coincidence_profile(&coincidence_kernel),
                 })
             );
         }
