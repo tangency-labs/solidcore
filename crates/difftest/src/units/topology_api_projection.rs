@@ -1,18 +1,14 @@
-//! Differential coverage for `topology.api_projection`: `SmApiProjectBrepOntoPlane`,
+//! Runner for unit `topology.api_projection`: `SmApiProjectBrepOntoPlane`,
 //! `SmApiCreateSilhouetteCurves` and both `SmApiProjectCurve`s (and through them the
-//! file-static `SmApiAddCurveOutputSlots`, unit `topology.api_files`).
+//! file-static `SmApiAddCurveOutputSlots`, unit `topology.api_files`). Ported from upstream
+//! `SmApi` projection wrappers; checked against its golden.
 //!
-//! Each side builds its own inputs: an upstream `.smb` B-rep (the native
-//! `SmApiReadBrepFromFile`, the Rust reader `own_reader::read_file`) or a box
-//! (`SmApiCreateBox` / `create_box`), optionally filleted on every edge
-//! (`SmApiCircularFillet` / `circular_fillet`) and moved (`Transform` / `transform`); a
-//! curve from control points (`SmApiCreateCurve` / `create_curve`); a bilinear surface
-//! from four corners (`CreateBilinearSurface`). No C++-built geometry reaches the Rust
-//! side. The output array may start with null entries (`prefill`), as upstream's tests
-//! append to arrays holding curves. Compared: the status (`status`) and the record
-//! (`record`, layout in `solidcore_ffi::units::topology_api_projection`). The native
-//! side runs in a fresh child process; inputs its build or the FFI guard refuse are
-//! `rejected`.
+//! The case builds its inputs: an upstream `.smb` B-rep (the Rust reader
+//! `own_reader::read_file`) or a box (`create_box`), optionally filleted on every edge
+//! (`circular_fillet`) and moved (`transform`); a curve from control points
+//! (`create_curve`); a bilinear surface from four corners (`CreateBilinearSurface`). The
+//! output array may start with null entries (`prefill`), as upstream's tests append to
+//! arrays holding curves. Recorded: the status (`status`) and the record (`record`).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,10 +23,18 @@ use solidcore::topology::api_projection::{
 };
 use solidcore::topology::Brep;
 use solidcore::{Result as SolidResult, SolidError};
-use solidcore_ffi::units::topology_api_projection::{self as ffi, NFIXED};
-use solidcore_ffi::FfiError;
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+/// Why a normal whose squared length overflows is refused (UB-169).
+const NORMAL_OVERFLOWS: &str =
+    "UB-169: the normal's squared length overflows, so it unitizes to a zero vector";
+
+/// Whether `normal`'s squared length (`SmVector3d::LengthSquared`) overflows, so that
+/// `Unitize` succeeds with a zero vector (UB-169). Ops 1 and 2 refuse such a normal.
+fn normal_overflows([x, y, z]: [f64; 3]) -> bool {
+    (x * x + y * y + z * z).is_infinite()
+}
 
 /// The runner of the `SM_API` projection wrappers.
 pub struct Runner;
@@ -123,67 +127,6 @@ fn herr(e: impl std::fmt::Display) -> HarnessError {
 
 fn v(p: [f64; 3]) -> Vec3 {
     Vec3::new(p[0], p[1], p[2])
-}
-
-fn flag(b: bool) -> f64 {
-    f64::from(u8::from(b))
-}
-
-fn path(i: &Inputs) -> Result<String, HarnessError> {
-    match &i.body {
-        Body::File { file } if i.op != Op::ProjectCurveSurface => {
-            let p = crate::fixtures::upstream_test_file(&crate::case::repo_root(), file)?;
-            Ok(p.to_string_lossy().into_owned())
-        }
-        _ => Ok(String::new()),
-    }
-}
-
-fn args(i: &Inputs) -> Vec<f64> {
-    let (kind, size, fillet) = match &i.body {
-        Body::Null => (0.0, [0.0; 3], 0.0),
-        Body::File { .. } => (1.0, [0.0; 3], 0.0),
-        Body::Box { size, fillet } => (2.0, *size, *fillet),
-    };
-    let t = i.translate.unwrap_or_default();
-    let mut a = vec![
-        kind,
-        size[0],
-        size[1],
-        size[2],
-        fillet,
-        flag(i.translate.is_some()),
-        t[0],
-        t[1],
-        t[2],
-        i.point[0],
-        i.point[1],
-        i.point[2],
-        i.normal[0],
-        i.normal[1],
-        i.normal[2],
-        f64::from(i.prefill),
-        flag(i.want_2d),
-        flag(i.want_3d),
-    ];
-    for c in &i.corners {
-        a.extend(c);
-    }
-    a.push(i.points.len() as f64);
-    for p in &i.points {
-        a.extend(p);
-    }
-    debug_assert_eq!(a.len(), NFIXED + 3 * i.points.len());
-    a
-}
-
-fn op_code(op: Op) -> u8 {
-    match op {
-        Op::ProjectBrep => 1,
-        Op::Silhouette => 2,
-        Op::ProjectCurveBrep => 3,
-        Op::ProjectCurveSurface => 4,
-    }
 }
 
 fn output(raw: &[f64]) -> Result<Output, HarnessError> {
@@ -320,10 +263,9 @@ fn rust_record(k: &mut Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     }
     // nor a normal that unitizes to a zero vector, which ops 1 and 2 go on with
     // through uninitialised vectors upstream (UB-169)
-    if matches!(i.op, Op::ProjectBrep | Op::Silhouette) && ffi::normal_overflows(i.normal) {
+    if matches!(i.op, Op::ProjectBrep | Op::Silhouette) && normal_overflows(i.normal) {
         return Ok(Output::rejected(format!(
-            "ffi guard: invalid argument: {}",
-            ffi::NORMAL_OVERFLOWS
+            "ffi guard: invalid argument: {NORMAL_OVERFLOWS}"
         )));
     }
     let mut body = match build(k, i)? {
@@ -358,21 +300,6 @@ fn rust_record(k: &mut Kernel, i: &Inputs) -> Result<Output, HarnessError> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.api_projection"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        match ffi::eval(op_code(i.op), &path(&i)?, &args(&i)) {
-            Ok(raw) if raw.first() == Some(&-999.) => Ok(Output::rejected(format!(
-                "native build status {}",
-                raw.get(1).copied().unwrap_or(-1.)
-            ))),
-            Ok(raw) => output(&raw),
-            Err(e @ FfiError::InvalidArgument(_)) => {
-                Ok(Output::rejected(format!("ffi guard: {e}")))
-            }
-            Err(e) => Err(herr(e)),
-        }
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
