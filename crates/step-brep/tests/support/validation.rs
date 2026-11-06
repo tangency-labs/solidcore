@@ -12,6 +12,17 @@
 //! units, an `SI_UNIT` or a `CONVERSION_BASED_UNIT` such as `'INCH'` (25.4 mm), are
 //! resolved through the file (ISO 10303-41); the volume in mm³ is the written value
 //! times the product of each element's mm-per-unit raised to its exponent.
+//!
+//! **Bounds.** A measured volume is compared with an expected one within
+//! [`ACCURACY`], the accuracy the tests ask the integrator for, plus, against a validation
+//! volume, half a unit of the last digit the exporter wrote, relative to the value
+//! ([`ValidationVolume::digits`], [`validation_bound`]). The part21 parser keeps the
+//! number, not its text, so the literal is read from the file's bytes
+//! ([`written_literal`]).
+//!
+//! Follow-up: everything here reads the file through `step_import::part21`, the crate
+//! being replaced. When #2591 lands, it reads through the record's parser instead, so the
+//! expected values do not depend on `step_import`.
 #![allow(
     clippy::expect_used,
     clippy::indexing_slicing,
@@ -24,6 +35,20 @@ use std::path::{Path, PathBuf};
 use step_import::part21::{self, Instance, Param, Record, StepFile};
 use step_import::Limits;
 
+/// The accuracy every volume of these tests is computed at: `brep_volume`'s `accuracy`.
+///
+/// What the argument controls (`solidcore::mass::integrator`): each face's trims are
+/// integrated knot span by knot span with adaptive Cash–Karp steps, and a step is kept
+/// only when its estimated error in every component is at most `accuracy / 10` of that
+/// component's scale, the running value plus the step's increment and at least a floor
+/// (for the volume, a tenth of the estimated area times a body length,
+/// `integrator::properties::boundary_properties`); the iso-curve integrals inside each
+/// step run at `accuracy / 10` too. It is a relative error target per step, not a proven
+/// bound on the sum, and it does not cover the trims themselves. The tests take it as the
+/// relative accuracy of the volume, as agreed on #2593; on every corpus file of #2580
+/// and #2583 the volume at 1e-9 is within 7e-11 of the volume at 1e-11 (the PRs' tables).
+pub const ACCURACY: f64 = 1e-9;
+
 /// One geometric validation volume of a file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValidationVolume {
@@ -35,8 +60,97 @@ pub struct ValidationVolume {
     pub description: String,
     /// The value as written, in the file's volume unit.
     pub written: f64,
+    /// The number as the file writes it, e.g. `7.746912251592E2`.
+    pub literal: String,
     /// The value in mm³.
     pub mm3: f64,
+}
+
+impl ValidationVolume {
+    /// Half a unit of the last digit written, relative to the value: how far the
+    /// exporter's number can be from the one it rounded (`7.746912251592E2` is
+    /// 5e-11 / 774.69… = 6.5e-14).
+    pub fn digits(&self) -> f64 {
+        half_unit_of_last_digit(&self.literal).unwrap_or(f64::INFINITY) / self.written.abs()
+    }
+}
+
+/// The relative bound of a volume computed at `accuracy` against `validation`: the
+/// accuracy plus the digits the exporter wrote ([`ValidationVolume::digits`]).
+pub fn validation_bound(accuracy: f64, validation: &ValidationVolume) -> f64 {
+    accuracy + validation.digits()
+}
+
+/// Half a unit of the last digit of the Part 21 real `literal`: `7.746912251592E2` is
+/// 0.5e-12 × 10² = 5e-11, `188312.244641244` 5e-10, `3.` 0.5.
+///
+/// # Errors
+///
+/// When `literal` is not a Part 21 number.
+pub fn half_unit_of_last_digit(literal: &str) -> Result<f64, String> {
+    let upper = literal.to_ascii_uppercase();
+    let (mantissa, exponent) = match upper.split_once('E') {
+        Some((m, e)) => (
+            m,
+            e.parse::<i32>()
+                .map_err(|_| format!("{literal}: exponent is not an integer"))?,
+        ),
+        None => (upper.as_str(), 0),
+    };
+    let digits = mantissa.trim_start_matches(['+', '-']);
+    let decimals = match digits.split_once('.') {
+        Some((whole, fraction))
+            if whole
+                .chars()
+                .chain(fraction.chars())
+                .all(|c| c.is_ascii_digit()) =>
+        {
+            fraction.len()
+        }
+        None if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) => 0,
+        _ => return Err(format!("{literal}: not a number")),
+    };
+    let decimals = i32::try_from(decimals).map_err(|_| format!("{literal}: too long"))?;
+    Ok(0.5 * 10f64.powi(exponent - decimals))
+}
+
+/// The number written as `keyword(…)` in the instance `#id` of the Part 21 `bytes`, as
+/// text: the first one after `#id=`, whitespace between the tokens skipped (exporters
+/// break long instances over lines).
+pub fn written_literal(bytes: &[u8], id: u64, keyword: &str) -> Option<String> {
+    let label = format!("#{id}");
+    let mut from = 0;
+    while let Some(at) = find_bytes(bytes.get(from..)?, label.as_bytes()) {
+        let start = from + at;
+        from = start + label.len();
+        if start > 0 && bytes.get(start - 1).is_some_and(u8::is_ascii_digit) {
+            continue;
+        }
+        let rest = bytes.get(from..)?;
+        let after = rest.iter().position(|b| !b.is_ascii_whitespace())?;
+        if rest.get(after) != Some(&b'=') {
+            continue;
+        }
+        let instance = rest.get(after..)?;
+        let end = instance.iter().position(|&b| b == b';')?;
+        let instance = instance.get(..end)?;
+        let open = format!("{keyword}(");
+        let at = find_bytes(instance, open.as_bytes())?;
+        let text: String = instance
+            .get(at + open.len()..)?
+            .iter()
+            .map(|&b| char::from(b))
+            .skip_while(char::is_ascii_whitespace)
+            .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | '+' | '-' | 'E' | 'e'))
+            .collect();
+        return (!text.is_empty()).then_some(text);
+    }
+    None
+}
+
+/// The first position of `needle` in `haystack`.
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// The corpus directory, or `None` when `SOLIDCORE_STEP_CORPUS` is unset.
@@ -83,12 +197,14 @@ pub fn parse(bytes: &[u8]) -> StepFile {
     part21::parse(bytes, &Limits::default()).expect("the file parses")
 }
 
-/// Every geometric validation volume of `file`, in file order, converted to mm³.
+/// Every geometric validation volume of `file` (parsed from `bytes`), in file order,
+/// converted to mm³.
 ///
 /// # Errors
 ///
-/// When a volume's unit cannot be resolved to lengths.
-pub fn validation_volumes(file: &StepFile) -> Result<Vec<ValidationVolume>, String> {
+/// When a volume's unit cannot be resolved to lengths, or its written number cannot be
+/// read back from `bytes`.
+pub fn validation_volumes(file: &StepFile, bytes: &[u8]) -> Result<Vec<ValidationVolume>, String> {
     let mut out = Vec::new();
     for instance in file.entities.values() {
         let Some(link) = instance.record("PROPERTY_DEFINITION_REPRESENTATION") else {
@@ -126,11 +242,15 @@ pub fn validation_volumes(file: &StepFile) -> Result<Vec<ValidationVolume>, Stri
                 .ok_or_else(|| format!("#{item}: VOLUME_MEASURE is not a number"))?;
             let unit = ref_at(measure, 2).ok_or_else(|| format!("#{item}: no unit"))?;
             let factor = volume_mm3(file, unit).map_err(|error| format!("#{item}: {error}"))?;
+            let literal = written_literal(bytes, item, "VOLUME_MEASURE")
+                .filter(|text| text.parse::<f64>() == Ok(written))
+                .ok_or_else(|| format!("#{item}: the written VOLUME_MEASURE is not {written}"))?;
             out.push(ValidationVolume {
                 property,
                 definition: ref_at(definition, 2).unwrap_or_default(),
                 description: str_at(definition, 1).unwrap_or_default().to_string(),
                 written,
+                literal,
                 mm3: written * factor,
             });
         }
@@ -138,27 +258,33 @@ pub fn validation_volumes(file: &StepFile) -> Result<Vec<ValidationVolume>, Stri
     Ok(out)
 }
 
-/// The one validation volume of `file` in mm³: `None` where the file has none, else the
-/// value every validation volume of the file gives (a file often writes the same value
-/// twice, on the part and on its shape aspect).
+/// The one validation volume of `file` (parsed from `bytes`): `None` where the file has
+/// none, else the first, when every validation volume of the file gives the same value
+/// to the digits written (a file often writes it twice, on the part and on its shape
+/// aspect).
 ///
 /// # Errors
 ///
-/// When a unit cannot be resolved, or the file's validation volumes disagree.
-pub fn validation_volume(file: &StepFile) -> Result<Option<f64>, String> {
-    let volumes = validation_volumes(file)?;
+/// When a unit cannot be resolved, or two of the file's validation volumes differ by
+/// more than their written digits allow.
+pub fn validation_volume(
+    file: &StepFile,
+    bytes: &[u8],
+) -> Result<Option<ValidationVolume>, String> {
+    let volumes = validation_volumes(file, bytes)?;
     let Some(first) = volumes.first() else {
         return Ok(None);
     };
     for other in &volumes {
-        if (other.mm3 - first.mm3).abs() > 1e-12 * first.mm3.abs().max(other.mm3.abs()) {
+        let allowed = first.digits() * first.mm3.abs() + other.digits() * other.mm3.abs();
+        if (other.mm3 - first.mm3).abs() > allowed {
             return Err(format!(
                 "validation volumes disagree: #{} {} mm³, #{} {} mm³",
                 first.property, first.mm3, other.property, other.mm3
             ));
         }
     }
-    Ok(Some(first.mm3))
+    Ok(Some(first.clone()))
 }
 
 /// The body entities `step_import` maps, as the file declares them: (`#id`, entity,
@@ -211,6 +337,166 @@ fn shell_faces(file: &StepFile, id: u64) -> usize {
         }
         _ => 0,
     }
+}
+
+/// The shape a file describes, as far as two exports of one part must agree on it
+/// whatever their faces: the sizes of its vertices' box and its curved-surface radii,
+/// all in mm. Two exporters split a part's periodic faces differently (one
+/// cylinder face or two halves), so face, edge and vertex counts are not compared.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Form {
+    /// The box of the `VERTEX_POINT`s, its three sizes in ascending order (exports place
+    /// the part differently, so the axes are not compared).
+    pub box_sizes: [f64; 3],
+    /// The radii of the `CYLINDRICAL_SURFACE`s, `SPHERICAL_SURFACE`s and
+    /// `TOROIDAL_SURFACE`s (major, minor), in file order. Cones are left out: their
+    /// radius depends on where the export places the axis.
+    pub radii: Vec<(&'static str, Vec<f64>)>,
+    /// The file's largest `UNCERTAINTY_MEASURE_WITH_UNIT`, in mm: how far it allows its
+    /// geometry to be from the model.
+    pub uncertainty: f64,
+}
+
+/// The [`Form`] of `file`.
+///
+/// # Errors
+///
+/// When its length unit or uncertainty cannot be resolved, or it has no vertex.
+pub fn form(file: &StepFile) -> Result<Form, String> {
+    let mm = file_length_mm(file)?;
+    let mut uncertainty: f64 = 0.0;
+    let mut low = [f64::INFINITY; 3];
+    let mut high = [f64::NEG_INFINITY; 3];
+    let mut radii: Vec<(&'static str, Vec<f64>)> = Vec::new();
+    for instance in file.entities.values() {
+        if let Some(measure) = instance.record("UNCERTAINTY_MEASURE_WITH_UNIT") {
+            let value = measure
+                .params
+                .first()
+                .and_then(Param::as_f64)
+                .ok_or("uncertainty value")?;
+            let unit = ref_at(measure, 1).ok_or("uncertainty unit")?;
+            uncertainty = uncertainty.max(value * length_mm(file, unit, 0)?);
+        }
+        let Instance::Simple(record) = instance else {
+            continue;
+        };
+        let number = |index: usize| record.params.get(index).and_then(Param::as_f64);
+        match record.name.as_str() {
+            "VERTEX_POINT" => {
+                let point = ref_at(record, 1)
+                    .and_then(|p| file.entities.get(&p))
+                    .and_then(|p| p.record("CARTESIAN_POINT"))
+                    .and_then(|p| p.params.get(1))
+                    .and_then(Param::as_list)
+                    .ok_or("a vertex without a point")?;
+                for (axis, coordinate) in point.iter().take(3).enumerate() {
+                    let value = coordinate.as_f64().ok_or("a coordinate")? * mm;
+                    low[axis] = low[axis].min(value);
+                    high[axis] = high[axis].max(value);
+                }
+            }
+            "CYLINDRICAL_SURFACE" | "SPHERICAL_SURFACE" => {
+                let kind = if record.name == "CYLINDRICAL_SURFACE" {
+                    "cylinder"
+                } else {
+                    "sphere"
+                };
+                radii.push((kind, vec![number(2).ok_or("a radius")? * mm]));
+            }
+            "TOROIDAL_SURFACE" => radii.push((
+                "torus",
+                vec![
+                    number(2).ok_or("a major radius")? * mm,
+                    number(3).ok_or("a minor radius")? * mm,
+                ],
+            )),
+            _ => {}
+        }
+    }
+    if !low[0].is_finite() {
+        return Err("no vertex".into());
+    }
+    let mut box_sizes = [high[0] - low[0], high[1] - low[1], high[2] - low[2]];
+    box_sizes.sort_by(f64::total_cmp);
+    Ok(Form {
+        box_sizes,
+        radii,
+        uncertainty,
+    })
+}
+
+/// Whether `a` and `b` are one part: the same box sizes, and the same set of radii (each
+/// kind and radius of one has a match in the other), within the larger of the two
+/// files' uncertainties.
+///
+/// # Errors
+///
+/// What differs.
+pub fn same_form(a: &Form, b: &Form) -> Result<(), String> {
+    let tolerance = a.uncertainty.max(b.uncertainty);
+    let close = |x: &f64, y: &f64| (x - y).abs() <= tolerance;
+    if !a
+        .box_sizes
+        .iter()
+        .zip(&b.box_sizes)
+        .all(|(x, y)| close(x, y))
+    {
+        return Err(format!(
+            "box sizes {:?} and {:?} mm differ by more than {tolerance} mm",
+            a.box_sizes, b.box_sizes
+        ));
+    }
+    let unmatched = |from: &Form, to: &Form| -> Vec<(&'static str, Vec<f64>)> {
+        from.radii
+            .iter()
+            .filter(|(kind, radii)| {
+                !to.radii.iter().any(|(k, r)| {
+                    k == kind
+                        && r.len() == radii.len()
+                        && r.iter().zip(radii).all(|(p, q)| close(p, q))
+                })
+            })
+            .cloned()
+            .collect()
+    };
+    let (only_a, only_b) = (unmatched(a, b), unmatched(b, a));
+    if !only_a.is_empty() || !only_b.is_empty() {
+        return Err(format!(
+            "radii without a match within {tolerance} mm: first {only_a:?}, second {only_b:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// mm per unit of the length unit of `file`'s geometry: the `LENGTH_UNIT` of its
+/// `GLOBAL_UNIT_ASSIGNED_CONTEXT`s, which must all agree.
+fn file_length_mm(file: &StepFile) -> Result<f64, String> {
+    let mut found: Option<f64> = None;
+    for instance in file.entities.values() {
+        let Some(context) = instance.record("GLOBAL_UNIT_ASSIGNED_CONTEXT") else {
+            continue;
+        };
+        let units = context
+            .params
+            .first()
+            .and_then(Param::as_list)
+            .unwrap_or_default();
+        for unit in units.iter().filter_map(Param::as_ref_id) {
+            if file
+                .entities
+                .get(&unit)
+                .is_some_and(|u| u.record("LENGTH_UNIT").is_some())
+            {
+                let mm = length_mm(file, unit, 0)?;
+                if found.is_some_and(|f| f != mm) {
+                    return Err(format!("length units disagree: {found:?} and {mm} mm"));
+                }
+                found = Some(mm);
+            }
+        }
+    }
+    found.ok_or_else(|| "no length unit".into())
 }
 
 /// mm³ per unit of the volume unit `#id`.
