@@ -1049,12 +1049,8 @@ fn read_face_surface(rd: &mut Rd<'_>) -> Result<(Option<Surface>, bool), Harness
 }
 
 /// Builds the Rust B-rep from the shim's export (see the module docs), with its cached
-/// gaps refilled ([`super::topology_vertexuse::refill_gaps`]).
-pub(crate) fn import(ex: &[f64]) -> Result<Brep, HarnessError> {
-    import_with_types(ex).map(|(b, _)| b)
-}
-
-/// [`import`], with the type codes of the geometry it imported.
+/// gaps refilled ([`super::topology_vertexuse::refill_gaps`]), and the type codes of the
+/// geometry it imported.
 pub(crate) fn import_with_types(ex: &[f64]) -> Result<(Brep, ImportTypes), HarnessError> {
     let (mut b, types) = import_raw_with_types(ex)?;
     super::topology_vertexuse::refill_gaps(&mut b);
