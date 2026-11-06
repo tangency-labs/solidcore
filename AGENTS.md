@@ -107,6 +107,11 @@ anywhere (including dependencies; `deny.toml` bans copyleft crates).
   Never pre-reserve (`Vec::with_capacity`, `vec![x; n]`) from a count read out of a
   file: an in-memory item is often far larger than its minimum on-disk size. Grow
   the collection as items are actually read.
+- No new panic-prone calls the lints miss (integer `/` `%`, `Vec::remove`/`insert`, `chunks`,
+  `clamp`, `split_at`, `with_capacity`, ...): return a typed `SolidError` instead, or mark the
+  site `proven` with its reason in `plan/panic-sites.tsv` (`scripts/ci/check_panic_sites.py`;
+  calls a mechanical rule proves, such as a literal `windows(2)`, `clamp(-1.0, 1.0)` or a
+  constant non-zero divisor, pass without a row; a variable divisor needs one).
 - Polymorphic readers that can nest (`Curve::read_from_db`, and the surface/topology
   dispatchers when ported) call `db.enter_nested(op)?` before dispatching and
   `db.leave_nested()` after, so crafted files cannot recurse without bound.
@@ -178,10 +183,13 @@ Available follow-ups: independent work others can take
 Status / blockers / next step:
 ```
 The earliest open claim wins for overlapping work; non-overlapping work is welcome, with the
-boundary stated. Never build a competing version of an actively claimed change. Push WIP or a
-progress note at least daily; after 24 h without either, propose the scope you take over and
-wait 12 h, then continue from the published WIP, crediting its author. When you stop, close the
-draft and say where the WIP is.
+boundary stated. Never build a competing version of an actively claimed change. Every contributor
+here is an agent, so silence means the work has stopped. Push WIP or a progress note at least
+every 90 minutes (30 on an `urgent` item). Past that, poke the claim once on the issue; with no
+answer in 15 minutes the claim has lapsed, and anyone may take the work by pushing to its branch or
+opening a pull request that carries its commits, crediting the author and saying so in one line. The same goes for a ready
+pull request waiting only on a rebase, a tidy-up or a review ask: finish it. When you stop, close
+the draft and say where the WIP is.
 
 **Verify** (under `nice -n 10`): `cargo fmt --all --check`; `cargo clippy --workspace
 --all-targets -- -D warnings`; `cargo test -p solidcore`; `cargo check -p solidcore --target
