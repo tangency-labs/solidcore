@@ -11,6 +11,7 @@ use crate::kernel::Kernel;
 use crate::math::Vec3;
 use crate::surface::sphere::{Sphere, SphereOptions};
 use crate::surface::surface::Surface;
+use crate::surface::torus::{Torus, TorusOptions};
 use crate::topology::brep::p2::ArenaNotifyState;
 use crate::topology::brep::p3::new_brep;
 use crate::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
@@ -31,7 +32,7 @@ fn projected_tilted_sphere_face_maximum_uses_projection_metric() {
 }
 
 fn check_sphere_projection(tilt: f64, scale: f64) {
-    let mut k = Kernel::default();
+    let k = Kernel::default();
     let mut sphere = Sphere::new(
         &k,
         Vec3::new(0.0, 0.0, -1.0),
@@ -43,7 +44,59 @@ fn check_sphere_projection(tilt: f64, scale: f64) {
     )
     .unwrap();
     sphere.make_nurb(&k).unwrap();
-    let surface = Surface::from(sphere);
+    let angle = tilt.to_radians();
+    let normal = Vec3::new(angle.sin(), 0.0, angle.cos()) * scale;
+    let query = Vec3::new(0.2, 0.3, 2.0);
+    let expected = 0.5 * normal.length_squared()
+        + normal
+            .cross(query - Vec3::new(0.0, 0.0, -1.0))
+            .cross(normal)
+            .length();
+    check_face_projection(k, Surface::from(sphere), normal, expected);
+}
+
+#[test]
+fn projected_trimmed_sphere_maximum_keeps_the_trim_endpoint() {
+    let k = Kernel::default();
+    let mut sphere = Sphere::new(
+        &k,
+        Vec3::new(0.0, 0.0, -1.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Extent2d::from_bounds(0.0, -45.0, 180.0, 45.0),
+        0.5,
+        SphereOptions::default(),
+    )
+    .unwrap();
+    sphere.make_nurb(&k).unwrap();
+    // The unconstrained farthest equator point is outside this half-longitude
+    // face. Its farthest included point is the trim endpoint (-0.5, 0, -1).
+    let expected = (0.7_f64 * 0.7 + 0.3 * 0.3).sqrt();
+    check_face_projection(k, Surface::from(sphere), Vec3::new(0.0, 0.0, 1.0), expected);
+}
+
+#[test]
+fn projected_torus_maximum_matches_the_capsule_projection() {
+    let k = Kernel::default();
+    let mut torus = Torus::new(
+        &k,
+        Vec3::new(0.0, 0.0, -2.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        Extent2d::from_bounds(0.0, 0.0, 360.0, 360.0),
+        1.0,
+        0.25,
+        TorusOptions::default(),
+    )
+    .unwrap();
+    torus.make_nurb(&k).unwrap();
+    // The projected torus is the radius-0.25 capsule around the y-axis segment
+    // [-1, 1]. The farther cap is centered at (0, -1).
+    let expected = (0.2_f64 * 0.2 + 1.3 * 1.3).sqrt() + 0.25;
+    check_face_projection(k, Surface::from(torus), Vec3::new(0.0, 0.0, 1.0), expected);
+}
+
+fn check_face_projection(mut k: Kernel, surface: Surface, normal: Vec3, expected: f64) {
     let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
     let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
     let mut state = ArenaNotifyState::new(&b);
@@ -88,8 +141,6 @@ fn check_sphere_projection(tilt: f64, scale: f64) {
         owner_of: &|_| None,
     };
     let query = Vec3::new(0.2, 0.3, 2.0);
-    let angle = tilt.to_radians();
-    let normal = Vec3::new(angle.sin(), 0.0, angle.cos()) * scale;
     let tol = 1e-5;
     let mut solver = TopologySolver::new(
         &k,
@@ -113,11 +164,6 @@ fn check_sphere_projection(tilt: f64, scale: f64) {
     );
     let point = surface.evaluate_point(&k, uv).unwrap();
     let measured = normal.cross(point - query).cross(normal).length();
-    let expected = 0.5 * normal.length_squared()
-        + normal
-            .cross(query - Vec3::new(0.0, 0.0, -1.0))
-            .cross(normal)
-            .length();
     assert!(
         (solution.start.solution_value - expected).abs() <= tol,
         "value={}, expected={expected}",
