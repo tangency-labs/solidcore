@@ -14,6 +14,7 @@
 //! | [`OffsetFailure::EdgeVanishes`]        | `SM_ERR_OFFSET_EDGE_VANISHES` (fork 34318f4) |
 //! | [`OffsetFailure::DistanceUnresolved`]  | `SM_ERR_INVALID_INPUT` (solidcore-native) |
 //! | [`OffsetFailure::ToleranceUnresolved`] | `SM_ERR_INVALID_INPUT` (solidcore-native, WR-749) |
+//! | [`OffsetFailure::SeamOpened`]          | `SM_ERR` (solidcore-native)               |
 //!
 //! Deviations: not upstream. Entity ids are those of the operation's input B-rep.
 
@@ -102,6 +103,15 @@ pub enum OffsetFailure {
         /// The tolerance asked for, as given (the executive takes its magnitude).
         tolerance: f64,
     },
+    /// A local operation gives `face`, which meets itself across an edge (a seam of its
+    /// closed surface), a surface that is not closed. Each moved edge is found again where
+    /// the new surfaces on its two sides meet; across the seam both sides are the face's
+    /// own new surface, which an open surface cannot close onto itself, so the face has
+    /// no edge there (the topology the operation keeps cannot be built).
+    SeamOpened {
+        /// The face, of the operation's input.
+        face: FaceId,
+    },
 }
 
 /// How loops of an offset face touch without crossing ([`OffsetFailure::WallsTouch`]).
@@ -149,7 +159,8 @@ impl OffsetFailure {
         match *self {
             Self::Folds { face, .. }
             | Self::NotCertified { face, .. }
-            | Self::Collapses { face, .. } => Some(EntityRef::Face(face)),
+            | Self::Collapses { face, .. }
+            | Self::SeamOpened { face } => Some(EntityRef::Face(face)),
             Self::WallsTouch { face, .. } | Self::LoopsCross { face, .. } => {
                 face.map(EntityRef::Face)
             }
@@ -163,7 +174,10 @@ impl OffsetFailure {
     /// The status the C++ reports for the refusal (difftest's comparison detail).
     pub(crate) const fn comparison_status(&self) -> i32 {
         match self {
-            Self::Folds { .. } | Self::NotCertified { .. } | Self::Collapses { .. } => SM_ERR,
+            Self::Folds { .. }
+            | Self::NotCertified { .. }
+            | Self::Collapses { .. }
+            | Self::SeamOpened { .. } => SM_ERR,
             Self::WallsTouch { .. } => SM_ERR_OFFSET_WALLS_TOUCH,
             Self::LoopsCross { .. } => SM_ERR_BAD_INTERSECTIONS,
             Self::EdgeVanishes { .. } => SM_ERR_OFFSET_EDGE_VANISHES,
@@ -182,6 +196,7 @@ impl OffsetFailure {
             Self::WallsTouch { .. } => ErrorKind::OffsetWallsTouch,
             Self::LoopsCross { .. } => ErrorKind::OffsetLoopsCross,
             Self::EdgeVanishes { .. } => ErrorKind::OffsetEdgeVanishes,
+            Self::SeamOpened { .. } => ErrorKind::Unsupported,
             Self::DistanceUnresolved { .. } | Self::ToleranceUnresolved { .. } => {
                 ErrorKind::InvalidInput
             }
@@ -316,6 +331,12 @@ impl core::fmt::Display for OffsetFailure {
                 "invalid input: offset distance {distance:e} is not a finite length of at \
                  least {resolution:e}, the B-rep tolerance (the smallest distance the model \
                  resolves)"
+            ),
+            Self::SeamOpened { face } => write!(
+                f,
+                "face {} meets itself across a seam and is given a surface that is not \
+                 closed: the seam has no edge on an open surface",
+                face.index()
             ),
             Self::ToleranceUnresolved { tolerance } => write!(
                 f,
