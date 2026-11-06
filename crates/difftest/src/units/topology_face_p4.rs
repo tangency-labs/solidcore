@@ -1,23 +1,21 @@
-//! Runner for unit `topology.face_p4`. C++: `solidcore_ffi::units::topology_face_p4`.
+//! Runner for unit `topology.face_p4`. Ported from upstream `SmFace.cpp` (the shim
+//! `harness/cpp/shim/topology_face_p4.cpp` was the reference); checked against its golden.
 //! Rust: `solidcore::topology::face::p4`.
 //!
 //! Every op runs on a B-rep of unit `topology.vertexuse` (upstream `.smb` files, faces of
-//! B-spline surfaces, real `SmPlane`s or analytic surfaces): the C++ side builds a real
-//! `SmBrep` and runs the `SmFace` member on the selected face of its native geometry; the
-//! Rust side builds the same B-rep itself ([`super::topology_face_p1::own_brep`]: the
-//! Rust kernel's builders, or the Rust `.smb` reader, renumbered into the shim's
-//! traversal order) and runs the port. No C++ state reaches the Rust side. Both sides
-//! produce one flat record (`out`, laid out as in the ffi module): traversal indices,
-//! flags, statuses, line/face solutions and seam classification point classes.
+//! B-spline surfaces, planes or analytic surfaces), built by
+//! [`super::topology_face_p1::own_brep`] (the Rust kernel's builders, or the Rust `.smb`
+//! reader, renumbered into the shim's traversal order). The runner records one flat
+//! record (`out`): traversal indices, flags, statuses, line/face solutions and seam
+//! classification point classes.
 //!
 //! **Selectors.** The face is taken modulo the face count, the loop modulo the loop
 //! count (`-1` stays "no target array"), a `Connected` target modulo its kind's count.
 //! `Sector` picks the `edge`-th edge of the face (modulo its edge count) and the vertex
 //! at the end it starts from (`at_start`), so the curve leaves a face vertex; the
-//! selectors are resolved by each side on its own B-rep (both in the shim's traversal
-//! order).
+//! selectors are resolved on the B-rep in the shim's traversal order.
 //!
-//! **Not compared.** Attribute filters (`pOptAttributeId`): both sides pass none. The
+//! **Not recorded.** Attribute filters (`pOptAttributeId`): none is passed. The
 //! solutions' objects of `Line` (the surface pointer upstream, a handle here).
 //!
 //! Deferred: `Line` ranges (`sm_FaceClassifyUVLine`, `query.face_p3`), `Sector` past
@@ -27,7 +25,6 @@
 //! `intersect.curve_class_p4`).
 
 use std::cell::RefCell;
-use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -52,8 +49,6 @@ use solidcore::topology::{
     VertexId, VertexuseId,
 };
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::topology_face_p4::{self as ffi, Op};
-use solidcore_ffi::units::topology_vertexuse as fixture;
 
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::case::CaseContext;
@@ -200,132 +195,9 @@ pub(super) fn brep_block(b: &BrepIn) -> Result<Vec<f64>, HarnessError> {
     Ok(out)
 }
 
-/// The op code and its arguments after the face index (selectors resolved).
-fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
-    match op {
-        OpIn::Brep => (Op::Brep, vec![]),
-        OpIn::List {
-            kind,
-            tgt_only,
-            loop_,
-        } => {
-            let op = match kind {
-                ListKind::Edges => Op::Edges,
-                ListKind::Vertices => Op::Vertices,
-                ListKind::Loopuses => Op::UpLoopuses,
-                ListKind::Vertexuses => Op::UpVertexuses,
-                ListKind::Edgeuses => Op::UpEdgeuses,
-            };
-            (op, vec![flag(*tgt_only), *loop_ as f64])
-        }
-        OpIn::Connected { kind, index } => (Op::Connected, vec![*kind as f64, *index as f64]),
-        OpIn::Line {
-            p,
-            v,
-            ivl,
-            fire,
-            tol,
-        } => {
-            let mut a: Vec<f64> = p.iter().chain(v.iter()).copied().collect();
-            let [t0, t1] = ivl.unwrap_or([0.0, 0.0]);
-            a.extend([
-                flag(ivl.is_some()),
-                t0,
-                t1,
-                flag(*fire),
-                flag(tol.is_none()),
-                tol.unwrap_or(0.0),
-            ]);
-            (Op::Line, a)
-        }
-        OpIn::Sector {
-            edge,
-            vertex,
-            use_uv,
-            at_start,
-            opposite,
-            tol,
-            validate,
-            uv_ok,
-        } => (
-            Op::Sector,
-            vec![
-                *vertex as f64,
-                *edge as f64,
-                flag(*use_uv),
-                flag(*at_start),
-                flag(*opposite),
-                tol.unwrap_or(0.0),
-                flag(*validate),
-                flag(*uv_ok),
-                flag(tol.is_none()),
-            ],
-        ),
-        OpIn::Face37 => (Op::Face37, vec![]),
-        OpIn::Seam {
-            outer,
-            periodic_u,
-            periodic_v,
-        } => (
-            Op::Seam,
-            vec![flag(*outer), *periodic_u as f64, *periodic_v as f64],
-        ),
-    }
-}
-
-/// A cached export with its key (the `.smb` path and the block's bits).
-type CachedExport = (String, Vec<u64>, Rc<Vec<f64>>);
-
-thread_local! {
-    /// The last few exports (both sides of a case export the same B-rep).
-    static EXPORTS: RefCell<Vec<CachedExport>> = const { RefCell::new(Vec::new()) };
-}
-
-/// The export of a B-rep.
-fn export_of(brep: &BrepIn) -> Result<Rc<Vec<f64>>, HarnessError> {
-    let path = shared::path_of(brep)?;
-    let block = brep_block(brep)?;
-    let bits: Vec<u64> = block.iter().map(|x| x.to_bits()).collect();
-    if let Some(e) = EXPORTS.with(|c| {
-        c.borrow()
-            .iter()
-            .find(|(p, b, _)| *p == path && *b == bits)
-            .map(|(_, _, e)| Rc::clone(e))
-    }) {
-        return Ok(e);
-    }
-    let e = Rc::new(
-        fixture::eval(fixture::Op::Export, &path, &block)
-            .map_err(|e| harness(format!("c++ export: {e}")))?,
-    );
-    EXPORTS.with(|c| {
-        let mut c = c.borrow_mut();
-        if c.len() >= 4 {
-            c.remove(0);
-        }
-        c.push((path, bits, Rc::clone(&e)));
-    });
-    Ok(e)
-}
-
-/// A resolved case (inputs and the B-rep export), or the output of a case that ends
-/// before the op.
-type Resolved = Result<(Inputs, Rc<Vec<f64>>), Output>;
-
 /// The edges of a face (`GetEdges`), for the `Sector` selectors.
 fn face_edges(b: &Brep, f: FaceId) -> Result<Vec<EdgeId>, HarnessError> {
     fp4::edges(b, f, None, false, None).map_err(|e| harness(format!("face edges: {e}")))
-}
-
-/// The C++ side's resolution: the selectors resolved on the import of the shim's export
-/// (the C++ B-rep's own traversal order).
-fn resolve(i: &Inputs) -> Result<Resolved, HarnessError> {
-    let ex = export_of(&i.brep)?;
-    let Some(c) = fixture::counts(&ex) else {
-        return Ok(Err(Output::new().values("out", ex.to_vec())));
-    };
-    let (b, _) = shared::import(&ex)?;
-    Ok(resolve_with(i, c, &b)?.map(|r| (r, ex)))
 }
 
 /// The inputs with the selectors resolved on a B-rep `b` with entity counts `c`, or the
@@ -393,26 +265,6 @@ fn resolve_with(
         _ => {}
     }
     Ok(Ok(r))
-}
-
-fn input_of(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
-    let (op, args) = op_args(&i.op);
-    let mut v = vec![i.face as f64];
-    v.extend(args);
-    v.extend(brep_block(&i.brep)?);
-    Ok((op, shared::path_of(&i.brep)?, v))
-}
-
-// ---- C++ side ---------------------------------------------------------------------------
-
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let (r, _) = match resolve(i)? {
-        Ok(x) => x,
-        Err(o) => return Ok(o),
-    };
-    let (op, path, input) = input_of(&r)?;
-    let out = ffi::eval(op, &path, &input).map_err(|e| harness(format!("c++: {e}")))?;
-    Ok(Output::new().values("out", out))
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -1038,10 +890,6 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.face_p4"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
