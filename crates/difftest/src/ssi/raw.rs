@@ -7,7 +7,7 @@
 use serde_json::{json, Map, Value};
 
 use super::geom::P3;
-use crate::{Deferred, HarnessError, Output};
+use crate::{Deferred, HarnessError};
 
 /// `SM_SUCCESS`.
 pub const SM_SUCCESS: i64 = 1000;
@@ -78,11 +78,6 @@ pub fn type_name(t: i64) -> &'static str {
         -1 => "n/a",
         _ => "?",
     }
-}
-
-/// Runner name -> `SmTsectCurveType` value (`-1` for `n/a`, `-2` for anything else).
-pub fn type_code(name: &str) -> i64 {
-    (-1..=6).find(|&t| type_name(t) == name).unwrap_or(-2)
 }
 
 fn num(x: f64) -> Value {
@@ -274,32 +269,6 @@ impl RawOutput {
             deferred,
         })
     }
-
-    /// The comparable record for the Rust-vs-C++ parity check: status, domains, curve
-    /// count, per-curve type, class, deviation, interval and every sample.
-    pub fn parity_output(&self) -> Output {
-        let mut o = Output::new()
-            .int("status", self.status)
-            .values("domains", [self.domain1, self.domain2].concat())
-            .int("n_curves", self.curves.len() as i64)
-            .points("points", &self.points);
-        for (i, c) in self.curves.iter().enumerate() {
-            let k = |s: &str| format!("curve{i:03}.{s}");
-            o = o
-                .ints(
-                    &k("kind"),
-                    vec![type_code(&c.ty), c.class_type.unwrap_or(-1)],
-                )
-                .scalar(&k("deviation"), c.deviation)
-                .values(&k("interval"), c.interval.map_or_else(Vec::new, Vec::from))
-                .points(&k("xyz"), &c.xyz)
-                .points(&k("uv1"), &c.uv1)
-                .points(&k("s1_at_uv"), &c.s1_at_uv)
-                .points(&k("uv2"), &c.uv2)
-                .points(&k("s2_at_uv"), &c.s2_at_uv);
-        }
-        o
-    }
 }
 
 #[cfg(test)]
@@ -310,7 +279,7 @@ mod tests {
     fn json_round_trip_with_nan() {
         let r = RawOutput {
             case: "c".into(),
-            engine: "cpp".into(),
+            engine: "rust".into(),
             status: SM_SUCCESS,
             approx_tol: Some(1e-6),
             curves: vec![RawCurve {

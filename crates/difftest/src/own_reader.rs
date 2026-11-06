@@ -176,44 +176,24 @@ pub(crate) type EdgeuseCase = (
 
 /// A `sc_edgeuse_graph.h` case's entity counts, B-rep and geometry types, or the output
 /// of a failed build (`brep_build_status_<status>`, or the deferral of an unported
-/// callee). With `own` (a runner's Rust side) the B-rep is [`brep_in_order`]'s and every
-/// geometry is held exactly; else (a runner's C++ side, which resolves its selectors on
-/// the B-rep the shim builds) it is imported from the shim's export.
+/// callee). The B-rep is [`brep_in_order`]'s and every geometry is held exactly.
 ///
 /// # Errors
 ///
-/// As [`brep_in_order`]; a harness error when the C++ export fails.
+/// As [`brep_in_order`].
 pub(crate) fn edgeuse_case(
     src: &crate::units::topology_edgeuse_p1::BrepIn,
     validate_only: bool,
     init_gaps: bool,
-    own: bool,
 ) -> Result<Result<EdgeuseCase, crate::Output>, HarnessError> {
     use crate::own_builder::{counts, failed_output, Built, Conventions};
-    use crate::units::topology_edgeuse_p1::{
-        brep_block_of, import_with_types, path_of, ImportTypes,
-    };
-    use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
-    if own {
-        let conv = &Conventions::EDGEUSE_GRAPH;
-        let k = &mut Kernel::default();
-        return Ok(
-            match brep_in_order(k, src, validate_only, init_gaps, conv)? {
-                Built::Brep(b) => Ok((counts(&b), *b, ImportTypes::default())),
-                Built::Failed(e) => Err(failed_output(&e)),
-            },
-        );
-    }
-    let path = path_of(Some(src))?;
-    let block = brep_block_of(Some(src), validate_only, init_gaps)?;
-    let ex = crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-        ffi1::eval(ffi1::Op::Export, &path, &block)
-    })
-    .map_err(|e| HarnessError::new(format!("c++ export: {e}")))?;
-    let Some(c) = ffi1::counts(&ex) else {
-        let st = ex.get(1).copied().unwrap_or(0.0);
-        return Ok(Err(crate::Output::err(format!("brep_build_status_{st}"))));
-    };
-    let (b, types) = import_with_types(&ex)?;
-    Ok(Ok((c, b, types)))
+    use crate::units::topology_edgeuse_p1::ImportTypes;
+    let conv = &Conventions::EDGEUSE_GRAPH;
+    let k = &mut Kernel::default();
+    Ok(
+        match brep_in_order(k, src, validate_only, init_gaps, conv)? {
+            Built::Brep(b) => Ok((counts(&b), *b, ImportTypes::default())),
+            Built::Failed(e) => Err(failed_output(&e)),
+        },
+    )
 }

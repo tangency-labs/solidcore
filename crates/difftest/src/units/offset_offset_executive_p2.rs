@@ -2027,12 +2027,12 @@ fn generated(rng: &mut Rng) -> Inputs {
 mod tests {
     use super::*;
 
-    /// The Rust result bodies of the cases moved from the C++ reference, measured on their
-    /// own ([`crate::soundness::probe`]).
+    /// The Rust result bodies of the cases named in `$SC_SOUNDNESS_CASES`, measured on their own
+    /// ([`crate::soundness::probe`]).
     #[test]
-    #[ignore = "a measurement for the moved cases' record, run on demand"]
+    #[ignore = "a measurement run on demand (`$SC_SOUNDNESS_CASES`)"]
     fn moved_cases_results_measured() {
-        crate::soundness::probe(&Runner, "offset.offset_executive_p2");
+        crate::soundness::probe(&Runner);
     }
     use std::collections::BTreeSet;
 

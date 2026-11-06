@@ -1,10 +1,7 @@
-//! Runs one SSI corpus case through each engine and returns its [`RawOutput`]:
-//!
-//! * `cpp`: upstream SMLib through `solidcore_ffi::units::ssi_corpus` (shim
-//!   `harness/cpp/shim/ssi_corpus.cpp`, which mirrors the corpus runner's `gsi` mode);
-//! * `rust`: the same surfaces built with solidcore's own types and
-//!   [`Surface::global_surface_intersect`], sampled the same way. Every
-//!   [`SolidError::Unported`] on the way makes the case deferred for Rust.
+//! Runs one SSI corpus case through the Rust port and returns its [`RawOutput`]: the
+//! case's surfaces built with solidcore's own types and intersected by
+//! [`Surface::global_surface_intersect`], every curve sampled at [`N_SAMPLES`] parameters.
+//! Every [`SolidError::Unported`] on the way makes the case deferred.
 
 use std::time::Instant;
 
@@ -13,36 +10,44 @@ use solidcore::geom::tol::approx_tol3d;
 use solidcore::kernel::Kernel;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::ssi_corpus::{self as ffi, SsiSurface, SsiSurfaceIn};
-use solidcore_ffi::FfiError;
 
 use super::case::{SsiCase, SurfaceSpec};
-use super::geom::P3;
 use super::kernel::{deferred_output, rust_surface, write_intersection};
-use super::raw::{type_name, RawCurve, RawOutput, N_SAMPLES, SM_SUCCESS};
+use super::raw::{RawOutput, SM_SUCCESS};
 
 /// `SM_ERR`.
 const SM_ERR: i64 = 1001;
 /// `SM_ERR_INVALID_INPUT`.
 const SM_ERR_INVALID_INPUT: i64 = 1007;
+/// Upstream `NL_MAXDEG`.
+const MAX_DEGREE: usize = 17;
+/// Largest control net accepted (`nu * nv`).
+const MAX_NET: usize = 1 << 22;
 
 pub use super::EngineFailure;
 
-fn ffi_surface(spec: &SurfaceSpec, domain: Option<[f64; 4]>) -> SsiSurfaceIn {
-    let surface = match spec.clone() {
+fn finite<'a>(v: impl IntoIterator<Item = &'a f64>) -> Result<(), String> {
+    if v.into_iter().all(|x| x.is_finite()) {
+        Ok(())
+    } else {
+        Err("ssi_corpus: non-finite value".into())
+    }
+}
+
+/// The input contract of a case's surface (ported from the reference's corpus wrapper):
+/// every number finite; for a NURBS surface degrees in `1..=NL_MAXDEG`, at least `p + 1`
+/// by `q + 1` control points and at most [`MAX_NET`], `nu * nv` points and weights,
+/// `n + p + 1` knots per direction, knots non-decreasing and weights positive.
+fn check_input(spec: &SurfaceSpec, domain: Option<[f64; 4]>) -> Result<(), String> {
+    let bad = |m: &str| Err(format!("ssi_corpus: {m}"));
+    match spec {
         SurfaceSpec::Plane {
             origin,
             xaxis,
             yaxis,
             u,
             v,
-        } => SsiSurface::Plane {
-            origin,
-            xaxis,
-            yaxis,
-            u,
-            v,
-        },
+        } => finite(origin.iter().chain(xaxis).chain(yaxis).chain(u).chain(v))?,
         SurfaceSpec::Cylinder {
             origin,
             xaxis,
@@ -50,27 +55,28 @@ fn ffi_surface(spec: &SurfaceSpec, domain: Option<[f64; 4]>) -> SsiSurfaceIn {
             radius,
             angle,
             height,
-        } => SsiSurface::Cylinder {
-            origin,
-            xaxis,
-            yaxis,
-            radius,
-            angle,
-            height,
-        },
+        } => finite(
+            origin
+                .iter()
+                .chain(xaxis)
+                .chain(yaxis)
+                .chain([radius])
+                .chain(angle)
+                .chain(height),
+        )?,
         SurfaceSpec::Cone {
             apex,
             xaxis,
             yaxis,
             half_angle_deg,
             height,
-        } => SsiSurface::Cone {
-            apex,
-            xaxis,
-            yaxis,
-            half_angle_deg,
-            height,
-        },
+        } => finite(
+            apex.iter()
+                .chain(xaxis)
+                .chain(yaxis)
+                .chain([half_angle_deg])
+                .chain(height),
+        )?,
         SurfaceSpec::Sphere {
             center,
             xaxis,
@@ -78,14 +84,15 @@ fn ffi_surface(spec: &SurfaceSpec, domain: Option<[f64; 4]>) -> SsiSurfaceIn {
             radius,
             lon,
             lat,
-        } => SsiSurface::Sphere {
-            center,
-            xaxis,
-            yaxis,
-            radius,
-            lon,
-            lat,
-        },
+        } => finite(
+            center
+                .iter()
+                .chain(xaxis)
+                .chain(yaxis)
+                .chain([radius])
+                .chain(lon)
+                .chain(lat),
+        )?,
         SurfaceSpec::Torus {
             center,
             xaxis,
@@ -94,15 +101,15 @@ fn ffi_surface(spec: &SurfaceSpec, domain: Option<[f64; 4]>) -> SsiSurfaceIn {
             minor_radius,
             major,
             minor,
-        } => SsiSurface::Torus {
-            center,
-            xaxis,
-            yaxis,
-            major_radius,
-            minor_radius,
-            major,
-            minor,
-        },
+        } => finite(
+            center
+                .iter()
+                .chain(xaxis)
+                .chain(yaxis)
+                .chain([major_radius, minor_radius])
+                .chain(major)
+                .chain(minor),
+        )?,
         SurfaceSpec::Nurbs {
             degree,
             knots_u,
@@ -111,131 +118,38 @@ fn ffi_surface(spec: &SurfaceSpec, domain: Option<[f64; 4]>) -> SsiSurfaceIn {
             nv,
             points,
             weights,
-        } => SsiSurface::Nurbs {
-            degree,
-            knots_u,
-            knots_v,
-            nu,
-            nv,
-            points,
-            weights,
-        },
-    };
-    SsiSurfaceIn { surface, domain }
-}
-
-/// Sequential reader over the shim's record.
-struct Rec<'a> {
-    v: std::slice::Iter<'a, f64>,
-}
-
-impl Rec<'_> {
-    fn num(&mut self) -> Result<f64, String> {
-        self.v
-            .next()
-            .copied()
-            .ok_or_else(|| "ssi_corpus: short record".to_string())
-    }
-    fn count(&mut self) -> Result<usize, String> {
-        let x = self.num()?;
-        if x >= 0.0 && x.fract() == 0.0 && x < 1e9 {
-            Ok(x as usize)
-        } else {
-            Err(format!("ssi_corpus: bad count {x}"))
-        }
-    }
-    fn p3(&mut self) -> Result<P3, String> {
-        Ok([self.num()?, self.num()?, self.num()?])
-    }
-    fn dom(&mut self) -> Result<[f64; 4], String> {
-        Ok([self.num()?, self.num()?, self.num()?, self.num()?])
-    }
-}
-
-/// Upstream `SmSurface::GlobalSurfaceIntersect` on the case (C++ via the shim).
-pub fn run_cpp(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFailure> {
-    let [(a, da), (b, db)] = &case.surfaces;
-    let s1 = ffi_surface(a, *da);
-    let s2 = ffi_surface(b, *db);
-    let t0 = Instant::now();
-    let rec = match ffi::intersect(&s1, &s2, tol, N_SAMPLES) {
-        Ok(r) => r,
-        Err(FfiError::Status(ffi::SC_ERR_BUILD)) => {
-            return Err(EngineFailure::Build("surface build error".into()))
-        }
-        Err(e @ FfiError::InvalidArgument(_)) => return Err(EngineFailure::Build(e.to_string())),
-        Err(e) => return Err(EngineFailure::Other(e.to_string())),
-    };
-    let time_ms = t0.elapsed().as_secs_f64() * 1000.0;
-    decode(case, tol, &rec, time_ms).map_err(EngineFailure::Other)
-}
-
-fn decode(
-    case: &SsiCase,
-    tol: Option<f64>,
-    rec: &[f64],
-    time_ms: f64,
-) -> Result<RawOutput, String> {
-    let mut r = Rec { v: rec.iter() };
-    let status = r.num()? as i64;
-    let domain1 = r.dom()?;
-    let domain2 = r.dom()?;
-    let n = r.count()?;
-    let mut curves = Vec::new();
-    for _ in 0..n {
-        let ty = r.num()? as i64;
-        let deviation = r.num()?;
-        let has3 = r.num()? != 0.0;
-        let (t0, t1) = (r.num()?, r.num()?);
-        let class = r.num()? as i64;
-        let nx = r.count()?;
-        let xyz = (0..nx).map(|_| r.p3()).collect::<Result<Vec<_>, _>>()?;
-        let mut uv = [Vec::new(), Vec::new()];
-        let mut at = [Vec::new(), Vec::new()];
-        for k in 0..2 {
-            let _has_uv = r.num()?;
-            let m = r.count()?;
-            let pts = (0..m)
-                .map(|_| Ok([r.num()?, r.num()?]))
-                .collect::<Result<Vec<[f64; 2]>, String>>()?;
-            let s = (0..m).map(|_| r.p3()).collect::<Result<Vec<_>, _>>()?;
-            if let (Some(u), Some(a)) = (uv.get_mut(k), at.get_mut(k)) {
-                *u = pts;
-                *a = s;
+        } => {
+            let [p, q] = *degree;
+            if !(1..=MAX_DEGREE).contains(&p) || !(1..=MAX_DEGREE).contains(&q) {
+                return bad("degree outside 1..=NL_MAXDEG");
             }
+            if *nu < p + 1 || *nv < q + 1 {
+                return bad("too few control points for the degree");
+            }
+            let Some(n) = nu.checked_mul(*nv) else {
+                return bad("net too large");
+            };
+            if n > MAX_NET || points.len() != n || weights.len() != n {
+                return bad("net size does not match nu * nv");
+            }
+            if knots_u.len() != nu + p + 1 || knots_v.len() != nv + q + 1 {
+                return bad("knot count does not match n + p + 1");
+            }
+            finite(knots_u.iter().chain(knots_v))?;
+            if knots_u
+                .windows(2)
+                .chain(knots_v.windows(2))
+                .any(|w| matches!(w, [a, b] if a > b))
+            {
+                return bad("decreasing knots");
+            }
+            if weights.iter().any(|w| !(w.is_finite() && *w > 0.0)) {
+                return bad("non-positive weight");
+            }
+            finite(points.iter().flatten())?;
         }
-        let [uv1, uv2] = uv;
-        let [s1_at_uv, s2_at_uv] = at;
-        curves.push(RawCurve {
-            ty: type_name(ty).to_string(),
-            deviation,
-            interval: has3.then_some([t0, t1]),
-            class_type: has3.then_some(class),
-            xyz,
-            uv1,
-            s1_at_uv,
-            uv2,
-            s2_at_uv,
-        });
     }
-    let np = r.count()?;
-    let points = (0..np).map(|_| r.p3()).collect::<Result<Vec<_>, _>>()?;
-    if r.v.next().is_some() {
-        return Err("ssi_corpus: trailing record data".into());
-    }
-    Ok(RawOutput {
-        case: case.id.clone(),
-        engine: "cpp".into(),
-        status,
-        status_name: None,
-        domain1,
-        domain2,
-        approx_tol: tol,
-        time_ms,
-        curves,
-        points,
-        deferred: None,
-    })
+    finite(domain.iter().flatten())
 }
 
 fn rust_status(e: &SolidError) -> (i64, Option<String>) {
@@ -249,16 +163,14 @@ fn rust_status(e: &SolidError) -> (i64, Option<String>) {
     }
 }
 
-/// The ported `Surface::global_surface_intersect` on the case, sampled like the C++ side.
+/// The ported `Surface::global_surface_intersect` on the case, every curve sampled at
+/// [`N_SAMPLES`] parameters.
 pub fn run_rust(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFailure> {
     let k = Kernel::default();
     let [(a, da), (b, db)] = &case.surfaces;
     let mut built = Vec::new();
     for (spec, dom) in [(a, da), (b, db)] {
-        // reject exactly what the C++ side's encoder rejects
-        ffi_surface(spec, *dom)
-            .encode()
-            .map_err(|e| EngineFailure::Build(e.to_string()))?;
+        check_input(spec, *dom).map_err(EngineFailure::Build)?;
         match rust_surface(&k, spec).map_err(EngineFailure::Build)? {
             Ok(s) => {
                 let d = match dom {

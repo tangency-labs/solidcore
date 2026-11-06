@@ -1,6 +1,7 @@
-//! Comparison of a C++ [`Output`] against a Rust [`Output`].
+//! Comparison of an expected [`Output`] against an actual one, and the value rule a golden
+//! check uses ([`values_agree`]).
 //!
-//! Rule for each float pair `(a, b)` (a = C++, b = Rust):
+//! Rule for each float pair `(a, b)` (a = expected, b = actual):
 //! * `a == b` (bitwise-equal value, including `+0 == -0` and equal infinities) passes;
 //! * both NaN passes; exactly one NaN fails;
 //! * otherwise passes iff `|a-b| <= REL_TOL * max(|a|,|b|)`;
@@ -34,10 +35,10 @@ pub struct AbsFloor {
 pub struct Mismatch {
     /// Path of the differing item, e.g. `values.basis[2]`, `topology.entities.faces`.
     pub field: String,
-    /// C++ side, rendered.
-    pub cpp: String,
-    /// Rust side, rendered.
-    pub rust: String,
+    /// Expected value, rendered.
+    pub expected: String,
+    /// Actual value, rendered.
+    pub actual: String,
     /// Relative error for float mismatches.
     pub rel_err: Option<f64>,
 }
@@ -128,15 +129,15 @@ fn render_f64(x: f64) -> String {
 }
 
 /// Compares two outputs. `floors` are the unit's documented absolute floors.
-pub fn compare(cpp: &Output, rust: &Output, floors: &[AbsFloor]) -> CaseDiff {
+pub fn compare(expected: &Output, actual: &Output, floors: &[AbsFloor]) -> CaseDiff {
     let mut d = CaseDiff::default();
 
-    if cpp.error.is_some() || rust.error.is_some() {
-        if cpp.error != rust.error {
+    if expected.error.is_some() || actual.error.is_some() {
+        if expected.error != actual.error {
             d.push(Mismatch {
                 field: "error".into(),
-                cpp: format!("{:?}", cpp.error),
-                rust: format!("{:?}", rust.error),
+                expected: format!("{:?}", expected.error),
+                actual: format!("{:?}", actual.error),
                 rel_err: None,
             });
         }
@@ -144,19 +145,19 @@ pub fn compare(cpp: &Output, rust: &Output, floors: &[AbsFloor]) -> CaseDiff {
     }
 
     // Floats.
-    for key in union_keys(cpp.values.keys(), rust.values.keys()) {
-        let (Some(a), Some(b)) = (cpp.values.get(&key), rust.values.get(&key)) else {
+    for key in union_keys(expected.values.keys(), actual.values.keys()) {
+        let (Some(a), Some(b)) = (expected.values.get(&key), actual.values.get(&key)) else {
             d.push(missing(
                 &format!("values.{key}"),
-                cpp.values.contains_key(&key),
+                expected.values.contains_key(&key),
             ));
             continue;
         };
         if a.len() != b.len() {
             d.push(Mismatch {
                 field: format!("values.{key}.len"),
-                cpp: a.len().to_string(),
-                rust: b.len().to_string(),
+                expected: a.len().to_string(),
+                actual: b.len().to_string(),
                 rel_err: None,
             });
             continue;
@@ -174,8 +175,8 @@ pub fn compare(cpp: &Output, rust: &Output, floors: &[AbsFloor]) -> CaseDiff {
             if !values_agree(x, y, floor) {
                 d.push(Mismatch {
                     field: format!("values.{key}[{i}]"),
-                    cpp: render_f64(x),
-                    rust: render_f64(y),
+                    expected: render_f64(x),
+                    actual: render_f64(y),
                     rel_err: Some(r),
                 });
             }
@@ -183,16 +184,19 @@ pub fn compare(cpp: &Output, rust: &Output, floors: &[AbsFloor]) -> CaseDiff {
     }
 
     // Integers.
-    for key in union_keys(cpp.ints.keys(), rust.ints.keys()) {
-        let (Some(a), Some(b)) = (cpp.ints.get(&key), rust.ints.get(&key)) else {
-            d.push(missing(&format!("ints.{key}"), cpp.ints.contains_key(&key)));
+    for key in union_keys(expected.ints.keys(), actual.ints.keys()) {
+        let (Some(a), Some(b)) = (expected.ints.get(&key), actual.ints.get(&key)) else {
+            d.push(missing(
+                &format!("ints.{key}"),
+                expected.ints.contains_key(&key),
+            ));
             continue;
         };
         exact_list(&mut d, &format!("ints.{key}"), a, b);
     }
 
     // Topology.
-    match (&cpp.topology, &rust.topology) {
+    match (&expected.topology, &actual.topology) {
         (None, None) => {}
         (Some(a), Some(b)) => {
             let (exact, nonzero) = (d.exact_compared, d.nonzero_compared);
@@ -223,8 +227,8 @@ fn compare_topology(d: &mut CaseDiff, a: &Topology, b: &Topology) {
                         if p != q {
                             d.push(Mismatch {
                                 field: format!("{field}[{i}]"),
-                                cpp: format!("{p:?}"),
-                                rust: format!("{q:?}"),
+                                expected: format!("{p:?}"),
+                                actual: format!("{q:?}"),
                                 rel_err: None,
                             });
                         }
@@ -232,8 +236,8 @@ fn compare_topology(d: &mut CaseDiff, a: &Topology, b: &Topology) {
                 } else {
                     d.push(Mismatch {
                         field: format!("{field}.len"),
-                        cpp: x.len().to_string(),
-                        rust: y.len().to_string(),
+                        expected: x.len().to_string(),
+                        actual: y.len().to_string(),
                         rel_err: None,
                     });
                 }
@@ -247,8 +251,8 @@ fn exact_list(d: &mut CaseDiff, field: &str, a: &[i64], b: &[i64]) {
     if a.len() != b.len() {
         d.push(Mismatch {
             field: format!("{field}.len"),
-            cpp: a.len().to_string(),
-            rust: b.len().to_string(),
+            expected: a.len().to_string(),
+            actual: b.len().to_string(),
             rel_err: None,
         });
         return;
@@ -261,24 +265,24 @@ fn exact_list(d: &mut CaseDiff, field: &str, a: &[i64], b: &[i64]) {
         if x != y {
             d.push(Mismatch {
                 field: format!("{field}[{i}]"),
-                cpp: x.to_string(),
-                rust: y.to_string(),
+                expected: x.to_string(),
+                actual: y.to_string(),
                 rel_err: None,
             });
         }
     }
 }
 
-fn missing(field: &str, in_cpp: bool) -> Mismatch {
-    let (cpp, rust) = if in_cpp {
+fn missing(field: &str, in_expected: bool) -> Mismatch {
+    let (expected, actual) = if in_expected {
         ("present", "missing")
     } else {
         ("missing", "present")
     };
     Mismatch {
         field: field.to_string(),
-        cpp: cpp.into(),
-        rust: rust.into(),
+        expected: expected.into(),
+        actual: actual.into(),
         rel_err: None,
     }
 }
@@ -401,14 +405,14 @@ mod tests {
 
     #[test]
     fn status_is_compared_even_with_empty_outputs() {
-        // C++ genuinely found nothing; Rust failed and produced nothing.
-        let cpp = Output::new().values("points", Vec::<f64>::new());
-        let rust = Output::from_result(
+        // The expected run found nothing; the actual one failed and produced nothing.
+        let expected = Output::new().values("points", Vec::<f64>::new());
+        let actual = Output::from_result(
             Err::<Vec<f64>, _>(solidcore::SolidError::sm_err("test")),
             |_| "status_3".into(),
             |v| Output::new().values("points", v),
         );
-        let d = compare(&cpp, &rust, &[]);
+        let d = compare(&expected, &actual, &[]);
         assert!(!d.pass());
         assert_eq!(d.mismatches[0].field, "error");
         let ok = Output::from_result(
@@ -416,7 +420,7 @@ mod tests {
             |_| "status_3".into(),
             |v| Output::new().values("points", v),
         );
-        let d = compare(&cpp, &ok, &[]);
+        let d = compare(&expected, &ok, &[]);
         assert!(d.pass());
         assert_eq!((d.values_compared, d.nonzero_compared), (0, 0));
         let zero = Output::new().int("n", 0).scalar("t", 0.0);

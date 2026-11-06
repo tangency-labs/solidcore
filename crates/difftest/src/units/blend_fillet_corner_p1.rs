@@ -508,7 +508,7 @@ fn pick(s: i64, ring: &[i64], n: usize) -> i64 {
 /// Builds and imports the B-rep and resolves the selectors of `i`; `Err(output)` when the
 /// case ends before the op (the B-rep cannot be built, a required entity is missing),
 /// with the same output on both sides.
-fn topo(i: &Inputs, own: bool) -> Result<Result<Topo, Output>, HarnessError> {
+fn topo(i: &Inputs) -> Result<Result<Topo, Output>, HarnessError> {
     let (Inputs::G1 { brep, .. }
     | Inputs::FaceByTwo { brep, .. }
     | Inputs::Tangential { brep, .. }
@@ -517,9 +517,8 @@ fn topo(i: &Inputs, own: bool) -> Result<Result<Topo, Output>, HarnessError> {
     else {
         return Err(harness("not a topology case"));
     };
-    // the Rust side's B-rep is read or built by the Rust kernel, never imported
-    // (`crate::own_reader::edgeuse_case`)
-    let (c, b, types) = match crate::own_reader::edgeuse_case(brep, false, false, own)? {
+    // the B-rep is read or built by the Rust kernel (`crate::own_reader::edgeuse_case`)
+    let (c, b, types) = match crate::own_reader::edgeuse_case(brep, false, false)? {
         Ok(x) => x,
         Err(o) => return Ok(Err(o)),
     };
@@ -752,7 +751,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
         Inputs::Corner { .. } => corner_rust(i),
         _ => {
-            let mut t = match topo(i, true)? {
+            let mut t = match topo(i)? {
                 Ok(t) => t,
                 Err(o) => return Ok(o),
             };
@@ -2854,8 +2853,7 @@ mod tests {
     /// flag ops `true` / `false`, for `face_by_two` `face` / `no_face`, for `seam_out`
     /// `moved` / `kept`); with `CASE_LIST=<kind>` as well, prints the name and inputs
     /// of every case of that kind (to pin generated cases as fixtures). Without it: runs
-    /// the cases `CASE_INDICES` (or the first `CASE_PER_OP` of each op) on one side
-    /// (`CASE_SIDE=rust`, else C++), for valgrind.
+    /// the cases `CASE_INDICES` (or the first `CASE_PER_OP` of each op), for valgrind.
     #[test]
     #[ignore = "census and valgrind sample; run on demand"]
     fn case_sample() {
@@ -2911,7 +2909,7 @@ mod tests {
                     // selectors
                     let mut resolved = String::new();
                     if let Ok(i) = serde_json::from_value::<Inputs>(case.inputs.clone()) {
-                        if let Ok(Ok(t)) = topo(&i, true) {
+                        if let Ok(Ok(t)) = topo(&i) {
                             let vid = t.args.first().and_then(|&v| u32::try_from(v).ok());
                             let ring: Vec<u32> = t
                                 .brep
@@ -2941,7 +2939,6 @@ mod tests {
             }
             return;
         }
-        let rust_side = env("CASE_SIDE").is_some_and(|s| s == "rust");
         let indices: Vec<usize> = if let Some(t) = env("CASE_INDICES") {
             t.split(',').map(|x| x.trim().parse().unwrap()).collect()
         } else {
@@ -2958,11 +2955,7 @@ mod tests {
         for i in indices {
             let case = &cases[i];
             eprintln!("case_start: {i} {} {}", case.name, case.inputs);
-            let r = if rust_side {
-                Runner.run_rust(case).map(|o| o.error)
-            } else {
-                Runner.run_cpp(case).map(|o| o.error)
-            };
+            let r = Runner.run_rust(case).map(|o| o.error);
             eprintln!("case_sample: {i} {} {r:?}", case.name);
         }
     }

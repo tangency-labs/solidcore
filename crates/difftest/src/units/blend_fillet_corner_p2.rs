@@ -332,13 +332,12 @@ fn corner_walk(b: &Brep, start: EdgeuseId) -> Option<Vec<EdgeuseId>> {
 
 /// Builds and imports the B-rep and resolves the vertex and edge uses: `args` is
 /// `v eu..`. `Err(output)` when the case ends before the op, the same on both sides.
-fn topo(i: &Inputs, own: bool) -> Result<Result<Topo, Output>, HarnessError> {
+fn topo(i: &Inputs) -> Result<Result<Topo, Output>, HarnessError> {
     let Inputs::FindConcave { brep, v, eus, walk } = i else {
         return Err(harness("not a find_concave case"));
     };
-    // the Rust side's B-rep is read or built by the Rust kernel, never imported
-    // (`crate::own_reader::edgeuse_case`)
-    let (c, b, types) = match crate::own_reader::edgeuse_case(brep, false, false, own)? {
+    // the B-rep is read or built by the Rust kernel (`crate::own_reader::edgeuse_case`)
+    let (c, b, types) = match crate::own_reader::edgeuse_case(brep, false, false)? {
         Ok(x) => x,
         Err(o) => return Ok(Err(o)),
     };
@@ -459,7 +458,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     {
         return corner_rust(&Kernel::default(), *method, model, corner, *split);
     }
-    let mut t = match topo(i, true)? {
+    let mut t = match topo(i)? {
         Ok(t) => t,
         Err(o) => return Ok(o),
     };

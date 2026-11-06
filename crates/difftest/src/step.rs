@@ -1,42 +1,29 @@
 //! `--step-corpus`: imports real-world STEP files with the clean-room `step-import`
-//! crate and builds every B-rep body on both kernels from the same intermediate.
+//! crate and builds every B-rep body with solidcore.
 //!
 //! The corpus is STEP Tools' AP203/AP214 sample set, fetched into `corpus/steptools/`
 //! by `scripts/fetch-steptools-corpus.sh` (All Rights Reserved; never committed). Each
-//! body is encoded once ([`step_import::flat::encode`]); the Rust side builds it from
-//! the decoded [`Body`] ([`build_rust`]) and the C++ side from the same numbers
-//! (`harness/cpp/shim/step_import.cpp`), with the same recipe: per face its surface
-//! and the bounded 3D curves of its edge loops into `CreateFacesWithCurves`, then
-//! `SmApiStitchIntoSolid`, counts, `SmApiBrepIsManifoldSolid`, area and volume,
-//! `SmApiHealBrep`, and counts, manifold test and volume again. Any difference is a
-//! kernel difference.
+//! body is encoded ([`step_import::flat::encode`]) and decoded again, and built from the
+//! decoded [`Body`] ([`build_rust`]): per face its surface and the bounded 3D curves of
+//! its edge loops into `CreateFacesWithCurves`, then `SmApiStitchIntoSolid`, counts,
+//! `SmApiBrepIsManifoldSolid`, area and volume, `SmApiHealBrep`, and counts, manifold
+//! test and volume again.
 //!
-//! Every (body, kernel) runs in a child process (`--step-case`), so a crash or hang is a
-//! `CRASH` verdict, not the end of the run. Stages are compared in order with the usual
-//! rule (statuses and counts equal, values within [`crate::REL_TOL`]); the first
-//! differing stage is reported. A Rust stage that reaches unported code is `DEFERRED`
-//! with its unit. This is a report, not a gate: verdicts never fail the run, and it is
-//! not part of CI (the files are not in the repository).
-//!
-//! A body whose C++ result is known to depend on the run (a confirmed upstream
-//! nondeterminism, e.g. ND-1's clock-seeded sampling) is listed in
-//! [`CPP_NONDETERMINISTIC_DIR`], one file per body, with the stages that vary. Its
-//! other stages are compared as usual; where they agree its verdict is `CPP-ND` and its
-//! detail shows only the Rust values of the listed stages, so its row is the same in
-//! every run while the Rust result is.
+//! Every body runs in a child process (`--step-case`), so a crash or hang is a `CRASH`
+//! verdict, not the end of the run. A stage that reaches unported code is `DEFERRED` with
+//! its unit. This is a report, not a gate: verdicts never fail the run, and it is not
+//! part of CI (the files are not in the repository).
 //!
 //! With `--constructor` each body is built instead through `SmBrepConstructor`
-//! ([`step_import::script::from_body`], run by [`crate::constructor`] and the
-//! `topology.brep_constructor` shim): shared edges joined by the importer, face
-//! orientations from the file, no stitching; the stages after construction are the same
-//! (`construct` replaces `faces` and `stitch`).
+//! ([`step_import::script::from_body`], run by [`crate::constructor`]): shared edges
+//! joined by the importer, face orientations from the file, no stitching; the stages
+//! after construction are the same (`construct` replaces `faces` and `stitch`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use solidcore::curve::curve::Curve;
@@ -73,7 +60,6 @@ use solidcore::{EntityRef, SolidError};
 
 use step_import::model::{self as sm, Body, Bound};
 
-use crate::compare::values_agree;
 use crate::ssi::{exit_detail, glob_match};
 use crate::HarnessError;
 
@@ -83,89 +69,16 @@ pub const ACCURACY: f64 = 1e-6;
 pub const TIMEOUT: Duration = Duration::from_secs(600);
 /// Where the corpus is fetched.
 pub const CORPUS_DIR: &str = "corpus/steptools";
-/// Where the bodies with a run-dependent C++ result are listed (one TOML file per body,
-/// [`CppNondeterministic`]), relative to the repository root.
-pub const CPP_NONDETERMINISTIC_DIR: &str = "crates/difftest/step_cpp_nondeterministic";
-/// Verdicts, in summary order.
-/// `HEAL-DIFF`: every build stage agrees and the first difference is in `SmApiHealBrep`
-/// or after it; `DIFF`: a build stage (faces, stitch, counts, manifold, area, volume)
-/// differs; `CPP-ND`: a body listed in [`CPP_NONDETERMINISTIC_DIR`] whose other stages
-/// agree; `RUST-ONLY`: a build without `cpp` built the body on the Rust side alone and
-/// compared nothing.
-pub const VERDICTS: [&str; 8] = [
-    "MATCH",
-    "HEAL-DIFF",
-    "DIFF",
-    "CPP-ND",
-    "DEFERRED",
-    "CRASH",
-    "SKIPPED",
-    "RUST-ONLY",
-];
-
-/// A corpus body whose C++ result depends on the run (a file in
-/// [`CPP_NONDETERMINISTIC_DIR`]):
-///
-/// ```toml
-/// file = "ap203/bull.stp"
-/// body = 0
-/// stages = ["volume", "healed_volume"]
-/// upstream_issue = "ND-1"
-/// why = "the stitch's clock-seeded shell test decides which regions are void"
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CppNondeterministic {
-    /// The file, relative to the corpus directory, with `/`.
-    pub file: String,
-    /// The body's index in the file.
-    pub body: usize,
-    /// The stages whose C++ values vary between runs; they are not compared.
-    pub stages: Vec<String>,
-    /// The confirmed upstream issue (`plan/upstream-issues/<id>--*.md`).
-    pub upstream_issue: String,
-    /// What varies and why.
-    pub why: String,
-}
-
-/// The entries of [`CPP_NONDETERMINISTIC_DIR`] under `root`, in file name order (none
-/// when the directory is missing).
-///
-/// # Errors
-///
-/// A file that cannot be read or parsed, or an entry without stages.
-pub fn load_cpp_nondeterministic(root: &Path) -> Result<Vec<CppNondeterministic>, HarnessError> {
-    let dir = root.join(CPP_NONDETERMINISTIC_DIR);
-    let Ok(rd) = std::fs::read_dir(&dir) else {
-        return Ok(Vec::new());
-    };
-    let mut paths: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "toml"))
-        .collect();
-    paths.sort();
-    let mut out = Vec::new();
-    for path in paths {
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| HarnessError::new(format!("{}: {e}", path.display())))?;
-        let entry: CppNondeterministic = toml::from_str(&text)
-            .map_err(|e| HarnessError::new(format!("{}: {e}", path.display())))?;
-        if entry.stages.is_empty() {
-            return Err(HarnessError::new(format!(
-                "{}: no stages listed",
-                path.display()
-            )));
-        }
-        out.push(entry);
-    }
-    Ok(out)
-}
+/// Verdicts, in summary order. `BUILT`: every stage ran (whatever its status);
+/// `DEFERRED`: a stage reached unported code; `CRASH`: the child crashed, hung or wrote
+/// no record; `SKIPPED`: the file has no B-rep body the importer takes.
+pub const VERDICTS: [&str; 4] = ["BUILT", "DEFERRED", "CRASH", "SKIPPED"];
 
 /// What one kernel reported for one body: stages in order, and where the Rust side
 /// stopped on unported code.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Record {
-    /// `(stage, values)` in order (names as `solidcore_ffi`'s `STAGES`).
+    /// `(stage, values)` in order.
     pub stages: Vec<(String, Vec<f64>)>,
     /// `(unit, upstream symbol)` of the unported callee that stopped the Rust side.
     pub deferred: Option<(String, String)>,
@@ -235,7 +148,7 @@ fn status<T>(r: &Result<T, SolidError>, notes: &mut Vec<String>) -> Result<f64, 
             Err(Deferred((*unit).to_string(), (*upstream).to_string()))
         }
         Err(SolidError::Upstream { code, .. }) => Ok(f64::from(*code)),
-        // a failure in solidcore's terms (#2615): its C++ comparison status
+        // a failure in solidcore's terms: its upstream status
         Err(e @ SolidError::Failed(_)) => {
             Ok(f64::from(e.sm_status().unwrap_or(solidcore::error::SM_ERR)))
         }
@@ -727,22 +640,6 @@ fn build_rust_stages(body: &Body, rec: &mut Record) -> Result<(), Deferred> {
     result
 }
 
-/// Builds `body` with the C++ reference.
-#[cfg(feature = "cpp")]
-pub fn build_cpp(body: &Body) -> Result<Record, String> {
-    use solidcore_ffi::units::step_import as ffi;
-    let flat = step_import::flat::encode(body);
-    let out = ffi::build(&flat, ACCURACY).map_err(|e| e.to_string())?;
-    let stages = ffi::stages(&out).map_err(|e| e.to_string())?;
-    Ok(Record {
-        stages: stages
-            .into_iter()
-            .map(|(n, v)| (n.to_string(), v))
-            .collect(),
-        ..Record::default()
-    })
-}
-
 /// Stage names of the constructor path's blocks 101..108 (as the stitch path's).
 const CONSTRUCTOR_STAGES: [&str; 8] = [
     "counts",
@@ -817,17 +714,6 @@ pub fn build_rust_constructor(body: &Body) -> Record {
     rec
 }
 
-/// Builds `body` through the C++ `SmBrepConstructor`.
-#[cfg(feature = "cpp")]
-pub fn build_cpp_constructor(body: &Body) -> Result<Record, String> {
-    use solidcore_ffi::units::topology_brep_constructor as ffi;
-    let script =
-        step_import::script::from_body(body, step_import::script::FromBodyOptions::default());
-    let out =
-        ffi::run(&step_import::script::encode(&script), 1, ACCURACY).map_err(|e| e.to_string())?;
-    constructor_record(&out)
-}
-
 fn load_body(path: &Path, index: usize) -> Result<Body, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let model = step_import::import(&bytes, &step_import::Limits::default())
@@ -837,20 +723,18 @@ fn load_body(path: &Path, index: usize) -> Result<Body, String> {
         .into_iter()
         .nth(index)
         .ok_or_else(|| format!("no body {index}"))?;
-    // Both kernels build from the decoded encoding: the very numbers the shim reads.
+    // Built from the decoded encoding, so the build sees the encoding's numbers.
     step_import::flat::decode(&step_import::flat::encode(&body))
 }
 
-/// `--step-case <file> <body> <cpp|rust> <out.json>`: one kernel on one body.
+/// `--step-case <file> <body> <out.json>`: one body.
 pub fn run_child(args: &[String]) -> ExitCode {
     let (args, constructor) = match args {
         [rest @ .., last] if last == "--constructor" => (rest, true),
         _ => (args, false),
     };
-    let [file, index, side, out] = args else {
-        eprintln!(
-            "usage: difftest --step-case <file.stp> <body> <cpp|rust> <out.json> [--constructor]"
-        );
+    let [file, index, out] = args else {
+        eprintln!("usage: difftest --step-case <file.stp> <body> <out.json> [--constructor]");
         return ExitCode::from(2);
     };
     let Ok(index) = index.parse::<usize>() else {
@@ -864,28 +748,16 @@ pub fn run_child(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let rec = match side.as_str() {
-        "rust" if constructor => Ok(build_rust_constructor(&body)),
-        "rust" => Ok(build_rust(&body)),
-        #[cfg(feature = "cpp")]
-        "cpp" if constructor => build_cpp_constructor(&body),
-        #[cfg(feature = "cpp")]
-        "cpp" => build_cpp(&body),
-        other => Err(format!("side `{other}` not available in this build")),
+    let rec = if constructor {
+        build_rust_constructor(&body)
+    } else {
+        build_rust(&body)
     };
-    match rec {
-        Ok(r) => {
-            let text = serde_json::to_string(&r.to_json()).unwrap_or_default();
-            match std::fs::write(out, text + "\n") {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("difftest: {out}: {e}");
-                    ExitCode::from(2)
-                }
-            }
-        }
+    let text = serde_json::to_string(&rec.to_json()).unwrap_or_default();
+    match std::fs::write(out, text + "\n") {
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("difftest: {e}");
+            eprintln!("difftest: {out}: {e}");
             ExitCode::from(2)
         }
     }
@@ -904,15 +776,6 @@ pub struct CorpusOptions {
     pub no_report: bool,
     /// Build through `SmBrepConstructor` instead of `CreateFacesWithCurves` and stitching.
     pub constructor: bool,
-}
-
-/// The sides this build runs.
-fn sides() -> &'static [&'static str] {
-    if cfg!(feature = "cpp") {
-        &["cpp", "rust"]
-    } else {
-        &["rust"]
-    }
 }
 
 fn step_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -937,7 +800,7 @@ fn step_files(dir: &Path, out: &mut Vec<PathBuf>) {
 type RunResult = Result<Record, String>;
 
 struct Job {
-    slot: (usize, usize),
+    slot: usize,
     out: PathBuf,
     child: Child,
     start: Instant,
@@ -949,32 +812,26 @@ fn read_record(path: &Path) -> RunResult {
     Record::from_json(&v)
 }
 
-/// Runs every (job, side) in a child process, `jobs` at a time.
+/// Runs every body in a child process, `jobs` at a time.
 fn run_children(
     work: &[(PathBuf, usize, String)],
     raw: &Path,
     jobs: usize,
     constructor: bool,
-) -> Result<Vec<Vec<RunResult>>, HarnessError> {
+) -> Result<Vec<RunResult>, HarnessError> {
     let exe =
         std::env::current_exe().map_err(|e| HarnessError::new(format!("current_exe: {e}")))?;
-    let mut results: Vec<Vec<RunResult>> = work
-        .iter()
-        .map(|_| sides().iter().map(|_| Err("not run".to_string())).collect())
-        .collect();
-    let mut queue: Vec<(usize, usize)> = (0..work.len())
-        .flat_map(|w| (0..sides().len()).map(move |s| (w, s)))
-        .rev()
-        .collect();
+    let mut results: Vec<RunResult> = work.iter().map(|_| Err("not run".to_string())).collect();
+    let mut queue: Vec<usize> = (0..work.len()).rev().collect();
     let mut running: Vec<Job> = Vec::new();
     while !queue.is_empty() || !running.is_empty() {
         while running.len() < jobs.max(1) {
-            let Some((w, s)) = queue.pop() else { break };
-            let (Some((file, body, id)), Some(side)) = (work.get(w), sides().get(s)) else {
+            let Some(w) = queue.pop() else { break };
+            let Some((file, body, id)) = work.get(w) else {
                 continue;
             };
-            let out = raw.join(format!("{id}.{side}.json"));
-            let log = raw.join(format!("{id}.{side}.log"));
+            let out = raw.join(format!("{id}.json"));
+            let log = raw.join(format!("{id}.log"));
             let _ = std::fs::remove_file(&out);
             let log_file = std::fs::File::create(&log)
                 .map_err(|err| HarnessError::new(format!("{}: {err}", log.display())))?;
@@ -985,7 +842,6 @@ fn run_children(
             cmd.arg("--step-case")
                 .arg(file)
                 .arg(body.to_string())
-                .arg(side)
                 .arg(&out);
             if constructor {
                 cmd.arg("--constructor");
@@ -997,7 +853,7 @@ fn run_children(
                 .spawn()
                 .map_err(|err| HarnessError::new(format!("spawn {}: {err}", exe.display())))?;
             running.push(Job {
-                slot: (w, s),
+                slot: w,
                 out,
                 child,
                 start: Instant::now(),
@@ -1025,10 +881,7 @@ fn run_children(
             };
             if let Some(r) = done {
                 let job = running.swap_remove(i);
-                if let Some(slot) = results
-                    .get_mut(job.slot.0)
-                    .and_then(|v| v.get_mut(job.slot.1))
-                {
+                if let Some(slot) = results.get_mut(job.slot) {
                     *slot = r;
                 }
                 progressed = true;
@@ -1043,38 +896,8 @@ fn run_children(
     Ok(results)
 }
 
-/// The first stage where the two records differ: `(stage, index, cpp, rust)`.
-pub fn first_difference(cpp: &Record, rust: &Record) -> Option<(String, usize, f64, f64)> {
-    first_difference_except(cpp, rust, &[])
-}
-
-/// [`first_difference`] over the stages not named in `skip`.
-fn first_difference_except(
-    cpp: &Record,
-    rust: &Record,
-    skip: &[String],
-) -> Option<(String, usize, f64, f64)> {
-    for (name, rv) in &rust.stages {
-        if skip.contains(name) {
-            continue;
-        }
-        let Some(cv) = cpp.stage(name) else {
-            continue;
-        };
-        if cv.len() != rv.len() {
-            return Some((name.clone(), usize::MAX, cv.len() as f64, rv.len() as f64));
-        }
-        for (i, (&a, &b)) in cv.iter().zip(rv).enumerate() {
-            if !values_agree(a, b, None) {
-                return Some((name.clone(), i, a, b));
-            }
-        }
-    }
-    None
-}
-
-/// A short summary of one side: faces built, solid, volume.
-fn side_summary(r: &RunResult) -> Value {
+/// A short summary of one body's build: faces built, solid, volume.
+fn summary(r: &RunResult) -> Value {
     match r {
         Err(e) => json!({"error": e}),
         Ok(rec) => {
@@ -1100,64 +923,19 @@ fn side_summary(r: &RunResult) -> Value {
     }
 }
 
-/// The verdict of one body from its results in [`sides`] order (`two_sided`: C++ then
-/// Rust; otherwise Rust alone, which compares nothing and is `RUST-ONLY`, not `MATCH`).
-/// A body listed with a run-dependent C++ result (`nondeterministic`) has its listed
-/// stages left out of the comparison, and where the rest agree it is `CPP-ND`, with the
-/// Rust values of the listed stages.
-fn verdict(
-    results: &[RunResult],
-    two_sided: bool,
-    nondeterministic: Option<&CppNondeterministic>,
-) -> (String, Value) {
-    let (cpp, rust) = match (results.first(), results.get(1)) {
-        (Some(c), Some(r)) if two_sided => (Some(c), r),
-        (Some(r), _) => (None, r),
-        _ => return ("CRASH".into(), json!("no result")),
-    };
-    if let Some(Err(e)) = cpp {
-        return ("CRASH".into(), json!({"side": "cpp", "detail": e}));
+/// The verdict of one body ([`VERDICTS`]) and its detail.
+fn verdict(result: Option<&RunResult>) -> (String, Value) {
+    match result {
+        None => ("CRASH".into(), json!("no result")),
+        Some(Err(e)) => ("CRASH".into(), json!({"detail": e})),
+        Some(Ok(rec)) => match &rec.deferred {
+            Some((u, s)) => (
+                "DEFERRED".into(),
+                json!({"unit": u, "symbol": s, "after": rec.stages.last().map(|(n, _)| n)}),
+            ),
+            None => ("BUILT".into(), Value::Null),
+        },
     }
-    let rust = match rust {
-        Err(e) => return ("CRASH".into(), json!({"side": "rust", "detail": e})),
-        Ok(r) => r,
-    };
-    let skip = nondeterministic.map_or(&[][..], |n| n.stages.as_slice());
-    let diff = cpp
-        .and_then(|c| c.as_ref().ok())
-        .and_then(|c| first_difference_except(c, rust, skip));
-    if let Some((stage, i, a, b)) = diff {
-        let v = if stage.starts_with("heal") {
-            "HEAL-DIFF"
-        } else {
-            "DIFF"
-        };
-        return (
-            v.into(),
-            json!({"stage": stage, "index": i, "cpp": a, "rust": b}),
-        );
-    }
-    if let Some((u, s)) = &rust.deferred {
-        return (
-            "DEFERRED".into(),
-            json!({"unit": u, "symbol": s, "after": rust.stages.last().map(|(n, _)| n)}),
-        );
-    }
-    if cpp.is_none() {
-        return ("RUST-ONLY".into(), Value::Null);
-    }
-    if let Some(n) = nondeterministic {
-        let values: BTreeMap<&str, Option<&[f64]>> = n
-            .stages
-            .iter()
-            .map(|s| (s.as_str(), rust.stage(s)))
-            .collect();
-        return (
-            "CPP-ND".into(),
-            json!({"upstream_issue": n.upstream_issue, "rust": values}),
-        );
-    }
-    ("MATCH".into(), Value::Null)
 }
 
 /// Runs the corpus (see the module docs).
@@ -1253,16 +1031,13 @@ fn run_corpus_inner(root: &Path, opts: &CorpusOptions) -> Result<(), HarnessErro
         }
     }
 
-    let nondeterministic = load_cpp_nondeterministic(root)?;
-    let mut listed_seen = vec![false; nondeterministic.len()];
     let results = run_children(&work, &raw, opts.jobs, opts.constructor)?;
     let mut tally: BTreeMap<String, usize> = BTreeMap::new();
     let mut deferred_units: BTreeMap<String, usize> = BTreeMap::new();
-    let mut diff_stages: BTreeMap<String, usize> = BTreeMap::new();
     let mut body_iter = 0usize;
     println!(
-        "{:<36} {:>5}  {:<9} {:<22} {:<22} detail",
-        "file", "body", "verdict", "cpp faces/solid", "rust faces/solid"
+        "{:<36} {:>5}  {:<9} {:<22} detail",
+        "file", "body", "verdict", "faces/solid"
     );
     for (fi, entry) in file_entries.iter_mut().enumerate() {
         let rel = entry["file"].as_str().unwrap_or("?").to_string();
@@ -1287,63 +1062,39 @@ fn run_corpus_inner(root: &Path, opts: &CorpusOptions) -> Result<(), HarnessErro
             if work_file.get(wi) != Some(&fi) {
                 continue;
             }
-            let res = results.get(wi).map_or(&[][..], Vec::as_slice);
-            let listed = nondeterministic
-                .iter()
-                .position(|n| n.file == rel && n.body == bi);
-            if let Some(slot) = listed.and_then(|i| listed_seen.get_mut(i)) {
-                *slot = true;
-            }
-            let (v, detail) = verdict(
-                res,
-                sides().len() == 2,
-                listed.and_then(|i| nondeterministic.get(i)),
-            );
+            let res = results.get(wi);
+            let (v, detail) = verdict(res);
             *tally.entry(v.clone()).or_default() += 1;
             if v == "DEFERRED" {
                 if let Some(u) = detail.get("unit").and_then(Value::as_str) {
                     *deferred_units.entry(u.to_string()).or_default() += 1;
                 }
             }
-            if v == "DIFF" || v == "HEAL-DIFF" {
-                if let Some(s) = detail.get("stage").and_then(Value::as_str) {
-                    *diff_stages.entry(s.to_string()).or_default() += 1;
+            let short = match res {
+                None => "-".to_string(),
+                Some(Err(_)) => "crash".to_string(),
+                Some(Ok(rec)) if rec.stage("construct").is_some() => {
+                    let c = rec.stage("construct").unwrap_or(&[]);
+                    let failed = c.get(1).copied().unwrap_or(0.0);
+                    let solid = rec
+                        .stage("manifold")
+                        .and_then(|s| s.get(1))
+                        .is_some_and(|&x| x == 1.0);
+                    format!("{failed} failed {}", if solid { "solid" } else { "-" })
                 }
-            }
-            let short = |r: Option<&RunResult>| -> String {
-                match r {
-                    None => "-".into(),
-                    Some(Err(_)) => "crash".into(),
-                    Some(Ok(rec)) if rec.stage("construct").is_some() => {
-                        let c = rec.stage("construct").unwrap_or(&[]);
-                        let failed = c.get(1).copied().unwrap_or(0.0);
-                        let solid = rec
-                            .stage("manifold")
-                            .and_then(|s| s.get(1))
-                            .is_some_and(|&x| x == 1.0);
-                        format!("{failed} failed {}", if solid { "solid" } else { "-" })
-                    }
-                    Some(Ok(rec)) => {
-                        let f = rec.stage("faces").unwrap_or(&[]);
-                        let made = f.get(1).copied().unwrap_or(0.0);
-                        let tot = f.first().copied().unwrap_or(0.0);
-                        let solid = rec
-                            .stage("stitch")
-                            .and_then(|s| s.get(1))
-                            .is_some_and(|&x| x == 1.0);
-                        format!("{made}/{tot} {}", if solid { "solid" } else { "-" })
-                    }
+                Some(Ok(rec)) => {
+                    let f = rec.stage("faces").unwrap_or(&[]);
+                    let made = f.get(1).copied().unwrap_or(0.0);
+                    let tot = f.first().copied().unwrap_or(0.0);
+                    let solid = rec
+                        .stage("stitch")
+                        .and_then(|s| s.get(1))
+                        .is_some_and(|&x| x == 1.0);
+                    format!("{made}/{tot} {}", if solid { "solid" } else { "-" })
                 }
-            };
-            let (c, r) = if sides().len() == 2 {
-                (res.first(), res.get(1))
-            } else {
-                (None, res.first())
             };
             println!(
-                "{rel:<36} {bi:>5}  {v:<9} {:<22} {:<22} {}",
-                short(c),
-                short(r),
+                "{rel:<36} {bi:>5}  {v:<9} {short:<22} {}",
                 if detail.is_null() {
                     String::new()
                 } else {
@@ -1353,15 +1104,11 @@ fn run_corpus_inner(root: &Path, opts: &CorpusOptions) -> Result<(), HarnessErro
             if let Some(b) = entry["bodies"].get_mut(bi) {
                 b["verdict"] = json!(v);
                 b["detail"] = detail;
-                for (si, side) in sides().iter().enumerate() {
-                    b[*side] = res
-                        .get(si)
-                        .map_or_else(|| side_summary(&Err("not run".into())), side_summary);
-                }
+                b["build"] = res.map_or_else(|| summary(&Err("not run".into())), summary);
             }
         }
     }
-    let summary: Vec<String> = tally.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let summary_line: Vec<String> = tally.iter().map(|(k, v)| format!("{k}={v}")).collect();
     println!(
         "STEP-CORPUS{} files={} bodies={} {}",
         if opts.constructor {
@@ -1371,36 +1118,21 @@ fn run_corpus_inner(root: &Path, opts: &CorpusOptions) -> Result<(), HarnessErro
         },
         files.len(),
         work.len(),
-        summary.join(" ")
+        summary_line.join(" ")
     );
     if !deferred_units.is_empty() {
         println!("deferred on: {deferred_units:?}");
     }
-    if !diff_stages.is_empty() {
-        println!("first differing stage: {diff_stages:?}");
-    }
     if !unsupported.is_empty() {
         println!("unsupported (bodies skipped by the importer): {unsupported:?}");
-    }
-    // (a filtered run does not reach every listed body)
-    let unused: Vec<String> = nondeterministic
-        .iter()
-        .zip(&listed_seen)
-        .filter(|(_, seen)| !**seen)
-        .map(|(n, _)| format!("{} body {}", n.file, n.body))
-        .collect();
-    if opts.glob.is_none() && !unused.is_empty() {
-        println!("listed in {CPP_NONDETERMINISTIC_DIR} but not in the corpus: {unused:?}");
     }
     if !opts.no_report {
         let report = json!({
             "corpus": CORPUS_DIR,
             "build": if opts.constructor { "constructor" } else { "faces+stitch" },
             "accuracy": ACCURACY,
-            "sides": sides(),
             "tally": tally,
             "deferred_units": deferred_units,
-            "diff_stages": diff_stages,
             "unsupported": unsupported,
             "files": file_entries,
         });
@@ -1419,22 +1151,13 @@ fn run_corpus_inner(root: &Path, opts: &CorpusOptions) -> Result<(), HarnessErro
 mod tests {
     use super::*;
 
-    fn built(volume: f64) -> Record {
+    fn built() -> Record {
         Record {
             stages: vec![
                 ("faces".into(), vec![1.0, 1.0, 0.0, 0.0, 1.0]),
-                ("volume".into(), vec![0.0, volume]),
-                ("heal".into(), vec![0.0]),
-                ("healed_volume".into(), vec![0.0, volume]),
+                ("volume".into(), vec![0.0, 1.0]),
             ],
             ..Record::default()
-        }
-    }
-
-    fn deferred() -> Record {
-        Record {
-            deferred: Some(("unit.x".into(), "SmX::Y".into())),
-            ..built(1.0)
         }
     }
 
@@ -1449,72 +1172,16 @@ mod tests {
     }
 
     #[test]
-    fn a_rust_only_build_is_not_a_match() {
-        // Without `cpp` there is no C++ side: nothing was compared.
-        assert_eq!(verdict(&[Ok(built(1.0))], false, None).0, "RUST-ONLY");
-        assert_eq!(verdict(&[Ok(deferred())], false, None).0, "DEFERRED");
-        assert_eq!(verdict(&[Err("killed".into())], false, None).0, "CRASH");
-        assert_eq!(verdict(&[], false, None).0, "CRASH");
-        assert!(VERDICTS.contains(&"RUST-ONLY"));
-    }
-
-    #[test]
-    fn two_sided_verdicts_are_unchanged() {
-        let v = |c: RunResult, r: RunResult| verdict(&[c, r], true, None).0;
-        assert_eq!(v(Ok(built(1.0)), Ok(built(1.0))), "MATCH");
-        assert_eq!(v(Ok(built(1.0)), Ok(built(2.0))), "DIFF");
-        let mut healed = built(1.0);
-        healed.stages[3].1[1] = 2.0;
-        assert_eq!(v(Ok(built(1.0)), Ok(healed)), "HEAL-DIFF");
-        assert_eq!(v(Ok(built(1.0)), Ok(deferred())), "DEFERRED");
-        assert_eq!(v(Err("timeout".into()), Ok(built(1.0))), "CRASH");
-        assert_eq!(v(Ok(built(1.0)), Err("timeout".into())), "CRASH");
-    }
-
-    #[test]
-    fn a_listed_body_is_cpp_nd_whatever_its_listed_stages() {
-        let entry = CppNondeterministic {
-            file: "ap203/bull.stp".into(),
-            body: 0,
-            stages: vec!["volume".into(), "healed_volume".into()],
-            upstream_issue: "ND-1".into(),
-            why: "clock-seeded".into(),
+    fn verdicts() {
+        let deferred = Record {
+            deferred: Some(("unit.x".into(), "SmX::Y".into())),
+            ..built()
         };
-        let v = |c: RunResult, r: RunResult| verdict(&[c, r], true, Some(&entry));
-        // the same verdict and detail whether the C++ volume agrees or not
-        let (agree, detail) = v(Ok(built(1.0)), Ok(built(1.0)));
-        assert_eq!(agree, "CPP-ND");
-        assert_eq!(v(Ok(built(2.0)), Ok(built(1.0))), (agree, detail.clone()));
-        assert_eq!(detail["upstream_issue"], "ND-1");
-        assert_eq!(detail["rust"]["volume"], json!([0.0, 1.0]));
-        // a stage not listed still differs
-        let mut faces = built(1.0);
-        faces.stages[0].1[1] = 0.0;
-        assert_eq!(v(Ok(faces), Ok(built(1.0))).0, "DIFF");
-        // a Rust change in a listed stage changes the row
-        assert_ne!(v(Ok(built(1.0)), Ok(built(3.0))).1, detail);
-        assert_eq!(v(Ok(built(1.0)), Ok(deferred())).0, "DEFERRED");
-        assert_eq!(v(Err("timeout".into()), Ok(built(1.0))).0, "CRASH");
-        assert!(VERDICTS.contains(&"CPP-ND"));
-    }
-
-    #[test]
-    fn the_listed_bodies_load() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let listed = load_cpp_nondeterministic(&root).unwrap();
-        let bull = listed
-            .iter()
-            .find(|n| n.file == "ap203/bull.stp" && n.body == 0)
-            .expect("bull.stp body 0 is listed");
-        assert_eq!(bull.upstream_issue, "ND-1");
-        for n in &listed {
-            let issues = root.join("plan/upstream-issues");
-            let prefix = format!("{}--", n.upstream_issue);
-            let found = std::fs::read_dir(&issues)
-                .unwrap()
-                .filter_map(Result::ok)
-                .any(|e| e.file_name().to_string_lossy().starts_with(&prefix));
-            assert!(found, "{}: no {prefix}* in plan/upstream-issues", n.file);
-        }
+        assert_eq!(verdict(Some(&Ok(built()))).0, "BUILT");
+        let (v, detail) = verdict(Some(&Ok(deferred)));
+        assert_eq!(v, "DEFERRED");
+        assert_eq!(detail["after"], "volume");
+        assert_eq!(verdict(Some(&Err("killed".into()))).0, "CRASH");
+        assert_eq!(verdict(None).0, "CRASH");
     }
 }

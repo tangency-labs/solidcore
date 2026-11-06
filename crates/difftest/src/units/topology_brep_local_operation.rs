@@ -428,11 +428,11 @@ fn strip_unrecorded(b: &mut Brep) -> SolidResult<()> {
 mod soundness_probe {
     use super::*;
 
-    /// The Rust result bodies of the cases moved from the C++ reference, measured on their
-    /// own ([`crate::soundness::probe`]).
+    /// The Rust result bodies of the cases named in `$SC_SOUNDNESS_CASES`, measured on their own
+    /// ([`crate::soundness::probe`]).
     #[test]
-    #[ignore = "a measurement for the moved cases' record, run on demand"]
+    #[ignore = "a measurement run on demand (`$SC_SOUNDNESS_CASES`)"]
     fn moved_cases_results_measured() {
-        crate::soundness::probe(&Runner, "topology.brep_local_operation");
+        crate::soundness::probe(&Runner);
     }
 }

@@ -1,14 +1,13 @@
-//! `difftest`: side-by-side comparison of solidcore (Rust) against upstream
-//! SMLib (C++ via [`solidcore_ffi`]) on identical inputs.
+//! `difftest`: runs every unit's cases on solidcore and checks each output against the
+//! unit's golden, its committed expected output ([`golden`]).
 //!
-//! A unit is green only when, for every case, the topology is identical and
+//! A case passes when its topology, integers and status are identical to the golden's and
 //! every value agrees within [`REL_TOL`] relative (see [`compare`](mod@compare)).
 //!
 //! Adding a runner: drop a file in `src/units/<unit_id_with_underscores>.rs`
 //! defining `pub struct Runner;` that implements [`UnitDiff`]. It is
 //! registered automatically by `build.rs`. See `crates/difftest/README.md`.
 
-pub mod baseline;
 pub mod case;
 /// Input contracts shared by several unit runners' generators.
 pub mod cases {
@@ -19,21 +18,14 @@ pub mod cases {
 }
 pub mod compare;
 pub mod constructor;
-pub mod export_memo;
 pub mod fixtures;
-pub mod fuzz;
 pub mod golden;
 pub mod jobs;
 pub mod json;
-pub mod known;
 pub mod output;
-#[cfg(feature = "cpp")]
 pub(crate) mod own_builder;
-#[cfg(feature = "cpp")]
 pub(crate) mod own_reader;
 pub mod plan;
-pub mod platform;
-pub mod report;
 pub mod rng;
 pub mod runner;
 pub mod solidcraft;
@@ -46,10 +38,10 @@ pub use case::{Case, CaseContext, CaseSource};
 pub use compare::{compare, AbsFloor, CaseDiff, Mismatch, REL_TOL};
 pub use output::{Deferred, Output, Topology};
 pub use rng::Rng;
-pub use runner::{run_unit, CaseOutcome, RunOptions, UnitDiff, UnitResult, UnitStatus, UnitTiming};
+pub use runner::{RunOptions, UnitDiff};
 
 /// Error from the harness itself (bad fixture, missing file, ...), as opposed
-/// to a comparison failure.
+/// to an operation's error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessError(pub String);
 
@@ -68,7 +60,7 @@ impl HarnessError {
     }
 }
 
-/// Registered unit runners (one per file in `src/units/`, only with feature `cpp`).
+/// Registered unit runners (one per file in `src/units/`).
 pub mod units {
     include!(concat!(env!("OUT_DIR"), "/units.rs"));
 }

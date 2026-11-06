@@ -15,9 +15,7 @@
 //! * `{"$repo_file": "fixtures/<unit>/data/a.smb"}` → absolute path string of that
 //!   file under `fixtures/` (an input generated for a case, read by both sides).
 
-#[cfg(feature = "cpp")]
 pub(crate) mod regions;
-#[cfg(feature = "cpp")]
 pub(crate) mod text_curve;
 
 use std::fs;

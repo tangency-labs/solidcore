@@ -1,7 +1,7 @@
-//! The Rust side's result bodies measured on their own, for cases whose values move from the
-//! C++ reference's: a probe enables capture ([`start`]), runs a case's Rust side, and reads
-//! what each runner that hands a result body to [`measure`] found ([`take`]). Off (the
-//! default), [`measure`] does nothing, so a run compares exactly what it did before.
+//! The Rust side's result bodies measured on their own: a probe enables capture ([`start`]),
+//! runs a case's Rust side, and reads what each runner that hands a result body to
+//! [`measure`] found ([`take`]). Off (the default), [`measure`] does nothing, so a run
+//! produces exactly what it did before.
 //!
 //! A body is sound when `check_brep` at level 2 reports nothing, its geometry's owners taken
 //! as the geometry records them (not the runner's naming); a closed one is also a manifold
@@ -148,27 +148,20 @@ fn measured(brep: &mut Brep) -> Soundness {
     }
 }
 
-/// Runs the Rust side of every case of `unit` listed as moved from the C++ reference (its
-/// `known_mismatches` file, and any named in `$SC_SOUNDNESS_CASES`, one per line) with
-/// capture on, and writes one line per case, what [`measure`] found of its result bodies,
-/// to `$SC_SOUNDNESS` (a probe for the moved cases' record, run on demand).
+/// Runs the Rust side of every case of `unit` named in `$SC_SOUNDNESS_CASES` (one per
+/// line) with capture on, and writes one line per case, what [`measure`] found of its
+/// result bodies, to `$SC_SOUNDNESS` (a probe run on demand).
 ///
 /// # Panics
 ///
-/// When the unit's cases or list cannot be read, or `$SC_SOUNDNESS` is not set.
+/// When the unit's cases cannot be read, or `$SC_SOUNDNESS` is not set.
 #[allow(clippy::unwrap_used, clippy::expect_used)] // a test probe
-pub fn probe(runner: &dyn crate::UnitDiff, unit: &str) {
+pub fn probe(runner: &dyn crate::UnitDiff) {
     use std::fmt::Write as _;
     let root = crate::case::repo_root();
-    let text = std::fs::read_to_string(root.join(crate::known::path_for(unit))).unwrap_or_default();
-    let mut names: Vec<String> = crate::known::parse(&text, unit)
-        .unwrap()
-        .into_iter()
-        .map(|m| m.case)
-        .collect();
-    if let Ok(extra) = std::env::var("SC_SOUNDNESS_CASES") {
-        names.extend(extra.lines().map(str::to_string));
-    }
+    let names: Vec<String> = std::env::var("SC_SOUNDNESS_CASES")
+        .map(|v| v.lines().map(str::to_string).collect())
+        .unwrap_or_default();
     let context = crate::CaseContext { root, seeds: 0 };
     let mut report = String::new();
     for case in runner.cases(&context).unwrap() {

@@ -248,17 +248,3 @@ fn heal_glues_the_two_edges_of_a_squeezed_sliver_face() {
         assert_healed(name, &r);
     }
 }
-
-/// The same cases on the C++ kernel: the same healed body, stage for stage.
-#[cfg(feature = "cpp")]
-#[test]
-fn heal_of_a_two_edge_sliver_face_matches_cpp() {
-    use difftest::step::{build_cpp_constructor, first_difference};
-    for (name, sag, b_reversed, b_curved) in CASES {
-        let body = doubled_edge_cube(sag, b_reversed, b_curved);
-        let cpp = build_cpp_constructor(&body).unwrap();
-        assert_healed(&format!("{name} (C++)"), &cpp);
-        let rust = build_rust_constructor(&body);
-        assert_eq!(first_difference(&cpp, &rust), None, "{name}");
-    }
-}

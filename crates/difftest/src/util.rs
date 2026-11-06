@@ -1,10 +1,7 @@
 //! Small conversions shared by the unit runners in [`crate::units`].
 
 pub mod assert_reports;
-#[cfg(feature = "cpp")]
-pub(crate) mod exact_curve;
 pub mod primitive;
-#[cfg(feature = "cpp")]
 pub(crate) mod trim_curve;
 
 use solidcore::geom::object::ObjectRef;

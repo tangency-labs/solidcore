@@ -353,13 +353,12 @@ fn flag(b: bool) -> f64 {
 
 // ---- the edge-use constructor ------------------------------------------------------
 
-/// The case's B-rep (the C++ side's imported from the shim's export, the Rust side's
-/// read or built by the Rust kernel) and the selected edge use; `Err(output)` when the B-rep cannot be built or has no edge use (as unit
+/// The case's B-rep (read or built by the Rust kernel) and the selected edge use;
+/// `Err(output)` when the B-rep cannot be built or has no edge use (as unit
 /// `topology.edgeuse_p3`'s runner).
-fn eu_setup(brep: &BrepIn, eu: i64, own: bool) -> Result<Result<Setup, Output>, HarnessError> {
-    // with `own` (the Rust side) the B-rep is read or built by the Rust kernel, never
-    // imported (`crate::own_reader::edgeuse_case`)
-    let (c, brep, types) = match crate::own_reader::edgeuse_case(brep, false, false, own)? {
+fn eu_setup(brep: &BrepIn, eu: i64) -> Result<Result<Setup, Output>, HarnessError> {
+    // the B-rep is read or built by the Rust kernel (`crate::own_reader::edgeuse_case`)
+    let (c, brep, types) = match crate::own_reader::edgeuse_case(brep, false, false)? {
         Ok(x) => x,
         Err(o) => return Ok(Err(o)),
     };
@@ -525,7 +524,7 @@ fn rust_edgeuse(i: &Inputs) -> Result<Output, HarnessError> {
     else {
         return Err(harness("not the edge-use op"));
     };
-    let mut s = match eu_setup(brep, *eu, true)? {
+    let mut s = match eu_setup(brep, *eu)? {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };
@@ -668,7 +667,7 @@ fn rust_cr_eu(i: &Inputs) -> Result<Output, HarnessError> {
     else {
         return Err(harness("not the edge-use initial-values op"));
     };
-    let mut s = match eu_setup(brep, *eu, true)? {
+    let mut s = match eu_setup(brep, *eu)? {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };

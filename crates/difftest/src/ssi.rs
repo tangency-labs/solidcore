@@ -1,22 +1,18 @@
-//! `--ssi-corpus`: scores the C++ reference, the Rust port, the `ssi` crate and the `ssi`
-//! crate through `solidcore-ssi` against jyviko's exact ground-truth surface/surface
-//! intersection corpus
+//! `--ssi-corpus`: scores the Rust port, the `ssi` crate and the `ssi` crate through
+//! `solidcore-ssi` against jyviko's exact ground-truth surface/surface intersection corpus
 //! (<https://github.com/jyviko/ssi-corpus>, commit `b04c8a6`, MIT OR Apache-2.0; fetched
 //! into `corpus/ssi/` by `scripts/fetch-ssi-corpus.sh`, never committed).
 //!
-//! Every case runs through each engine in a child process (`--ssi-case`), so a C++
-//! crash or hang is a `CRASH` verdict instead of the end of the run, as with the
-//! corpus' own runner. Every output is graded by the port of the corpus scorer
-//! ([`score`]); where the C++ and the port both answered, their outputs are also
-//! compared with the difftest rule (topology identical, values within
-//! [`crate::REL_TOL`]). The `ssi` engine ([`ssi_engine`]) is a method of its own, never
-//! compared for parity; the `solidcore-ssi` engine ([`solidcore_ssi_engine`]) runs it
-//! from solidcore's own surfaces into the port's output form, sampled as the port's is
-//! ([`kernel`]). Those two are the engines a build without the `cpp` feature runs. This
-//! is a correctness report: it never changes a unit's difftest status.
+//! Every case runs through each engine in a child process (`--ssi-case`), so a crash or
+//! hang is a `CRASH` verdict instead of the end of the run, as with the corpus' own
+//! runner. Every output is graded by the port of the corpus scorer ([`score`]). The port
+//! ([`engine`]) runs upstream's `GlobalSurfaceIntersect` as ported; the `ssi` engine
+//! ([`ssi_engine`]) is a method of its own; the `solidcore-ssi` engine
+//! ([`solidcore_ssi_engine`]) runs it from solidcore's own surfaces into the port's output
+//! form, sampled as the port's is ([`kernel`]). This is a correctness report: it never
+//! changes a unit's golden.
 
 pub mod case;
-#[cfg(feature = "cpp")]
 pub mod engine;
 pub mod geom;
 pub mod kernel;
@@ -37,7 +33,7 @@ use serde_json::{json, Value};
 use self::case::SsiCase;
 use self::raw::RawOutput;
 use self::score::{score_case, status_names, Score, VERDICTS};
-use crate::{compare, HarnessError};
+use crate::HarnessError;
 
 /// The corpus repository.
 pub const CORPUS_REPO: &str = "https://github.com/jyviko/ssi-corpus";
@@ -49,33 +45,18 @@ pub const TIMEOUT: Duration = Duration::from_secs(300);
 pub const DEFAULT_TOL: &str = "1e-6";
 
 /// How many engines there are.
-pub const N_ENGINES: usize = 4;
+pub const N_ENGINES: usize = 3;
 
-/// The engines, in report order: upstream SMLib (C++), the Rust port, the `ssi` crate,
-/// and the `ssi` crate through `solidcore-ssi` on solidcore's own surfaces.
-pub const ENGINES: [&str; N_ENGINES] = ["cpp", "rust", "ssi", "solidcore-ssi"];
-
-/// Whether this build runs each of [`ENGINES`]: `cpp` and `rust` need the C++ kernel
-/// (feature `cpp`), `ssi` and `solidcore-ssi` nothing.
-pub const BUILT: [bool; N_ENGINES] = [cfg!(feature = "cpp"), cfg!(feature = "cpp"), true, true];
-
-/// Whether the C++ and the port both run, so their outputs are compared for parity.
-const PARITY: bool = BUILT[0] && BUILT[1];
-
-/// The indices of the engines this build runs.
-fn built() -> impl DoubleEndedIterator<Item = usize> {
-    BUILT
-        .into_iter()
-        .enumerate()
-        .filter_map(|(e, b)| b.then_some(e))
-}
+/// The engines, in report order: the Rust port, the `ssi` crate, and the `ssi` crate
+/// through `solidcore-ssi` on solidcore's own surfaces.
+pub const ENGINES: [&str; N_ENGINES] = ["rust", "ssi", "solidcore-ssi"];
 
 /// Why an engine produced no [`RawOutput`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineFailure {
     /// A surface could not be built (the corpus runner's exit code 3).
     Build(String),
-    /// Anything else (bad input, C++ exception): a crash for scoring.
+    /// Anything else (bad input): a crash for scoring.
     Other(String),
 }
 
@@ -156,13 +137,14 @@ pub fn case_files(root: &Path, glob: Option<&str>) -> Result<Vec<PathBuf>, Harne
     Ok(v)
 }
 
-/// `--ssi-case <case.json> <tol|default> <cpp|rust|ssi|solidcore-ssi> <out.json>`: one engine on one
-/// case, writing the corpus runner's JSON. Exit `0` on success (including a deferred Rust
-/// run and a non-success status), `3` when a surface cannot be built, `2` otherwise.
-/// `cpp` and `rust` need the `cpp` feature.
+/// `--ssi-case <case.json> <tol|default> <rust|ssi|solidcore-ssi> <out.json>`: one engine on
+/// one case, writing the corpus runner's JSON. Exit `0` on success (including a deferred
+/// Rust run and a non-success status), `3` when a surface cannot be built, `2` otherwise.
 pub fn run_child(args: &[String]) -> ExitCode {
     let [case_path, tol, engine_name, out_path] = args else {
-        eprintln!("usage: difftest --ssi-case <case.json> <tol|default> <cpp|rust|ssi|solidcore-ssi> <out.json>");
+        eprintln!(
+            "usage: difftest --ssi-case <case.json> <tol|default> <rust|ssi|solidcore-ssi> <out.json>"
+        );
         return ExitCode::from(2);
     };
     let tol = match parse_tol(tol) {
@@ -180,16 +162,9 @@ pub fn run_child(args: &[String]) -> ExitCode {
         }
     };
     let res = match engine_name.as_str() {
-        #[cfg(feature = "cpp")]
-        "cpp" => engine::run_cpp(&case, tol),
-        #[cfg(feature = "cpp")]
         "rust" => engine::run_rust(&case, tol),
         "ssi" => ssi_engine::run_ssi(&case, tol),
         "solidcore-ssi" => solidcore_ssi_engine::run_solidcore_ssi(&case, tol),
-        other if ENGINES.contains(&other) => {
-            eprintln!("difftest: engine `{other}` needs feature `cpp`");
-            return ExitCode::from(2);
-        }
         other => {
             eprintln!("difftest: unknown engine `{other}`");
             return ExitCode::from(2);
@@ -246,7 +221,7 @@ fn read_raw(path: &Path) -> RunResult {
     RawOutput::from_json(&v).map_err(|e| format!("unreadable output: {e}"))
 }
 
-/// Runs every (case, engine this build runs) in a child process, `jobs` at a time.
+/// Runs every (case, engine) in a child process, `jobs` at a time.
 fn run_children(
     files: &[PathBuf],
     tol: &str,
@@ -260,7 +235,7 @@ fn run_children(
         .map(|_| std::array::from_fn(|_| Err("not run".to_string())))
         .collect();
     let mut queue: Vec<(usize, usize)> = (0..files.len())
-        .flat_map(|c| built().map(move |e| (c, e)))
+        .flat_map(|c| (0..N_ENGINES).map(move |e| (c, e)))
         .rev()
         .collect();
     let mut running: Vec<Job> = Vec::new();
@@ -379,9 +354,8 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-/// Grades every engine output (`None` for a deferred one or an engine this build does
-/// not run), `jobs` cases at a time; the result is in case order whatever the thread
-/// timing.
+/// Grades every engine output (`None` for a deferred one), `jobs` cases at a time; the
+/// result is in case order whatever the thread timing.
 fn score_all(
     cases: &[SsiCase],
     results: &[[RunResult; N_ENGINES]],
@@ -392,9 +366,7 @@ fn score_all(
 ) -> Vec<Vec<Option<Score>>> {
     let grade = |case: &SsiCase, res: &[RunResult; N_ENGINES]| -> Vec<Option<Score>> {
         res.iter()
-            .zip(BUILT)
-            .map(|(r, run)| match r {
-                _ if !run => None,
+            .map(|r| match r {
                 Ok(o) if o.deferred.is_some() => None,
                 Ok(o) => Some(score_case(case, Ok(o), acc_tol, cov_floor, names)),
                 Err(d) => Some(score_case(case, Err(d), acc_tol, cov_floor, names)),
@@ -482,22 +454,17 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
     }
     let raw_root = root.join("bin").join("ssi-corpus").join("raw");
     let rawdirs = ENGINES.map(|e| raw_root.join(format!("{e}_{}", opts.tol)));
-    for (d, _) in rawdirs.iter().zip(BUILT).filter(|(_, run)| *run) {
+    for d in &rawdirs {
         if let Err(e) = std::fs::create_dir_all(d) {
             eprintln!("difftest: {}: {e}", d.display());
             return ExitCode::from(2);
         }
     }
-    let names_run: Vec<&str> = ENGINES
-        .iter()
-        .zip(BUILT)
-        .filter_map(|(e, run)| run.then_some(*e))
-        .collect();
     println!(
         "SSI-CORPUS: {} case(s), approx tol {}, engines {} ({} job(s)); raw output in {}",
         files.len(),
         opts.tol,
-        names_run.join(", "),
+        ENGINES.join(", "),
         opts.jobs,
         raw_root.strip_prefix(root).unwrap_or(&raw_root).display()
     );
@@ -513,7 +480,6 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
     let acc_tol = tol.map(|t| 10.0 * t);
     let cov_floor = if tol.is_none() { 5e-3 } else { 0.0 };
     let mut counts: [BTreeMap<String, usize>; N_ENGINES] = Default::default();
-    let (mut compared, mut identical, mut same_verdict) = (0usize, 0usize, 0usize);
     let mut entries = Vec::new();
     let all_scores = score_all(&cases, &results, acc_tol, cov_floor, &names, opts.jobs);
     for ((case, res), scores) in cases.iter().zip(&results).zip(&all_scores) {
@@ -525,11 +491,7 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
             "surfaces".into(),
             json!([case.surfaces[0].0.kind(), case.surfaces[1].0.kind()]),
         );
-        for (k, ((r, s), run)) in res.iter().zip(scores).zip(BUILT).enumerate() {
-            if !run {
-                verdicts.push("-".to_string());
-                continue;
-            }
+        for (k, (r, s)) in res.iter().zip(scores).enumerate() {
             let v = verdict_of(r, s.as_ref());
             if let Some(c) = counts.get_mut(k) {
                 *c.entry(v.clone()).or_default() += 1;
@@ -540,84 +502,23 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
             );
             verdicts.push(v);
         }
-        // Rust vs C++ parity where both answered
-        let mut parity = "-".to_string();
-        if let [Ok(c), Ok(r), ..] = res {
-            if r.deferred.is_none() {
-                compared += 1;
-                let d = compare(&c.parity_output(), &r.parity_output(), &[]);
-                let first = d
-                    .mismatches
-                    .first()
-                    .map(|m| format!("{}: cpp={} rust={}", m.field, m.cpp, m.rust));
-                if d.pass() {
-                    identical += 1;
-                    parity = "identical".into();
-                } else {
-                    parity = format!("MISMATCH({})", d.mismatch_count);
-                }
-                entry.insert(
-                    "parity".into(),
-                    json!({"pass": d.pass(), "mismatches": d.mismatch_count,
-                           "max_rel_err": crate::json::num(d.max_rel_err), "first": first}),
-                );
-            }
-        }
-        if let [a, b, _] = verdicts.as_slice() {
-            if PARITY && b != "DEFERRED" && a == b {
-                same_verdict += 1;
-            }
-        }
-        // the flags of the first engine run (the C++ when it runs)
+        // the flags of the first engine graded
         let flags = scores
             .iter()
-            .zip(BUILT)
-            .filter(|(_, run)| *run)
-            .find_map(|(s, _)| s.as_ref())
+            .find_map(Option::as_ref)
             .map(|s| s.detail.clone().unwrap_or_else(|| s.flags.join("; ")))
             .unwrap_or_default();
         let mut columns = String::new();
-        for ((e, v), _) in ENGINES
-            .iter()
-            .zip(&verdicts)
-            .zip(BUILT)
-            .filter(|(_, run)| *run)
-        {
+        for (e, v) in ENGINES.iter().zip(&verdicts) {
             let _ = write!(columns, " {e} {v:<14}");
         }
-        let parity_column = if PARITY {
-            format!(" parity {parity:<13}")
-        } else {
-            String::new()
-        };
-        println!(
-            "{:<36}{columns}{parity_column} {}",
-            case.id,
-            truncate(&flags, 160)
-        );
+        println!("{:<36}{columns} {}", case.id, truncate(&flags, 160));
         entries.push(Value::Object(entry));
     }
     let mut summaries = serde_json::Map::new();
-    for ((e, c), _) in ENGINES
-        .iter()
-        .zip(&counts)
-        .zip(BUILT)
-        .filter(|(_, run)| *run)
-    {
+    for (e, c) in ENGINES.iter().zip(&counts) {
         println!("{}", summary(e, c));
         summaries.insert((*e).into(), json!(c));
-    }
-    if PARITY {
-        println!(
-            "SSI-CORPUS parity: compared={compared} identical={identical} mismatched={} \
-             same_verdict={same_verdict}",
-            compared - identical
-        );
-        summaries.insert(
-            "parity".into(),
-            json!({"compared": compared, "identical": identical,
-                   "mismatched": compared - identical, "same_verdict": same_verdict}),
-        );
     }
 
     if !opts.no_report {
@@ -634,14 +535,6 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
             .clone()
             .unwrap_or_else(|| root.join("reports"));
         let mut name = "ssi-corpus".to_string();
-        // a build without some engines names the ones it ran, so it never overwrites a
-        // full report
-        if !PARITY {
-            for e in &names_run {
-                name.push('_');
-                name.push_str(e);
-            }
-        }
         if opts.tol != DEFAULT_TOL {
             name.push('_');
             name.push_str(&opts.tol);

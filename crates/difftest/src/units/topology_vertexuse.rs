@@ -651,60 +651,41 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     }
 }
 
-/// Recomputes every cached gap the import marked as set, as far as it can: the export
-/// says which gaps the C++ B-rep has cached, not their values, so the import leaves
-/// them at `SM_UNDEF_DOUBLE` placeholders, which an op reading a cache (`IsOnPole`: the
-/// vertex/face gap's face UV; the healers: the gap lengths) would see. The refilling
-/// importers call it on every Rust-side import. A gap whose recomputation fails (an
-/// unported callee, or geometry the import does not hold, such as an edge curve a
-/// runner sets after the import) keeps its placeholder, as before this refill, so a
-/// runner that never reads the caches is unaffected; a runner whose ops read them
-/// imports raw and calls [`recalc_gaps`], which reports the failure. On the C++ side
-/// of a case (helpers both sides share import to resolve selectors) it does nothing.
-pub(crate) fn refill_gaps(b: &mut Brep) {
-    if crate::export_memo::on_cpp_side() {
-        return;
-    }
-    // lenient: every failure leaves that gap's placeholder, so this cannot fail
-    let _ = fill_gaps(b, false);
-}
-
-/// [`refill_gaps`] that fails on the first gap it cannot recompute (whose caches stay
-/// partly refilled). Its caller reports the error on the Rust side only: an unported
-/// callee defers the case, anything else is a harness error.
+/// Recomputes every cached gap the B-rep marks as set (see [`fill_gaps`]); a gap left at
+/// its `SM_UNDEF_DOUBLE` placeholder would be seen by an op reading a cache (`IsOnPole`:
+/// the vertex/face gap's face UV). Stops at the first gap it cannot recompute (whose
+/// caches stay partly refilled).
 ///
 /// # Errors
 ///
 /// That of the first failed recomputation.
 pub(crate) fn recalc_gaps(b: &mut Brep) -> Result<(), SolidError> {
-    fill_gaps(b, true)
+    fill_gaps(b)
 }
 
-/// The cached-gap recomputation of [`refill_gaps`] and [`recalc_gaps`], as the fixture's
-/// `init_gaps` walk fills them (vertex uses in arena order, which is the export's
-/// traversal order: `GetVertexFaceGap`, then `GetVertexEdgeGap`; then edge uses:
-/// `GetMaxEdgeFaceGap`, then `GetEdgeCCWEdgeGap`), through the upstream setters with
-/// each record stored where they store it, but only into the caches the import marked
-/// as set (so every cache keeps the state the C++ export reported):
+/// The cached-gap recomputation of [`recalc_gaps`], as the fixture's `init_gaps` walk
+/// fills them (vertex uses in arena order, which is the traversal order:
+/// `GetVertexFaceGap`, then `GetVertexEdgeGap`; then edge uses: `GetMaxEdgeFaceGap`,
+/// then `GetEdgeCCWEdgeGap`), through the upstream setters with each record stored where
+/// they store it, but only into the caches the B-rep marks as set:
 /// - `CalcVertexFaceGap`: the vertex use's own record.
 /// - `CalcVertexEdgeGap`: one record, naming the vertex use that computed it, stored in
 ///   every use of the vertex on the same edge (the first set one in arena order
 ///   computes it; the walk's `GetVertexEdgeGap` of the others finds it cached). When
-///   C++ computed it in another order (another walk, a healer), the record names
+///   upstream computes it in another order (another walk, a healer), the record names
 ///   another use of that group and, at a closed edge, the other end parameter; its gap
 ///   length is the same.
 /// - `CalcMaxEdgeFaceGap`: one record stored in the edge use and its mate (renamed to
 ///   the mate); the first set one in arena order computes it.
 /// - `CalcEdgeCCWEdgeGap`: the edge use's own record.
 ///
-/// Each record is stored only after it is fully computed. `strict`: stop at the first
-/// failure; else skip the failed record.
-fn fill_gaps(b: &mut Brep, strict: bool) -> Result<(), SolidError> {
-    // The refill reconstructs values the C++ export reported, and must not leave cache
-    // history the C++ side did not have: its smsurf_GetSurfaceCache calls build no
-    // tree (as during a Boolean operation: no UV trim curves are made), and the trimmed
-    // caches they keep are dropped again, leaving each surface's cache slot as a
-    // face-unaware lookup outside a Boolean operation leaves it (a built tree).
+/// Each record is stored only after it is fully computed; the first failure stops it.
+fn fill_gaps(b: &mut Brep) -> Result<(), SolidError> {
+    // The refill must not leave cache history the fixture's walk does not: its
+    // smsurf_GetSurfaceCache calls build no tree (as during a Boolean operation: no UV
+    // trim curves are made), and the trimmed caches they keep are dropped again, leaving
+    // each surface's cache slot as a face-unaware lookup outside a Boolean operation
+    // leaves it (a built tree).
     use solidcore::surface::surface::CacheTreeState;
     let before: Vec<Option<(bool, CacheTreeState)>> = b
         .faces()
@@ -715,7 +696,7 @@ fn fill_gaps(b: &mut Brep, strict: bool) -> Result<(), SolidError> {
                 .map(|s| (s.has_trim_cache(), s.cache_tree_state()))
         })
         .collect();
-    let result = fill_gaps_body(b, strict);
+    let result = fill_gaps_body(b);
     for ((_, f), before) in b.faces().iter().zip(before) {
         if let (Some(s), Some((had, state))) = (f.surface.as_ref(), before) {
             if !had && s.has_trim_cache() && !s.trim_cache_in_use() {
@@ -730,15 +711,11 @@ fn fill_gaps(b: &mut Brep, strict: bool) -> Result<(), SolidError> {
     result
 }
 
-fn fill_gaps_body(b: &mut Brep, strict: bool) -> Result<(), SolidError> {
+fn fill_gaps_body(b: &mut Brep) -> Result<(), SolidError> {
     use std::collections::BTreeSet;
     let mut k = Kernel::default();
     k.context.set_doing_boolean(true);
     let k = k;
-    let keep = |r: Result<(), SolidError>| match r {
-        Err(e) if strict => Err(e),
-        _ => Ok(()),
-    };
     let vus: Vec<(VertexuseId, bool, bool)> = b
         .vertexuses()
         .iter()
@@ -748,10 +725,10 @@ fn fill_gaps_body(b: &mut Brep, strict: bool) -> Result<(), SolidError> {
     let mut edge_done = BTreeSet::new();
     for &(vu, face_set, edge_set_here) in &vus {
         if face_set {
-            keep(fill_vertex_face_gap(&k, b, vu))?;
+            fill_vertex_face_gap(&k, b, vu)?;
         }
         if edge_set_here && !edge_done.contains(&vu) {
-            keep(fill_vertex_edge_gap(&k, b, vu, &edge_set, &mut edge_done))?;
+            fill_vertex_edge_gap(&k, b, vu, &edge_set, &mut edge_done)?;
         }
     }
     let eus: Vec<(EdgeuseId, bool, bool)> = b
@@ -763,10 +740,10 @@ fn fill_gaps_body(b: &mut Brep, strict: bool) -> Result<(), SolidError> {
     let mut face_done = BTreeSet::new();
     for &(eu, face_set_here, ccw_set) in &eus {
         if face_set_here && !face_done.contains(&eu) {
-            keep(fill_edge_face_gap(&k, b, eu, &face_set, &mut face_done))?;
+            fill_edge_face_gap(&k, b, eu, &face_set, &mut face_done)?;
         }
         if ccw_set {
-            keep(fill_edge_ccw_edge_gap(&k, b, eu))?;
+            fill_edge_ccw_edge_gap(&k, b, eu)?;
         }
     }
     Ok(())

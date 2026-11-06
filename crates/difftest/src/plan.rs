@@ -83,19 +83,6 @@ pub fn parse_unit(text: &str) -> Result<PlanUnit, String> {
     })
 }
 
-/// Ids of port units with `status = "green"` or `"partial"` (what `--green` runs),
-/// in the order of `units` (by id, as [`load`] returns them). `audit.recursion` is a
-/// crate-wide audit, validated by rerunning these ports; it has no standalone C++
-/// counterpart or runner.
-pub fn green_units(units: &[PlanUnit]) -> Vec<String> {
-    units
-        .iter()
-        .filter(|u| u.status == "green" || u.status == "partial")
-        .filter(|u| u.id != "audit.recursion")
-        .map(|u| u.id.clone())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,7 +97,11 @@ mod tests {
         .iter()
         .map(|t| parse_unit(t).unwrap())
         .collect();
-        assert_eq!(green_units(&u), vec!["a".to_string(), "c".to_string()]);
+        let statuses: Vec<(&str, &str)> = u
+            .iter()
+            .map(|u| (u.id.as_str(), u.status.as_str()))
+            .collect();
+        assert_eq!(statuses, [("a", "green"), ("b", "todo"), ("c", "partial")]);
         assert!(parse_unit("id = \"x\"\nstatus = \"done\"\n").is_err());
         assert!(parse_unit("status = \"green\"\n").is_err());
     }
@@ -176,26 +167,10 @@ mod tests {
         .unwrap();
         fs::write(units.join("README"), "not a unit").unwrap();
         let got = load(&dir).unwrap();
-        assert_eq!(
-            green_units(&got),
-            vec!["a.x".to_string(), "b.y".to_string()]
-        );
+        let ids: Vec<&str> = got.iter().map(|u| u.id.as_str()).collect();
+        assert_eq!(ids, ["a.x", "b.y"]);
         fs::write(units.join("c.toml"), "id = \"other\"\n").unwrap();
         assert!(load(&dir).is_err());
         fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn green_audit_does_not_require_a_standalone_runner() {
-        let units: Vec<PlanUnit> = [
-            "id = \"audit.recursion\"\nstatus = \"green\"\n",
-            "id = \"port.without.runner\"\nstatus = \"green\"\n",
-        ]
-        .iter()
-        .map(|t| parse_unit(t).unwrap())
-        .collect();
-        // Ordinary ports remain selected even if their runner is missing, so the
-        // CLI still reports the missing runner as a failure.
-        assert_eq!(green_units(&units), vec!["port.without.runner"]);
     }
 }

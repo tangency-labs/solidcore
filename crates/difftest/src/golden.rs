@@ -311,8 +311,7 @@ pub struct GoldenResult {
     pub added: Vec<String>,
     /// Cases in the golden the run did not produce.
     pub removed: Vec<String>,
-    /// Cases whose Rust side failed as a harness error, panicked or called the C++ kernel:
-    /// never blessed.
+    /// Cases whose Rust side failed as a harness error or panicked: never blessed.
     pub broken: Vec<(String, String)>,
     /// Building the case list failed.
     pub harness_error: Option<String>,
@@ -350,12 +349,8 @@ pub fn check_unit(
         ..GoldenResult::default()
     };
     let floors = unit.abs_floors();
-    let walked = each_rust_output(unit, ctx, opts, reverse, |case, rust, needs_cpp| {
-        let out = match rust {
-            Ok(_) if needs_cpp => Err("calls the C++ kernel".to_string()),
-            other => other,
-        };
-        let line = match out {
+    let walked = each_rust_output(unit, ctx, opts, reverse, |case, rust| {
+        let line = match rust {
             Ok(out) => encode(&case.name, &out),
             Err(e) => {
                 res.broken.push((case.name.clone(), e));

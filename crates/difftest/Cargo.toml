@@ -4,17 +4,11 @@ edition.workspace = true
 license.workspace = true
 version.workspace = true
 publish = false
-description = "Side-by-side comparison runner: solidcore (Rust) vs upstream SMLib (C++ via solidcore-ffi)."
+description = "Checks every unit's cases against its committed expected output (goldens)."
 build = "build.rs"
-
-[features]
-default = []
-# Link the C++ kernel and register the unit runners in src/units/. Required to run.
-cpp = ["solidcore-ffi/cpp"]
 
 [dependencies]
 solidcore = { path = "../solidcore" }
-solidcore-ffi = { path = "../solidcore-ffi" }
 # The `ssi` engine of --ssi-corpus (a surface/surface intersection of its own, not a port).
 ssi = { path = "../ssi" }
 # The `solidcore-ssi` engine of --ssi-corpus (`ssi` behind the port's inputs and output).
