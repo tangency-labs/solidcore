@@ -252,6 +252,18 @@ fn record_picks(
     picked(op, selection, Some(length))
 }
 
+/// Checks a single-pick operation's cardinality before classifying a traced miss.
+fn record_pick(op: &str, selection: &Value, kind: &str, length: usize) -> Result<usize, Stop> {
+    let bad = || Stop::Fail(format!("{op}: exactly one {kind} pick required"));
+    if selection["picked"].as_array().map(Vec::len) != Some(1) {
+        return Err(bad());
+    }
+    record_picks(op, selection, kind, length)?
+        .first()
+        .copied()
+        .ok_or_else(bad)
+}
+
 /// Looks up the record order once; an unrepresentable result is unsupported, not a refusal.
 fn ensure_order(slot: &mut Slot, op: &str) -> Result<Order, Stop> {
     ensure_order_with(slot, op, Body::to_record)
@@ -491,35 +503,14 @@ fn call_with_copy(
                 return Err(bad("one input"));
             }
             let mut source = first()?;
-            if source.order.is_none() {
-                let (_, order) = source
-                    .body
-                    .to_record()
-                    .map_err(|e| Stop::Fail(format!("order before extend_sheet: {e}")))?;
-                source.order = Some(order);
-            }
+            ensure_order(&mut source, "extend_sheet")?;
             // Map the source record's indices through the preparation copy.
             let s = copy_for_edit(&source)?;
             let order = s
                 .order
                 .as_ref()
                 .ok_or_else(|| Stop::Fail("extend_sheet: missing copied order".to_owned()))?;
-            if p["edge"]["kind"].as_str() != Some("edge") {
-                return Err(bad("edge pick kind"));
-            }
-            let picked = p["edge"]["picked"]
-                .as_array()
-                .ok_or_else(|| bad("edge picked"))?;
-            let [pick] = picked.as_slice() else {
-                return Err(bad("exactly one edge"));
-            };
-            let edge = pick["index"]
-                .as_u64()
-                .and_then(|i| usize::try_from(i).ok())
-                .ok_or_else(|| bad("edge index"))?;
-            if order.edges.get(edge).is_none() {
-                return Err(bad("edge outside record order"));
-            }
+            let edge = record_pick("extend_sheet", &p["edge"], "edge", order.edges.len())?;
             let distance = p["distance"].as_f64().ok_or_else(|| bad("distance"))?;
             let how = match p["how"].as_str().ok_or_else(|| bad("how"))? {
                 "natural" => Continuation::Natural,
@@ -2499,6 +2490,9 @@ fn extend_sheet_metadata_and_refusal_are_distinct() {
         serde_json::json!({"kind":"edge","picked":[{}]}),
         serde_json::json!({"kind":"edge","picked":[{"index":3},{"index":1}]}),
         serde_json::json!({"kind":"edge","picked":[{"index":100000}]}),
+        serde_json::json!({"kind":"edge","picked":[{"miss":false}]}),
+        serde_json::json!({"kind":"edge","picked":[{"miss":"missed","index":3}]}),
+        serde_json::json!({"kind":"edge","picked":[{"miss":"missed"},{"index":3}]}),
     ] {
         let mut bad = step.clone();
         bad["params"]["edge"] = pick;
@@ -2507,6 +2501,13 @@ fn extend_sheet_metadata_and_refusal_are_distinct() {
             Err(Stop::Fail(_))
         ));
     }
+    let mut missed = step.clone();
+    missed["params"]["edge"] =
+        serde_json::json!({"kind":"edge","picked":[{"miss":"no edge at traced point"}]});
+    assert!(matches!(
+        call(&missed, &mut [input.clone()]),
+        Err(Stop::Unsupported(_))
+    ));
     assert!(matches!(
         call(
             &sheet_extension_step(3, 5.0, "unported_mode"),
