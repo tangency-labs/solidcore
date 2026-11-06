@@ -29,6 +29,7 @@ def measurement():
 
 class ReplayTests(unittest.TestCase):
     def setUp(self):
+        """Create isolated inputs and a complete replay configuration."""
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -53,6 +54,7 @@ class ReplayTests(unittest.TestCase):
         return replay.clean_run(result, self.manifest)
 
     def test_manifest_is_path_free_and_hashes_exact_inputs(self):
+        """Provenance retains content hashes without exposing input locations."""
         text = json.dumps(self.manifest)
         self.assertNotIn(str(self.root), text)
         self.assertNotIn('"binary"', text)
@@ -64,11 +66,13 @@ class ReplayTests(unittest.TestCase):
                 replay.public_manifest(bad)
 
     def test_paths_are_not_accepted_as_public_ids(self):
+        """Reject path-shaped labels at the public publication boundary."""
         for value in ("../case", "user@example.test", "machine/name", "has space", ""):
             with self.assertRaises(replay.Invalid):
                 replay.identifier(value)
 
     def test_malformed_missing_and_nonfinite_eval_are_rejected(self):
+        """Malformed evaluation data cannot become a successful sample."""
         self.assertIsNone(replay.figures(self.root / "missing"))
         for mutate in (
             lambda d: d["total"].update(volume_mm3=float("nan")),
@@ -85,6 +89,7 @@ class ReplayTests(unittest.TestCase):
             self.assertIsNone(self.figures(data))
 
     def test_incomplete_geometry_does_not_become_a_fast_success(self):
+        """Partial geometry remains ineligible for successful timing summaries."""
         for key in ("errors", "suppressed", "rolled_back", "open_bodies_skipped"):
             run = self.sample()
             run["figures"][key] = 1
@@ -94,6 +99,7 @@ class ReplayTests(unittest.TestCase):
         self.assertFalse(replay.successful(run))
 
     def test_medians_exclude_failures_but_keep_failed_durations(self):
+        """Keep failure evidence while excluding it from eligible medians."""
         good = self.sample(seconds=4.0)
         failed = self.sample(round=2, status="exit_error", exit=1, seconds=0.01)
         warmup = self.sample(round=0, phase="warmup", seconds=0.001)
@@ -108,6 +114,7 @@ class ReplayTests(unittest.TestCase):
         self.assertFalse(row["timing_eligible"])
 
     def test_export_allowlist_discards_private_fields_at_every_level(self):
+        """Nested unknown fields never cross the public export boundary."""
         self.manifest["private_path"] = "PRIVATE_SENTINEL"
         self.manifest["variants"][0]["binary"] = "PRIVATE_SENTINEL"
         self.manifest["cases"][0]["recipe"] = "PRIVATE_SENTINEL"
@@ -121,12 +128,14 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(exported["samples"][0]["figures"]["faces"], 6)
 
     def test_duplicate_sample_is_rejected(self):
+        """Repeated sample identities invalidate a report instead of biasing it."""
         replay.write_json(self.root / "manifest.json", self.manifest)
         (self.root / "runs.jsonl").write_text((json.dumps(self.sample()) + "\n") * 2)
         with self.assertRaises(replay.Invalid):
             replay.load_report(self.root)
 
     def test_bad_resource_metrics_are_rejected(self):
+        """Require complete finite resource measurements with integer RSS."""
         path = self.root / "resources"
         for text in ("", "nan 2 3", "1 -2 3", "1 2 3.5", "1 2", "not metrics"):
             path.write_text(text)
@@ -135,6 +144,7 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(replay.resources(path)["max_rss_kib"], 300)
 
     def test_spawn_failure_and_timeout_are_recorded(self):
+        """Distinguish launch failure from a deadline-triggered cleanup."""
         with patch.object(replay.subprocess, "Popen", side_effect=OSError("PRIVATE_SENTINEL")):
             result = replay.execute(["missing"], {}, self.root / "failed", 1)
         self.assertEqual(result["status"], "spawn_error")
@@ -148,6 +158,7 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(result["status"], "timeout")
 
     def test_empty_geometry_and_missing_resources_are_not_successes(self):
+        """Empty or unmeasured evaluations cannot qualify as successful."""
         run = self.sample()
         run["figures"].update(bodies=0, closed=[], bounds=[])
         self.assertFalse(replay.successful(run))
@@ -157,6 +168,7 @@ class ReplayTests(unittest.TestCase):
             self.assertFalse(replay.successful(run))
 
     def test_success_uses_blocking_wait_without_timeout_polling(self):
+        """Successful evaluations use a blocking wait with no polling timeout."""
         process = Mock(returncode=0)
         process.wait.return_value = 0
         with patch.object(replay.subprocess, "Popen", return_value=process), patch.object(replay, "process_group_exists", return_value=False):
@@ -204,17 +216,20 @@ class ReplayTests(unittest.TestCase):
                     replay.stop_process(process)
 
     def run_mocked(self, execute):
+        """Exercise orchestration without invoking platform-specific utilities."""
         # Exercise orchestration on all hosts without invoking Linux utilities.
         with patch.object(replay.sys, "platform", "linux"), patch.object(replay.shutil, "which", return_value="nice"), patch.object(replay.Path, "is_file", return_value=True), patch.object(replay, "execute", side_effect=execute):
             return replay.run(self.config_path, self.root / "output")
 
     def fake_success(self, command, environment, prefix, timeout):
+        """Emit a complete fake evaluation and verify its thread budget."""
         replay.write_json(Path(str(prefix) + ".json"), measurement())
         Path(str(prefix) + ".resources").write_text("0.01 0.02 100\n")
         self.assertEqual(environment["RAYON_NUM_THREADS"], "2")
         return {"status": "ok", "exit": 0, "seconds": 1.0}
 
     def test_warmup_failure_stops_before_measured_samples(self):
+        """A failed warmup censors all measured runs for the experiment."""
         self.assertEqual(self.run_mocked(lambda *args: {"status": "exit_error", "exit": 1, "seconds": 0.1}), 2)
         report = replay.load_report(self.root / "output")
         self.assertEqual(report["manifest"]["state"], "warmup_failed")
@@ -257,6 +272,7 @@ class ReplayTests(unittest.TestCase):
             replay.public_manifest(report["manifest"])
 
     def test_interruption_preserves_completed_samples(self):
+        """Cancellation keeps earlier samples and the interrupted attempt."""
         count = 0
 
         def execute(*args):
@@ -271,6 +287,7 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(report["summary"][0]["successful_samples"], 1)
 
     def test_timeout_censors_remaining_repeats_without_faking_samples(self):
+        """Skipped repeats are reported as unattempted, never synthetic timings."""
         count = 0
 
         def execute(*args):
@@ -285,6 +302,7 @@ class ReplayTests(unittest.TestCase):
         self.assertIsNone(report["summary"][0]["median_seconds"])
 
     def test_mutated_binary_invalidates_the_experiment(self):
+        """Changing a measured executable invalidates its timing summary."""
         def execute(*args):
             (self.root / "binary").write_bytes(b"changed")
             return self.fake_success(*args)
@@ -361,6 +379,7 @@ class ReplayTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "owned process-group cleanup requires Linux")
     def test_timeout_kills_descendant_even_when_leader_exits_first(self):
+        """Deadline cleanup terminates surviving descendants after leader exit."""
         child_file = self.root / "child.pid"
         program = ("import os,signal,time,pathlib; p=os.fork(); "
                    "signal.signal(signal.SIGTERM, signal.SIG_IGN) if p==0 else None; "
