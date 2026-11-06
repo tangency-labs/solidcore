@@ -256,7 +256,18 @@ fn local_operation_on(
     let offset = executive
         .do_extended_offset(k, Some(&mut *b), notifications)
         .map_err(|e| {
-            if e.is_unported_or_cancelled() || k.fixes.local_operation_offset_status {
+            // (not upstream) the reach's refusals, made before the faces are rebuilt, are
+            // the operation's own reason
+            let reach_refusal = matches!(
+                e.failure().map(|f| &f.reason),
+                Some(crate::error::Reason::Offset(
+                    OffsetFailure::FacesApart { .. } | OffsetFailure::ReachUncertified { .. }
+                ))
+            );
+            if e.is_unported_or_cancelled()
+                || k.fixes.local_operation_offset_status
+                || reach_refusal
+            {
                 e
             } else {
                 // status `SM_ERR`, as upstream; the offset's own error is kept (#2615)
@@ -1624,7 +1635,10 @@ mod tests {
     }
 
     /// Review finding 5: a 10 mm cube's vertical edge rounded r 2, the round given a
-    /// coaxial cylinder of another radius: refused as not sound, or sound.
+    /// coaxial cylinder of another radius: the wider r 2.3 and r 2.05 refused as not sound
+    /// (the first new failure an edge's curve owner, #61); the narrower
+    /// r 1.8 no longer reaches the side planes it was tangent to (it ends 0.2 short of
+    /// them), so it is refused as apart (review finding 6) before anything is built.
     #[test]
     fn a_round_given_a_coaxial_cylinder_is_refused_as_not_sound_or_apart() {
         use crate::blend::fillet_executive::api::fillet_edges;
@@ -1649,11 +1663,16 @@ mod tests {
             let s = Surface::from(
                 ap::create_cylinder_surface(&k, Point3::new(8.0, 8.0, -1.0), radius, 12.0).unwrap(),
             );
-            let why = refused_unchanged_or_sound(&mut k, &mut b, &[round], vec![s]);
-            assert!(
-                matches!(why, None | Some(OffsetFailure::Unsound { .. })),
-                "{radius}: {why:?}"
-            );
+            let why = refused_unchanged_or_returned(&mut k, &mut b, &[round], vec![s]);
+            let want = if radius < 2.0 {
+                // the side x = 10, the first of the two the round was tangent to
+                Some(OffsetFailure::FacesApart {
+                    face: face_on_x(&k, &b, 10.0),
+                })
+            } else {
+                Some(unsound_check(7, 61))
+            };
+            assert_eq!(why, want, "{radius}");
         }
     }
 
@@ -1875,5 +1894,192 @@ mod tests {
             other.as_slice(),
             [(FailureClass::Report { test_index: 5, .. }, 1)]
         ));
+    }
+
+    /// A 20 mm cube with its vertical edge at x = y = 20 rounded r 5.
+    fn cube_rounded_r5(k: &mut Kernel) -> Brep {
+        use crate::blend::fillet_executive::api::fillet_edges;
+        use crate::topology::{edge, vertex};
+        let mut b = create_box(k, Point3::ZERO, 20.0, 20.0, 20.0).unwrap();
+        let e = b
+            .edges()
+            .ids()
+            .find(|&e| {
+                let (s, t) = edge::start_end_vertices(&b, e).unwrap();
+                [s, t].into_iter().flatten().all(|v| {
+                    let p = vertex::point(&b, v).unwrap();
+                    p.x == 20.0 && p.y == 20.0
+                })
+            })
+            .unwrap();
+        fillet_edges(k, &mut b, &[e], 5.0, 1, 1, 1.0).unwrap();
+        b
+    }
+
+    /// The face of `b` on the plane x = `x`.
+    fn face_on_x(k: &Kernel, b: &Brep, x: f64) -> FaceId {
+        bp1::faces(b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                let s = face_ops::surface(b, f).unwrap().unwrap();
+                matches!(s.kind(), SurfaceKind::Plane(_)) && {
+                    let uv = b.face(f).unwrap().uv_domain.evaluate(0.5, 0.5);
+                    let p = s.evaluate_point(k, uv).unwrap();
+                    let n = s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap();
+                    (p.x - x).abs() < 1e-9 && n.x.abs() > 0.99
+                }
+            })
+            .unwrap()
+    }
+
+    /// `∫ √(R² − u²) du` from 0 to `u`.
+    fn quarter_disc_area(radius: f64, u: f64) -> f64 {
+        0.5 * (u * (radius * radius - u * u).sqrt() + radius * radius * (u / radius).asin())
+    }
+
+    /// The refusal of a body not sound by its check, `failures` lines beyond the input's,
+    /// the first test `test` of an `SmBrep` (16011).
+    fn unsound_check(failures: usize, test: u64) -> OffsetFailure {
+        OffsetFailure::Unsound {
+            what: crate::error::offset::Unsoundness::Check {
+                failures,
+                first: Some((crate::geom::a_object::BREP_TYPE, test)),
+            },
+        }
+    }
+
+    /// The cube's round r 5 given the coaxial cylinder r 5.1 (moved out 0.1).
+    fn round_moved_out(k: &mut Kernel) -> (Brep, Option<OffsetFailure>) {
+        use crate::primitive::api_primitives as ap;
+        let mut b = cube_rounded_r5(k);
+        let round = curved_face(&b);
+        let wider = Surface::from(
+            ap::create_cylinder_surface(k, Point3::new(15.0, 15.0, -1.0), 5.1, 22.0).unwrap(),
+        );
+        let why = refused_unchanged_or_returned(k, &mut b, &[round], vec![wider]);
+        (b, why)
+    }
+
+    /// The cube's side x = 20, tangent to the round, moved into the body by 0.1.
+    fn side_moved_into_its_round(k: &mut Kernel) -> (Brep, Option<OffsetFailure>) {
+        let mut b = cube_rounded_r5(k);
+        let side = face_on_x(k, &b, 20.0);
+        let moved = Surface::from(Plane::from_normal(Vec3::new(19.9, 0.0, 0.0), Vec3::X));
+        let why = refused_unchanged_or_returned(k, &mut b, &[side], vec![moved]);
+        (b, why)
+    }
+
+    /// Review finding 6: the round moved out. The side planes, tangent to the round, are
+    /// extended to meet it 1.005 past their old edges (`reach`'s tests), but the tangent
+    /// edge across from the moved face is extended and trimmed, not met again: it keeps
+    /// its old line, the merge closes the gap by growing tolerances, and the check fails
+    /// (issue draft "a moved face next to a tangent edge (a round) is refused as
+    /// unsound"): refused, the cube as it came in.
+    #[test]
+    fn a_round_moved_out_is_refused_as_not_sound_at_its_tangent_edges() {
+        let mut k = Kernel::default();
+        let (_, why) = round_moved_out(&mut k);
+        assert_eq!(why, Some(unsound_check(7, 61)));
+    }
+
+    /// The closed form the round moved out should have, once the tangent edges are met
+    /// again (issue draft "a moved face next to a tangent edge (a round) is refused as
+    /// unsound"): the cube with its corner cut by the r 5.1 circle, `20 (375 + A)`, `A`
+    /// the part of the corner square [15, 20]² inside the circle.
+    #[test]
+    #[ignore = "a moved face next to a tangent edge (a round) is refused as unsound \
+                (notes: issue-draft-tangent-edges.md)"]
+    fn tangent_edges_a_round_moved_out_has_its_closed_form_volume() {
+        let mut k = Kernel::default();
+        let (mut b, why) = round_moved_out(&mut k);
+        assert_eq!(why, None);
+        let r = 5.1_f64;
+        let w = (r * r - 25.0).sqrt();
+        let inside = 5.0 * w + quarter_disc_area(r, 5.0) - quarter_disc_area(r, w);
+        let want = 20.0 * (375.0 + inside);
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v - want).abs() <= 1e-9 * want, "{v} vs {want}");
+    }
+
+    /// The side moved into its round: it meets the round 1 from its old tangent edge
+    /// (`reach`'s tests), and the same tangent edges leave the body unsound: refused, the
+    /// first new failure a vertex out of tolerance (test #59).
+    #[test]
+    fn a_side_moved_into_its_round_is_refused_as_not_sound_at_its_tangent_edges() {
+        let mut k = Kernel::default();
+        let (_, why) = side_moved_into_its_round(&mut k);
+        assert_eq!(why, Some(unsound_check(4, 59)));
+    }
+
+    /// The closed form the side moved into its round should have (issue draft "a moved
+    /// face next to a tangent edge (a round) is refused as unsound"):
+    /// `20 (19.9 · 20 − 4.9 · 5 + ∫₀^4.9 √(25 − u²) du)`.
+    #[test]
+    #[ignore = "a moved face next to a tangent edge (a round) is refused as unsound \
+                (notes: issue-draft-tangent-edges.md)"]
+    fn tangent_edges_a_side_moved_into_its_round_has_its_closed_form_volume() {
+        let mut k = Kernel::default();
+        let (mut b, why) = side_moved_into_its_round(&mut k);
+        assert_eq!(why, None);
+        let want = 20.0 * (19.9 * 20.0 - 4.9 * 5.0 + quarter_disc_area(5.0, 4.9));
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold && (v - want).abs() <= 1e-9 * want, "{v} vs {want}");
+    }
+
+    /// The same side moved out by 0.1: the plane x = 20.1 passes the round, which bends
+    /// away from it, so no extension makes them meet: refused as apart before anything
+    /// is built, the cube as it came in.
+    #[test]
+    fn a_side_moved_off_its_round_is_refused_as_apart() {
+        let mut k = Kernel::default();
+        let mut b = cube_rounded_r5(&mut k);
+        let side = face_on_x(&k, &b, 20.0);
+        let moved = Surface::from(Plane::from_normal(Vec3::new(20.1, 0.0, 0.0), Vec3::X));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[side], vec![moved]);
+        assert_eq!(why, Some(OffsetFailure::FacesApart { face: side }));
+    }
+
+    /// A tangent pair of equal curvature: a 60 x 40 x 20 block whose top is imprinted
+    /// along x = 30, the piece x < 30 raised 1. The two pieces' planes stay parallel and
+    /// 1 apart: they meet nowhere, refused as apart (at the first of the two faces whose
+    /// reach is taken) before anything is built (without the step walls, which build the
+    /// wall between them: `wr_530_local_operation_step_walls`).
+    #[test]
+    fn a_coplanar_neighbour_raised_off_its_twin_is_refused_as_apart() {
+        use crate::boolean::api_brep::boolean_with_options;
+        use crate::boolean::merge::MergeOptions;
+        use crate::geom::a_object::BooleanOperation;
+        let mut k = Kernel::default();
+        let block = create_box(&mut k, Point3::ZERO, 60.0, 40.0, 20.0).unwrap();
+        let cutter = create_box(&mut k, Point3::new(30.0, -1.0, 10.0), 60.0, 42.0, 20.0).unwrap();
+        let mut b = boolean_with_options(
+            &mut k,
+            block,
+            cutter,
+            BooleanOperation::Imprint,
+            MergeOptions::default(),
+        )
+        .unwrap()
+        .result;
+        b.refresh_cached_topology();
+        let piece = bp1::faces(&b, None)
+            .unwrap()
+            .into_iter()
+            .find(|&f| {
+                let face = b.face(f).unwrap();
+                let s = face.surface.as_ref().unwrap();
+                let p = s
+                    .evaluate_point(&k, face.uv_domain.evaluate(0.5, 0.5))
+                    .unwrap();
+                matches!(s.kind(), SurfaceKind::Plane(_)) && (p.z - 20.0).abs() < 1e-9 && p.x < 30.0
+            })
+            .unwrap();
+        let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 21.0), Vec3::Z));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[piece], vec![raised]);
+        assert!(
+            matches!(why, Some(OffsetFailure::FacesApart { .. })),
+            "{why:?}"
+        );
     }
 }
