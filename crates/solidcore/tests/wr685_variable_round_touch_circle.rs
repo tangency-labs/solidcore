@@ -236,7 +236,10 @@ fn folding_balls_are_not_refused_as_a_fold_without_the_fix() {
 #[test]
 fn a_progressive_spline_round_builds() {
     let v = spline_round(kernel(true, true), HOLDS).expect("builds");
-    eprintln!("{v} vs the envelope's 5957.718502, rel {}", rel(v, 5957.718502));
+    eprintln!(
+        "{v} vs the envelope's 5957.718502, rel {}",
+        rel(v, 5957.718502)
+    );
     assert!(rel(v, 5957.718502) < 3.1e-8, "{v}");
 }
 
