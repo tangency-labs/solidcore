@@ -12,11 +12,11 @@
 //!   larger of it and the fifth divided difference (`OdeOptions::quadrature`, as the
 //!   precise-property integrals).
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
-use solidcore::Kernel;
 use solidcore::curve::curve::Curve;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::math::{CPoint, NOW};
+use solidcore::Kernel;
 
 const RADIUS: f64 = 5.0;
 
