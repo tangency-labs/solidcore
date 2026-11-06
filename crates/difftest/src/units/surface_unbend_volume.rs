@@ -36,6 +36,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
+use crate::cases::contract;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -496,6 +497,76 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     Ok(to_output(&o))
 }
 
+// ---- input contract -----------------------------------------------------------------
+
+/// The largest derivative order.
+const MAX_N: usize = 5;
+/// The largest magnitude of a value.
+const MAX_COORD: f64 = 1e8;
+/// The shortest side of a bounded box whose edges upstream builds.
+const MIN_SIDE: f64 = 1e-9;
+
+fn fin(v: f64) -> bool {
+    contract::finite(v, MAX_COORD)
+}
+
+fn vecs(vs: &[[f64; 3]]) -> bool {
+    vs.iter().all(|v| contract::vec3(v, MAX_COORD))
+}
+
+/// Whether a box coordinate is one of the generator's unbounded markers.
+fn is_infinite(a: f64) -> bool {
+    a.abs() == 1_234_567.0 || a.abs() == 1111.111
+}
+
+/// Whether an unbend volume's constructor arguments and next map are finite within range.
+fn unbend_ok(u: &UnbendIn) -> bool {
+    u.ctor
+        .as_ref()
+        .is_none_or(|c| vecs(&[c.c, c.axis, c.mid]) && fin(c.neutral) && fin(c.tol))
+        && u.next.as_ref().is_none_or(|n| vecs(n))
+}
+
+/// Whether a case keeps the input contract of the C++ reference wrapper
+/// (`crates/solidcore-ffi/src/units/surface_unbend_volume.rs`, `validate`): finite values
+/// within [`MAX_COORD`], up to 64 type codes in `[0, 2^30]`, derivative orders up to
+/// [`MAX_N`], and no `b_box` with outputs of a bounded box with a side shorter than
+/// [`MIN_SIDE`] (upstream then uses a null or deleted edge line). `read_db` cases are
+/// fixtures only.
+fn keeps_contract(i: &Inputs) -> bool {
+    let ok = i.unbend().is_none_or(unbend_ok);
+    ok && match i {
+        Inputs::Info { types, .. } => {
+            types.len() <= 64 && types.iter().all(|t| (0..=1 << 30).contains(t))
+        }
+        Inputs::Eval { p, n, .. } | Inputs::EvalSimple { p, n, .. } => {
+            vecs(&[*p]) && *n <= MAX_N
+        }
+        Inputs::BBox {
+            a,
+            b,
+            want_box,
+            want_pseudo,
+            ..
+        } => {
+            let bounded = !a.iter().chain(b).any(|&x| is_infinite(x));
+            let flat = a.iter().zip(b).any(|(a, b)| (b - a).abs() < MIN_SIDE);
+            vecs(&[*a, *b]) && !((*want_box || *want_pseudo) && bounded && flat)
+        }
+        Inputs::Trim { a, b, .. } | Inputs::CurveIn { a, b, .. } => vecs(&[*a, *b]),
+        Inputs::InvGuess { p, .. } => vecs(&[*p]),
+        Inputs::Global { p, dom, .. } => vecs(&[*p]) && dom.as_ref().is_none_or(|d| vecs(d)),
+        Inputs::Local { p, g, dom, .. } => {
+            vecs(&[*p, *g]) && dom.as_ref().is_none_or(|d| vecs(d))
+        }
+        Inputs::OnBoundary { p, tol, .. } => vecs(&[*p]) && tol.is_none_or(fin),
+        Inputs::Preds { p, a, b, .. } => vecs(&[*p, *a, *b]),
+        Inputs::Copy { .. } => true,
+        Inputs::Equal { other, .. } => unbend_ok(other),
+        Inputs::ReadDb { .. } => false,
+    }
+}
+
 // ---- generation ---------------------------------------------------------------------
 
 fn coord(rng: &mut Rng, r: f64) -> [f64; 3] {
@@ -792,7 +863,13 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_case(rng)).ok()
+        for _ in 0..64 {
+            let i = gen_case(rng);
+            if keeps_contract(&i) {
+                return serde_json::to_value(i).ok();
+            }
+        }
+        None
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
