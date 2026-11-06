@@ -11,7 +11,7 @@
 //! (`uniform`, `chord_length`, `centripetal`, `inherited`) and `tol`.
 //!
 //! Output keys: `status` (`0` ok, else the `NL_*_ERR` number, `1000` for upstream's
-//! bare error flags, `-1` on the Rust side for any other error, which never matches),
+//! bare error flags, `-1` for any other error, such as the sample bound's refusal),
 //! then on success `dims` (`n p m`), `cpts` (homogeneous `x y z w`) and `knots` of the
 //! offset curve.
 //!
@@ -180,19 +180,23 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     to_output(&rust_record(i)?)
 }
 
-/// The Rust record (status, then the curve on success).
-fn rust_record(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let c = resolve(&i.crv)?;
-    let cur = to_curve(&c)?;
+/// The Rust offset of the case's curve; the outer error is the harness's.
+fn rust_offset(i: &Inputs) -> Result<solidcore::Result<Curve>, HarnessError> {
+    let cur = to_curve(&resolve(&i.crv)?)?;
     let [bx, by, bz] = i.b;
-    let rec = match cur.offset_pt_sampling(
+    Ok(cur.offset_pt_sampling(
         Vec3::new(bx, by, bz),
         i.d,
         i.deg,
         i.tangents,
         i.par.par(),
         i.tol,
-    ) {
+    ))
+}
+
+/// The Rust record (status, then the curve on success).
+fn rust_record(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
+    let rec = match rust_offset(i)? {
         Ok(q) => {
             let mut o = vec![0.0, q.n() as f64, q.degree() as f64, q.m() as f64];
             for &pw in q.cpts() {
@@ -495,10 +499,14 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solidcore::nurbs::crv_offset::TOO_MANY_SAMPLES_REASON;
     use std::collections::BTreeMap;
 
-    /// The generator reaches success and the main error statuses, never a Rust-only
-    /// error.
+    /// The generator reaches success and the main error statuses. The only error
+    /// without an `NL_*_ERR` number it reaches is the sample bound's refusal of an
+    /// offset with a cusp: seed 216 offsets a cubic by 0.87 across a span whose
+    /// radius of curvature falls to 1.9e-4, which needs 17 743 samples where the
+    /// bound is 16 384.
     #[test]
     fn generated_cases_cover_statuses() {
         let mut tally: BTreeMap<i64, usize> = BTreeMap::new();
@@ -508,10 +516,16 @@ mod tests {
                 continue;
             };
             let st = rust_record(&i).unwrap()[0];
+            if st == -1.0 {
+                let e = rust_offset(&i).unwrap().unwrap_err();
+                let bound = matches!(&e, SolidError::InvalidInput { reason, .. }
+                    if *reason == TOO_MANY_SAMPLES_REASON);
+                assert!(bound, "seed {s}: {e:?}");
+            }
             *tally.entry(st as i64).or_default() += 1;
         }
-        assert!(tally.get(&0).copied().unwrap_or(0) > 200, "{tally:?}");
         eprintln!("{tally:?}");
-        assert!(!tally.contains_key(&-1), "{tally:?}");
+        assert!(tally.get(&0).copied().unwrap_or(0) > 200, "{tally:?}");
+        assert!(tally.get(&-1).copied().unwrap_or(0) <= 1, "{tally:?}");
     }
 }
