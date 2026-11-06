@@ -1,25 +1,5 @@
 [
   {
-    "case": "fillets/1080-fillet-equal-slope-basin-1-mm-rim-loop-4",
-    "issue": "tangency-labs/solidcore#2947",
-    "reason": "continuity_order: got {'body': 'Slab', 'edges': 'blend', 'order': 'g0',  want >= g1 at every blend seam"
-  },
-  {
-    "case": "fillets/1080-fillet-sloped-basin-1-mm-rim-r4-2-edges",
-    "issue": "tangency-labs/solidcore#2947",
-    "reason": "continuity_order: got {'body': 'Slab', 'edges': 'blend', 'order': 'g0',  want >= g1 at every blend seam"
-  },
-  {
-    "case": "fillets/1080-fillet-sloped-basin-1-mm-rim-r4-4-edges",
-    "issue": "tangency-labs/solidcore#2947",
-    "reason": "continuity_order: got {'body': 'Slab', 'edges': 'blend', 'order': 'g0',  want >= g1 at every blend seam"
-  },
-  {
-    "case": "fillets/11991-round-cylinder-edge-ending-on-a-round-tangent-line",
-    "issue": "solidcore#2843",
-    "reason": "round status 1001 where the cylinder's end lies on the round's tangent line; builds at x = 5.001"
-  },
-  {
     "case": "fillets/12034-round-loft-square-to-circle-circular-rim",
     "issue": "solidcore#2844",
     "reason": "the round of the loft's circular rim is not a closed solid"
@@ -40,37 +20,9 @@
     "reason": "status 1001 instead of the refusal naming the size that fits"
   },
   {
-    "case": "fillets/2893-chamfer-distance-and-angle-past-the-wall-refused",
-    "issue": "tangency-labs/solidcore#2949",
-    "reason": "refused, but not because \"angle\": step 2 (solid.chamfer): SMLib chamfer: operation: SMLib rejected the input (SM_ERR_INVALID_INPUT)"
-  },
-  {
-    "case": "fillets/2893-chamfer-two-distances-elliptical-rim",
-    "issue": "tangency-labs/solidcore#2950",
-    "reason": "refused, but not because \"not supported yet\": step 3 (solid.chamfer): SMLib chamfer: operation: SMLib failed (status 1001) (tangent propagation blended the picked edges' tangent chain with them; with it off, tangent_chain:"
-  },
-  {
     "case": "fillets/4782-fillet-bar-edge-wider-than-both-faces",
     "issue": "tangency-labs/solidcore#2948",
     "reason": "continuity_order: got Box: no null seams want >= g1 at every blend seam"
-  },
-  {
-    "case": "fillets/851-chamfer-knife-edge-tip-2-box-less-cylinder",
-    "issue": "tangency-labs/solidcore#2965",
-    "reason": "refused at call 3 (blend_dropping) with SM_ERR_INVALID_INPUT: prepare_chamfers_along measures the wedge between the knife edge's two faces, which are tangent and folded back on each other, and refuses; the ruling is that they build, as the chord between the ball's contact points",
-    "fails": "call 3 (blend_dropping) refused: solidcore rejected the input (SM_ERR_INVALID_INPUT)"
-  },
-  {
-    "case": "fillets/851-chamfer-knife-edge-tip-2-sketched",
-    "issue": "tangency-labs/solidcore#2965",
-    "reason": "refused at call 3 (blend_dropping) with SM_ERR_INVALID_INPUT: prepare_chamfers_along measures the wedge between the knife edge's two faces, which are tangent and folded back on each other, and refuses; the ruling is that they build, as the chord between the ball's contact points",
-    "fails": "call 3 (blend_dropping) refused: solidcore rejected the input (SM_ERR_INVALID_INPUT)"
-  },
-  {
-    "case": "fillets/851-chamfer-knife-edge-tip-5",
-    "issue": "tangency-labs/solidcore#2965",
-    "reason": "refused at call 3 (blend_dropping) with SM_ERR_INVALID_INPUT: prepare_chamfers_along measures the wedge between the knife edge's two faces, which are tangent and folded back on each other, and refuses; the ruling is that they build, as the chord between the ball's contact points",
-    "fails": "call 3 (blend_dropping) refused: solidcore rejected the input (SM_ERR_INVALID_INPUT)"
   },
   {
     "case": "fillets/9-fillet-corner-curvature-with-reduce-fit",
@@ -126,11 +78,6 @@
     "case": "fillets/every-block-cylinder-tangent-concave-arc-r2-partial-chain",
     "issue": "tangency-labs/solidcore#2864",
     "reason": "refused: the picked edge runs on across the cylinder's seam into the rest of the same half circle, and a round does not end there; it passes as written (19091.9620) once the round runs on across the seam"
-  },
-  {
-    "case": "fillets/report-drafted-peg-front-and-concave-rounds-together-r2",
-    "issue": "tangency-labs/solidcore#2953",
-    "reason": "step 13 (solid.fillet): invalid input: not supported yet: the fillet meets a corner of this kind, which SMLib's blends do not handle yet (where its ed"
   },
   {
     "case": "fillets/report-fillet-curvature-three-edges-at-bar-corner",

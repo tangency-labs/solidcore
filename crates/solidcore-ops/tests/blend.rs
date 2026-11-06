@@ -2,6 +2,7 @@
 //! on edge, face and vertex indices). Their own test binary: each holds the process kernel for
 //! seconds.
 #![allow(
+    clippy::disallowed_methods, // closed-form oracles, not ops geometry
     clippy::unwrap_used,
     clippy::indexing_slicing,
     clippy::panic,
@@ -13,19 +14,23 @@ mod common;
 use common::*;
 
 use std::f64::consts::PI;
+use std::io::Read as _;
 
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::kernel::Kernel;
-use solidcore::query::api_queries::face_bounding_box;
+use solidcore::query::api_queries::{edge_closest_point, face_bounding_box};
 use solidcore::topology::api_files::write_brep_to_file;
 use solidcore::topology::brep_data_write::FromBrepEnv;
 use solidcore::topology::loopuse;
 use solidcore::topology::topology::NotifyRecords;
 use solidcore::topology::EdgeuseId;
 use solidcore::{EdgeId, FaceId, Vec3};
+use solidcore_record::brep::Brep as Record;
+
 use solidcore_ops::{
-    blend, chamfer_sides, edge_faces_along, fillet_variable, make_box, tangent_chain, Blend, Body,
-    ChamferSecond, CheckLevel, Corners, Error, FitKind, SetBack, Unblendable,
+    blend, chamfer_sides, edge_faces_along, fillet_variable, make_box, make_cone, make_cylinder,
+    tangent_chain, Blend, Body, ChamferSecond, CheckLevel, Corners, Error, FitKind, SetBack,
+    Unblendable,
 };
 
 /// The block's top front edge, 30 long, between the top (z = 10) and the front (y = 0).
@@ -184,19 +189,10 @@ fn a_variable_round_runs_from_its_start() {
     assert!(v < ABC - off(1.0) && v > ABC - off(2.0), "{v}");
     assert!(b.check(CheckLevel::All).unwrap().is_valid());
 
-    // a law with a corner, one zero inside, one that starts off the edge
+    // a law zero inside, one that starts off the edge
     let b = block();
     let e = top_front(&b);
     let start = vertex_at(&b, [0.0, 0.0, 10.0]);
-    let bent = fillet_variable(
-        &b,
-        e,
-        start,
-        1,
-        &[0.0, 0.0, 0.5, 1.0, 1.0],
-        &[1.0, 2.0, 1.0],
-    );
-    assert!(matches!(bent, Err(Error::Unsupported(_))), "{bent:?}");
     let pinched = fillet_variable(
         &b,
         e,
@@ -211,6 +207,214 @@ fn a_variable_round_runs_from_its_start() {
     assert_eq!(off_edge, Err(Error::Argument));
     // refused: the body as it came in
     assert!(rel(volume(&b), ABC) < 1e-12);
+}
+
+/// A law with a corner rounds its edge as the union of its balls (`docs/generic-blend.md` §3.2,
+/// "Corners in a radius law"): at a peak the two sides' rounds cross and end on their crossing,
+/// at a dip the corner ball's zone lies between them. Each removes its balls' union, integrated
+/// numerically (SolidCraft's `variable_radius_with_a_corner_through_a_middle_point` for the
+/// peak, the fork's capi cases for the others, as `wr685_law_corners` holds them), to that
+/// test's 1e-4 relative; each keeps the law's radius at its start and is one sound body.
+#[test]
+fn a_variable_round_with_a_corner_in_its_law_is_its_balls_union() {
+    // box size, the edge's middle, its start, the start's rail ends, knots, radii, removed, faces
+    type Case<'a> = (
+        [f64; 3],
+        [f64; 3],
+        [f64; 3],
+        [[f64; 3]; 2],
+        &'a [f64],
+        &'a [f64],
+        f64,
+        usize,
+    );
+    all_fixes();
+    let peak = [0.0, 0.0, 0.5, 1.0, 1.0];
+    let dip_then_peak = [0.0, 0.0, 0.25, 0.75, 1.0, 1.0];
+    let cases: [Case<'_>; 4] = [
+        // 2 -> 4 -> 2 on the 10 x 20 x 30 box's top edge x = 10, z = 30, from y = 0
+        (
+            [10.0, 20.0, 30.0],
+            [10.0, 10.0, 30.0],
+            [10.0, 0.0, 30.0],
+            [[8.0, 0.0, 30.0], [10.0, 0.0, 28.0]],
+            &peak,
+            &[2.0, 4.0, 2.0],
+            39.541034,
+            8,
+        ),
+        // 4 -> 2 -> 4 on the 20 cube's edge y = z = 20, from x = 0
+        (
+            [20.0; 3],
+            [10.0, 20.0, 20.0],
+            [0.0, 20.0, 20.0],
+            [[0.0, 16.0, 20.0], [0.0, 20.0, 16.0]],
+            &peak,
+            &[4.0, 2.0, 4.0],
+            39.542073,
+            9,
+        ),
+        // 4, 2, 4, 2 at 0, 0.25, 0.75, 1 on the same edge, from either end (mirror images)
+        (
+            [20.0; 3],
+            [10.0, 20.0, 20.0],
+            [0.0, 20.0, 20.0],
+            [[0.0, 16.0, 20.0], [0.0, 20.0, 16.0]],
+            &dip_then_peak,
+            &[4.0, 2.0, 4.0, 2.0],
+            38.818277,
+            10,
+        ),
+        (
+            [20.0; 3],
+            [10.0, 20.0, 20.0],
+            [20.0, 20.0, 20.0],
+            [[20.0, 16.0, 20.0], [20.0, 20.0, 16.0]],
+            &dip_then_peak,
+            &[4.0, 2.0, 4.0, 2.0],
+            38.818277,
+            10,
+        ),
+    ];
+    for (size, middle, from, rails, knots, radii, want, faces) in cases {
+        let b = make_box([0.0; 3], size).unwrap();
+        let e = edge_at(&b, middle);
+        let start = vertex_at(&b, from);
+        fillet_variable(&b, e, start, 1, knots, radii).unwrap();
+        let removed = size[0] * size[1] * size[2] - volume(&b);
+        eprintln!("{radii:?} from {from:?}: removed {removed}, want {want}");
+        assert!(
+            (removed - want).abs() <= 1e-4 * want,
+            "{radii:?} from {from:?}: removed {removed}, want {want}"
+        );
+        assert_eq!(b.counts().unwrap()[0], faces, "{radii:?} from {from:?}");
+        // the round's end at its start is a section of the law's first radius
+        for p in rails {
+            vertex_at(&b, p);
+        }
+        assert!(b.check(CheckLevel::All).unwrap().is_valid());
+    }
+}
+
+/// Select the cube's edge along x at y = z = 20, with its record Order.
+fn variable_ordered_edge(b: &Body) -> (solidcore_ops::Order, usize) {
+    let (record, order) = b.to_record().unwrap();
+    let edge = record
+        .edges
+        .iter()
+        .position(|e| {
+            e.vertices.iter().all(|&v| {
+                let p = record.vertices[usize::try_from(v).unwrap()].point;
+                p[1] == 20.0 && p[2] == 20.0
+            })
+        })
+        .unwrap();
+    (order, edge)
+}
+
+#[test]
+fn a_record_ordered_variable_round_keeps_its_selected_edge() {
+    all_fixes();
+    for permuted in [false, true] {
+        let b = make_box([0.0; 3], [20.0; 3]).unwrap();
+        let (mut order, edge) = variable_ordered_edge(&b);
+        let selected = order.edges[edge];
+        if permuted {
+            order.edges.rotate_left(5);
+        }
+        let edge = order.edges.iter().position(|&e| e == selected).unwrap();
+        solidcore_ops::fillet_variable_ordered(
+            &b,
+            &order,
+            edge,
+            [-10.0, 20.0, 20.0],
+            1,
+            &[0.0, 0.0, 1.0, 1.0],
+            &[2.0, 2.0],
+        )
+        .unwrap();
+        let want = 8000.0 - (1.0 - PI / 4.0) * 4.0 * 20.0;
+        assert!((b.volume(1e-9).unwrap() - want).abs() <= want * 1e-9);
+        for point in [
+            [0.0, 18.0, 20.0],
+            [0.0, 20.0, 18.0],
+            [20.0, 18.0, 20.0],
+            [20.0, 20.0, 18.0],
+        ] {
+            vertex_at(&b, point);
+        }
+        assert!(b.check(CheckLevel::All).unwrap().is_valid());
+    }
+}
+
+/// Reversing this law leaves its total volume the same, so its start's radius-4 rail
+/// vertices and its ten faces, not volume alone, prove which end receives the law.
+#[test]
+fn a_record_ordered_variable_round_keeps_the_near_end_and_tie_rule() {
+    all_fixes();
+    for point in [[-10.0, 20.0, 20.0], [30.0, 20.0, 20.0], [10.0, 20.0, 20.0]] {
+        let b = make_box([0.0; 3], [20.0; 3]).unwrap();
+        let (record, _) = b.to_record().unwrap();
+        let (mut order, edge) = variable_ordered_edge(&b);
+        let selected = order.edges[edge];
+        let solidcore_record::brep::Curve::Line { start, .. } = record.edges[edge].curve else {
+            panic!("the selected edge is a line");
+        };
+        let from_x = if point[0] < 0.0 {
+            0.0
+        } else if point[0] > 20.0 {
+            20.0
+        } else {
+            start[0]
+        };
+        order.edges.reverse();
+        let edge = order.edges.iter().position(|&e| e == selected).unwrap();
+        solidcore_ops::fillet_variable_ordered(
+            &b,
+            &order,
+            edge,
+            point,
+            1,
+            &[0.0, 0.0, 0.25, 0.75, 1.0, 1.0],
+            &[4.0, 2.0, 4.0, 2.0],
+        )
+        .unwrap();
+        assert_eq!(b.counts().unwrap()[0], 10, "start {point:?}");
+        vertex_at(&b, [from_x, 16.0, 20.0]);
+        vertex_at(&b, [from_x, 20.0, 16.0]);
+        assert!(b.check(CheckLevel::All).unwrap().is_valid());
+    }
+}
+
+#[test]
+fn an_ordered_variable_round_rejects_bad_selection_without_editing() {
+    all_fixes();
+    let b = make_box([0.0; 3], [20.0; 3]).unwrap();
+    let (before, _) = b.to_record().unwrap();
+    let (order, edge) = variable_ordered_edge(&b);
+    let law = |order: &solidcore_ops::Order, edge: usize, start| {
+        solidcore_ops::fillet_variable_ordered(
+            &b,
+            order,
+            edge,
+            start,
+            1,
+            &[0.0, 0.0, 1.0, 1.0],
+            &[2.0, 2.0],
+        )
+    };
+    assert_eq!(
+        law(&order, usize::MAX, [0.0, 20.0, 20.0]),
+        Err(Error::Argument)
+    );
+    let mut missing = order.clone();
+    missing.edges[edge] = EdgeId::from_index(1_000_000);
+    assert_eq!(law(&missing, edge, [0.0, 20.0, 20.0]), Err(Error::Argument));
+    assert_eq!(
+        law(&order, edge, [f64::NAN, 20.0, 20.0]),
+        Err(Error::Argument)
+    );
+    assert_eq!(b.to_record().unwrap().0, before);
 }
 
 #[test]
@@ -264,6 +468,131 @@ fn arguments_are_checked_before_the_kernel() {
     );
     // nothing changed the body
     assert!(rel(volume(&b), ABC) < 1e-12);
+}
+
+/// A distance and an angle whose chamfer runs out past the other face: the refusal names the
+/// angle and the bound below which one meets that face, pi less the wedge between the faces.
+#[test]
+fn a_chamfer_angle_past_the_other_face_is_refused_naming_its_bound() {
+    all_fixes();
+    let refused = |b: &Body, e: usize, angle: f64, largest: f64| {
+        let first = edge_faces_along(b, e, [0.0, 0.0, -1.0]).unwrap()[0].0;
+        let before = volume(b);
+        match chamfer_sides(b, &[e], &[first], 2.0, ChamferSecond::Angle(angle)) {
+            Err(Error::ChamferAngleTooLarge {
+                edge,
+                angle: asked,
+                largest: bound,
+            }) => {
+                assert_eq!(edge, e);
+                assert_eq!(asked, angle);
+                assert!(rel(bound, largest) < 1e-12, "{bound} against {largest}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(volume(b), before, "a refusal leaves the body as it came in");
+    };
+    // a right angle between the faces: the top rim of a cylinder at 90.573 degrees
+    let b = make_cylinder([0.0; 3], 10.0, 20.0).unwrap();
+    refused(
+        &b,
+        edge_at(&b, [0.0, 10.0, 20.0]),
+        1.580797063408824,
+        PI / 2.0,
+    );
+    // and a straight edge, exactly at the bound as well as past it
+    let b = block();
+    let e = top_front(&b);
+    refused(&b, e, PI / 2.0, PI / 2.0);
+    refused(&b, e, 0.75 * PI, PI / 2.0);
+    // 45 degrees between a frustum's base and its side: room for 135
+    let b = make_cone([0.0; 3], 10.0, 5.0, 5.0).unwrap();
+    refused(&b, edge_at(&b, [0.0, 10.0, 0.0]), 2.5, 0.75 * PI);
+}
+
+/// The index of the edge of `b` nearest `p` (a case's pick lies off its edge).
+fn nearest_edge(b: &Body, p: [f64; 3]) -> usize {
+    let (k, brep) = kernel_copy(b);
+    let q = Vec3::new(p[0], p[1], p[2]);
+    let distance = |&e: &EdgeId| {
+        edge_closest_point(&k, &brep, e, q)
+            .unwrap()
+            .closest
+            .distance
+    };
+    let list = brep.edge_list();
+    let all = list.iter().map(distance);
+    all.enumerate()
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap()
+        .0
+}
+
+/// A tangent chain chamfered 1 and 2 is one chamfer: the tilted cylinder's elliptical rim, in
+/// two arcs whose middles have different wedges (the kernel case
+/// `2893-chamfer-two-distances-elliptical-rim`), measured at the widest. Its one pair of
+/// offsets puts the ball's centre on the cylinder of radius 5 less the wall's offset, at the
+/// top's offset under the plane z = 10, so the top's rail is that cylinder's ellipse there,
+/// lifted to the plane: semi-axes `R` along y and `R sqrt(5) / 2` along x, centred at
+/// x = 10 less half the top's offset (the axis runs 1 along x to 2 along z).
+#[test]
+#[allow(clippy::disallowed_methods)] // the test's closed form, not ops computing geometry
+fn a_tangent_chain_is_one_chamfer_measured_at_its_widest_wedge() {
+    const SQRT_5: f64 = 2.236_067_977_499_79;
+    all_fixes();
+    let case = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../solidcore/tests/kernel_cases/fillets/",
+        "2893-chamfer-two-distances-elliptical-rim.bodies.json.gz"
+    );
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(case).unwrap())
+        .read_to_string(&mut text)
+        .unwrap();
+    let records: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let record: Record = serde_json::from_value(records["b12"].clone()).unwrap();
+    let (b, _) = Body::from_record(&record, true).unwrap();
+    let up = [0.0, 0.0, 1.0];
+    let rim = [
+        nearest_edge(
+            &b,
+            [12.397279543126551, 4.505296518190091, 9.999999999999998],
+        ),
+        nearest_edge(
+            &b,
+            [7.602194600606031, -4.505901858302108, 9.999999999999998],
+        ),
+    ];
+    assert_ne!(rim[0], rim[1]);
+    // each arc's faces at its middle: the top's normal is up, the wall's leans `wall`, so
+    // their wedge's cosine is -wall, and the widest is the wall's leaning up most
+    let (mut top, mut wall) = (0, f64::NEG_INFINITY);
+    for e in rim {
+        let [a, b] = edge_faces_along(&b, e, up).unwrap();
+        let (t, w) = if a.1 > b.1 { (a, b) } else { (b, a) };
+        assert!(rel(t.1, 1.0) < 1e-12);
+        top = t.0;
+        wall = wall.max(w.1);
+    }
+    let (c, s) = (-wall, wall.acos().sin());
+    let (r_top, r_wall) = ((2.0 - c) / s, (1.0 - 2.0 * c) / s);
+    chamfer_sides(&b, &rim, &[top, top], 1.0, ChamferSecond::Distance(2.0)).unwrap();
+    let (k, made) = kernel_copy(&b);
+    let bx = made
+        .face_list()
+        .iter()
+        .find_map(|&f| {
+            let bx = face_bounding_box(&k, &made, f, true).ok()?;
+            ((bx.min().z - 10.0).abs() < 1e-9 && (bx.max().z - 10.0).abs() < 1e-9).then_some(bx)
+        })
+        .unwrap();
+    let radius = 5.0 - r_wall;
+    let half_x = radius * SQRT_5 / 2.0;
+    assert!(rel(bx.max().y, radius) < 1e-8, "{}", bx.max().y);
+    assert!(rel(bx.min().y, -radius) < 1e-8, "{}", bx.min().y);
+    let middle = 10.0 - r_top / 2.0;
+    assert!(rel(bx.max().x, middle + half_x) < 1e-8, "{}", bx.max().x);
+    assert!(rel(bx.min().x, middle - half_x) < 1e-8, "{}", bx.min().x);
 }
 
 #[test]

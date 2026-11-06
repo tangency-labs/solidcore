@@ -197,6 +197,16 @@ pub enum NoRoomReason {
     /// than the round it runs round). The size at which the rail closes to a point on the
     /// axis builds (not the fork's, #2546, WR-739).
     RailPastAxis,
+    /// Two blends running on into each other at a smooth vertex with different offsets:
+    /// each is built on its own offsets, so their rails do not reach the shared section the
+    /// Join ends them on. The fit is the smaller offset, on the edge of the larger (not the
+    /// fork's, #2905).
+    JoinOffsetsDiffer,
+    /// A blend past its faces would leave a strip of the body, along an edge of the body,
+    /// thinner than the part resolves: the edge lies off the blend by less than the trim's
+    /// tolerance and the body's together, within which the strip's vertices are one. The
+    /// fit is the blend's size less the fit margin (not the fork's, #2404).
+    StripBelowResolution,
 }
 
 /// The initialized error-info members p3 reads or writes. Corner kinds use the

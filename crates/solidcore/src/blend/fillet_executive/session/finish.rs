@@ -27,6 +27,9 @@
 //! edges, edge uses and faces under the session's kernel identities is rebound to the
 //! target's naming, as the piecewise merge does (owners are pointers upstream;
 //! tangency-labs/solidcore#423).
+//! `do_filleting` ends with the fork's `SplitFilletFacesAtRadiusCorners`, which the fork
+//! runs in `DoFillet` only, so a session driven step by step splits a round at its radius
+//! law's corners too.
 //! A failing `CreateFilletBrep` (or one that makes no faces) that noted no error notes
 //! `SM_FILERR_EDGE_PROBLEM` with what failed, and the caller's error info gets it (not
 //! upstream, #11360: upstream leaves code 0 and the default comment there).
@@ -36,12 +39,13 @@
 //! No recursion.
 
 use super::original_trim::OriginalSurfaceDeletion;
-use super::{invalid, FilletBody, FilletObject, FilletSession, SessionObjects};
+use super::{invalid, FilletBody, FilletObject, FilletSession, SessionObjects, SolverObject};
 use crate::blend::fillet_cliff_overflow::Refusal;
 use crate::blend::fillet_executive::p3::{
     ErrorInfo, FilletExecutive, FilletFinishAccess, StitchAttempt, StitchSettings,
 };
 use crate::blend::fillet_geom::p1::FilletErrorType;
+use crate::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::object::NotifyOperation;
 use crate::geom::tol::approx_tol3d;
@@ -527,23 +531,12 @@ impl FilletSession<'_> {
         let missing_corner_note = (k.fixes.fillet_vertex_error_diagnostics
             && self.executive.error.code == FilletErrorType::CornerUnsupported as i32)
             .then(|| self.executive.error.clone());
-        let result = self.do_filleting_unlogged(k, None);
+        let (result, split_and_logged) = self.filleting_split_and_logged(k, None);
         if result.is_err() {
             if let Some(note) = missing_corner_note {
                 self.executive.error = note;
             }
         }
-        // The fork's SplitFilletFacesAtRadiusCorners (6eecf04): a fillet surface turns where
-        // its radius has a corner; the face is split there into faces that are smooth, with
-        // an edge along the turn (and rebuilt where the law dips or peaks, 7babe17).
-        let split = if result.is_ok() {
-            self.split_fillet_faces_at_radius_corners(k)
-        } else {
-            Ok(())
-        };
-        // (not upstream, #2489) the blend face log is read after the split, whose faces
-        // replace the round's
-        let logged = self.take_blend_faces(k, result.is_ok() && split.is_ok());
         // Opt-in (`fixes.fillet_gn_section_generator`, WR-696): a refusal with a size that
         // builds carries it on the error, its status unchanged.
         if let Err(SolidError::Upstream {
@@ -563,8 +556,7 @@ impl FilletSession<'_> {
             }
         }
         result?;
-        split?;
-        logged?;
+        split_and_logged?;
         if !k.fixes.fillet_refuse_non_manifold_result {
             return Ok(());
         }
@@ -610,18 +602,45 @@ impl FilletSession<'_> {
     /// joined again afterwards where the blends left more than one at a split point,
     /// whether the blends built or not (`JoinBlendedVertexFans`); the filleting's own
     /// error comes first.
+    ///
+    /// A round whose radius law has a corner is split there (the fork's
+    /// `SplitFilletFacesAtRadiusCorners`, which its `DoFillet` runs), so a session filleted
+    /// step by step, its corners set between [`Self::create_corners`] and this, builds the
+    /// law's corners as [`Self::do_fillet`] does.
     pub fn do_filleting(
         &mut self,
         k: &mut Kernel,
         error_out: Option<&mut ErrorInfo<FilletObject>>,
     ) -> Result<()> {
-        let status = self.do_filleting_unlogged(k, error_out);
-        let logged = self.take_blend_faces(k, status.is_ok());
-        status.and(logged)
+        let (status, split_and_logged) = self.filleting_split_and_logged(k, error_out);
+        status.and(split_and_logged)
     }
 
-    /// [`Self::do_filleting`] without reading the blend face log, for
-    /// [`Self::do_fillet`], which reads it after the split at the radius law's corners.
+    /// The filleting's status, then the split at the radius law's corners and the blend
+    /// face log read after it: the filleting's own error is kept apart for
+    /// [`Self::do_fillet`].
+    fn filleting_split_and_logged(
+        &mut self,
+        k: &mut Kernel,
+        error_out: Option<&mut ErrorInfo<FilletObject>>,
+    ) -> (Result<()>, Result<()>) {
+        let status = self.do_filleting_unlogged(k, error_out);
+        // The fork's SplitFilletFacesAtRadiusCorners (6eecf04): a fillet surface turns where
+        // its radius has a corner; the face is split there into faces that are smooth, with
+        // an edge along the turn (and rebuilt where the law dips or peaks, 7babe17).
+        let split = if status.is_ok() {
+            self.split_fillet_faces_at_radius_corners(k)
+        } else {
+            Ok(())
+        };
+        // (not upstream, #2489) the blend face log is read after the split, whose faces
+        // replace the round's
+        let logged = self.take_blend_faces(k, status.is_ok() && split.is_ok());
+        (status, split.and(logged))
+    }
+
+    /// [`Self::do_filleting`]'s filleting, without the split at the radius law's corners
+    /// or reading the blend face log.
     fn do_filleting_unlogged(
         &mut self,
         k: &mut Kernel,
@@ -635,6 +654,48 @@ impl FilletSession<'_> {
             Ok(()) => joined,
             Err(e) => Err(e),
         }
+    }
+
+    /// Not the fork's (#2727): great circles have no corner of a radius law to stop at. Swept
+    /// over one, the surface's net doubles back on itself (`check_brep` #5): the 20 cube's
+    /// law 4, 2, 4 builds such a net, and 3, 2, 4, 2, 3 one over 140 mm across. A circular
+    /// variable round whose law has a corner inside its edge is built only as its balls'
+    /// union (`fixes.fillet_gn_section_generator`, WR-696), which splits it there; without
+    /// it the round is refused before the target is touched.
+    fn refuse_great_circles_over_a_law_corner(&mut self, k: &Kernel) -> Result<()> {
+        if k.fixes.fillet_gn_section_generator {
+            return Ok(());
+        }
+        let mut crossed = false;
+        for solver in self.objects.solvers.iter().flatten() {
+            let SolverObject::VariableRadius(vr) = solver else {
+                continue;
+            };
+            let circular = vr
+                .curve_based
+                .solver
+                .fillet_surface_generator()
+                .is_some_and(|fsg| {
+                    fsg.fillet_surface_generator_type() == FilletSurfaceGeneratorType::Circular
+                });
+            if circular
+                && !vr
+                    .law
+                    .corner_parameters(&vr.law_interval, vr.law_orientation)?
+                    .is_empty()
+            {
+                crossed = true;
+            }
+        }
+        if !crossed {
+            return Ok(());
+        }
+        self.note_refusal(Refusal {
+            code: FilletErrorType::CornerUnsupported,
+            reason: None,
+            comment: "Fillet Error: a variable round's radius law has a corner inside its edge, which a sweep of great circles cannot follow: its net would double back on itself",
+        });
+        Err(failure())
     }
 
     /// `JoinBlendedVertexFans` (the fork's, tangency-labs/smlib@e418750, WR-665): the
@@ -708,6 +769,7 @@ impl FilletSession<'_> {
             });
             return Err(failure());
         }
+        self.refuse_great_circles_over_a_law_corner(k)?;
         // WR-459: the clean-up after filleting leaves the target's own edges and faces.
         self.objects.cleanup_kept = if k.fixes.fillet_cleanup_keeps_target_faces {
             Some((

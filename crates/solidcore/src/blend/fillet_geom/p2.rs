@@ -12,7 +12,7 @@
 //! | [`srf_srf_intersection`], [`SrfSrfCurves`], [`SrfSrfOptions`] | `sm_SrfSrfIntersection`          |
 //! | [`FilletVertex::new`](super::p1::FilletVertex::new) (in `p1`) | `SmFilletVertex::SmFilletVertex` |
 //! | [`FilletBrep::calc_rail_int_rail`]                | `SmFilletVertex::CalcRailIntRail`            |
-//! | [`FilletBrep::calc_rail_int_edgeuse`], [`FilletBrep::calc_rail_int_edgeuse_with_solver`] | `SmFilletVertex::CalcRailIntEdgeuse`         |
+//! | [`FilletBrep::calc_rail_int_edgeuse`]             | `SmFilletVertex::CalcRailIntEdgeuse`         |
 //! | [`FilletBrep::calc_vert_on_cross_section`]        | `SmFilletVertex::CalcVertOnCrossSection`     |
 //! | [`FilletBrep::calc_set_back_vert`]                | `SmFilletVertex::CalcSetBackVert`            |
 //! | [`FilletBrep::calc_join_section`]                 | the fork's `SmFilletVertex::CalcJoinSection` (`SmBlendCornerJoin.cpp`, 543d25a; WR-697) |
@@ -36,8 +36,8 @@
 //!   an id not in the table is [`SolidError::InvalidInput`], a geometry without a
 //!   solver where upstream dereferences it `SM_ERR_NULL_POINTER`). The rollover
 //!   caller can supply its single live solver with its actual id through
-//!   `calc_rail_int_edgeuse_with_solver`; the `_with_solver_ops` entry retains
-//!   derived virtual operations. An unresolved adjacent id is an error.
+//!   `calc_rail_int_edgeuse_with_solver_ops`, which retains derived virtual
+//!   operations. An unresolved adjacent id is an error.
 //!   The target B-rep
 //!   (the classifications, original faces and the solvers' edge uses) is `target`. The
 //!   constructors `SmFilletVertex(SmFilletCorner*)` and `SmFilletEdge(SmFilletBrep*,
@@ -418,7 +418,6 @@ impl InterpolationSolvers<'_> {
 
 enum RailSolvers<'a> {
     Indexed(&'a mut [FilletSolver]),
-    Single(FilletSolverId, &'a mut FilletSolver),
     Live(FilletSolverId, &'a mut dyn FilletSolverOps),
     LiveSet(Vec<(FilletSolverId, &'a mut dyn FilletSolverOps)>),
 }
@@ -429,7 +428,6 @@ impl RailSolvers<'_> {
             Self::Indexed(solvers) => {
                 solver_at(solvers, solver_index(solvers, id, OP_RAIL_EU)?, OP_RAIL_EU)
             }
-            Self::Single(key, solver) if *key == id => Ok(solver),
             Self::Live(key, solver) if *key == id => Ok(solver.solver()),
             Self::LiveSet(solvers) => solvers
                 .iter()
@@ -438,7 +436,7 @@ impl RailSolvers<'_> {
                 .ok_or_else(|| {
                     SolidError::invalid_input(OP_RAIL_EU, "unresolved adjacent fillet solver")
                 }),
-            Self::Single(..) | Self::Live(..) => Err(SolidError::invalid_input(
+            Self::Live(..) => Err(SolidError::invalid_input(
                 OP_RAIL_EU,
                 "unresolved adjacent fillet solver",
             )),
@@ -461,7 +459,6 @@ impl RailSolvers<'_> {
                 })?;
                 Ok(solver)
             }
-            Self::Single(key, solver) if *key == id => Ok(&mut **solver),
             Self::Live(key, solver) if *key == id => Ok(&mut **solver),
             Self::LiveSet(solvers) => solvers
                 .iter_mut()
@@ -470,7 +467,7 @@ impl RailSolvers<'_> {
                 .ok_or_else(|| {
                     SolidError::invalid_input(OP_RAIL_EU, "unresolved adjacent fillet solver")
                 }),
-            Self::Single(..) | Self::Live(..) => Err(SolidError::invalid_input(
+            Self::Live(..) => Err(SolidError::invalid_input(
                 OP_RAIL_EU,
                 "unresolved adjacent fillet solver",
             )),
@@ -650,12 +647,11 @@ fn g2_rail_rail_curve(
 /// The point and the tangent `set_back_dist` along edge `e` from the filleted vertex
 /// `cp_vertex` (`CalcSetBackVert`'s walk along the edge's curve).
 ///
-/// Upstream chooses the direction with `GetVertex()` (the primary edge use's vertex) and walks
-/// the curve's natural interval, so on an edge whose primary edge use runs against its curve
-/// the point is measured from the far vertex (WR-445, #1169). With
-/// `Kernel::fixes.fillet_setback_from_start_vertex` it walks the edge's own interval from the
-/// end `cp_vertex` marks (`GetStartVertex()` marks the start), a negative length from the
-/// other end.
+/// It walks the edge's own interval from the end `cp_vertex` marks (`GetStartVertex()` marks
+/// the start), a negative length from the other end, as the fork does. Upstream chooses the
+/// direction with `GetVertex()` (the primary edge use's vertex) and walks the curve's natural
+/// interval, so on an edge whose primary edge use runs against its curve the point is
+/// measured from the far vertex (WR-445).
 pub(crate) fn set_back_frame(
     k: &Kernel,
     target: &Brep,
@@ -666,31 +662,15 @@ pub(crate) fn set_back_frame(
 ) -> Result<(Point3, Point3)> {
     let curve = edge::curve(target, e)?.ok_or_else(|| SolidError::null_pointer(op))?;
     let owner_zone_tol_3d = Some(edge::tolerance(target, e)?);
-    let pv = if k.fixes.fillet_setback_from_start_vertex {
-        let ivl = edge::interval(target, e)?;
-        let from_start = edge::start_vertex(target, e)? == cp_vertex;
-        let (start, length) = if from_start {
-            (ivl.min(), set_back_dist)
-        } else {
-            (ivl.max(), -set_back_dist)
-        };
-        let end_param = arc_length_param(k, curve, start, length, owner_zone_tol_3d, op)?;
-        curve.evaluate(k, end_param, 1, true, true)?
+    let ivl = edge::interval(target, e)?;
+    let from_start = edge::start_vertex(target, e)? == cp_vertex;
+    let (start, length) = if from_start {
+        (ivl.min(), set_back_dist)
     } else {
-        let ivl = curve.natural_interval();
-        // Walk along the curve for dSetBackDist
-        if edge::vertex(target, e)? == cp_vertex {
-            let end_param =
-                arc_length_param(k, curve, ivl.min(), set_back_dist, owner_zone_tol_3d, op)?;
-            curve.evaluate(k, end_param, 1, true, true)?
-        } else {
-            let mut new_curve = curve.copy(k)?;
-            let new_ivl = new_curve.reverse_parameterization(k, &ivl)?;
-            let end_param =
-                arc_length_param(k, &new_curve, new_ivl.min(), set_back_dist, None, op)?;
-            new_curve.evaluate(k, end_param, 1, true, true)?
-        }
+        (ivl.max(), -set_back_dist)
     };
+    let end_param = arc_length_param(k, curve, start, length, owner_zone_tol_3d, op)?;
+    let pv = curve.evaluate(k, end_param, 1, true, true)?;
     let orig = pv.first().copied().ok_or_else(|| SolidError::sm_err(op))?;
     let normal = pv.get(1).copied().ok_or_else(|| SolidError::sm_err(op))?;
     Ok((orig, normal))
@@ -1089,8 +1069,11 @@ pub fn srf_srf_intersection_with_context(
     // on both, where they cross: the plane goes on as itself past the face it was made for, so
     // its domain does not end the curve. A flat surface meets the plane in a line, which the
     // analytic intersector gives exactly. Points off a surface, and an end where the surface
-    // touches the plane, are met by the intersectors below.
-    if k.fixes.fillet_surface_plane_curve_on_plane_equation && curves_3d.is_empty() {
+    // touches the plane, are met by the intersectors below. A round of touch circles needs it
+    // (#2704): its end section leaves the end face's plane, so its side curve is this one.
+    if (k.fixes.fillet_surface_plane_curve_on_plane_equation || k.fixes.fillet_gn_section_generator)
+        && curves_3d.is_empty()
+    {
         let plane_first = matches!(surf1.kind(), SurfaceKind::Plane(_));
         if let (Some(start_pnt), Some(end_pnt), true) = (
             start,
@@ -1688,39 +1671,13 @@ impl FilletBrep {
         )
     }
 
-    /// Calculate a rail/side-edge vertex using one caller-owned solver and its
-    /// actual identity. Geometry-owned offset surfaces are used before the solver.
+    /// Calculate a rail/side-edge vertex using the retained concrete solver's
+    /// virtual operations and actual identity. Geometry-owned offset surfaces are
+    /// used before the solver.
     ///
     /// # Errors
     /// As [`Self::calc_rail_int_edgeuse`]; resolving an adjacent solver with another
     /// id returns [`SolidError::InvalidInput`] rather than fabricating its state.
-    pub fn calc_rail_int_edgeuse_with_solver(
-        &mut self,
-        k: &Kernel,
-        v: VertexId,
-        opt_fg: Option<FilletGeomId>,
-        corners: CornerLookup<'_>,
-        solver_id: FilletSolverId,
-        solver: &mut FilletSolver,
-        target: &mut Brep,
-    ) -> Result<()> {
-        self.calc_rail_int_edgeuse_with_solvers(
-            k,
-            v,
-            opt_fg,
-            corners,
-            &mut RailSolvers::Single(solver_id, solver),
-            target,
-            None,
-            0,
-        )
-    }
-
-    /// Calculate a rail/side-edge vertex using the retained concrete solver's
-    /// virtual operations and actual identity.
-    ///
-    /// # Errors
-    /// As [`Self::calc_rail_int_edgeuse_with_solver`].
     pub fn calc_rail_int_edgeuse_with_solver_ops(
         &mut self,
         k: &Kernel,
@@ -3402,25 +3359,7 @@ mod tests {
     }
 
     #[test]
-    fn single_solver_lookup_preserves_nonzero_identity_and_live_mutations() {
-        let id = FilletSolverId(37);
-        let mut solver = FilletSolver::new(1e-5, 1e-3, 0.01);
-        let mut table = RailSolvers::Single(id, &mut solver);
-        table.solver_mut(id).unwrap().set_extension_factor(4.5);
-        assert_eq!(table.solver(id).unwrap().extension_factor(), 4.5);
-        assert!(matches!(
-            table.solver(FilletSolverId(0)),
-            Err(SolidError::InvalidInput { .. })
-        ));
-        assert!(matches!(
-            table.solver_mut(FilletSolverId(38)),
-            Err(SolidError::InvalidInput { .. })
-        ));
-        assert_eq!(solver.extension_factor(), 4.5);
-    }
-
-    #[test]
-    fn geometry_offsets_precede_single_solver_resolution() {
+    fn geometry_offsets_precede_solver_resolution() {
         let k = Kernel::default();
         let mut fb = FilletBrep::new();
         let mut geom =
@@ -3438,8 +3377,9 @@ mod tests {
             .unwrap(),
         );
         let g = fb.add_geom(geom);
-        let mut solver = FilletSolver::new(1e-5, 1e-3, 0.01);
-        let table = RailSolvers::Single(FilletSolverId(37), &mut solver);
+        // An empty table: the geometry's own offset surface is read before the
+        // solver is resolved, so reaching the solver at all would be an error here.
+        let table = RailSolvers::Indexed(&mut []);
         assert_eq!(
             table
                 .offset_surface(&fb, g, 0)
@@ -3503,12 +3443,11 @@ mod tests {
         assert!(fb.geom(g).unwrap().vertices.is_empty());
     }
 
-    /// The setback is measured from the filleted vertex along the edge (WR-445, #1169). Upstream
-    /// picks the direction from the primary edge use's vertex but walks the curve's natural
-    /// interval, so on an edge whose primary edge use runs against its curve the point comes
-    /// from the far vertex, whichever end is filleted.
+    /// The setback is measured from the filleted vertex along the edge (WR-445), also on an
+    /// edge whose primary edge use runs against its curve, where upstream measures from the
+    /// far vertex whichever end is filleted.
     #[test]
-    fn a_setback_is_measured_from_the_filleted_vertex_with_the_fix() {
+    fn a_setback_is_measured_from_the_filleted_vertex() {
         let mut k = Kernel::default();
         let target =
             crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 60.0, 40.0, 20.0)
@@ -3532,39 +3471,20 @@ mod tests {
             out
         };
 
-        // upstream: right on an edge whose primary edge use runs with its curve, the far
-        // vertex's distance on one that runs against it
-        let upstream = errors(&k);
+        let found = errors(&k);
         assert!(
-            upstream.iter().any(|&(against, _)| against),
+            found.iter().any(|&(against, _)| against),
             "no edge runs against its curve"
         );
-        assert!(upstream
-            .iter()
-            .filter(|&&(against, _)| !against)
-            .all(|&(_, err)| err < 1e-9));
-        assert!(
-            upstream
-                .iter()
-                .filter(|&&(against, _)| against)
-                .all(|&(_, err)| err > 1.0),
-            "{upstream:?}"
-        );
-
-        k.fixes.fillet_setback_from_start_vertex = true;
-        assert!(
-            errors(&k).iter().all(|&(_, err)| err < 1e-9),
-            "{:?}",
-            errors(&k)
-        );
+        assert!(found.iter().all(|&(_, err)| err < 1e-9), "{found:?}");
     }
 
-    /// The setback walks the edge's own interval, not its curve's natural interval (WR-445,
-    /// #1169): each box edge's curve is replaced by a line running 10 past both its ends, the
-    /// edge keeping the middle part as its interval. Upstream walks from the natural interval's
+    /// The setback walks the edge's own interval, not its curve's natural interval (WR-445):
+    /// each box edge's curve is replaced by a line running 10 past both its ends, the edge
+    /// keeping the middle part as its interval. Upstream walks from the natural interval's
     /// start, 10 outside the edge, from either end.
     #[test]
-    fn a_setback_walks_the_edges_own_interval_with_the_fix() {
+    fn a_setback_walks_the_edges_own_interval() {
         let mut k = Kernel::default();
         let mut target =
             crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 60.0, 40.0, 20.0)
@@ -3608,11 +3528,6 @@ mod tests {
             out
         };
 
-        // upstream: from either end the walk starts outside the edge
-        let upstream = errors(&k);
-        assert!(upstream.iter().all(|&err| err > 1.0), "{upstream:?}");
-
-        k.fixes.fillet_setback_from_start_vertex = true;
         let fixed = errors(&k);
         assert!(fixed.iter().all(|&err| err < 1e-9), "{fixed:?}");
     }
