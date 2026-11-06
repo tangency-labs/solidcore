@@ -455,42 +455,305 @@ fn meets_itself(b: &Brep, face: FaceId) -> Result<bool> {
     Ok(false)
 }
 
-/// The samples along each seam [`keeps_seams`] lifts its two lines at.
-const SEAM_SAMPLES: u32 = 8;
+/// Which end of the new surface's domain, in the seam's direction, a seam use's UV line
+/// lies on ([`keeps_seams`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeamEnd {
+    /// The domain's low end (`u = umin` for a seam in u).
+    Low,
+    /// The domain's high end.
+    High,
+}
 
-/// Whether `surface` keeps every seam `face` meets itself across (none for a face that
-/// does not, [`meets_itself`]). The face's UV loops are copied onto the surface it takes,
-/// so a seam's two edge uses keep their UV lines, which differ in the direction its own
-/// surface is closed in (`u = u0` and `u = u0 + period` for a cylinder's side). On the new
-/// surface the seam has an edge only where both lines lift to one curve: the surface is
-/// closed in that direction (`IsClosed` at the edge's tolerance, as `SmEdge::IsSeam` asks
-/// it), the two lines lift to the same points, within the edge's tolerance, at each
-/// sample along the edge, and they lie on the surface's seam, one period apart (each
-/// line's parameter off its end of the surface's domain moves it by no more than the
-/// tolerance, to first order: a radius-0.5 cylinder's arc-length u of period π takes the
-/// lines u = 0 and u = 2π to one ruling, but round twice). So the closed direction must match, not only be one of as many
-/// (a coaxial cylinder with its u and v swapped is closed once, but round its other
-/// parameter), and so must the seam's place in the parameters: the lines must be the new
-/// surface's seam (a period or a seam parameter of its own does not take them).
+/// A seam use's UV trim curve read exactly ([`uv_line`]): its control points (Euclidean
+/// UV) and its two ends.
+struct UvLine {
+    points: Vec<crate::geom::vector2d::Point2>,
+    ends: [crate::geom::vector2d::Point2; 2],
+}
+
+/// The rounding a UV coordinate is compared with a domain end to, at the parameter scale
+/// `scale`: the two are one value computed two ways (the old surface's UV loops, the new
+/// surface's domain), each within a few roundings of the scale, and a rational line's
+/// coordinate is a quotient, one rounding more. A cylinder one rounding wider (`2π r` one
+/// ulp off `2π`) is within it; a line a period or a part of one away is not.
+fn uv_rounding(scale: f64) -> f64 {
+    crate::nurbs::math::gamma(4) * scale
+}
+
+/// The coordinate of `p` in the seam's direction (`in_u`), or across it (`!in_u`).
+fn coordinate(p: crate::geom::vector2d::Point2, in_u: bool) -> f64 {
+    if in_u {
+        p.x
+    } else {
+        p.y
+    }
+}
+
+/// `curve` (a UV trim curve) as its control polygon and ends, or `None` for a kind without
+/// one (a B-spline's and a line's NURB have one) or a weight not positive: a curve with
+/// positive weights lies in its control points' hull, so a coordinate all of them share
+/// to rounding is the curve's own.
 ///
 /// # Errors
 ///
-/// Those of the topology queries, of the edge uses' UV evaluations (no UV trim curve is
-/// made: `b` is not changed) and of the surface's closure test and evaluations.
-fn keeps_seams(k: &Kernel, b: &mut Brep, face: FaceId, surface: &Surface) -> Result<bool> {
-    use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
-    use crate::topology::edgeuse::{p1 as eu1, p3 as eu3};
-    let domain = surface.natural_uv_domain_with_nurb(k)?;
-    let uv_at = |k: &Kernel, b: &mut Brep, u, t: f64| -> Result<crate::geom::vector2d::Point2> {
-        // `t` along the edge, whichever way the use runs
-        let t = if eu1::orientation(b, u)? == OrientType::Opposite {
-            1.0 - t
-        } else {
-            t
-        };
-        let p = eu3::normalized_evaluate(k, b, u, t, true, false, false)?.point;
-        Ok(crate::geom::vector2d::Point2::new(p.x, p.y))
+/// Those of the line's NURB and of the end evaluations.
+fn uv_line(k: &Kernel, curve: &crate::curve::curve::Curve) -> Result<Option<UvLine>> {
+    use crate::curve::curve::CurveKind;
+    use crate::geom::vector2d::Point2;
+    use crate::nurbs::math::NOW;
+    let line_base;
+    let nurb = match curve.kind() {
+        CurveKind::BSpline(c) => c.gw_nurb(),
+        CurveKind::Line(c) => {
+            line_base = c.base_with_nurb()?;
+            line_base.gw_nurb()
+        }
+        _ => None,
     };
+    let Some(nurb) = nurb else {
+        return Ok(None);
+    };
+    let mut points = Vec::with_capacity(nurb.cpts().len());
+    for c in nurb.cpts() {
+        if c.w == NOW {
+            points.push(Point2::new(c.x, c.y));
+        } else if c.w > 0.0 {
+            points.push(Point2::new(c.x / c.w, c.y / c.w));
+        } else {
+            return Ok(None);
+        }
+    }
+    let interval = curve.natural_interval();
+    let a = curve.evaluate_point(k, interval.min())?;
+    let b = curve.evaluate_point(k, interval.max())?;
+    Ok(Some(UvLine {
+        points,
+        ends: [Point2::new(a.x, a.y), Point2::new(b.x, b.y)],
+    }))
+}
+
+/// The end of `[low, high]` every control point of `line` lies on in the seam's direction
+/// (`in_u`), to [`uv_rounding`]; `None` when it is neither.
+fn seam_end(line: &UvLine, in_u: bool, low: f64, high: f64) -> Option<SeamEnd> {
+    let r = uv_rounding(low.abs().max(high.abs()).max((high - low).abs()));
+    let on = |end: f64| {
+        line.points
+            .iter()
+            .all(|&p| (coordinate(p, in_u) - end).abs() <= r)
+    };
+    if on(low) {
+        Some(SeamEnd::Low)
+    } else if on(high) {
+        Some(SeamEnd::High)
+    } else {
+        None
+    }
+}
+
+/// The interval `line` covers across the seam (`in_u` the seam's direction): its ends'
+/// coordinates, when every control point lies between them to `r` (the hull then holds
+/// the curve's image there, and it reaches both ends, so the image is that interval);
+/// `None` otherwise.
+fn line_extent(line: &UvLine, in_u: bool, r: f64) -> Option<(f64, f64)> {
+    let [a, b] = line.ends.map(|p| coordinate(p, !in_u));
+    let (lo, hi) = (a.min(b), a.max(b));
+    line.points
+        .iter()
+        .all(|&p| {
+            let c = coordinate(p, !in_u);
+            c >= lo - r && c <= hi + r
+        })
+        .then_some((lo, hi))
+}
+
+/// A certified bound on the distance between the surface's two boundary iso curves in
+/// the seam's direction (`in_u`), `u = umin` and `u = umax` at each `v` for a seam in u,
+/// over `domain` (the surface's natural domain), or `None` when there is no certificate:
+/// - a surface evaluated through a B-spline net (a B-spline, a surface of revolution,
+///   sphere, torus, extrusion, ball patch; a procedural blend's net within its bound of
+///   its definition): the net clamped in that direction at the domain's ends, so its
+///   boundary isos are its first and last columns, each pair of those columns' points of
+///   one positive weight. Then `C_lo(v) - C_hi(v) = sum_j R_j(v) (P_j - Q_j)` with `R_j`
+///   the one rational basis of both, non-negative and summing to one, so the gap is at
+///   most `max_j |P_j - Q_j|` (plus twice a blend's bound);
+/// - a cone or cylinder ([`cone_seam_gap`]).
+///
+/// A plane is never closed; a curve-bounded, STEP, offset or in-volume surface has no
+/// certificate here. Neither is accepted.
+///
+/// # Errors
+///
+/// Those of the surface's NURB form and evaluations.
+fn seam_gap(
+    k: &Kernel,
+    surface: &Surface,
+    in_u: bool,
+    domain: &crate::geom::extent2d::Extent2d,
+) -> Result<Option<crate::geom::certified::Bounded>> {
+    use crate::geom::certified::{distance, gamma, Bounded};
+    use crate::geom::vector3d::Point3;
+    use crate::nurbs::math::{CPoint, NOW};
+    let blend = match surface.kind_with_nurb(k)? {
+        SurfaceKind::Plane(_)
+        | SurfaceKind::CurveBounded(_)
+        | SurfaceKind::Step(_)
+        | SurfaceKind::OffsetSurface(_)
+        | SurfaceKind::SrfInVolume(_) => return Ok(None),
+        SurfaceKind::Cone(c) => return cone_seam_gap(k, surface, c, in_u, domain),
+        SurfaceKind::ProceduralBlend(pb) => pb.def.bound,
+        SurfaceKind::BSpline(_)
+        | SurfaceKind::BallPatch(_)
+        | SurfaceKind::SurfOfRevolution(_)
+        | SurfaceKind::SurfOfExtrusion(_)
+        | SurfaceKind::Sphere(_)
+        | SurfaceKind::Torus(_) => 0.0,
+    };
+    let Some(form) = crate::blend::fillet_section::station::as_b_spline(k, surface)? else {
+        return Ok(None);
+    };
+    let Some(net) = form.gw_nurb() else {
+        return Ok(None);
+    };
+    let (p, q) = net.degrees();
+    let (knots, degree, low, high) = if in_u {
+        (net.u_knots(), p, domain.min.x, domain.max.x)
+    } else {
+        (net.v_knots(), q, domain.min.y, domain.max.y)
+    };
+    let (Some(&first), Some(&last)) = (knots.first(), knots.last()) else {
+        return Ok(None);
+    };
+    let clamped = knots.len() > degree.saturating_mul(2).saturating_add(1)
+        && knots.iter().take(degree.saturating_add(1)).all(|&t| t == first)
+        && knots
+            .iter()
+            .rev()
+            .take(degree.saturating_add(1))
+            .all(|&t| t == last);
+    if !clamped || first != low || last != high {
+        return Ok(None);
+    }
+    let rows: Vec<&[CPoint]> = net.rows().collect();
+    let pairs: Vec<(CPoint, CPoint)> = if in_u {
+        let (Some(a), Some(b)) = (rows.first(), rows.last()) else {
+            return Ok(None);
+        };
+        a.iter().copied().zip(b.iter().copied()).collect()
+    } else {
+        let mut pairs = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let (Some(&a), Some(&b)) = (row.first(), row.last()) else {
+                return Ok(None);
+            };
+            pairs.push((a, b));
+        }
+        pairs
+    };
+    let euclid = |c: CPoint| {
+        if c.w == NOW {
+            Point3::new(c.x, c.y, c.z)
+        } else {
+            Point3::new(c.x / c.w, c.y / c.w, c.z / c.w)
+        }
+    };
+    let (mut value, mut bound) = (0.0_f64, 0.0_f64);
+    for (a, b) in pairs {
+        let rational = a.w != NOW;
+        if rational != (b.w != NOW) || (rational && !(a.w > 0.0 && a.w == b.w)) {
+            return Ok(None);
+        }
+        let (pa, pb) = (euclid(a), euclid(b));
+        let d = distance(pa, pb);
+        // (a rational point is a quotient: each coordinate one rounding off)
+        let quotient = if rational {
+            gamma(1) * (pa.length() + pb.length())
+        } else {
+            0.0
+        };
+        value = value.max(d.value);
+        bound = bound.max(d.bound + quotient);
+    }
+    Ok(Some(Bounded {
+        value: value + 2.0 * blend,
+        bound,
+    }))
+}
+
+/// [`seam_gap`] of a cone or cylinder, evaluated by its STEP angle and height: the seam
+/// must be its sweep coordinate (`u`, or `v` when its NURB's u is the linear direction).
+/// Its point is `A + r(h) (cos θ X + sin θ Y) + h Z`, the angle `θ` a function of the
+/// sweep parameter alone and the height `h` and radius `r(h)` affine in the other
+/// (`cone_convert_uv_from_nurbs_to_step`), so the two rulings' gap at a height,
+/// `|r(h)| 2 |sin(Δθ / 2)|`, is convex along them: its largest is at one of the domain's
+/// two ends, the larger of the two corner distances. Each corner point is within
+/// `gamma(16)` of its size (the angle's conversion, `cos` and `sin` at two roundings
+/// each, the products and sums), added to the distance's own bound.
+///
+/// # Errors
+///
+/// Those of the evaluations.
+fn cone_seam_gap(
+    k: &Kernel,
+    surface: &Surface,
+    cone: &crate::surface::cone::Cone,
+    in_u: bool,
+    domain: &crate::geom::extent2d::Extent2d,
+) -> Result<Option<crate::geom::certified::Bounded>> {
+    use crate::geom::certified::{distance, gamma, Bounded};
+    use crate::geom::vector2d::Point2;
+    if in_u == cone.rev().swap_uv() {
+        return Ok(None);
+    }
+    let (lo, hi) = (domain.min, domain.max);
+    let corners = if in_u {
+        [
+            (Point2::new(lo.x, lo.y), Point2::new(hi.x, lo.y)),
+            (Point2::new(lo.x, hi.y), Point2::new(hi.x, hi.y)),
+        ]
+    } else {
+        [
+            (Point2::new(lo.x, lo.y), Point2::new(lo.x, hi.y)),
+            (Point2::new(hi.x, lo.y), Point2::new(hi.x, hi.y)),
+        ]
+    };
+    let (mut value, mut bound) = (0.0_f64, 0.0_f64);
+    for (a, b) in corners {
+        let (p, q) = (surface.evaluate_point(k, a)?, surface.evaluate_point(k, b)?);
+        let d = distance(p, q);
+        value = value.max(d.value);
+        bound = bound.max(d.bound + gamma(16) * (p.length() + q.length()));
+    }
+    Ok(Some(Bounded { value, bound }))
+}
+
+/// Whether `surface` keeps every seam `face` meets itself across (none for a face that
+/// does not, [`meets_itself`]). The face's UV loops are copied onto the surface it takes,
+/// so a seam's edge uses keep their UV lines, which on its own surface are the two ends
+/// of the domain in the direction it is closed in (`u = 0` and `u = 2π` for a radius-1
+/// cylinder's side). On the new surface the seam has an edge only where both lines lift
+/// to one curve, decided exactly, without samples:
+/// 1. every use's UV trim curve ([`uv_line`]) lies, by its control points, on one end of
+///    the new surface's natural domain in one direction, to the parameters' rounding
+///    ([`seam_end`]), and both ends are taken: the lines are the new surface's own seam
+///    (a radius-0.5 cylinder's arc-length u of period π puts u = 2π off its domain, a
+///    swapped cylinder puts the lines across its seam);
+/// 2. the lines cover one interval across the seam ([`line_extent`]);
+/// 3. the surface's two boundary isos there are within the edge's tolerance, by a
+///    certified bound ([`seam_gap`]; no certificate refuses).
+///
+/// A use without a UV trim curve has one made on a scratch copy of `b` (as
+/// `NormalizedEvaluate` makes it), so `b` is not changed. An edge whose uses all share one
+/// UV line (a slit) lifts to one curve on any surface and is not a seam.
+///
+/// # Errors
+///
+/// Those of the topology queries, of the scratch copy and the UV trim curves, and of the
+/// surface's NURB form and evaluations.
+fn keeps_seams(k: &Kernel, b: &mut Brep, face: FaceId, surface: &Surface) -> Result<bool> {
+    use crate::topology::edgeuse::{get_or_create_uv_trim_curve, p1 as eu1};
+    let domain = surface.natural_uv_domain_with_nurb(k)?;
+    let mut scratch: Option<Brep> = None;
     for e in crate::topology::face::p4::edges(b, face, None, false, None)? {
         let mut uses = Vec::new();
         for u in crate::topology::edge::edgeuses(b, e, None, None)? {
@@ -502,70 +765,87 @@ fn keeps_seams(k: &Kernel, b: &mut Brep, face: FaceId, surface: &Surface) -> Res
         if uses.len() <= 2 {
             continue;
         }
-        // the seam's two lines: the uses whose middles differ (`SmEdge::IsSeam`'s test)
-        let mut middles = Vec::new();
+        let mut lines = Vec::with_capacity(uses.len());
         for &u in &uses {
-            middles.push((u, uv_at(k, b, u, 0.5)?));
-        }
-        let Some((a, c, across)) = middles.iter().find_map(|&(a, p)| {
-            middles
-                .iter()
-                .find(|(_, q)| p.distance(*q) > crate::math::EFF_ZERO_SQ)
-                .map(|&(c, q)| (a, c, q - p))
-        }) else {
-            continue;
-        };
-        let in_u = across.x.abs() >= across.y.abs();
-        let direction = if in_u {
-            SurfParamType::U
-        } else {
-            SurfParamType::V
-        };
-        let tolerance = crate::topology::edge::tolerance(b, e)?;
-        if !surface
-            .is_closed(k, &domain, direction, Some(tolerance), false)?
-            .0
-        {
-            return Ok(false);
-        }
-        let (low, high) = if in_u {
-            (domain.min.x, domain.max.x)
-        } else {
-            (domain.min.y, domain.max.y)
-        };
-        let flags = crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags::default();
-        for i in 0..=SEAM_SAMPLES {
-            let t = f64::from(i) / f64::from(SEAM_SAMPLES);
-            let (uv_a, uv_c) = (uv_at(k, b, a, t)?, uv_at(k, b, c, t)?);
-            let p = surface.evaluate_point(k, uv_a)?;
-            let q = surface.evaluate_point(k, uv_c)?;
-            if p.distance(q) > tolerance {
-                return Ok(false);
-            }
-            // the lines on the seam itself, one period apart (not two, nor a seam inside
-            // the domain): each line's parameter off the domain's end moves its lift by
-            // that times the surface's speed across it, to first order
-            let (s_a, s_c) = if in_u {
-                (uv_a.x, uv_c.x)
+            let line = if let Some(c) = eu1::uv_trim_curve(b, u)?.0 {
+                uv_line(k, c)?
             } else {
-                (uv_a.y, uv_c.y)
+                if scratch.is_none() {
+                    scratch = Some(b.clone_standing_for_self()?);
+                }
+                let Some(s) = scratch.as_mut() else {
+                    return Err(null());
+                };
+                let _ = get_or_create_uv_trim_curve(k, s, u, false, false, true)?;
+                match eu1::uv_trim_curve(s, u)?.0 {
+                    Some(c) => uv_line(k, c)?,
+                    None => None,
+                }
             };
-            let off = ((s_a.min(s_c) - low).abs()).max((s_a.max(s_c) - high).abs());
-            let d = surface.evaluate(k, uv_a, 1, 1, flags)?;
-            let speed = if in_u {
-                d.get(1).and_then(|row| row.first())
-            } else {
-                d.first().and_then(|row| row.get(1))
+            let Some(line) = line else {
+                return Ok(false);
+            };
+            lines.push(line);
+        }
+        let one_line = |a: &UvLine, c: &UvLine| {
+            a.points == c.points || a.points.iter().rev().eq(c.points.iter())
+        };
+        if let Some(first) = lines.first() {
+            if lines.iter().all(|l| one_line(first, l)) {
+                continue;
             }
-            .ok_or_else(|| SolidError::sm_err(OP))?
-            .length();
-            // (a speed or offset that is not a number refuses too)
-            if !matches!(
-                (off * speed).partial_cmp(&tolerance),
-                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-            ) {
+        }
+        let tolerance = crate::topology::edge::tolerance(b, e)?;
+        let mut kept = false;
+        for in_u in [true, false] {
+            let ((low, high), (across_lo, across_hi)) = if in_u {
+                ((domain.min.x, domain.max.x), (domain.min.y, domain.max.y))
+            } else {
+                ((domain.min.y, domain.max.y), (domain.min.x, domain.max.x))
+            };
+            let Some(ends) = lines
+                .iter()
+                .map(|l| seam_end(l, in_u, low, high))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            if !(ends.contains(&SeamEnd::Low) && ends.contains(&SeamEnd::High)) {
+                continue;
+            }
+            let r = uv_rounding(
+                across_lo
+                    .abs()
+                    .max(across_hi.abs())
+                    .max((across_hi - across_lo).abs()),
+            );
+            let Some(extents) = lines
+                .iter()
+                .map(|l| line_extent(l, in_u, r))
+                .collect::<Option<Vec<_>>>()
+            else {
+                return Ok(false);
+            };
+            let Some(&(lo, hi)) = extents.first() else {
+                return Ok(false);
+            };
+            if !extents
+                .iter()
+                .all(|&(a, c)| (a - lo).abs() <= r && (c - hi).abs() <= r)
+            {
                 return Ok(false);
             }
+            let Some(gap) = seam_gap(k, surface, in_u, &domain)? else {
+                return Ok(false);
+            };
+            if !gap.at_most(tolerance).is_yes() {
+                return Ok(false);
+            }
+            kept = true;
+            break;
+        }
+        if !kept {
+            return Ok(false);
         }
     }
     Ok(true)
@@ -1777,6 +2057,125 @@ mod tests {
         );
         assert!(keeps_seams(&k, &mut b, face, &s).unwrap());
         s.swap_uv(&k).unwrap();
+        assert!(!keeps_seams(&k, &mut b, face, &s).unwrap());
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[face], vec![s]);
+        assert!(
+            matches!(why, Some(OffsetFailure::SeamOpened { face: f }) if f == face),
+            "{why:?}"
+        );
+    }
+
+    /// The largest tolerance of `face`'s edges.
+    fn largest_edge_tolerance(b: &Brep, face: FaceId) -> f64 {
+        crate::topology::face::p4::edges(b, face, None, false, None)
+            .unwrap()
+            .into_iter()
+            .map(|e| crate::topology::edge::tolerance(b, e).unwrap())
+            .fold(0.0, f64::max)
+    }
+
+    /// A closed square tube net, degree 1 both ways, over `domain` with 4 spans round
+    /// (u) and 64 along (v): its first and last columns are one, except the last column's
+    /// point at the v knot 4/64, moved by `moved` along x, and the last column's weights,
+    /// `last_weight` (a rational net when not 1, its points the same).
+    fn tube(domain: &Extent2d, moved: f64, last_weight: f64) -> Surface {
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+        use crate::nurbs::math::{CPoint, NOW};
+        let (u0, u1, v0, v1) = (domain.min.x, domain.max.x, domain.min.y, domain.max.y);
+        let corners = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0), (1.0, 0.0)];
+        let rational = last_weight != 1.0;
+        let net: Vec<Vec<CPoint>> = corners
+            .iter()
+            .enumerate()
+            .map(|(i, &(x, y))| {
+                (0..=64_u32)
+                    .map(|j| {
+                        let z = 2.0 * f64::from(j) / 64.0;
+                        let last = i == 4;
+                        let x = if last && j == 4 { x + moved } else { x };
+                        match (rational, last) {
+                            (false, _) => CPoint::new(x, y, z, NOW),
+                            (true, false) => CPoint::new(x, y, z, 1.0),
+                            (true, true) => CPoint::new(
+                                x * last_weight,
+                                y * last_weight,
+                                z * last_weight,
+                                last_weight,
+                            ),
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let du = (u1 - u0) / 4.0;
+        let u = vec![u0, u0, u0 + du, u0 + 2.0 * du, u0 + 3.0 * du, u1, u1];
+        let mut v = vec![v0];
+        v.extend((0..64_u32).map(|j| v0 + (v1 - v0) * f64::from(j) / 64.0));
+        v.push(v1);
+        v.push(v1);
+        let n = crate::nurbs::srf_basic::Surface::new(net, 1, 1, u, v).unwrap();
+        Surface::from(BSplineSurface::from_nurb(n, false))
+    }
+
+    /// A cylinder side given a closed tube net over its own domain keeps its seam: the
+    /// lines are the net's domain ends, and its first and last columns are one, so the
+    /// certified gap is 0. One last-column point moved by 10 times the edge's tolerance, at
+    /// the v knot 4/64, opens the seam only between the knots 3/64 and 5/64 (where the
+    /// side's seam spans the domain, between the points t = i/8 the seam was once lifted at,
+    /// which saw no gap): the column bound refuses it.
+    #[test]
+    fn a_seam_opening_between_the_old_samples_is_refused() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let face = curved_face(&b);
+        let domain = face_ops::surface(&b, face)
+            .unwrap()
+            .unwrap()
+            .natural_uv_domain_with_nurb(&k)
+            .unwrap();
+        let tolerance = largest_edge_tolerance(&b, face);
+        assert!(keeps_seams(&k, &mut b, face, &tube(&domain, 0.0, 1.0)).unwrap());
+        let opened = tube(&domain, 10.0 * tolerance, 1.0);
+        assert!(!keeps_seams(&k, &mut b, face, &opened).unwrap());
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[face], vec![opened]);
+        assert!(
+            matches!(why, Some(OffsetFailure::SeamOpened { face: f }) if f == face),
+            "{why:?}"
+        );
+    }
+
+    /// A closed net whose last column carries other weights than its first (the same
+    /// points) has no column certificate (the two boundary isos do not share one rational
+    /// basis), so the seam is refused rather than decided by samples.
+    #[test]
+    fn a_closed_net_whose_end_columns_differ_in_weight_is_refused() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let face = curved_face(&b);
+        let domain = face_ops::surface(&b, face)
+            .unwrap()
+            .unwrap()
+            .natural_uv_domain_with_nurb(&k)
+            .unwrap();
+        assert!(!keeps_seams(&k, &mut b, face, &tube(&domain, 0.0, 2.0)).unwrap());
+    }
+
+    /// A cylinder's side given an offset of a coaxial cylinder of its own radius (its
+    /// lines on the offset's domain ends): an offset surface has no seam certificate, so
+    /// it is refused as a seam opened before anything changes.
+    #[test]
+    fn a_cylinder_given_an_offset_surface_is_refused_as_a_seam_opened() {
+        use crate::primitive::api_primitives as ap;
+        use crate::surface::offset_surface::OffsetSurface;
+        let mut k = Kernel::default();
+        let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 1.0, 2.0).unwrap();
+        let face = curved_face(&b);
+        let base = Surface::from(
+            ap::create_cylinder_surface(&k, Point3::new(0.0, 0.0, -1.0), 1.0, 4.0).unwrap(),
+        );
+        let s = Surface::from(OffsetSurface::new(&k, 0.25, base, true, 0).unwrap());
         assert!(!keeps_seams(&k, &mut b, face, &s).unwrap());
         let why = refused_unchanged_or_returned(&mut k, &mut b, &[face], vec![s]);
         assert!(
