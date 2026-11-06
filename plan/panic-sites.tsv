@@ -402,8 +402,6 @@ crates/solidcore/src/curve/line.rs	Line::intersect_with_ellipse	swap	3	open	swap
 crates/solidcore/src/curve/line.rs	Line::make_nurb_owned	copy_from_slice	1	open	copy_from_slice(&[min, min, max, max])	
 crates/solidcore/src/curve/parabola.rs	Parabola::evaluate_step	with_capacity	1	open	Vec::with_capacity(num_derivs + 1)	
 crates/solidcore/src/curve/parabola.rs	Parabola::global_point_solve_step	with_capacity	1	open	Vec::with_capacity(sols.len())	
-crates/solidcore/src/eval/form.rs	arcs	with_capacity	1	open	Vec::with_capacity(2 * n + 1)	
-crates/solidcore/src/eval/form.rs	arcs_between	with_capacity	1	open	Vec::with_capacity(2 * n + 1)	
 crates/solidcore/src/eval/form.rs	extent_in	with_capacity	1	open	Vec::with_capacity(EXTENT_POINTS + 1)	
 crates/solidcore/src/eval/form.rs	face_arcs	f64::clamp	1	open	clamp(0.0, n - 1.0)	
 crates/solidcore/src/eval/form.rs	face_arcs	f64::clamp	2	open	clamp(0.0, phi)	
@@ -414,7 +412,6 @@ crates/solidcore/src/eval/sphere.rs	curve_on_sphere	int-div	1	open	b / p
 crates/solidcore/src/eval/sphere.rs	curve_on_sphere	int-rem	1	open	(n - 1) % p	
 crates/solidcore/src/eval/sphere.rs	cuts	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/eval/sphere.rs	insert	Vec::insert	1	open	insert(k + 1, t)	
-crates/solidcore/src/eval/sphere.rs	insert	with_capacity	1	open	Vec::with_capacity(pts.len() + 1)	
 crates/solidcore/src/eval/sphere.rs	surface_on_sphere	int-div	1	open	bu / p	
 crates/solidcore/src/eval/sphere.rs	surface_on_sphere	int-div	2	open	bv / q	
 crates/solidcore/src/eval/sphere.rs	surface_on_sphere	int-rem	1	open	(lu - 1) % p	
@@ -462,10 +459,6 @@ crates/solidcore/src/geom/polar_box.rs	PolarBox::are_disjoint	f64::clamp	1	prove
 crates/solidcore/src/geom/pseudo_box.rs	PseudoBox::distance_to_point	with_capacity	1	proven	Vec::with_capacity(6)	constant capacity
 crates/solidcore/src/geom/solution_array.rs	SolutionArray::insert_at	Vec::split_off	1	open	split_off(index)	
 crates/solidcore/src/geom/solution_array.rs	SolutionArray::swap	swap	1	open	swap(index1, index2)	
-crates/solidcore/src/geom/solution_array.rs	SolutionArray::with_capacity	with_capacity	1	open	Vec::with_capacity(capacity)	
-crates/solidcore/src/geom/tree.rs	Tree::add_to_spatial_tree_at	with_capacity	1	open	Vec::with_capacity(all.len())	
-crates/solidcore/src/geom/tree.rs	Tree::add_to_spatial_tree_at	with_capacity	2	open	Vec::with_capacity(all.len())	
-crates/solidcore/src/geom/tree.rs	Tree::retag_curve_tree	with_capacity	1	open	Vec::with_capacity(self.nodes.len())	
 crates/solidcore/src/heal/face_props.rs	FaceProps::set_props_stage3_inner	int-rem	1	proven	total % 2	constant non-zero divisor
 crates/solidcore/src/heal/face_props.rs	LoopProps::set_props	int-div	1	proven	(this_touches.len() as u64) / 2	constant non-zero divisor
 crates/solidcore/src/heal/face_props.rs	LoopProps::set_props	int-div	2	proven	(this_touches.len() as u64) / 2	constant non-zero divisor
@@ -492,16 +485,12 @@ crates/solidcore/src/intersect/adv_surface_intersector.rs	AdvSurfaceIntersector:
 crates/solidcore/src/intersect/adv_surface_intersector/tangent_contacts.rs	tp_solve4	split_at	1	open	split_at_mut(k + 1)	
 crates/solidcore/src/intersect/adv_surface_intersector/tangent_contacts.rs	tp_solve4	swap	1	open	swap(k, i_piv)	
 crates/solidcore/src/intersect/adv_surface_intersector/tangent_contacts.rs	tp_solve4	swap	2	open	swap(k, i_piv)	
-crates/solidcore/src/intersect/curve_class/p1.rs	CurveClassification::map_objects	with_capacity	1	open	Vec::with_capacity(self.data.len())	
-crates/solidcore/src/intersect/curve_class/p1.rs	CurveClassification::map_objects	with_capacity	2	open	Vec::with_capacity(self.tgt_loops.len())	
 crates/solidcore/src/intersect/curve_class/p1.rs	CurveClassification::remove_at	Vec::remove	1	open	remove(index)	
 crates/solidcore/src/intersect/curve_class/p1.rs	get_winding_count	chunks	1	proven	chunks_exact(2)	constant non-zero size
 crates/solidcore/src/intersect/curve_class/p1.rs	get_winding_count	int-rem	1	proven	touches.len() % 2	constant non-zero divisor
 crates/solidcore/src/intersect/curve_class/p1.rs	remove_non_crossings	int-rem	1	proven	count % 2	constant non-zero divisor
 crates/solidcore/src/intersect/curve_class/p4.rs	CurveClassification::classify_touch	int-rem	1	open	(next + c.ivl_cnt - 1) % c.ivl_cnt	
 crates/solidcore/src/intersect/curve_class/p4.rs	CurveClassification::classify_touch	with_capacity	1	open	Vec::with_capacity(vertexuses.len())	
-crates/solidcore/src/intersect/curve_class/p4.rs	CurveClassification::classify_touch	with_capacity	2	open	Vec::with_capacity(vertexuses.len())	
-crates/solidcore/src/intersect/curve_class/p4.rs	CurveClassification::classify_touch	with_capacity	3	open	Vec::with_capacity(vertexuses.len())	
 crates/solidcore/src/intersect/curve_class/p4.rs	CurveClassification::crossings_from_touches	int-div	1	proven	get_connected_touches(Some(lp), &crossings).len() as u64 / 2	constant non-zero divisor
 crates/solidcore/src/intersect/curve_class/p8.rs	CurveClassification::natural_bounds	windows	1	proven	windows(2)	constant non-zero size
 crates/solidcore/src/intersect/surface_drop_curve.rs	SurfaceDropCurve::boundary_start_points	Vec::remove	1	open	remove(kk)	
