@@ -11,6 +11,7 @@
 //! of radius R0 + d, d = r tan(42.5 degrees).
 
 #![allow(
+    clippy::disallowed_methods, // closed-form oracles, not ops geometry
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
@@ -161,7 +162,10 @@ fn the_corner_is_the_mixed_one_and_g1() {
         })
         .min_by(|a, c| a.0.total_cmp(&c.0))
         .unwrap();
-    assert!(nearest < 1e-7, "X {x:?} is {nearest} from the nearest vertex");
+    assert!(
+        nearest < 1e-7,
+        "X {x:?} is {nearest} from the nearest vertex"
+    );
     assert!(vertex::edges(&b, at, None).unwrap().len() >= 3);
 
     // the corner's box: past X, and short of the rounds' ends and the sharp edges
