@@ -123,6 +123,7 @@ pub struct InsertionGeometry<'a> {
     curves: Option<&'a mut InsertionCurves>,
     notifications: Option<InsertionNotifications<'a>>,
     topology_keys: Option<BodyKeys<'a>>,
+    records_seeded: usize,
 }
 
 type TopologyKey<'a> = Box<dyn Fn(EntityRef) -> ObjectRef + 'a>;
@@ -166,6 +167,7 @@ impl<'a> InsertionGeometry<'a> {
             curves: None,
             notifications: None,
             topology_keys: None,
+            records_seeded: 0,
         };
         let mut identities = Vec::new();
         for role in [
@@ -257,6 +259,13 @@ impl<'a> InsertionGeometry<'a> {
             .ok_or_else(|| invalid("missing insertion curve ownership"))?;
         curves.destroy(notifications.context, notifications.attributes, binding)
     }
+    /// The objects this view's edits and merge contexts visited to give the bodies' objects
+    /// their notification records
+    /// ([`crate::kernel::WorkCounters::insertion_records_seeded`]).
+    #[must_use]
+    pub(crate) const fn records_seeded(&self) -> usize {
+        self.records_seeded
+    }
     /// Run one edit against the actual body and retained notification stores.
     /// # Errors
     /// Missing actual context or the original edit failure, with partial writes retained.
@@ -279,7 +288,8 @@ impl<'a> InsertionGeometry<'a> {
             .notifications
             .as_mut()
             .ok_or_else(|| invalid("missing insertion notification context"))?;
-        crate::topology::brep::p3::seed_records(notifications.records, body, &key_of);
+        let seeded = crate::topology::brep::p3::seed_records(notifications.records, body, &key_of);
+        self.records_seeded = self.records_seeded.saturating_add(seeded);
         let mut env = crate::topology::edge::NotifyEnv {
             records: notifications.records,
             attributes: notifications.attributes,
@@ -1624,5 +1634,190 @@ mod tests {
         })
         .unwrap()
         .unwrap();
+    }
+
+    /// The live objects of `b`, the B-rep itself not counted.
+    fn objects(b: &Brep) -> usize {
+        b.regions().len()
+            + b.shells().len()
+            + b.faceuses().len()
+            + b.faces().len()
+            + b.loopuses().len()
+            + b.loops().len()
+            + b.edgeuses().len()
+            + b.edges().len()
+            + b.vertexuses().len()
+            + b.vertices().len()
+    }
+
+    /// Whether `records` hold what a full seeding of each of `bodies` leaves.
+    fn fully_seeded(records: &crate::topology::topology::NotifyRecords, bodies: &[&Brep]) -> bool {
+        let mut full = records.clone();
+        for b in bodies {
+            let serial = b.notify_serial().unwrap();
+            crate::topology::brep::p3::seed_records(&mut full, b, &|e| topology_ref(serial, e));
+        }
+        full == *records
+    }
+
+    /// Whether the view's records are those a full seeding of its bodies in `roles` leaves.
+    fn view_fully_seeded(view: &InsertionGeometry<'_>, roles: &[InsertionBody]) -> bool {
+        let bodies: Vec<&Brep> = roles.iter().map(|&role| view.body(role)).collect();
+        fully_seeded(view.notifications.as_ref().unwrap().records, &bodies)
+    }
+
+    fn new_vertex(b: &mut Brep) -> crate::topology::VertexId {
+        b.add_vertex_record(crate::topology::Vertex {
+            point: Point3::new(1.0, 2.0, 3.0),
+            tolerance: b.tolerance(),
+            vertexuses: Vec::new(),
+            poly_vertex: None,
+        })
+        .unwrap()
+    }
+
+    /// Between merge contexts and edits the bodies gain a vertex, lose a record, keep a
+    /// changed one and empty a slot: after each, the records are those a full seeding
+    /// leaves, and a merge context or an edit after a gain visits the new object and the
+    /// B-rep alone.
+    #[test]
+    fn each_merge_context_and_edit_leaves_the_records_of_a_full_seeding() {
+        use crate::intersect::curve_class::p6::MergeIntervalBrep;
+        use InsertionBody::{Intermediate, Target};
+        let mut k = Kernel::default();
+        let mut target = box_at(&mut k, 0.0);
+        let mut intermediate = box_at(&mut k, 100.0);
+        let mut pseudo = FilletBrep::new();
+        *pseudo.brep_mut() = box_at(&mut k, 200.0);
+        let serial = target.notify_serial().unwrap();
+        let key = |e| topology_ref(serial, e).key;
+        let mut curves = InsertionCurves::default();
+        let mut records = crate::topology::topology::NotifyRecords::new();
+        let mut attributes = AttributeStore::default();
+        let mut view = InsertionGeometry::new(&mut target, &mut pseudo, &mut intermediate)
+            .unwrap()
+            .with_notifications(
+                &mut curves,
+                InsertionNotifications {
+                    records: &mut records,
+                    attributes: &mut attributes,
+                    context: &mut k.context,
+                },
+            )
+            .unwrap();
+        let face = FaceId::from_index(0);
+        let merge = |view: &mut InsertionGeometry<'_>| {
+            let before = view.records_seeded();
+            let object = FilletObject::Topology(FilletBody::Target, EntityRef::Face(face));
+            assert!(view.merge_context_with_curve_identity(object).is_some());
+            view.records_seeded() - before
+        };
+        let edit = |view: &mut InsertionGeometry<'_>, role| {
+            let before = view.records_seeded();
+            view.with_edit(role, |_, _| Ok(())).unwrap();
+            view.records_seeded() - before
+        };
+        let both = [Target, Intermediate];
+
+        merge(&mut view);
+        edit(&mut view, Intermediate);
+        assert!(view_fully_seeded(&view, &both));
+
+        let v = new_vertex(view.target);
+        assert_eq!(merge(&mut view), 2);
+        assert!(view_fully_seeded(&view, &both));
+        let w = new_vertex(view.intermediate);
+        assert_eq!(edit(&mut view, Intermediate), 2);
+        assert_eq!(edit(&mut view, Target), 1);
+        assert!(view_fully_seeded(&view, &both));
+
+        let gained = key(EntityRef::Vertex(v));
+        view.notifications.as_mut().unwrap().records.remove(&gained);
+        merge(&mut view);
+        assert!(view
+            .notifications
+            .as_ref()
+            .unwrap()
+            .records
+            .contains_key(&gained));
+        assert!(view_fully_seeded(&view, &both));
+
+        let kept = key(EntityRef::Face(face));
+        view.notifications
+            .as_mut()
+            .unwrap()
+            .records
+            .get_mut(&kept)
+            .unwrap()
+            .set_all_flags(5);
+        edit(&mut view, Target);
+        assert_eq!(
+            view.notifications.as_ref().unwrap().records[&kept].all_flags(),
+            5
+        );
+        assert!(view_fully_seeded(&view, &both));
+
+        view.target.remove_vertex_record(v).unwrap();
+        view.intermediate.remove_vertex_record(w).unwrap();
+        merge(&mut view);
+        edit(&mut view, Intermediate);
+        assert!(view_fully_seeded(&view, &both));
+    }
+
+    /// A fillet of the four upright edges (r 3) of a 60 x 40 x 20 box united with `lumps`
+    /// disjoint 10 mm cubes: the target's objects before the fillet, the objects its
+    /// insertion visits to seed records, and whether the target's records end as a full
+    /// seeding leaves them.
+    fn insertion_seeding(lumps: u32) -> (usize, u64, bool) {
+        use crate::blend::fillet_executive::session::FilletSession;
+        let mut k = Kernel::default();
+        let mut body = create_box(&mut k, Point3::ZERO, 60.0, 40.0, 20.0).unwrap();
+        for i in 1..=lumps {
+            let at = Point3::new(100.0 * f64::from(i), 0.0, 0.0);
+            let lump = create_box(&mut k, at, 10.0, 10.0, 10.0).unwrap();
+            let union = crate::geom::a_object::BooleanOperation::Union;
+            body = crate::boolean::api_brep::boolean(&mut k, body, lump, union)
+                .unwrap()
+                .result;
+        }
+        let upright: Vec<_> = body
+            .edges()
+            .ids()
+            .filter(|&e| {
+                let ends = crate::topology::edge::vertices(&body, e, None).unwrap();
+                let [Some(a), Some(b)] = ends[..] else {
+                    return false;
+                };
+                let at = |v| body.vertex(v).unwrap().point;
+                (at(a).z - at(b).z).abs() > 1.0 && at(a).x < 80.0
+            })
+            .collect();
+        assert_eq!(upright.len(), 4);
+        let before = objects(&body);
+        let mut session = FilletSession::new(&mut k, &mut body).unwrap();
+        session
+            .prepare_constant_radius_edges(&mut k, &upright, 3.0, 1, 1, 1.0)
+            .unwrap();
+        k.work_counters.reset();
+        session.do_fillet(&mut k).unwrap();
+        let seeded = k.work_counters.insertion_records_seeded();
+        let target = &*session.objects.target;
+        let full = fully_seeded(&session.objects.notification_records, &[target]);
+        (before, seeded, full)
+    }
+
+    /// A fillet's insertion edits and merges the target many times: the objects of six more
+    /// cubes in the target are each visited once to give them a record, not at each edit
+    /// and merge.
+    #[test]
+    fn a_fillet_insertion_seeds_each_object_once_not_once_per_merge() {
+        let (box_objects, box_seeded, box_full) = insertion_seeding(0);
+        let (objects, seeded, full) = insertion_seeding(6);
+        let more = u64::try_from(objects - box_objects).unwrap();
+        println!(
+            "{box_objects} objects: {box_seeded} visited; {objects} objects: {seeded} visited"
+        );
+        assert!(box_full && full);
+        assert_eq!(seeded - box_seeded, more, "{more} more objects");
     }
 }

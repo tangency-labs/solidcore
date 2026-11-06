@@ -163,6 +163,7 @@ pub struct WorkCounters {
     loops_classified: Cell<u64>,
     wall_body_copies: Cell<u64>,
     records_seeded: Cell<u64>,
+    insertion_records_seeded: Cell<u64>,
 }
 
 impl WorkCounters {
@@ -199,12 +200,22 @@ impl WorkCounters {
         self.records_seeded.get()
     }
 
+    /// Objects a fillet's insertion looks at to give each object of a body a notification
+    /// record before each edit and each merge it makes in the target, the intermediate body
+    /// or the pseudo topology: each object the seeding visits, the B-rep's own record
+    /// included. Not the fork's.
+    #[must_use]
+    pub fn insertion_records_seeded(&self) -> u64 {
+        self.insertion_records_seeded.get()
+    }
+
     /// Zeroes every count (`SmWorkCounters::Reset`).
     pub fn reset(&self) {
         self.face_pairs.set(0);
         self.loops_classified.set(0);
         self.wall_body_copies.set(0);
         self.records_seeded.set(0);
+        self.insertion_records_seeded.set(0);
     }
 
     /// Counts one face pair examined for intersection.
@@ -229,6 +240,13 @@ impl WorkCounters {
         let objects = u64::try_from(objects).unwrap_or(u64::MAX);
         self.records_seeded
             .set(self.records_seeded.get().saturating_add(objects));
+    }
+
+    /// Counts `objects` a fillet's insertion visited to seed notification records.
+    pub(crate) fn add_insertion_records_seeded(&self, objects: usize) {
+        let objects = u64::try_from(objects).unwrap_or(u64::MAX);
+        self.insertion_records_seeded
+            .set(self.insertion_records_seeded.get().saturating_add(objects));
     }
 }
 
@@ -1961,19 +1979,21 @@ mod tests {
                 w.loops_classified(),
                 w.wall_body_copies(),
                 w.records_seeded(),
+                w.insertion_records_seeded(),
             )
         };
-        assert_eq!(counts(w), (0, 0, 0, 0));
+        assert_eq!(counts(w), (0, 0, 0, 0, 0));
         w.add_face_pair();
         w.add_face_pair();
         w.add_loop_classified();
         w.add_wall_body_copy();
         w.add_records_seeded(5);
-        assert_eq!(counts(w), (2, 1, 1, 5));
+        w.add_insertion_records_seeded(7);
+        assert_eq!(counts(w), (2, 1, 1, 5, 7));
         // each kernel counts its own work
         assert_eq!(Kernel::default().work_counters.face_pairs(), 0);
         w.reset();
-        assert_eq!(counts(w), (0, 0, 0, 0));
+        assert_eq!(counts(w), (0, 0, 0, 0, 0));
     }
 
     #[test]

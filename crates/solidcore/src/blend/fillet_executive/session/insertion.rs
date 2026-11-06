@@ -74,7 +74,10 @@ impl FilletSession<'_> {
                         context,
                     },
                 )?;
-            operation(k, state.intersector, &mut geometry)
+            let result = operation(k, state.intersector, &mut geometry);
+            k.work_counters
+                .add_insertion_records_seeded(geometry.records_seeded());
+            result
         })?
     }
 

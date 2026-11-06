@@ -87,7 +87,10 @@ impl OriginalSurfaceDeletionAccess<FilletObject> for DeleteAccess<'_, '_> {
                     context,
                 },
             )?;
-            intersector.delete_faces(k, &mut geometry, faces, None)
+            let result = intersector.delete_faces(k, &mut geometry, faces, None);
+            k.work_counters
+                .add_insertion_records_seeded(geometry.records_seeded());
+            result
         })?
     }
 }

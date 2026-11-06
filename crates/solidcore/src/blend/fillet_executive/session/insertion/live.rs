@@ -140,7 +140,11 @@ impl LiveGeometryInsertion<'_> {
                     context: self.context,
                 },
             )?;
-        call(self.k, self.ti, &mut geometry)
+        let result = call(self.k, self.ti, &mut geometry);
+        self.k
+            .work_counters
+            .add_insertion_records_seeded(geometry.records_seeded());
+        result
     }
     pub(super) fn marker_scope<T>(
         &mut self,

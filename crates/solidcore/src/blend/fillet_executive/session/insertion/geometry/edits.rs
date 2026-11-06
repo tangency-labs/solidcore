@@ -200,7 +200,8 @@ impl crate::intersect::curve_class::p6::MergeIntervalBrep<FilletObject> for Inse
             InsertionBody::Intermediate => &mut *self.intermediate,
         };
         let notifications = self.notifications.as_mut()?;
-        crate::topology::brep::p3::seed_records(notifications.records, body, key_of);
+        let seeded = crate::topology::brep::p3::seed_records(notifications.records, body, key_of);
+        self.records_seeded = self.records_seeded.saturating_add(seeded);
         Some(
             crate::intersect::curve_class::p6::MergeContextWithIdentity {
                 brep: body,
