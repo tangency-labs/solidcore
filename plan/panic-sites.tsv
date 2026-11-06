@@ -324,13 +324,9 @@ crates/solidcore/src/boolean/topology_intersector/p2.rs	teardown_reads_freed	Vec
 crates/solidcore/src/curve/composite_curve/p1.rs	CompositeCurve::approximate_curve	Vec::drain	1	open	drain(..)	
 crates/solidcore/src/curve/composite_curve/p1.rs	CompositeCurve::approximate_curve	with_capacity	1	open	Vec::with_capacity(n)	
 crates/solidcore/src/curve/composite_curve/p1.rs	CompositeCurve::approximate_curve	with_capacity	2	open	Vec::with_capacity(approx_segments.len())	
-crates/solidcore/src/curve/composite_curve/p1.rs	CompositeCurve::build_composites_from_curves	with_capacity	1	open	Vec::with_capacity(total)	
 crates/solidcore/src/curve/composite_curve/p1.rs	CompositeCurve::copy	with_capacity	1	open	Vec::with_capacity(self.segments.len())	
 crates/solidcore/src/curve/composite_curve/p1.rs	convert_to_bspline_curves_indexed	with_capacity	1	open	Vec::with_capacity(curves.len())	
-crates/solidcore/src/curve/composite_curve/p1.rs	convert_to_bspline_curves_indexed	with_capacity	2	open	Vec::with_capacity(curves.len())	
-crates/solidcore/src/curve/composite_curve/p1.rs	convert_to_bspline_curves_indexed	with_capacity	3	open	Vec::with_capacity(curves.len())	
 crates/solidcore/src/curve/composite_curve/p1.rs	flush_crv	Vec::drain	1	open	drain(..)	
-crates/solidcore/src/curve/composite_curve/p1.rs	flush_crv	with_capacity	1	open	Vec::with_capacity(curves.len())	
 crates/solidcore/src/curve/composite_curve/p1.rs	insert_sorted_breaks	Vec::insert	1	open	insert(ii, value)	
 crates/solidcore/src/curve/composite_curve/p1.rs	trim_first_break	Vec::drain	1	open	drain(..ii)	
 crates/solidcore/src/curve/composite_curve/p1.rs	trim_first_break	Vec::drain	2	open	drain(..ii)	
@@ -383,9 +379,7 @@ crates/solidcore/src/curve/curve_cache.rs	CurveCache::build_tree	int-div	1	prove
 crates/solidcore/src/curve/curve_cache.rs	CurveCache::build_tree	int-rem	1	proven	curr.len() % 2	constant non-zero divisor
 crates/solidcore/src/curve/curve_cache.rs	CurveCache::build_tree	with_capacity	1	open	Vec::with_capacity(span_count)	
 crates/solidcore/src/curve/curve_cache.rs	CurveCache::build_tree	with_capacity	2	open	Vec::with_capacity(curr.len() / 2 + 1)	
-crates/solidcore/src/curve/curve_cache.rs	build_bezier_spans	with_capacity	1	open	Vec::with_capacity(knots.len() - 1)	
 crates/solidcore/src/curve/curve_cache.rs	compute_constants	windows	1	proven	windows(2)	constant non-zero size
-crates/solidcore/src/curve/ellipse/p1.rs	Ellipse::global_point_solve_step	with_capacity	1	open	Vec::with_capacity(sols.len())	
 crates/solidcore/src/curve/ellipse/p1.rs	PolarConversion::read_tables	int-rem	1	proven	ii % 5	constant non-zero divisor
 crates/solidcore/src/curve/ellipse/p1.rs	PolarConversion::read_tables	int-rem	2	proven	n % 5	constant non-zero divisor
 crates/solidcore/src/curve/ellipse/p1.rs	PolarConversion::read_tables	int-rem	3	proven	ii % 5	constant non-zero divisor
@@ -395,13 +389,11 @@ crates/solidcore/src/curve/ellipse/p1.rs	PolarConversion::write_to_db	int-rem	2	
 crates/solidcore/src/curve/ellipse/p2.rs	Ellipse::drop_point_fast	Vec::remove	1	open	remove(0)	
 crates/solidcore/src/curve/ellipse/p2.rs	Ellipse::eval_step	with_capacity	1	open	Vec::with_capacity(num_derivs + 1)	
 crates/solidcore/src/curve/hyperbola.rs	Hyperbola::evaluate_step	with_capacity	1	open	Vec::with_capacity(num_derivs + 1)	
-crates/solidcore/src/curve/hyperbola.rs	Hyperbola::global_point_solve_step	with_capacity	1	open	Vec::with_capacity(sols.len())	
 crates/solidcore/src/curve/line.rs	Line::intersect_with_ellipse	swap	1	open	swap(0, 1)	
 crates/solidcore/src/curve/line.rs	Line::intersect_with_ellipse	swap	2	open	swap(0, 1)	
 crates/solidcore/src/curve/line.rs	Line::intersect_with_ellipse	swap	3	open	swap(0, 1)	
 crates/solidcore/src/curve/line.rs	Line::make_nurb_owned	copy_from_slice	1	open	copy_from_slice(&[min, min, max, max])	
 crates/solidcore/src/curve/parabola.rs	Parabola::evaluate_step	with_capacity	1	open	Vec::with_capacity(num_derivs + 1)	
-crates/solidcore/src/curve/parabola.rs	Parabola::global_point_solve_step	with_capacity	1	open	Vec::with_capacity(sols.len())	
 crates/solidcore/src/eval/form.rs	arcs	with_capacity	1	open	Vec::with_capacity(2 * n + 1)	
 crates/solidcore/src/eval/form.rs	arcs_between	with_capacity	1	open	Vec::with_capacity(2 * n + 1)	
 crates/solidcore/src/eval/form.rs	extent_in	with_capacity	1	open	Vec::with_capacity(EXTENT_POINTS + 1)	
