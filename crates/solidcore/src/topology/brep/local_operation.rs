@@ -2441,34 +2441,40 @@ mod tests {
         );
     }
 
-    /// The same cube, its top given a roof with a ridge: a degree-1 patch whose interior
-    /// knot is a crease. The body built on it fails tests the input did not (at the time
-    /// of writing four lines, the first `SmBrep` test 61, at the moved top's edges): the
-    /// operation's, refused as a check failure beyond the input's, the cube as it came in
-    /// with the input's own failures.
+    /// The same cube, its top raised to z = 25 on a plane parametrised over the unit
+    /// square, 20 mm a unit: an exact plane, so its reach is certified, whose body fails
+    /// tests the input did not, at the moved top's edges (the first `SmBrep` test 61, as
+    /// the same plane leaves the plain box in
+    /// `a_far_top_on_a_unit_square_plane_is_refused_as_not_sound`): the operation's,
+    /// refused as a check failure beyond the input's, the cube as it came in with the
+    /// input's own failures.
     #[test]
     fn a_new_failure_on_a_moved_face_of_a_defective_input_is_refused() {
-        use crate::nurbs::b_spline_surface::BSplineSurface;
-        use crate::nurbs::math::{CPoint, NOW};
-        use crate::nurbs::srf_basic::Surface as Net;
         let mut k = Kernel::default();
         let mut b = cube_with_a_defective_bottom(&mut k);
         let had = failure_classes(&mut k, &b);
         assert!(!had.is_empty());
         let top = box_top(&k, &b);
-        let row = |x: f64, z: f64| vec![CPoint::new(x, 0.0, z, NOW), CPoint::new(x, 20.0, z, NOW)];
-        let net = vec![row(0.0, 25.0), row(10.0, 27.0), row(20.0, 25.0)];
-        let roof = Net::new(
-            net,
-            1,
-            1,
-            vec![0.0, 0.0, 0.5, 1.0, 1.0],
-            vec![0.0, 0.0, 1.0, 1.0],
-        )
-        .unwrap();
-        let roof = Surface::from(BSplineSurface::from_gw_nurb(&roof));
-        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![roof]);
-        assert_eq!(why, Some(unsound_check(4, 61)));
+        let raised = Surface::from(Plane::new(
+            Vec3::new(0.0, 0.0, 25.0),
+            Vec3::X,
+            Vec3::Y,
+            crate::math::Vec2::new(20.0, 20.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        ));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![raised]);
+        assert!(
+            matches!(
+                why,
+                Some(OffsetFailure::Unsound {
+                    what: crate::error::offset::Unsoundness::Check {
+                        failures: 1..,
+                        first: Some((crate::geom::a_object::BREP_TYPE, 61)),
+                    },
+                })
+            ),
+            "{why:?}"
+        );
         assert_eq!(failure_classes(&mut k, &b), had);
     }
 
