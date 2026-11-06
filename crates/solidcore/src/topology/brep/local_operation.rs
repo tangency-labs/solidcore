@@ -34,6 +34,7 @@ use crate::error::{EntityRef, Failure, Result, SolidError};
 use crate::geom::attribute::ObjectKey;
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::kernel::Kernel;
+use crate::mass::enclosure::VolumeSign;
 use crate::math::Vec3;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::knots::Side;
@@ -311,8 +312,9 @@ fn local_operation_on(
 /// - the body's pointer check failed, so its geometry was not checked (`AssertValid` is
 ///   skipped then), even where the input's pointer check failed alike;
 /// - the input was a manifold solid and the body is not;
-/// - the body is a manifold solid whose volume is not positive (the input's volume is
-///   not measured).
+/// - the body is a manifold solid whose volume is not proved positive: its certified
+///   enclosure lies below 0, or still holds 0 after its budget
+///   ([`validation::volume_sign`]; the input's volume is not measured).
 ///
 /// The owners the check tests the geometry against are the identities the body's naming
 /// scheme names its entities by ([`validation::standing`]), as `move_faces` sets them.
@@ -357,10 +359,12 @@ fn refuse_unsound(k: &mut Kernel, b: &Brep, input: &validation::Standing) -> Res
         Unsoundness::GeometryUnchecked
     } else if input.manifold && !found.manifold {
         Unsoundness::NotManifoldSolid
-    } else if found.manifold
-        && validation::volume(k, &mut copy)?.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
-    {
-        Unsoundness::VolumeNotPositive
+    } else if found.manifold {
+        match validation::volume_sign(k, &mut copy)? {
+            VolumeSign::Positive(_) => return Ok(()),
+            VolumeSign::Negative(_) => Unsoundness::VolumeNotPositive,
+            VolumeSign::Undecided(_) => Unsoundness::VolumeUndecided,
+        }
     } else {
         return Ok(());
     };
