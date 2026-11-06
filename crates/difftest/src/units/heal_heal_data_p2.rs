@@ -2,9 +2,9 @@
 //! `SmProbArray` class family and the `SmHealData` target management, tolerance,
 //! coincidence and degeneracy steps.
 //!
-//! C++: `solidcore_ffi::units::heal_heal_data_p2` (upstream `SmHealData.cpp`,
-//! `SmEdgeProps.cpp`, `SmVertexProps.cpp`, `SmHealProbArray.h`). Rust:
-//! `solidcore::heal::heal_data::p2`.
+//! Ported from upstream `SmHealData.cpp`, `SmEdgeProps.cpp`, `SmVertexProps.cpp` and
+//! `SmHealProbArray.h` into `solidcore::heal::heal_data::p2`; checked against the unit's
+//! golden.
 //!
 //! Two kinds of case:
 //! - `prob`: a script of `Setup` / `Add` / `Remove` / `RemoveAll` / `ReSet` /
@@ -18,12 +18,12 @@
 //!   target lists, then a script of heal steps;
 //!   outputs each step's status and results and, at the end, the whole healer state
 //!   (targets, every props record ever allocated, every problem array with its labels,
-//!   histograms, statistics and the vertex voxel model). Both sides build the B-rep
-//!   themselves with its native geometry: the C++ side with the upstream constructors,
-//!   the Rust side with the Rust kernel ([`own_brep`]: the Rust `.smb` reader, the Rust
+//!   histograms, statistics and the vertex voxel model). The B-rep is built with its
+//!   native geometry by the Rust kernel ([`own_brep`]: the Rust `.smb` reader, the Rust
 //!   constructors, the single-vertex sphere record by record as `SmBrepConstructor`
-//!   writes it), renumbered into the shim's traversal order, so no C++ output or state
-//!   reaches the Rust side.
+//!   writes it), renumbered into the reference fixture's traversal order. A case runs
+//!   only when its block and script keep the reference wrapper's input contract
+//!   ([`source_contract`], [`heal_contract`], [`prob_contract`]).
 //!   A repair step that edits the B-rep (a nonempty queue) ends the script; when it
 //!   succeeds, a summary read from the live B-rep and the healer follows it (target,
 //!   new-object and repair problem list sizes, face/edge/vertex counts, per-face loop
@@ -52,7 +52,6 @@ use solidcore::kernel::Kernel;
 use solidcore::topology::topology_traverser::Marks;
 use solidcore::topology::{Brep, EdgeId, EdgeuseId, FaceId, LoopId, VertexId, VertexuseId};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::heal_heal_data_p2 as ffi;
 
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent2d::Extent2d;
@@ -385,7 +384,7 @@ pub(crate) enum Inputs {
         /// 0 plain, 1 pair, 2 mixed, 3 tried.
         kind: u8,
         n: u64,
-        /// `[code, a, b, c]` (see `solidcore_ffi::units::heal_heal_data_p2::check_prob`).
+        /// `[code, a, b, c]` (see [`prob_contract`]).
         ops: Vec<[i64; 4]>,
     },
     Heal {
@@ -620,71 +619,304 @@ fn prob_input(kind: u8, n: u64, ops: &[[i64; 4]]) -> Vec<f64> {
     v
 }
 
-// ---- C++ --------------------------------------------------------------------------------
+// ---- the input contract ------------------------------------------------------------------
+//
+// The reference wrapper accepts only what upstream handles without undefined behaviour;
+// the Rust side runs a case only when it keeps that contract, so the generated cases stay
+// on the working path (hostile scripts are covered by the fixture and fuzz files).
 
-fn ffi_out(r: Result<Vec<f64>, solidcore_ffi::FfiError>) -> Result<Output, HarnessError> {
-    match r {
-        // the shim refused an input whose upstream path is undefined (`-999 id`)
-        Ok(v) if v.first() == Some(&-999.0) => Ok(Output::rejected(match v.get(1) {
-            Some(&265.0) => {
-                "UB-265: Fix_SplitEdgesAtSeam reads the mark of a null target face".to_string()
-            }
-            id => format!("shim refusal {id:?}"),
-        })),
-        Ok(v) => Ok(Output::new().values("out", v)),
-        Err(solidcore_ffi::FfiError::Status(s)) => Ok(Output::err(format!("status_{s}"))),
-        Err(e) => Err(harness(format!("c++: {e}"))),
+/// Largest target list length.
+const MAX_TARGETS: usize = 512;
+/// Largest step count of a heal script.
+const MAX_STEPS: usize = 64;
+/// Largest op count of a problem array script.
+const MAX_OPS: usize = 64;
+/// Largest object count of a problem array script.
+pub(crate) const MAX_OBJECTS: usize = 8;
+/// Largest voxel count per axis.
+const MAX_VOXELS: usize = 16;
+/// Largest "old" count of `SetOldCounts`.
+const MAX_OLD: usize = 1024;
+/// Largest selector.
+const MAX_SEL: usize = 1 << 30;
+/// Largest topology list of a `Get*Props_ForTgts` step.
+const MAX_TGTS: usize = 64;
+
+/// A reader over an encoded script ([`prob_input`], [`args_of`]) or block ([`block_of`]).
+struct Reader<'a> {
+    input: &'a [f64],
+    at: usize,
+}
+
+impl Reader<'_> {
+    fn num(&mut self) -> Result<f64, String> {
+        let v = *self.input.get(self.at).ok_or("input too short")?;
+        self.at += 1;
+        Ok(v)
+    }
+
+    fn index(&mut self, max: usize) -> Result<usize, String> {
+        let v = self.num()?;
+        if v.fract() != 0.0 || v < 0.0 || v > max as f64 {
+            return Err(format!("bad index/count {v} (max {max})"));
+        }
+        Ok(v as usize)
+    }
+
+    fn int(&mut self, lo: i64, hi: i64) -> Result<i64, String> {
+        let v = self.num()?;
+        if v.fract() != 0.0 || v < lo as f64 || v > hi as f64 {
+            return Err(format!("bad integer {v} (range {lo}..={hi})"));
+        }
+        Ok(v as i64)
+    }
+
+    fn flag(&mut self) -> Result<bool, String> {
+        Ok(self.index(1)? == 1)
+    }
+
+    fn done(&self) -> Result<(), String> {
+        if self.at == self.input.len() {
+            Ok(())
+        } else {
+            Err("trailing input".into())
+        }
     }
 }
 
-/// The export of a heal case's B-rep and its `[n_v, n_e, n_f]` (`None` when it could
-/// not be built).
-fn export_of(path: &str, block: &[f64]) -> Result<(Vec<f64>, Option<[usize; 3]>), HarnessError> {
-    let ex = crate::export_memo::export("heal_heal_data_p2", &[path], block, || {
-        ffi::export(path, block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let n = solidcore_ffi::units::topology_vertexuse::counts(&ex).map(vef);
-    Ok((ex, n))
+/// The B-rep block contract ([`block_of`]): a box of sides in `[1e-4, 1e4]`, a sphere
+/// face (or single-vertex face) of radius in `[1e-3, 1e3]`, a seam-crossing cone patch
+/// of radii in `[1e-3, 1e3]` (`[0, 1e3]` for the top), height in `[1e-3, 1e3]` and an
+/// increasing angular range of at most 360 degrees within `±360` (the seam too), or a
+/// `topology.vertexuse` block ([`crate::cases::contract::vertexuse_block`]).
+fn source_contract(path: &str, block: &[f64]) -> Result<(), String> {
+    let kind = *block.first().ok_or("empty block")?;
+    let mut rd = Reader {
+        input: block,
+        at: 1,
+    };
+    if kind == 4.0 {
+        for _ in 0..3 {
+            if !(1e-4..=1e4).contains(&rd.num()?) {
+                return Err("box size out of range".into());
+            }
+        }
+        rd.flag()?;
+        rd.flag()?;
+        return rd.done();
+    }
+    if kind == 5.0 || kind == 6.0 {
+        if !(1e-3..=1e3).contains(&rd.num()?) {
+            return Err("sphere radius out of range".into());
+        }
+        rd.flag()?;
+        if kind == 6.0 {
+            rd.index(2)?;
+        }
+        rd.flag()?;
+        rd.flag()?;
+        return rd.done();
+    }
+    if kind == 7.0 {
+        let (r0, r1, height) = (rd.num()?, rd.num()?, rd.num()?);
+        if !(1e-3..=1e3).contains(&r0) || !(0.0..=1e3).contains(&r1) {
+            return Err("cone patch radius out of range".into());
+        }
+        if !(1e-3..=1e3).contains(&height) {
+            return Err("cone patch height out of range".into());
+        }
+        let (a0, a1, seam) = (rd.num()?, rd.num()?, rd.num()?);
+        if !((-360.0..=360.0).contains(&a0)
+            && a1 > a0
+            && a1 - a0 <= 360.0
+            && (-360.0..=360.0).contains(&seam))
+        {
+            return Err("cone patch angles out of range".into());
+        }
+        rd.flag()?;
+        rd.flag()?;
+        rd.flag()?;
+        return rd.done();
+    }
+    crate::cases::contract::vertexuse_block::check(path, block).map_err(str::to_owned)
 }
 
-pub(crate) fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match i {
-        Inputs::Prob { kind, n, ops } => ffi_out(ffi::prob(&prob_input(*kind, *n, ops))),
-        Inputs::Heal {
-            brep,
-            validate_only,
-            init_gaps,
-            targets,
-            voxels,
-            steps,
-        } => {
-            let (path, block) = block_of(brep, *validate_only, *init_gaps)?;
-            let (_, n) = export_of(&path, &block)?;
-            let n = n.unwrap_or([0; 3]);
-            let args = args_of(targets, *voxels, steps, n);
-            if steps.iter().any(|s| {
-                matches!(
-                    s,
-                    Step::HealTargets { .. }
-                        | Step::UpdateTargets { .. }
-                        | Step::FixCoinVertices
-                        | Step::FixDegenFaces
-                        | Step::FixDegenEdges
-                        | Step::FixMoveSeam
-                        | Step::FixSplitEdgesAtSeam
-                        | Step::FixSplitFaceAtSeams
-                        | Step::UpdateTracked { .. }
-                )
-            }) {
-                ffi_out(solidcore_ffi::units::heal_heal_data_p3::heal(
-                    &path, &block, &args,
-                ))
-            } else {
-                ffi_out(ffi::heal(&path, &block, &args))
+/// The problem array script contract ([`prob_input`]): `kind n nops (code a b c)*` with a
+/// kind up to 3, one to [`MAX_OBJECTS`] objects, at most [`MAX_OPS`] ops, and per op code
+/// (`0` `Setup`, `1` `Add`, `2` `Remove`, `6` a flag write, `7` `SetLabels`, `8` `GetAt`,
+/// `9` the original counts, the others without arguments) its arguments in range.
+fn prob_contract(input: &[f64]) -> Result<(), String> {
+    let mut rd = Reader { input, at: 0 };
+    let kind = rd.index(3)?;
+    let n = rd.index(MAX_OBJECTS)?;
+    if n == 0 {
+        return Err("no objects".into());
+    }
+    let nops = rd.index(MAX_OPS)?;
+    let max_link: i64 = match kind {
+        2 => 1,
+        3 => 2,
+        _ => 17,
+    };
+    for _ in 0..nops {
+        match rd.index(9)? {
+            0 => {
+                rd.int(0, 26)?;
+                rd.int(-1, max_link)?;
+                rd.int(0, 0)?;
+            }
+            1 => {
+                rd.index(n - 1)?;
+                match kind {
+                    2 => rd.int(0, 5)?,
+                    3 => rd.int(0, 3)?,
+                    _ => rd.int(0, 1)?,
+                };
+                rd.int(0, 0)?;
+            }
+            2 => {
+                rd.index(n - 1)?;
+                rd.int(0, 0)?;
+                rd.int(0, 0)?;
+            }
+            6 => {
+                rd.index(n - 1)?;
+                rd.index(17)?;
+                rd.index(2)?;
+            }
+            code @ 7..=9 => {
+                rd.index(match code {
+                    7 => 2,
+                    8 => MAX_SEL,
+                    _ => MAX_OLD,
+                })?;
+                rd.int(0, 0)?;
+                rd.int(0, 0)?;
+            }
+            _ => {
+                rd.int(0, 0)?;
+                rd.int(0, 0)?;
+                rd.int(0, 0)?;
             }
         }
     }
+    rd.done()
+}
+
+fn targets_contract(rd: &mut Reader<'_>) -> Result<(), String> {
+    for _ in 0..3 {
+        for _ in 0..rd.index(MAX_TARGETS)? {
+            rd.index(MAX_SEL)?;
+        }
+    }
+    Ok(())
+}
+
+/// The heal script contract ([`args_of`]): target lists of at most [`MAX_TARGETS`]
+/// selectors, voxel counts in `1..=MAX_VOXELS`, at most [`MAX_STEPS`] steps with their
+/// arguments in range, and the steps that end the healer's state (`FreeTargets`,
+/// `ReSet`, `Fix_InfiniteRegion`, `HealTgts`, a `HealBrep` on a B-rep) last;
+/// `SeedFaceProblems` only right before a final `Fix_SplitEdgesAtSeam` (or, with a null
+/// face, `Fix_DegenFaces` / `Fix_SplitFaceAtSeams`).
+fn heal_contract(args: &[f64]) -> Result<(), String> {
+    let mut rd = Reader {
+        input: args,
+        at: 0,
+    };
+    targets_contract(&mut rd)?;
+    for _ in 0..3 {
+        if rd.index(MAX_VOXELS)? == 0 {
+            return Err("zero voxel count".into());
+        }
+    }
+    let nsteps = rd.index(MAX_STEPS)?;
+    for s in 0..nsteps {
+        let code = rd.index(42)?;
+        let last = s + 1 == nsteps;
+        match code {
+            12..=14 | 21 | 24 => {
+                rd.index(MAX_SEL)?;
+            }
+            15 => {
+                rd.index(2)?;
+                rd.flag()?;
+                for _ in 0..rd.index(MAX_TGTS)? {
+                    rd.index(9)?;
+                    rd.index(MAX_SEL)?;
+                }
+            }
+            16 if !last => return Err("FreeTargets must be the last step".into()),
+            17 => targets_contract(&mut rd)?,
+            18 => {
+                for _ in 0..3 {
+                    rd.index(MAX_OLD)?;
+                }
+            }
+            19 => {
+                rd.index(26)?;
+            }
+            20 => {
+                rd.index(MAX_SEL)?;
+                rd.flag()?;
+            }
+            23 | 29 => {
+                if code == 23 {
+                    rd.flag()?;
+                }
+                if !last {
+                    return Err("ReSet / Fix_InfiniteRegion must be the last step".into());
+                }
+            }
+            28 => {
+                rd.flag()?;
+            }
+            42 => {
+                let null_face = rd.flag()?;
+                let next = rd.input.get(rd.at).copied();
+                let safe_repair =
+                    next == Some(38.0) || (null_face && matches!(next, Some(35.0 | 39.0)));
+                if s + 2 != nsteps || !safe_repair {
+                    return Err(
+                        "SeedFaceProblems must immediately precede its final guarded repair"
+                            .into(),
+                    );
+                }
+            }
+            32 => {
+                rd.index(26)?;
+                rd.flag()?;
+                if !last {
+                    return Err("HealTgts must be last".into());
+                }
+            }
+            33 => {
+                rd.index(26)?;
+                for _ in 0..2 {
+                    for _ in 0..rd.index(MAX_TGTS)? {
+                        rd.index(10)?;
+                        rd.index(MAX_SEL)?;
+                    }
+                }
+            }
+            40 => {
+                rd.flag()?;
+                rd.index(26)?;
+            }
+            30 => {
+                let mode = rd.index(2)?;
+                rd.index(26)?;
+                rd.flag()?;
+                if mode == 2 {
+                    targets_contract(&mut rd)?;
+                }
+                if mode != 0 && !last {
+                    return Err("HealBrep on a B-rep must be the last step".into());
+                }
+            }
+            _ => {}
+        }
+    }
+    rd.done()
 }
 
 // ---- Rust: problem arrays -------------------------------------------------------------
@@ -752,8 +984,8 @@ fn op_of(c: i64) -> HealerOpType {
 
 #[allow(clippy::too_many_lines)]
 fn rust_prob(kind: u8, n: u64, ops: &[[i64; 4]]) -> Result<Output, HarnessError> {
-    // Run only on scripts the C++ guard accepts: `n` sizes the object list below.
-    ffi::check_prob(&prob_input(kind, n, ops)).map_err(|e| harness(format!("prob script: {e}")))?;
+    // Run only on scripts that keep the contract: `n` sizes the object list below.
+    prob_contract(&prob_input(kind, n, ops)).map_err(|e| harness(format!("prob script: {e}")))?;
     let mut arena: PropsArena<FacePropsId, FacePropsEntry<H>> = PropsArena::default();
     let ids: Vec<FacePropsId> = (0..n).map(|_| arena.alloc(FacePropsEntry::new())).collect();
     let id = |a: i64| -> Result<FacePropsId, HarnessError> {
@@ -1815,8 +2047,8 @@ fn rust_heal(
     steps: &[Step],
 ) -> Result<Output, HarnessError> {
     let (path, block) = block_of(brep, validate_only, init_gaps)?;
-    // the shim's input guards, without its build (HANG-29, the size ranges)
-    ffi::check_source(&path, &block).map_err(|e| harness(format!("B-rep block: {e}")))?;
+    // the block contract (HANG-29, the size ranges)
+    source_contract(&path, &block).map_err(|e| harness(format!("B-rep block: {e}")))?;
     let mut k = Kernel::default();
     let mut b = match own_brep(&mut k, brep, validate_only, init_gaps)? {
         Built::Brep(b) => *b,
@@ -1828,8 +2060,8 @@ fn rust_heal(
     };
     let c = own_counts(&b);
     let n = vef(c);
-    // Run only on scripts the C++ guard accepts: the voxel counts size the voxel model.
-    ffi::check_heal(&args_of(targets, voxels, steps, n))
+    // Run only on scripts that keep the contract: the voxel counts size the voxel model.
+    heal_contract(&args_of(targets, voxels, steps, n))
         .map_err(|e| harness(format!("heal script: {e}")))?;
 
     let mut marks = Marks::default();
@@ -2614,10 +2846,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         run_rust(&case.parse()?)
     }
@@ -2628,21 +2856,18 @@ mod tests {
     use super::*;
 
     /// HANG-29: `--fuzz 30000` fuzz22334, a surface control point of `-1e300` in the
-    /// B-rep block; the healer's caching did not return. Both sides refuse the block
-    /// through the `topology.vertexuse` block's HANG-29 bound (`1e150`; the Rust side
-    /// applies the same pure check, `check_source`, before its own build).
+    /// B-rep block; the healer's caching did not return. The block contract refuses it
+    /// through the `topology.vertexuse` block's HANG-29 bound (`1e150`).
     #[test]
-    fn both_sides_refuse_a_block_in_the_overflow_range() {
+    fn a_block_in_the_overflow_range_is_refused() {
         let recorded: Value = serde_json::from_str(include_str!(
             "../../tests/fuzz_regressions/heal.heal_data_p2.json"
         ))
         .unwrap();
         for recorded in recorded["cases"].as_array().unwrap() {
             let i: Inputs = serde_json::from_value(recorded["inputs"].clone()).unwrap();
-            for error in [run_cpp(&i), run_rust(&i)] {
-                let error = error.unwrap_err().to_string();
-                assert!(error.contains("HANG-29"), "{}: {error}", recorded["name"]);
-            }
+            let error = run_rust(&i).unwrap_err().to_string();
+            assert!(error.contains("HANG-29"), "{}: {error}", recorded["name"]);
         }
     }
 
@@ -2655,7 +2880,7 @@ mod tests {
     }
 
     /// The Rust build heals the native sphere, not a plain B-spline copy (which has the
-    /// same control net but different UV evaluation), and has the C++ build's counts.
+    /// same control net but different UV evaluation).
     #[test]
     fn own_sphere_keeps_the_analytic_surface() {
         use solidcore::surface::surface::SurfaceKind;
@@ -2673,10 +2898,6 @@ mod tests {
                 let (_, face) = brep.faces().iter().next().unwrap();
                 let surface = face.surface.as_ref().unwrap();
                 assert!(matches!(surface.kind(), SurfaceKind::Sphere(_)));
-                let (path, block) = block_of(&input, false, false).unwrap();
-                let (export, _) = export_of(&path, &block).unwrap();
-                let cpp = solidcore_ffi::units::topology_vertexuse::counts(&export).unwrap();
-                assert_eq!(own_counts(&brep), cpp, "{input:?}");
             }
         }
     }
@@ -2758,7 +2979,7 @@ mod tests {
         }
     }
 
-    /// Cache steps on the analytic edge still compare real edge/vertex props values.
+    /// Cache steps on the analytic edge record real edge/vertex props values.
     #[test]
     fn ellipse_face_heal_cache_compares_values() {
         let input = Inputs::Heal {
@@ -2782,22 +3003,19 @@ mod tests {
             voxels: default_voxels(),
             steps: vec![Step::CacheEdgeProps, Step::CacheVertexProps],
         };
-        let cpp = run_cpp(&input).unwrap();
         let rust = run_rust(&input).unwrap();
-        assert!(cpp.error.is_none(), "C++ failed: {cpp:?}");
         assert!(rust.error.is_none(), "Rust failed: {rust:?}");
         assert!(rust.deferred.is_none(), "Rust deferred: {rust:?}");
-        let diff = crate::compare(&cpp, &rust, Runner.abs_floors());
-        assert!(diff.pass() && diff.values_compared > 0, "{diff:?}");
+        assert!(rust.values["out"].len() > 1, "{rust:?}");
     }
 
-    /// Object counts the C++ guard refuses are a harness error on the Rust side too,
-    /// not a capacity-overflow panic or a 32 GiB object list (issue #181).
+    /// Object counts outside the contract are a harness error, not a capacity-overflow
+    /// panic or a 32 GiB object list (issue #181).
     #[test]
     fn prob_refuses_unguarded_object_counts() {
         for n in [
             0,
-            ffi::MAX_OBJECTS as u64 + 1,
+            MAX_OBJECTS as u64 + 1,
             1 << 31,
             1 << 32,
             i64::MAX as u64,

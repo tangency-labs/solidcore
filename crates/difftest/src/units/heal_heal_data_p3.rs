@@ -1,7 +1,8 @@
-//! Differential coverage of `heal.heal_data_p3` on real native B-reps.
-//! Shared scripts compare all props, flags, problem-list order and counters.
+//! Runner for `heal.heal_data_p3` (upstream `SmHealData`'s repair and target steps, ported
+//! into `solidcore::heal::heal_data`) on real B-reps, checked against the unit's golden.
+//! Shared scripts record all props, flags, problem-list order and counters.
 //! `HealTgts` is terminal because it can delete fixture topology; that operation
-//! compares status, stop/done step, recursion count and resulting target counts.
+//! records status, stop/done step, recursion count and resulting target counts.
 //! Mutating branches defer at the exact missing topology/face/classification call.
 
 use super::heal_heal_data_p2::{self as shared, BIn, Inputs, Prim, Sel, Step, Targets};
@@ -122,9 +123,6 @@ impl UnitDiff for Runner {
                 ..ctx.clone()
             },
         )
-    }
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        shared::run_cpp(&case.parse()?)
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         shared::run_rust(&case.parse()?)

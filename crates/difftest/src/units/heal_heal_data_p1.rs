@@ -4,7 +4,7 @@
 //!
 //! A case is either a heal script of the `heal.heal_data_p2` runner (the healer built
 //! on a real B-rep, steps `23..=31` of
-//! [`solidcore_ffi::units::heal_heal_data_p2::check_heal`] driving this unit's
+//! the `heal.heal_data_p2` script contract driving this unit's
 //! functions after the p2 cache steps, followed by the whole healer state), or an
 //! `SmApiHealBrep` call (`{"api": {"box_size": [dx, dy, dz]}}`, or without a box
 //! for a null B-rep).
@@ -31,10 +31,9 @@ use solidcore::kernel::Kernel;
 use solidcore::math::Point3;
 use solidcore::primitive::api_primitives::create_box;
 use solidcore::SolidError;
-use solidcore_ffi::units::heal_heal_data_p1 as ffi;
 
 use super::heal_heal_data_p2::{
-    gen_brep_in, gen_targets, log_uniform, run_cpp as p2_cpp, run_rust as p2_rust, BIn,
+    gen_brep_in, gen_targets, log_uniform, run_rust as p2_rust, BIn,
     Inputs as Script, Prim, Step,
 };
 use super::topology_vertexuse::{domain, gen_surface, BrepIn};
@@ -71,8 +70,8 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
-/// Largest magnitude of a script value the C++ side is given (the `±f64::MAX` markers
-/// aside). HANG-29: a B-rep coordinate whose square overflows (from about `1.34e154`)
+/// Largest magnitude of a script value the input contract admits (the `±f64::MAX`
+/// markers aside). HANG-29: a B-rep coordinate whose square overflows (from about `1.34e154`)
 /// makes the healer's face work (`SmCurve::GlobalCoincidenceChecker` through
 /// `DropPoint`) split forever; weights stay within `1e-3..=1e3`, so this bound keeps
 /// every Euclidean point under that regime.
@@ -91,34 +90,10 @@ fn has_huge(v: &Value) -> bool {
     }
 }
 
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    match i {
-        Inputs::Script(s) => {
-            let v = serde_json::to_value(s).map_err(|e| harness(e.to_string()))?;
-            if has_huge(&v) {
-                return Err(harness("script value above 1e150 (HANG-29)"));
-            }
-            p2_cpp(s)
-        }
-        Inputs::Api { api } => {
-            let r = match api.box_size {
-                None => ffi::api_heal_null(),
-                Some(d) => ffi::api_heal_box(d),
-            };
-            match r {
-                Ok(v) => Ok(Output::new().values("out", v)),
-                Err(solidcore_ffi::FfiError::Status(s)) => Ok(Output::err(format!("status_{s}"))),
-                Err(e) => Err(harness(format!("c++: {e}"))),
-            }
-        }
-    }
-}
-
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     match i {
         Inputs::Script(s) => {
-            // as the C++ side: the Rust side builds its B-rep through the same C++
-            // export, which hangs under HANG-29
+            // the input contract's HANG-29 bound on every script value
             let v = serde_json::to_value(s).map_err(|e| harness(e.to_string()))?;
             if has_huge(&v) {
                 return Err(harness("script value above 1e150 (HANG-29)"));
@@ -127,7 +102,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
         Inputs::Api { api } => {
             let mut k = Kernel::default();
-            // The C++ side heals a box made by `SmApiCreateBox(origin, dx, dy, dz)`;
+            // Upstream heals a box made by `SmApiCreateBox(origin, dx, dy, dz)`;
             // the output is `create_status heal_status`.
             let mut create_status = 0.0;
             let r = match api.box_size {
@@ -162,7 +137,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
 // ---- generation -------------------------------------------------------------------------
 
 /// A box, a sphere face, an upstream file, a generated B-spline face or another
-/// generated B-rep, and whether the C++ healer may run on it to the end (`HealBrep`,
+/// generated B-rep, and whether the healer may run on it to the end (`HealBrep`,
 /// `Fix_InfiniteRegion`). Generated B-spline faces dominate: stage 2 on a plane face
 /// stops at the plane's face tolerance (`SmFace::GetTolerance` in the plane's box,
 /// `topology.face_p2`) and on a closed surface at `SmFace::HasSeamProblem`.
@@ -371,10 +346,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run_cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {

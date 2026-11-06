@@ -422,16 +422,32 @@ pub mod vertexuse_block {
     /// Whether `block` (of an `.smb` file at `path` for kind 0) keeps the contract.
     #[must_use]
     pub fn holds(path: &str, block: &[f64]) -> bool {
+        check(path, block).is_ok()
+    }
+
+    /// [`holds`], with the rule `block` breaks.
+    ///
+    /// # Errors
+    ///
+    /// The broken rule: a malformed block, or a value above `1e150` (HANG-29).
+    pub fn check(path: &str, block: &[f64]) -> Result<(), &'static str> {
         let mut rd = Reader {
             input: block,
             at: 0,
         };
-        brep(&mut rd, path).is_some()
-            && rd.at == block.len()
-            && !block.iter().any(|v| {
-                let a = v.abs();
-                a > MAX_BLOCK_MAGNITUDE && a < f64::MAX
-            })
+        if brep(&mut rd, path).is_none() {
+            return Err("malformed B-rep block");
+        }
+        if rd.at != block.len() {
+            return Err("trailing input after the B-rep block");
+        }
+        if block.iter().any(|v| {
+            let a = v.abs();
+            a > MAX_BLOCK_MAGNITUDE && a < f64::MAX
+        }) {
+            return Err("B-rep value above 1e150 (HANG-29)");
+        }
+        Ok(())
     }
 
     struct Reader<'a> {
