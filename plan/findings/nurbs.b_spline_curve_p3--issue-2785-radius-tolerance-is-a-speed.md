@@ -9,9 +9,9 @@ Issue: tangency-labs/solidcore#2785. Fix: this PR.
 speed-based tolerance falls through it at `T = 24.3`. From there on the bend was silently
 accepted, although nothing about the curve had changed.*
 
-(The SVG is hand-authored to the house palette in `docs/agent-style.md`; no VectorCraft instance
-was reachable from the environment this was written in, so there is no `.vectorcraft` source
-beside it yet. Redraw and export it there when one is available.)
+Drawn in VectorCraft 0.21.1 through its MCP server and exported from it with live text
+(`outlineText: false`); `issue-2785-radius-tolerance.vectorcraft` beside it is the source, so the
+figure can be reopened and changed rather than redrawn.
 
 ## The defect
 
