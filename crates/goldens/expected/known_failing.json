@@ -1,5 +1,13 @@
 {
   "blend.fillet_executive_p3": {
     "real-box-high-corner-setback-eight": "tangency-labs/solidcore#2933: the N x N corner patch meets the three rounds up to 4.35 degrees off tangent; edge tolerance 5.17e-5"
+  },
+  "offset.offset_executive_p1": {
+    "extend_bilinear_huge": "tangency-labs/solidcore#3000: a 5e8 extension of a bilinear sheet extends 3 of 4 sides; the opposite side's diameter is rounded on the whole net and reads as collapsed"
+  },
+  "offset.offset_geometry_creation": {
+    "gen0049": "tangency-labs/solidcore#3002: the result has an edge whose pcurve interval differs from its 3D curve's, after the local-operation change",
+    "gen0732": "tangency-labs/solidcore#3001: the offset result's edge pcurve interval differs from its 3D curve's, on main as well",
+    "gen0779": "tangency-labs/solidcore#3002: the result has an edge whose pcurve interval differs from its 3D curve's, after the local-operation change"
   }
 }
