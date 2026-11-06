@@ -66,6 +66,7 @@
     "what": "a box 30 x 20 x 20 with its vertical edge at x = y = 0 rounded R5, joined with a half cylinder r2 along x (axis y = 0, z = 15, x 5..11) standing out of the front face y = 0; the cylinder's end x = 5 lies exactly on the line where the front face runs tangent into the R5 round. The concave edge where the cylinder meets the front face (z = 13) rounded 0.5 must give one closed solid; at x = 5.001 or 6 it does, at x = 5 it fails with status 1001"
   },
   "expressible": true,
+  "gallery_note": "the half cylinder's end sits on the line where the front face runs into the R5 round (highlighted); the round of its foot fails there with status 1001 and builds with the end 0.001 further on",
   "operation_expressible": true,
   "records": "11991-round-cylinder-edge-ending-on-a-round-tangent-line.bodies.json.gz",
   "result": [],
