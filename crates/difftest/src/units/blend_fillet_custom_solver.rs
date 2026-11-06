@@ -3,12 +3,12 @@
 //! `LoadInitialValues` and `SmSecantConstantRadiusFS::LoadJacobian` /
 //! `LoadInitialValues`.
 //!
-//! C++: `solidcore_ffi::units::blend_fillet_custom_solver` (upstream
-//! `source/SMLib/src/SmFilletCustomSolver.cpp`). Rust:
+//! Ported from upstream `source/SMLib/src/SmFilletCustomSolver.cpp`; checked against its
+//! golden. Rust:
 //! `solidcore::blend::fillet_custom_solver`.
 //!
-//! A case is one op (`create`, `jac` or `init`) with its inputs. Both sides produce the
-//! same flat record (layout in the FFI module docs), split into keys by [`to_output`]:
+//! A case is one op (`create`, `jac` or `init`) with its inputs. The Rust side produces a
+//! flat record, split into keys by [`to_output`]:
 //! `status` (`0` = `SM_SUCCESS`, else the `SmStatus`: `1001` `SM_ERR`, `1007`
 //! `SM_ERR_INVALID_INPUT`; `-1` on the Rust side for an error upstream cannot produce),
 //! then for `create` the final rails (`rail1_*`, `rail2_*`) and the fillet surface
@@ -51,7 +51,6 @@ use solidcore::nurbs::srf_basic::Surface as NurbSurface;
 use solidcore::surface::offset_surface::SS_UNKNOWN;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
-use solidcore_ffi::units::blend_fillet_custom_solver::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -62,6 +61,10 @@ pub const MIN_GENERATED: usize = 400;
 
 /// `blend.fillet_custom_solver` runner.
 pub struct Runner;
+
+/// Largest array length (`x`, `f`, guesses, intervals, Jacobian sides) the reference
+/// wrapper takes.
+const MAX_ARRAY: usize = 32;
 
 fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
@@ -158,150 +161,11 @@ enum Inputs {
     },
 }
 
-impl Inputs {
-    fn ffi(&self) -> Op {
-        match self {
-            Inputs::Create { .. } => Op::Create,
-            Inputs::Jac {
-                kind: Kind::Eiffel, ..
-            } => Op::JacEiffel,
-            Inputs::Jac {
-                kind: Kind::Secant, ..
-            } => Op::JacSecant,
-            Inputs::Init {
-                kind: Kind::Eiffel, ..
-            } => Op::InitEiffel,
-            Inputs::Init {
-                kind: Kind::Secant, ..
-            } => Op::InitSecant,
-        }
-    }
-}
-
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
 
-fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
-    let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
-    if s.net.iter().any(|r| r.len() != cols) {
-        return Err(harness("net rows differ in length"));
-    }
-    Ok((n, m))
-}
-
 // ---- C++ side -----------------------------------------------------------------------
-
-fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
-    let (n, m) = shape(s)?;
-    o.extend(
-        [n, m, s.p, s.q, s.u.len().saturating_sub(1), s.v.len().saturating_sub(1)]
-            .map(|x| x as f64),
-    );
-    for row in &s.net {
-        for p in row {
-            o.extend_from_slice(p);
-        }
-    }
-    o.extend_from_slice(&s.u);
-    o.extend_from_slice(&s.v);
-    Ok(())
-}
-
-fn push_crv(o: &mut Vec<f64>, c: &InlineCrv) {
-    let n = c.cpts.len().saturating_sub(1);
-    o.extend([n as f64, c.p as f64, c.u.len().saturating_sub(1) as f64]);
-    for p in &c.cpts {
-        o.extend_from_slice(p);
-    }
-    o.extend_from_slice(&c.u);
-}
-
-fn push_solver(o: &mut Vec<f64>, s: &SolverIn) -> Result<(), HarnessError> {
-    o.push(flag(s.b.is_none()));
-    push_srf(o, &s.a)?;
-    if let Some(b) = &s.b {
-        push_srf(o, b)?;
-    }
-    o.extend([s.r[0], s.r[1], s.o[0], s.o[1], s.angle, s.ext]);
-    o.push(f64::from(s.sing));
-    Ok(())
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match i {
-        Inputs::Create {
-            tol,
-            rail1,
-            rail2,
-            points,
-        } => {
-            o.push(*tol);
-            push_crv(&mut o, rail1);
-            push_crv(&mut o, rail2);
-            o.push(points.len() as f64);
-            for [p1, p2] in points {
-                o.extend_from_slice(p1);
-                o.extend_from_slice(p2);
-            }
-        }
-        Inputs::Jac {
-            solver,
-            rail,
-            ne,
-            np,
-            sel1,
-            off1,
-            sel2,
-            off2,
-            x,
-            f,
-            jac,
-            ..
-        } => {
-            push_solver(&mut o, solver)?;
-            o.extend([*rail, *ne, *np, *sel1, *off1, *sel2, *off2].map(|v| v as f64));
-            o.push(x.len() as f64);
-            o.extend_from_slice(x);
-            o.push(f.len() as f64);
-            o.extend_from_slice(f);
-            let [rows, cols] = jac.unwrap_or([0, 0]);
-            o.extend([flag(jac.is_some()), rows as f64, cols as f64]);
-        }
-        Inputs::Init {
-            solver,
-            do2,
-            rail,
-            sel1,
-            s1_index,
-            intervals,
-            per,
-            guess,
-            ..
-        } => {
-            push_solver(&mut o, solver)?;
-            o.extend([flag(*do2), *rail as f64, *sel1 as f64, *s1_index as f64]);
-            o.push(intervals.len() as f64);
-            for iv in intervals {
-                o.extend_from_slice(iv);
-            }
-            o.push(per.len() as f64);
-            o.extend(per.iter().map(|&b| flag(b)));
-            o.push(guess.len() as f64);
-            o.extend_from_slice(guess);
-        }
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(i.ffi(), &input).map_err(|e| harness(e.to_string()))?;
-    to_output(i, &flat)
-}
 
 // ---- output splitting ---------------------------------------------------------------
 
@@ -657,8 +521,8 @@ fn rust_jac(
     };
     let (mut ne, mut np) = (ne, np);
     let mut f = f.to_vec();
-    // the Jacobian size is harness data: same bound as the FFI guard
-    if jac.is_some_and(|[r, c]| r > ffi::MAX_ARRAY || c > ffi::MAX_ARRAY) {
+    // the Jacobian size is harness data: the reference wrapper's bound
+    if jac.is_some_and(|[r, c]| r > MAX_ARRAY || c > MAX_ARRAY) {
         return Err(harness("jacobian size"));
     }
     let mut j = jac
@@ -1343,10 +1207,6 @@ impl UnitDiff for Runner {
         default_cases(self, &ctx)
     }
 
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
-    }
-
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
     }
@@ -1357,6 +1217,25 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    /// The upstream routine a case runs.
+    fn op_of(i: &Inputs) -> &'static str {
+        match i {
+            Inputs::Create { .. } => "Create",
+            Inputs::Jac {
+                kind: Kind::Eiffel, ..
+            } => "JacEiffel",
+            Inputs::Jac {
+                kind: Kind::Secant, ..
+            } => "JacSecant",
+            Inputs::Init {
+                kind: Kind::Eiffel, ..
+            } => "InitEiffel",
+            Inputs::Init {
+                kind: Kind::Secant, ..
+            } => "InitSecant",
+        }
+    }
+
     /// The generators reach success and failure of `create` on the Rust side, and
     /// mostly real values.
     #[test]
@@ -1365,7 +1244,7 @@ mod tests {
         for seed in 0..400u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
             let i = gen_case(&mut rng);
-            let op = format!("{:?}", i.ffi());
+            let op = op_of(&i).to_string();
             let out = rust(&i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.symbol)
