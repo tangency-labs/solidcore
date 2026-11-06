@@ -76,6 +76,7 @@
 //!   copy of that B-rep (its UV trim curve and trimmed surface cache additions are not
 //!   kept).
 
+use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::Curve;
 use crate::curve::curve::p8::CurveIntersectOptions;
@@ -1988,10 +1989,12 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         true,
         true,
     )? {
-        return Ok((
-            copies.curves_3d.unwrap_or_default(),
+        return silhouette_measurement_curves(
+            k,
+            srf,
+            objects.face_uv_domain(face)?,
             copies.curves_uv.unwrap_or_default(),
-        ));
+        );
     }
 
     // No cached trimmed silhouette curves in existance -- create them
@@ -2065,12 +2068,30 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
         true,
         true,
     )? {
-        Some(copies) => Ok((
-            copies.curves_3d.unwrap_or_default(),
+        Some(copies) => silhouette_measurement_curves(
+            k,
+            srf,
+            objects.face_uv_domain(face)?,
             copies.curves_uv.unwrap_or_default(),
-        )),
+        ),
         None => Err(SolidError::sm_err(OP_FACE_SIL)),
     }
+}
+
+/// Measure on S(uv(t)), rather than the independent fitted 3D silhouette.
+/// The UV trace and its trimming still carry their construction error; lifting
+/// removes the additional 3D fitting error, not the need to bound that UV error.
+fn silhouette_measurement_curves(
+    k: &Kernel,
+    surface: &Surface,
+    domain: Extent2d,
+    uv_curves: Vec<Curve>,
+) -> Result<(Vec<Curve>, Vec<Curve>)> {
+    let curves = uv_curves
+        .iter()
+        .map(|uv| CrvOnSurf::new(k, uv.clone(), surface.clone(), Some(domain), 0).map(Curve::from))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((curves, uv_curves))
 }
 
 /// `pFace->GetSurface()->GlobalPointSolve(uv_domain, op, point, tol,
