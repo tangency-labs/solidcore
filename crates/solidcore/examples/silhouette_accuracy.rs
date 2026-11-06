@@ -1,6 +1,7 @@
 //! Diagnostic for #2967: silhouette samples versus the analytic sphere equator.
 //! Sampling diagnoses error; it does not certify a maximum or a global bound.
-//! Optional arguments: view tilt in degrees (0 through 45), then normal length.
+//! Optional arguments: view tilt in degrees (0 through 45), normal length,
+//! then `legacy` (default) or `metric` tracing tolerance.
 use solidcore::curve::crv_on_surf::CrvOnSurf;
 use solidcore::curve::curve::{p1::GlobalPointSolveOptions, Curve};
 use solidcore::geom::extent2d::Extent2d;
@@ -29,6 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let angle = tilt.to_radians();
     let view = Vec3::new(angle.sin(), 0.0, angle.cos()) * scale;
+    let trace_tolerance = match args.next().as_deref() {
+        None | Some("legacy") => 1e-4,
+        Some("metric") => 1e-5 / view.length_squared().max(1.0),
+        Some(_) => return Err("expected legacy or metric tracing tolerance".into()),
+    };
+    if !view.length_squared().is_finite() || trace_tolerance <= 0.0 {
+        return Err("projection scale or tracing tolerance is not representable".into());
+    }
     let mut sphere = Sphere::new(
         &k,
         Vec3::new(0.0, 0.0, -1.0),
@@ -46,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &domain,
         view,
         false,
-        Some(1e-4),
+        Some(trace_tolerance),
         Some(20.0_f64.to_radians()),
     )?;
     let query = Vec3::new(0.2, 0.3, 2.0);
