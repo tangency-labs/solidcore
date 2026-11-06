@@ -30,10 +30,12 @@ use solidcore::surface::surface::p2::{
 };
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::{Volume, VolumeKind};
-use solidcore::topology::database_io::{fixed16, DatabaseReader, DatabaseWriter, FileType};
+use solidcore::topology::database_io::{
+    fixed16, DatabaseReader, DatabaseWriter, FileType, MAX_READ_NESTING,
+};
 use solidcore::topology::geometry_write::{write_curve, write_surface};
 use solidcore::Kernel;
-use solidcore::{Point3, Vec3};
+use solidcore::{Point3, SolidError, Vec3};
 
 /// One frozen record.
 struct Record {
@@ -236,8 +238,9 @@ fn surfaces_in_volumes_write_back_their_records() {
     round_trip("surface.srf_in_volume", SRF_IN_VOLUME_TYPE, false);
 }
 
-/// A surface in a chain of `n` transform volumes, the last one with an orient map.
-fn surface_in_chain(k: &Kernel, n: usize) -> Option<Surface> {
+/// A surface in a chain of `n` transform volumes, the last one with an orient map
+/// when `orient` is set; `None` when the chain cannot be built.
+fn surface_in_chain(k: &Kernel, n: usize, orient: bool) -> Option<Surface> {
     let shift = |d: f64| {
         Transform::new(
             Point3::new(d, 0.0, 0.0),
@@ -246,8 +249,9 @@ fn surface_in_chain(k: &Kernel, n: usize) -> Option<Surface> {
             None,
         )
     };
+    let last_orient = orient.then(|| shift(2.0));
     let mut volume =
-        Volume::with_maps(VolumeKind::Transform(shift(1.0)), Some(shift(2.0)), None).ok()?;
+        Volume::with_maps(VolumeKind::Transform(shift(1.0)), last_orient, None).ok()?;
     for _ in 1..n {
         volume = Volume::with_maps(VolumeKind::Transform(shift(1.0)), None, Some(volume)).ok()?;
     }
@@ -256,28 +260,46 @@ fn surface_in_chain(k: &Kernel, n: usize) -> Option<Surface> {
     Some(Surface::from(siv))
 }
 
-/// Every volume chain the writer writes reads back, and the writer refuses every
-/// chain the reader would refuse: a map nested past the reader's bound, the orient
-/// map on the deepest volume included.
+/// The reader enters a level for the surface (1) and one for each volume below it
+/// (`DatabaseReader::enter_nested`, at most `MAX_READ_NESTING`), and the orient map of
+/// the last volume one level deeper: so it reads a chain of at most
+/// `MAX_READ_NESTING - 1` volumes, `MAX_READ_NESTING - 2` with that orient map. The
+/// writer writes exactly the chains that can be built up to that length, in both
+/// formats, refuses every longer one with `InvalidInput`, and every record it writes
+/// reads back.
 #[test]
 fn a_volume_chain_is_written_only_when_it_reads_back() {
     let k = Kernel::default();
-    let mut written = 0;
-    for n in 1..=40 {
-        let Some(s) = surface_in_chain(&k, n) else {
-            continue;
-        };
-        for ft in [FileType::Ascii, FileType::Binary] {
-            let mut w = DatabaseWriter::open_for_write(ft);
-            let Ok(()) = write_surface(&s, &mut w, 30) else {
+    let max = MAX_READ_NESTING as usize;
+    for (orient, longest) in [(false, max - 1), (true, max - 2)] {
+        let mut built = 0;
+        for n in 1..=max + 8 {
+            let Some(s) = surface_in_chain(&k, n, orient) else {
                 continue;
             };
-            written += 1;
-            let mut db = DatabaseReader::new();
-            db.open_for_read(w.into_bytes(), ft);
-            let read = Surface::read_from_db(&k, SRF_IN_VOLUME_TYPE, &mut db, 30);
-            assert!(read.is_ok(), "{n} volumes ({ft:?}): written, then {read:?}");
+            built = n;
+            for ft in [FileType::Ascii, FileType::Binary] {
+                let mut w = DatabaseWriter::open_for_write(ft);
+                let written = write_surface(&s, &mut w, 30);
+                let at = format!("{n} volumes, orient map {orient}, {ft:?}");
+                if n > longest {
+                    assert!(
+                        matches!(written, Err(SolidError::InvalidInput { .. })),
+                        "{at}: {written:?}"
+                    );
+                    continue;
+                }
+                assert!(written.is_ok(), "{at}: {written:?}");
+                let mut db = DatabaseReader::new();
+                db.open_for_read(w.into_bytes(), ft);
+                let read = Surface::read_from_db(&k, SRF_IN_VOLUME_TYPE, &mut db, 30);
+                assert!(read.is_ok(), "{at}: written, then {read:?}");
+            }
         }
+        eprintln!("orient map {orient}: chains built up to {built}, written up to {longest}");
+        assert!(
+            built > longest,
+            "orient map {orient}: no chain past the bound was built"
+        );
     }
-    assert!(written > 0);
 }
