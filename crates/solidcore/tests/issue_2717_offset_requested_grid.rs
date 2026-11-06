@@ -57,7 +57,7 @@ fn issue_2717_parabolic_base(transpose: bool) -> Surface {
 }
 
 /// Differentiate (-2t,0,1)/sqrt(1+4t²) directly, independently of the cross-product
-/// recurrence used by OffsetSurface. Transposition puts its curved component in y.
+/// recurrence used by `OffsetSurface`. Transposition puts its curved component in y.
 #[allow(clippy::disallowed_methods)] // Independent closed-form oracle.
 fn issue_2717_parabolic_jet(transpose: bool, distance: f64, u: f64, v: f64) -> [[Vec3; 4]; 4] {
     let t = if transpose { v } else { u };
