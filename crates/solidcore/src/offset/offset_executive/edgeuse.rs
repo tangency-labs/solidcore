@@ -1250,6 +1250,19 @@ impl CreatorExecutive<Handle> for Executive<'_> {
         }
     }
 
+    /// The face's recorded margin, as its extension's (the derived reach, at least the
+    /// body's tolerance in a local operation; the reach and the offset otherwise): not
+    /// upstream's five offset distances, which in a local operation (whose offset distance
+    /// is half the body's bounding radius) is 2.5 times that radius. A surface no face
+    /// owns has no recorded reach: the body's largest.
+    fn analytic_extension_margin(&self, base: Handle, _upstream: f64) -> f64 {
+        match base.object {
+            Object::FaceSurface(Arena::Original, f) => self.inner.original_extension_margin(f),
+            Object::FaceSurface(Arena::Offset, f) => self.inner.offset_extension_margin(f),
+            _ => self.inner.body_extension_reach(),
+        }
+    }
+
     fn get_create_extended_surface<B: OffsetBrep<Handle>>(
         &mut self,
         k: &Kernel,

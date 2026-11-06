@@ -1062,6 +1062,27 @@ mod tests {
         assert!((v - 32000.0).abs() <= 1e-9 * 32000.0, "{v}");
     }
 
+    /// Second review, finding 11: with the exact analytic mate opt-in, the analytic copies
+    /// of the faces' surfaces are extended by each face's derived reach (not five offset
+    /// distances, 2.5 times the body's bounding radius in a local operation): a cylinder's
+    /// top raised 0.5 meets its side on the exact circle there, a sound solid of the
+    /// raised cylinder's volume.
+    #[test]
+    fn a_raised_cylinder_top_mates_on_its_exact_circle_within_the_derived_reach() {
+        use crate::primitive::api_primitives as ap;
+        let mut k = Kernel::default();
+        k.fixes.offset_analytic_mate_edges = true;
+        let mut b = ap::create_cylinder(&mut k, Point3::ZERO, 5.0, 20.0).unwrap();
+        let top = box_top(&k, &b);
+        let raised = Surface::from(Plane::from_normal(Vec3::new(0.0, 0.0, 20.5), Vec3::Z));
+        let why = refused_unchanged_or_returned(&mut k, &mut b, &[top], vec![raised]);
+        assert_eq!(why, None);
+        let (v, manifold) = volume_and_manifold(&k, &mut b);
+        assert!(manifold);
+        let want = crate::math::PI * 25.0 * 20.5;
+        assert!((v - want).abs() <= 1e-6 * want, "{v} vs {want}");
+    }
+
     /// The same top given a plane parametrised over the unit square, 20 mm a unit: the
     /// body built leaves the corner over (20, 20) unbuilt (the vertical edge there ends at
     /// the old top, z = 20, and the moved top's two edges into that corner end 60 from
