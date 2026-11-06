@@ -727,3 +727,215 @@ pub mod vertexuse_block {
         Some(())
     }
 }
+
+// ---- topology fixture B-rep blocks ----------------------------------------------------------
+
+/// The size bounds of the topology fixture's B-rep blocks (`topology_vertexuse`'s
+/// `push_curve` / `push_surface` layout): control point indices up to 32, degrees up to 5,
+/// coordinates up to `1e300`.
+pub const BREP_BLOCK: Limits = Limits {
+    max_index: 32,
+    max_degree: 5,
+    max_coord: 1.0e300,
+};
+
+/// Largest magnitude of a B-rep block value below `f64::MAX` (HANG-29: building a face
+/// from such a block never returns upstream).
+pub const MAX_BLOCK_MAGNITUDE: f64 = 1.0e150;
+
+/// A sequential reader over a flat input record, for the contracts that walk one.
+#[derive(Debug, Clone)]
+pub struct Values<'a> {
+    /// The record.
+    pub input: &'a [f64],
+    /// The index of the next value.
+    pub at: usize,
+}
+
+impl<'a> Values<'a> {
+    /// A reader at `at` in `input`.
+    #[must_use]
+    pub fn new(input: &'a [f64], at: usize) -> Self {
+        Self { input, at }
+    }
+
+    /// The next value.
+    pub fn num(&mut self) -> Option<f64> {
+        let v = *self.input.get(self.at)?;
+        self.at += 1;
+        Some(v)
+    }
+
+    /// The next value, if it is [`finite`] within `max`.
+    pub fn finite(&mut self, max: f64) -> Option<f64> {
+        self.num().filter(|&v| finite(v, max))
+    }
+
+    /// The next `k` values, each [`Values::finite`].
+    pub fn finites(&mut self, k: usize, max: f64) -> Option<Vec<f64>> {
+        (0..k).map(|_| self.finite(max)).collect()
+    }
+
+    /// The next three values, each [`Values::finite`].
+    pub fn vec3(&mut self, max: f64) -> Option<[f64; 3]> {
+        Some([self.finite(max)?, self.finite(max)?, self.finite(max)?])
+    }
+
+    /// The next value as an integer in `0..=max`.
+    pub fn index(&mut self, max: usize) -> Option<usize> {
+        let v = self.num()?;
+        (v.fract() == 0.0 && v >= 0.0 && v <= max as f64).then_some(v as usize)
+    }
+
+    /// The next value as a flag, `0` or `1`.
+    pub fn flag(&mut self) -> Option<bool> {
+        Some(self.index(1)? == 1)
+    }
+
+    /// The next value as an index below `count`.
+    pub fn below(&mut self, count: usize) -> Option<usize> {
+        self.index(usize::MAX >> 12).filter(|&i| i < count)
+    }
+
+    /// The next value as an integer in `lo..=hi`.
+    pub fn int(&mut self, lo: i64, hi: i64) -> Option<i64> {
+        let v = self.num()?;
+        (v.fract() == 0.0 && v >= lo as f64 && v <= hi as f64).then_some(v as i64)
+    }
+
+    /// The next value as `-1` (`Some(None)`) or an index below `n`.
+    pub fn opt_below(&mut self, n: usize) -> Option<Option<usize>> {
+        let v = self.int(-1, i64::from(u32::MAX))?;
+        match usize::try_from(v) {
+            Err(_) => Some(None),
+            Ok(i) if i < n => Some(Some(i)),
+            Ok(_) => None,
+        }
+    }
+
+    /// Whether the whole record was read.
+    #[must_use]
+    pub fn done(&self) -> bool {
+        self.at == self.input.len()
+    }
+
+    /// The next `k` control points, stored `[x, y, z, w]`, if they keep [`curve_points`].
+    fn points(&mut self, k: usize, planar: bool) -> Option<()> {
+        let mut pts = Vec::with_capacity(k.min(1024));
+        for _ in 0..k {
+            pts.push([self.num()?, self.num()?, self.num()?, self.num()?]);
+        }
+        curve_points(&pts, planar, BREP_BLOCK.max_coord).then_some(())
+    }
+
+    /// A B-spline curve block `dim n p m cpts knots` with at most `max_index + 1` control
+    /// points: dimension 2 or 3, `1 ≤ p ≤ n`, `m = n + p + 1`, [`curve_points`] and
+    /// [`clamped`] knots. Its parameter range.
+    pub fn brep_curve(&mut self, max_index: usize) -> Option<(f64, f64)> {
+        let lim = BREP_BLOCK;
+        let dim = self.index(3)?;
+        if dim < 2 {
+            return None;
+        }
+        let n = self.index(max_index)?;
+        let p = self.index(lim.max_degree)?;
+        let m = self.index(max_index + lim.max_degree + 1)?;
+        if p == 0 || p > n || m != n + p + 1 {
+            return None;
+        }
+        self.points(n + 1, dim == 2)?;
+        let knots = self.finites(m + 1, lim.max_coord)?;
+        clamped(&knots, p)
+    }
+
+    /// A surface block: a plane `1 O[3] N[3]` with a non-zero normal (`Some(None)`), or a
+    /// B-spline `0 oob form n m p q r s cpts u v` with `1 ≤ p ≤ n`, `1 ≤ q ≤ m`,
+    /// `r = n + p + 1`, `s = m + q + 1`, 3D [`curve_points`] and [`clamped`] knots
+    /// (`Some(Some(domain))`).
+    pub fn brep_surface(&mut self) -> Option<Option<[f64; 4]>> {
+        let lim = BREP_BLOCK;
+        if self.index(1)? == 1 {
+            self.vec3(lim.max_coord)?;
+            let n = self.vec3(lim.max_coord)?;
+            return (len_sq(n) >= 1e-12).then_some(None);
+        }
+        self.flag()?;
+        self.index(11)?;
+        let n = self.index(lim.max_index)?;
+        let m = self.index(lim.max_index)?;
+        let p = self.index(lim.max_degree)?;
+        let q = self.index(lim.max_degree)?;
+        let r = self.index(lim.max_index + lim.max_degree + 1)?;
+        let s = self.index(lim.max_index + lim.max_degree + 1)?;
+        if p == 0 || p > n || q == 0 || q > m || r != n + p + 1 || s != m + q + 1 {
+            return None;
+        }
+        self.points((n + 1) * (m + 1), false)?;
+        let u = self.finites(r + 1, lim.max_coord)?;
+        let v = self.finites(s + 1, lim.max_coord)?;
+        let (u0, u1) = clamped(&u, p)?;
+        let (v0, v1) = clamped(&v, q)?;
+        Some(Some([u0, v0, u1, v1]))
+    }
+
+    /// A one-face block `surface u0 v0 u1 v1`: an ordered domain inside a B-spline's
+    /// domain, or within `1e4` on a plane.
+    fn brep_face(&mut self) -> Option<()> {
+        let dom = self.brep_surface()?;
+        let d = self.finites(4, BREP_BLOCK.max_coord)?;
+        let [a, b, c, e] = <[f64; 4]>::try_from(d).ok()?;
+        if a >= c || b >= e {
+            return None;
+        }
+        let ok = match dom {
+            Some([u0, v0, u1, v1]) => a >= u0 && c <= u1 && b >= v0 && e <= v1,
+            None => [a, b, c, e].iter().all(|x| x.abs() <= 1e4),
+        };
+        ok.then_some(())
+    }
+
+    /// A topology fixture B-rep block of kind `0` (an existing `.smb` file at `path`, then
+    /// its rebuild flag), `1` (a wire edge: a curve, then `t0 < t1` inside its range), `2`
+    /// (one face) or `3` (the wire network), then the validate-only and cached-gap flags.
+    pub fn brep_block(&mut self, path: &str) -> Option<()> {
+        match self.index(14)? {
+            0 => {
+                let p = std::path::Path::new(path);
+                if p.extension().and_then(|e| e.to_str()) != Some("smb") || !p.is_file() {
+                    return None;
+                }
+                self.flag()?;
+            }
+            1 => {
+                let (a, b) = self.brep_curve(BREP_BLOCK.max_index)?;
+                let t0 = self.finite(BREP_BLOCK.max_coord)?;
+                let t1 = self.finite(BREP_BLOCK.max_coord)?;
+                if !(a <= t0 && t0 < t1 && t1 <= b) {
+                    return None;
+                }
+            }
+            2 => self.brep_face()?,
+            3 => {}
+            // the kinds the other fixture writers (nets, analytic faces) emit
+            _ => return None,
+        }
+        self.flag()?;
+        self.flag()?;
+        Some(())
+    }
+}
+
+/// Whether the topology fixture B-rep block at the start of `input` keeps the contract
+/// ([`Values::brep_block`]) and holds no value of magnitude above
+/// [`MAX_BLOCK_MAGNITUDE`] and below `f64::MAX` (the non-rational weight).
+#[must_use]
+pub fn brep_block(path: &str, input: &[f64]) -> bool {
+    let mut rd = Values::new(input, 0);
+    rd.brep_block(path).is_some()
+        && input.get(..rd.at).is_some_and(|block| {
+            !block.iter().any(|v| {
+                let a = v.abs();
+                a > MAX_BLOCK_MAGNITUDE && a < f64::MAX
+            })
+        })
+}
