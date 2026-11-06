@@ -56,7 +56,7 @@
 //!   when linear) instead of reusing `dThetaXRad`, and aligns a full-turn STEP
 //!   domain with the projected NURB seam before `SetUpPolarConversion`. Default
 //!   behavior stays pinned C++.
-//! - **Rounding of the analytic form (#2539, WR-741).** `AssertValid`'s tests 1 and 2 also
+//! - **Rounding of the analytic form (WR-741).** `AssertValid`'s tests 1 and 2 also
 //!   allow `gamma_11 max(|rx|, |ry|) (1 + |t|)` (`t` in radians), the rounding the angle
 //!   and the evaluation of `o + rx cos(t) X + ry sin(t) Y` carry: a near-degenerate
 //!   ellipse (radii 1.8e7 and 8) makes it larger than `100 SM_EFF_ZERO (1 + |p|)`.
@@ -3233,7 +3233,7 @@ mod tests {
         assert!(lin_pos.x_axis().dot(lin_pos.y_axis()).abs() < 1e-12);
     }
 
-    /// #2539's near-line ellipse as the part's last cut leaves it: a slanted face meets a
+    /// WR-741's near-line ellipse as the part's last cut leaves it: a slanted face meets a
     /// notch cylinder of radius 8 whose axis it nearly holds, in an ellipse of radii 1.8e7
     /// and 8 over 1.3e-4 degrees (SolidCraft's `periph_case_R` minus `t24`; its data as the
     /// cut made them), with its NURB's middle control point moved by `moved` across the
@@ -3287,11 +3287,11 @@ mod tests {
         .unwrap()
     }
 
-    /// #2539 (WR-741): the near-line ellipse's NURB is exact, but its analytic form is
+    /// WR-741: the near-line ellipse's NURB is exact, but its analytic form is
     /// evaluated to about `rx` times an ulp of its angle. At one of the check's samples its
     /// NURB and STEP points lie farther apart than upstream's `100 SM_EFF_ZERO (1 + |p|)`
     /// (4.6e-9 against 1.7e-9 at its start), within the rounding the evaluation carries,
-    /// and the check passes it; moved 1e-3 off the line, it is refused. An ordinary ellipse
+    /// and the check passes it; moved 1e-6 or 1e-3 off the line, it is refused. An ordinary ellipse
     /// (radii 8 and 5) whose NURB has a control point moved 1e-8, about 5e-9 off the curve,
     /// is still refused: the rounding is 2.5e-14 there.
     #[test]
@@ -3319,6 +3319,14 @@ mod tests {
                 .assert_valid(&k, None, false, ObjectKey(0), ObjectKey(0))
                 .unwrap(),
             "a near-line ellipse whose NURB is moved 1e-3"
+        );
+        // Just above the bound: moved 1e-6 it is refused too (1.16e-6 against 5.88e-8, 20x), so the
+        // bound is tight; measured, 1e-7 is already refused (1.12e-7, 1.9x) and 1e-8 passes.
+        assert!(
+            !near_line_ellipse(&k, 1e-6)
+                .assert_valid(&k, None, false, ObjectKey(0), ObjectKey(0))
+                .unwrap(),
+            "a near-line ellipse whose NURB is moved 1e-6"
         );
 
         let (o, x, y) = (
