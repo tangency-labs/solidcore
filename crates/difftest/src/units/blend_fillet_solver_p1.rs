@@ -1,5 +1,5 @@
-//! Runner for unit `blend.fillet_solver_p1`. C++: `solidcore_ffi::units::blend_fillet_solver_p1`.
-//! Rust: `solidcore::blend::fillet_solver::p1`.
+//! Runner for unit `blend.fillet_solver_p1`. Ported from upstream
+//! `source/SMLib/src/SmFilletSolver.cpp`; checked against its golden. Rust: `solidcore::blend::fillet_solver::p1`.
 //!
 //! Both sides build the same solver: the base `SmFilletSolver` (the shim derives a
 //! class that only names itself, so every virtual is the base version, except the
@@ -81,14 +81,42 @@ use solidcore::surface::volume::Volume;
 use solidcore::topology::edgeuse::p1 as eu;
 use solidcore::topology::{Brep, Edge, EdgeId, EdgeuseId, FaceId, Vertex};
 use solidcore::{EntityRef, SolidError};
-use solidcore_ffi::units::blend_fillet_solver_p1::{self as ffi, Op, StaticOp};
-use solidcore_ffi::units::topology_edgeuse_p1 as ffi1;
 
 use super::topology_edgeuse_p1::{
-    brep_block_of, bspline_of, domain, gen_brep, gen_curve, gen_surface, import, path_of,
-    push_curve, push_surface, sel, surface_of, BrepIn, BssIn, CrvIn, SrfIn, FILES,
+    bspline_of, domain, gen_brep, gen_curve, gen_surface, sel, surface_of, BrepIn, BssIn, CrvIn,
+    SrfIn, FILES,
 };
 use crate::{HarnessError, Output, Rng, UnitDiff};
+
+/// The routines of the static shim (`harness/cpp/shim/blend_fillet_solver_p1_static.cpp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaticOp {
+    /// `sm_FindNextGoodInterval`.
+    FindNext,
+    /// `sm_CheckEdgeCurveDomains`.
+    CheckDomains,
+    /// `sm_TestAnalyticSurface`.
+    Analytic,
+    /// `SmRailRailIntersectENFO::Evaluate`.
+    RailRail,
+    /// The `SmFindClippedRadiusEFO` constructor and `Evaluate`.
+    Clipped,
+    /// `sm_TestSideEdgeConvexity`.
+    Convexity,
+    /// `sm_TrimRail`.
+    TrimRail,
+    /// `GetVertex`, `FindIndexOfRailOnFace`, `FindIndexOfRailXSideEdgeuse`.
+    Queries,
+    /// `sm_TestAnalyticSurface` on a cone, cylinder, sphere or torus.
+    AnalyticRev,
+    /// `sm_TestManifoldTangentRollover`.
+    Rollover,
+    /// Direct actual `sm_SplitRail` notification/identity component.
+    SplitRail,
+}
+
+/// Largest array length the reference wrapper accepts.
+const MAX_ARRAY: usize = 32;
 
 /// The runner.
 pub struct Runner;
@@ -291,22 +319,6 @@ enum Inputs {
 }
 
 impl Inputs {
-    fn ffi(&self) -> Option<Op> {
-        Some(match self {
-            Inputs::State { .. } => Op::State,
-            Inputs::Extension { .. } => Op::Extension,
-            Inputs::Sphere { .. } => Op::Sphere,
-            Inputs::RailUv { .. } => Op::RailUv,
-            Inputs::SurfValues { .. } => Op::SurfValues,
-            Inputs::UvVectors { .. } => Op::UvVectors,
-            Inputs::Split => Op::Split,
-            Inputs::Finish { .. } => Op::Finish,
-            Inputs::Fsg { .. } => Op::Fsg,
-            Inputs::TolAng { .. } | Inputs::InitialValues { .. } => Op::Misc,
-            _ => return None,
-        })
-    }
-
     fn static_op(&self) -> Option<StaticOp> {
         Some(match self {
             Inputs::FindNext { .. } => StaticOp::FindNext,
@@ -339,31 +351,11 @@ impl Inputs {
 /// The Jacobian of `a` (rows and columns at most `MAX_ARRAY`, as the FFI accepts).
 fn jacobian_of(a: &Arrays) -> Result<Option<Matrix>, HarnessError> {
     match a.jac {
-        Some([r, c]) if r > ffi::MAX_ARRAY || c > ffi::MAX_ARRAY => {
+        Some([r, c]) if r > MAX_ARRAY || c > MAX_ARRAY => {
             Err(harness("Jacobian larger than MAX_ARRAY"))
         }
         jac => Ok(jac.map(|[r, c]| Matrix::new(r, c))),
     }
-}
-
-fn push_arrays(o: &mut Vec<f64>, a: &Arrays) {
-    o.push(a.x.len() as f64);
-    o.extend_from_slice(&a.x);
-    o.push(a.f.len() as f64);
-    o.extend_from_slice(&a.f);
-    match a.jac {
-        Some([r, c]) => o.extend_from_slice(&[1.0, r as f64, c as f64]),
-        None => o.extend_from_slice(&[0.0, 0.0, 0.0]),
-    }
-}
-
-fn push_surfs(o: &mut Vec<f64>, s: &Surfs) -> Result<(), HarnessError> {
-    push_surface(o, &s.base)?;
-    for (h, d) in s.has.iter().zip(&s.off) {
-        o.push(b(*h));
-        o.push(*d);
-    }
-    Ok(())
 }
 
 // ---- B-rep cases -------------------------------------------------------------------------
@@ -371,31 +363,8 @@ fn push_surfs(o: &mut Vec<f64>, s: &Surfs) -> Result<(), HarnessError> {
 /// The case's B-rep: its counts and B-rep (the C++ side's from the export, the Rust
 /// side's from [`own_case`]).
 struct BrepCase {
-    path: String,
-    block: Vec<f64>,
     counts: [usize; 10],
     brep: Brep,
-}
-
-/// Builds the case's B-rep on both sides; `Err(output)` when it cannot be built.
-fn brep_case(brep: &BrepIn) -> Result<Result<BrepCase, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
-    let ex = crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-        ffi1::eval(ffi1::Op::Export, &path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some(counts) = ffi1::counts(&ex) else {
-        let st = ex.get(1).copied().unwrap_or(0.0);
-        return Ok(Err(Output::err(format!("brep_build_status_{st}"))));
-    };
-    let brep = import(&ex)?;
-    Ok(Ok(BrepCase {
-        path,
-        block,
-        counts,
-        brep,
-    }))
 }
 
 /// The Rust side's B-rep case: the source read by the Rust reader or built by the Rust
@@ -403,15 +372,11 @@ fn brep_case(brep: &BrepIn) -> Result<Result<BrepCase, Output>, HarnessError> {
 /// never imported from the C++ export; `Err(output)` when the Rust build fails, as
 /// [`brep_case`] reports the shim's failed build.
 fn own_case(brep: &BrepIn) -> Result<Result<BrepCase, Output>, HarnessError> {
-    let path = path_of(Some(brep))?;
-    let block = brep_block_of(Some(brep), false, false)?;
     let brep = match crate::own_reader::edgeuse_graph_brep(&mut Kernel::default(), brep)? {
         Ok(b) => b,
         Err(e) => return Ok(Err(crate::own_builder::failed_output(&e))),
     };
     Ok(Ok(BrepCase {
-        path,
-        block,
         counts: crate::own_builder::counts(&brep),
         brep,
     }))
@@ -447,209 +412,6 @@ fn trim_interval(c: &BrepCase, e: i64, t: [f64; 2]) -> Result<[f64; 2], HarnessE
         .interval;
     let at = |f: f64| ivl.min() + (ivl.max() - ivl.min()) * f;
     Ok([at(t[0]), at(t[1])])
-}
-
-fn static_input(i: &Inputs, c: Option<&BrepCase>) -> Result<Vec<f64>, HarnessError> {
-    let mut o = c.map(|c| c.block.clone()).unwrap_or_default();
-    let r = c.map_or([-1; 4], |c| resolve(i, c));
-    match i {
-        Inputs::FindNext { start, cls } => {
-            o.push(cls.len() as f64);
-            o.push(*start as f64);
-            o.extend(cls.iter().map(|&k| f64::from(k)));
-        }
-        Inputs::CheckDomains { before, after, .. } => {
-            o.extend([r[0] as f64, b(*before), b(*after)]);
-        }
-        Inputs::Analytic { surface } => push_surface(&mut o, surface)?,
-        Inputs::AnalyticRev {
-            kind,
-            origin,
-            x,
-            y,
-            p,
-        } => {
-            o.push(f64::from(*kind));
-            o.extend(origin.iter().chain(x).chain(y).chain(p));
-        }
-        Inputs::RailRail {
-            rail,
-            other,
-            load,
-            found,
-            arrays,
-        } => {
-            o.extend([
-                *rail as f64,
-                *other as f64,
-                b(load[0]),
-                b(found[0]),
-                b(load[1]),
-                b(found[1]),
-            ]);
-            push_arrays(&mut o, arrays);
-        }
-        Inputs::Clipped {
-            idx,
-            dist,
-            tol,
-            has,
-            off,
-            orient,
-            doms,
-            param,
-            iso,
-            uv,
-            bases,
-            radius,
-        } => {
-            o.extend([*idx as f64, *dist, *tol]);
-            push_surface(&mut o, &bases[0])?;
-            push_surface(&mut o, &bases[1])?;
-            o.extend([b(has[0]), off[0], b(has[1]), off[1]]);
-            o.extend_from_slice(orient);
-            o.extend_from_slice(doms);
-            o.push(f64::from(*param));
-            o.push(*iso);
-            o.extend_from_slice(uv);
-            o.extend([b(radius.is_some()), radius.unwrap_or(0.0)]);
-        }
-        Inputs::Convexity { tangential, .. } => o.extend([r[0] as f64, b(*tangential)]),
-        Inputs::TrimRail { t, .. } => {
-            let c = c.ok_or_else(|| harness("trim_rail without B-rep"))?;
-            let [t0, t1] = trim_interval(c, r[0], *t)?;
-            o.extend([r[0] as f64, t0, t1]);
-        }
-        Inputs::Queries { .. } => o.extend(r.map(|v| v as f64)),
-        Inputs::Rollover { tol, .. } => o.extend([r[0] as f64, *tol]),
-        _ => return Err(harness("not a static op")),
-    }
-    Ok(o)
-}
-
-fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut o = Vec::new();
-    match i {
-        Inputs::State {
-            tols,
-            base,
-            has,
-            off,
-            orient,
-            cmds,
-        } => {
-            o.extend_from_slice(tols);
-            push_surface(&mut o, &base[0])?;
-            push_surface(&mut o, &base[1])?;
-            for (h, d) in has.iter().zip(off) {
-                o.push(b(*h));
-                o.push(*d);
-            }
-            o.extend_from_slice(orient);
-            o.push(cmds.len() as f64);
-            for c in cmds {
-                o.extend_from_slice(c);
-            }
-        }
-        Inputs::Extension { ext, surface, dom } => {
-            o.push(*ext);
-            push_surface(&mut o, surface)?;
-            o.extend_from_slice(dom);
-        }
-        Inputs::Sphere {
-            c,
-            r,
-            adjusts,
-            load,
-            found,
-            surfs,
-            arrays,
-        } => {
-            o.extend_from_slice(c);
-            o.push(*r);
-            o.extend([b(*adjusts), b(*load), b(*found)]);
-            push_surfs(&mut o, surfs)?;
-            push_arrays(&mut o, arrays);
-        }
-        Inputs::RailUv {
-            rail,
-            load,
-            found,
-            curve,
-            line,
-            ivl,
-            arrays,
-        } => {
-            o.push(*rail as f64);
-            o.push(b(*load));
-            o.push(b(*found));
-            o.push(b(line.is_some()));
-            if let Some(l) = line {
-                o.extend_from_slice(l);
-            }
-            push_curve(&mut o, curve)?;
-            o.extend_from_slice(ivl);
-            push_arrays(&mut o, arrays);
-        }
-        Inputs::SurfValues { setup, surfs, uv } => {
-            o.push(b(*setup));
-            push_surfs(&mut o, surfs)?;
-            o.extend_from_slice(uv);
-        }
-        Inputs::UvVectors { vecs, uvd } => {
-            for v in vecs {
-                o.extend_from_slice(v);
-            }
-            o.extend_from_slice(uvd);
-        }
-        Inputs::Split => o.push(0.0),
-        Inputs::Finish { surface, has, off } => {
-            push_surface(&mut o, surface)?;
-            o.push(b(has[0]));
-            o.push(b(has[1]));
-            o.push(*off);
-        }
-        Inputs::Fsg { kind, args, rails } => {
-            o.push(f64::from(*kind));
-            o.extend_from_slice(args);
-            if *kind == 1 {
-                // (the shim reads the rail count of the linear kind, then the rails)
-                o.push(rails.len() as f64);
-                for r in rails {
-                    push_curve(&mut o, r)?;
-                }
-            }
-        }
-        Inputs::TolAng { has, ang } => o.extend([0.0, b(*has), *ang]),
-        Inputs::InitialValues { do2, rail, idx2 } => {
-            o.extend([1.0, f64::from(*do2), *rail as f64, f64::from(*idx2)]);
-        }
-        _ => return Err(harness("not a main-shim op")),
-    }
-    Ok(o)
-}
-
-fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    if matches!(i, Inputs::SplitRail) {
-        return split_rail::cpp();
-    }
-    if let Some(op) = i.static_op() {
-        let case = match i.brep() {
-            Some(brep) => match brep_case(brep)? {
-                Ok(c) => Some(c),
-                Err(out) => return Ok(out),
-            },
-            None => None,
-        };
-        let path = case.as_ref().map(|c| c.path.clone()).unwrap_or_default();
-        let input = static_input(i, case.as_ref())?;
-        let flat = ffi::eval_static(op, &path, &input).map_err(|e| harness(e.to_string()))?;
-        return Ok(Output::new().values("flat", flat));
-    }
-    let op = i.ffi().ok_or_else(|| harness("no op"))?;
-    let input = cpp_input(i)?;
-    let flat = ffi::eval(op, &input).map_err(|e| harness(e.to_string()))?;
-    Ok(Output::new().values("flat", flat))
 }
 
 // ---- Rust side ------------------------------------------------------------------------
@@ -2581,10 +2343,6 @@ impl UnitDiff for Runner {
             ..ctx.clone()
         };
         crate::runner::default_cases(self, &ctx)
-    }
-
-    fn run_cpp(&self, case: &crate::Case) -> Result<Output, HarnessError> {
-        cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &crate::Case) -> Result<Output, HarnessError> {

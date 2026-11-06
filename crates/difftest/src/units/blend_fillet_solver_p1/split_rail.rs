@@ -1,5 +1,5 @@
 //! Direct native helper proof; not a full `ProcessRollOver` fixture.
-use super::{ffi, harness};
+use super::harness;
 use crate::{HarnessError, Output};
 use solidcore::blend::fillet_geom::p1::{FilletBrep, FilletGeom, FilletGeomType, FilletVertex};
 use solidcore::blend::fillet_solver::p1::{split_rail, RailOwnership, RetainedRailOwnership};
@@ -125,11 +125,6 @@ fn output(flat: &[f64]) -> Result<Output, HarnessError> {
     Ok(Output::new()
         .ints("actual_identity_topology", exact)
         .values("actual_curve", values))
-}
-pub(super) fn cpp() -> Result<Output, HarnessError> {
-    output(
-        &ffi::eval_static(ffi::StaticOp::SplitRail, "", &[]).map_err(|e| harness(e.to_string()))?,
-    )
 }
 pub(super) fn rust() -> Result<Output, HarnessError> {
     let run = || -> solidcore::Result<Vec<f64>> {
