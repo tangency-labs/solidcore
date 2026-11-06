@@ -13,6 +13,8 @@
 //! rails on their faces (to the fork's 1e-9, see [`OFF_BALL`]), and the round face's area
 //! matches the canal surface's between the rails and the end disc's plane (Gauss-Legendre)
 //! to [`AREA_TOL`]. Without the flag, or with the arm traced, the fillet fails.
+//! The spine is constructed directly in Bernstein form: its offset identities and the
+//! round's canal identity certify a bound of 0, also through its definition's record.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -23,12 +25,14 @@
 use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::boolean::api_brep::boolean_union;
 use solidcore::geom::axis2_placement::Axis2Placement;
+use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::vector2d::Point2;
 use solidcore::math::{Point3, Vec3, PI};
 use solidcore::nurbs::b_spline_surface::SurfParamType;
 use solidcore::primitive::api_primitives::create_cylinder;
 use solidcore::surface::procedural_blend::convert::{exact_rebuild, exact_to_record};
 use solidcore::surface::procedural_blend::exact::ExactClass;
+use solidcore::surface::procedural_blend::record::SupportRecord;
 use solidcore::surface::procedural_blend::BlendNet;
 use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::face::p2 as face;
@@ -42,11 +46,9 @@ const RHO: f64 = 1.0;
 /// Where the small pipe starts along x.
 const X0: f64 = 0.5;
 const FILLET: f64 = 0.5;
-/// How far the round may be from the ball: the fork's exact-round criterion (1e-9 mm,
-/// tangency-labs/smlib@95ce0c5). Its nodal-quartic formula in doubles loses about 1e-10
-/// on the spine toward the trace's last point (W cancels by about 1e4 there: the second
-/// point of a short line from the node); the round is 9e-10 off there, 1e-12 at the
-/// first point. The traced round fails outright.
+/// The existing ball/rail sample bar (1e-9 mm, tangency-labs/smlib@95ce0c5), unchanged.
+/// Exactness is proved separately by the offset and canal polynomial identities when
+/// the round retains its definition; the old power-basis spine could not pass them.
 const OFF_BALL: f64 = 1e-9;
 /// How far the round face's area may be from the canal surface's (relative): the face is
 /// trimmed at the end disc by fitted UV curves (the end edges' tolerances are 6e-5; their
@@ -369,4 +371,45 @@ fn the_nodal_quartic_round_keeps_its_exact_definition() {
     let (k0, b0, r0, _) = pipes_kept(true, false);
     r0.unwrap();
     assert_eq!(body_bits(&k, &b), body_bits(&k0, &b0));
+
+    let s = b
+        .faces()
+        .ids()
+        .filter_map(|f| face::surface(&b, f).unwrap())
+        .find(|s| {
+            s.procedural_blend()
+                .and_then(|blend| blend.exact())
+                .is_some()
+        })
+        .unwrap();
+    let mut edited = s.copy(&k).unwrap();
+    edited.reverse(&k, SurfParamType::U).unwrap();
+    edited.swap_uv(&k).unwrap();
+    edited
+        .reparameterize(&k, &Extent2d::from_bounds(-1.0, 2.0, 3.0, 7.0))
+        .unwrap();
+    edited.reverse(&k, SurfParamType::V).unwrap();
+    assert_eq!(
+        edited.procedural_blend().unwrap().recertify(&k).unwrap(),
+        0.0
+    );
+    let record = exact_to_record(&k, &edited).unwrap();
+    exact_rebuild(&k, &record).unwrap();
+
+    // A definition's identity must reject an independently moved support.
+    let mut off = record.clone();
+    let SupportRecord::Nurbs { form, .. } = &mut off.supports[0] else {
+        panic!("the analytic support is stored by its rational form");
+    };
+    for point in &mut form.points {
+        point[0] += 1e-3;
+    }
+    assert!(exact_rebuild(&k, &off).is_err());
+
+    // The spine's own identity is checked, rather than accepting a stored class label.
+    let mut off = record;
+    let leader = off.leader.as_mut().unwrap();
+    let middle = leader.points.len() / 2;
+    leader.points[middle][0] += 1e-3;
+    assert!(exact_rebuild(&k, &off).is_err());
 }
