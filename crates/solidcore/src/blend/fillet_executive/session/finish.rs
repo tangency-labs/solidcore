@@ -770,6 +770,18 @@ impl FilletSession<'_> {
             return Err(failure());
         }
         self.refuse_great_circles_over_a_law_corner(k)?;
+        // (not the fork, #2933) a corner its vertex's mark made the Setback is filled at the
+        // setback and ease set on it, as one asked with SetSetBackFill (without one, it is
+        // the N x N corner the mark builds)
+        let objects = &mut self.objects;
+        for corner in &mut objects.corners {
+            if let Some(fill) = crate::blend::blend_corner::setback::settle_marked_corner(
+                corner,
+                &objects.set_back_fills,
+            ) {
+                objects.set_back_fills.push(fill);
+            }
+        }
         // WR-459: the clean-up after filleting leaves the target's own edges and faces.
         self.objects.cleanup_kept = if k.fixes.fillet_cleanup_keeps_target_faces {
             Some((
