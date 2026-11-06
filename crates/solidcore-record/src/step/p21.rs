@@ -184,8 +184,45 @@ struct Lexer<'a> {
     i: usize,
 }
 
-fn err<T>(msg: impl Into<String>) -> Result<T, String> {
-    Err(msg.into())
+/// Why a text was refused. Its message is the one `parse` returned as a string before it had
+/// a type; `String::from` gives it back for callers that collect messages.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum Error {
+    /// The text is longer than [`MAX_BYTES`].
+    #[error("STEP file too large ({} MB, limit {} MB)", .bytes >> 20, MAX_BYTES >> 20)]
+    TooLarge {
+        /// The text's length.
+        bytes: usize,
+    },
+    /// The text does not start with `ISO-10303-21;`.
+    #[error("not a STEP file (no ISO-10303-21 header)")]
+    NotStep,
+    /// The text ends before `END-ISO-10303-21;`.
+    #[error("STEP file ends without END-ISO-10303-21")]
+    MissingEnd,
+    /// More entity instances than the limit.
+    #[error("STEP file has more than {limit} entities")]
+    TooManyEntities {
+        /// The limit, [`MAX_ENTITIES`].
+        limit: usize,
+    },
+    /// The [`Progress`] watcher cancelled.
+    #[error("STEP import cancelled")]
+    Cancelled,
+    /// The text breaks the exchange structure's syntax.
+    #[error("STEP syntax error at line {line}: {message}")]
+    Syntax {
+        /// The line, counted from 1.
+        line: usize,
+        /// What was wrong.
+        message: String,
+    },
+}
+
+impl From<Error> for String {
+    fn from(e: Error) -> String {
+        e.to_string()
+    }
 }
 
 impl Lexer<'_> {
@@ -194,14 +231,17 @@ impl Lexer<'_> {
             .get(..self.i)
             .map_or(0, |b| b.split(|c| *c == b'\n').count())
     }
-    fn fail<T>(&self, msg: &str) -> Result<T, String> {
-        err(format!("STEP syntax error at line {}: {msg}", self.line()))
+    fn fail<T>(&self, msg: &str) -> Result<T, Error> {
+        Err(Error::Syntax {
+            line: self.line(),
+            message: msg.to_string(),
+        })
     }
     fn peek(&self) -> Option<u8> {
         self.s.get(self.i).copied()
     }
     /// Skip whitespace and comments.
-    fn ws(&mut self) -> Result<(), String> {
+    fn ws(&mut self) -> Result<(), Error> {
         loop {
             match self.peek() {
                 Some(c) if c.is_ascii_whitespace() => self.i += 1,
@@ -216,7 +256,7 @@ impl Lexer<'_> {
             }
         }
     }
-    fn eat(&mut self, c: u8) -> Result<bool, String> {
+    fn eat(&mut self, c: u8) -> Result<bool, Error> {
         self.ws()?;
         if self.peek() == Some(c) {
             self.i += 1;
@@ -225,14 +265,14 @@ impl Lexer<'_> {
             Ok(false)
         }
     }
-    fn expect(&mut self, c: u8) -> Result<(), String> {
+    fn expect(&mut self, c: u8) -> Result<(), Error> {
         if self.eat(c)? {
             Ok(())
         } else {
             self.fail(&format!("expected `{}`", c as char))
         }
     }
-    fn keyword(&mut self) -> Result<String, String> {
+    fn keyword(&mut self) -> Result<String, Error> {
         self.ws()?;
         let st = self.i;
         if self.peek() == Some(b'!') {
@@ -250,7 +290,7 @@ impl Lexer<'_> {
         }
         Ok(String::from_utf8_lossy(self.s.get(st..self.i).unwrap_or(&[])).to_ascii_uppercase())
     }
-    fn number(&mut self) -> Result<Param, String> {
+    fn number(&mut self) -> Result<Param, Error> {
         let st = self.i;
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() || matches!(c, b'+' | b'-' | b'.' | b'E' | b'e') {
@@ -277,7 +317,7 @@ impl Lexer<'_> {
             Err(_) => self.fail(&format!("bad number `{t}`")),
         }
     }
-    fn string(&mut self) -> Result<String, String> {
+    fn string(&mut self) -> Result<String, Error> {
         // Opening quote consumed by the caller.
         let mut raw = Vec::new();
         loop {
@@ -301,7 +341,7 @@ impl Lexer<'_> {
         }
         Ok(decode_string(&raw))
     }
-    fn param(&mut self, depth: usize) -> Result<Param, String> {
+    fn param(&mut self, depth: usize) -> Result<Param, Error> {
         if depth > MAX_DEPTH {
             return self.fail("parameters nested too deeply");
         }
@@ -373,7 +413,7 @@ impl Lexer<'_> {
         }
     }
     /// Parameters after an opening `(` up to and including the `)`.
-    fn list_rest(&mut self, depth: usize) -> Result<Vec<Param>, String> {
+    fn list_rest(&mut self, depth: usize) -> Result<Vec<Param>, Error> {
         let mut v = Vec::new();
         if self.eat(b')')? {
             return Ok(v);
@@ -387,7 +427,7 @@ impl Lexer<'_> {
             return Ok(v);
         }
     }
-    fn record(&mut self) -> Result<Record, String> {
+    fn record(&mut self) -> Result<Record, Error> {
         let name = self.keyword()?;
         self.expect(b'(')?;
         Ok(Record {
@@ -474,18 +514,14 @@ pub trait Progress {
 }
 
 /// Parse an exchange structure.
-pub fn parse(text: &str) -> Result<Exchange, String> {
+pub fn parse(text: &str) -> Result<Exchange, Error> {
     parse_with(text, None)
 }
 
 /// [`parse`], reporting progress to `watch` and stopping when it cancels.
-pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, String> {
+pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, Error> {
     if text.len() > MAX_BYTES {
-        return err(format!(
-            "STEP file too large ({} MB, limit {} MB)",
-            text.len() >> 20,
-            MAX_BYTES >> 20
-        ));
+        return Err(Error::TooLarge { bytes: text.len() });
     }
     let mut lx = Lexer {
         s: text.as_bytes(),
@@ -493,14 +529,14 @@ pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, 
     };
     let magic = lx.keyword()?;
     if magic != "ISO-10303-21" {
-        return err("not a STEP file (no ISO-10303-21 header)");
+        return Err(Error::NotStep);
     }
     lx.expect(b';')?;
     let mut ex = Exchange::default();
     loop {
         lx.ws()?;
         if lx.peek().is_none() {
-            return err("STEP file ends without END-ISO-10303-21");
+            return Err(Error::MissingEnd);
         }
         let kw = lx.keyword()?;
         match kw.as_str() {
@@ -595,12 +631,14 @@ pub fn parse_with(text: &str, watch: Option<&dyn Progress>) -> Result<Exchange, 
                         && let Some(w) = watch
                     {
                         if w.cancelled() {
-                            return err("STEP import cancelled");
+                            return Err(Error::Cancelled);
                         }
                         w.progress("reading", lx.i, lx.s.len());
                     }
                     if ex.entities.len() >= MAX_ENTITIES {
-                        return err(format!("STEP file has more than {MAX_ENTITIES} entities"));
+                        return Err(Error::TooManyEntities {
+                            limit: MAX_ENTITIES,
+                        });
                     }
                     // A duplicate id is invalid; some writers emit them for geometry nobody
                     // reads. Keep the first definition and report it.
