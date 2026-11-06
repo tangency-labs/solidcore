@@ -93,17 +93,29 @@ and its minimum is at parameter **exactly 0** of `[0, 1.677]`, with the first tw
 shape: a G2 blend's tangent end has radius growing as `|t - t_end|` from 0, so a small radius
 there is inherent to the construction, not a defect in it.
 
-The radius loop therefore now skips a solution on a natural boundary end, as the
-first-derivative loop above it already does ("skip solutions on the natural boundary ends - they
-are not a problem"): an end is where the curve joins a neighbour or a vertex, and that joint's
-own checks (G1 across the knot, the vertex's, WR-668's waiver) judge it. The radius test judging
-the end in isolation double-counts a thing another check owns. The trade: a curve that genuinely
-ends in a kink is no longer reported by tests 13/14 — such a joint is what the vertex and G1
-checks exist for, the same trade the derivative loop made.
+The radius loop therefore now skips a solution on a natural boundary end **of a curve with
+topology context** — `edge_ends` or `trim_surface` present, which is how `check_brep` validates
+every edge's curve and every UV trim — as the first-derivative loop above it already does ("skip
+solutions on the natural boundary ends - they are not a problem"): an end is where the curve
+joins a neighbour or a vertex, and that joint's own checks (G1 across the knot, the vertex's,
+WR-668's waiver) judge it. The radius test judging the end in isolation double-counts a thing
+another check owns. A **bare curve** — `assert_valid` with no edge and no trim surface, a direct
+caller — has no such joint, so its boundary solutions are kept and its end is reported.
 
-(A minimal synthetic reproducer is an open nicety: no Bezier of the shape `(0,0) (h,0) (a,b)
-(1,1)` puts the solver's minimum on the domain end — from `h = 1e-3` down to `1e-6` the reported
-minimum sits at `1.22e-4 ... 2.44e-4`, interior. The countersink case is the regression test;
+The trade: a curve validated through a body that genuinely ends in a kink is no longer reported
+by tests 13/14 — such a joint is what the vertex and G1 checks exist for, the same trade the
+derivative loop made.
+
+Both sides are pinned by a synthetic pair,
+`issue_2785_a_bare_curve_reports_a_boundary_radius_minimum`: a cubic Bezier whose first control
+span is `1e-7` of its size and whose remaining spans run flat, so its radius of curvature is
+`1.5e-14` at `t = 0` and above the length tolerance past `t = 4.9e-5` — inside the search's
+first interior sample (`1.22e-4`), so the boundary solution is the search's only sub-tolerance
+one. Bare, `assert_valid` reports it at parameter 0; with an edge's context, the skip takes it
+and the curve is accepted. (The earlier failure to build this pair was a wrong curve: the
+smoothstep `(0,0) (1/3,0) (2/3,a/3) (1,a)` has interior sub-tolerance points, so a report
+survives the filter whatever the context. The spike-shaped first span is what the countersink
+trim has and what the pair needs.
 `issue_2785_the_default_fixes_see_no_report_at_any_parametrisation` pins the difftest's side.)
 
 ## The fraction, freed

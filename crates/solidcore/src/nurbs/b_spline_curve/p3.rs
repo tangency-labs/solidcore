@@ -1752,11 +1752,15 @@ impl BSplineCurve {
             // and the verdict moved when the curve was reparametrised although no
             // geometry changed: a bend of radius r was reported on a domain of length T
             // while `sqrt(2) / T / 10000 > r` and silently accepted once T grew past it.
-            // `size_xyz / 10000` is the same part-scale fraction of the curve's own box
-            // that the speed tolerance is of its average speed, and it is the only scale
-            // here that does not involve the parametrisation. `radius_tol` is also the
-            // length `zero_speed_radius_stretch` divides by the radius' growth rate to get
-            // a stretch in parameter units (WR-668), which the speed made dimensionless.
+            // `size_xyz / 10000` is upstream's own 1/10000 fraction, applied to the right
+            // quantity; for the 3D curve, and for a UV trim measured on its surface
+            // (`uv_trim_checks_on_surface`, WR-560), that is a length with no
+            // parametrisation in it. A trim measured in its own (u, v) -- the flag off --
+            // is in the surface's parameters, which is the gap WR-560's mapping exists to
+            // close, not this one. The corpus's expectations hold the fraction to a wide
+            // window (the finding record). `radius_tol` is also the length
+            // `zero_speed_radius_stretch` divides by the radius' growth rate to get a
+            // stretch in parameter units (WR-668), which the speed made dimensionless.
             let radius_scale = if bounded { size_xyz / 10000.0 } else { 1e-03 };
 
             // Not upstream (#2568): where the curve's speed is bounded above the tolerance
@@ -1942,28 +1946,37 @@ impl BSplineCurve {
                 }
             }
             // Not upstream (tangency-labs/solidcore#2785): a radius minimum on a natural
-            // boundary end belongs to the joint there, not to this curve, as the
-            // first-derivative loop above already takes it ("skip solutions on the natural
-            // boundary ends - they are not a problem"): the end is where the curve meets a
-            // neighbour or a vertex, and that joint's own checks (G1 across the knot, the
-            // vertex's, WR-668's waiver) judge it. Without this a blend's tangent end, whose
-            // radius grows as `|t - t_end|` from 0 (WR-668), reports a cusp: #2343's countersink
-            // corner trim had its minimum at parameter 0 of [0, 1.677], a spike (1.5e-4
-            // there, 0.85 one twentieth of the way along, 37 mid-curve).
-            let mut interior: Vec<&SolutionEnd> = Vec::with_capacity(solutions.len());
-            for s in &solutions {
-                let p = s.param(0)?;
-                if !domain
-                    .is_value_on_boundary(p, EFF_ZERO * (1.0 + domain.length()))
-                    .0
-                {
-                    interior.push(s);
-                }
-            }
-            let mut first = interior.first().copied();
+            // boundary end of a curve with topology context belongs to the joint there,
+            // not to this curve, as the first-derivative loop above already takes it
+            // ("skip solutions on the natural boundary ends - they are not a problem"): the
+            // end is where the curve meets a neighbour or a vertex, and that joint's own
+            // checks (G1 across the knot, the vertex's, WR-668's waiver) judge it. Without
+            // this a blend's tangent end, whose radius grows as `|t - t_end|` from 0
+            // (WR-668), reports a cusp: #2343's countersink corner trim had its minimum at
+            // parameter 0 of [0, 1.677], a spike (1.5e-4 there, 0.85 one twentieth of the
+            // way along, 37 mid-curve). A bare curve -- `assert_valid` with no edge and no
+            // trim surface, a direct caller -- has no such joint, so its boundary solutions
+            // are kept and its end is reported.
+            let candidates: Vec<&SolutionEnd> =
+                if ovr.edge_ends.is_some() || ovr.trim_surface.is_some() {
+                    let mut interior = Vec::with_capacity(solutions.len());
+                    for s in &solutions {
+                        let p = s.param(0)?;
+                        if !domain
+                            .is_value_on_boundary(p, EFF_ZERO * (1.0 + domain.length()))
+                            .0
+                        {
+                            interior.push(s);
+                        }
+                    }
+                    interior
+                } else {
+                    solutions.iter().collect()
+                };
+            let mut first = candidates.first().copied();
             if stretch.iter().any(|&s| s >= 0.0) {
                 first = None;
-                for &s in &interior {
+                for &s in &candidates {
                     let p = s.param(0)?;
                     let growth = (p - domain.min()).abs() <= stretch[0]
                         || (p - domain.max()).abs() <= stretch[1];
@@ -2581,16 +2594,59 @@ mod tests {
         }
     }
 
-    /// A radius minimum on the curve's own start is the joint there's, not the curve's, and
-    /// is not reported (#2785): the first-derivative loop above already skips a solution on
-    /// a natural boundary end. The regression case is the corpus's
-    /// `issue_2343_curved_setback::countersink_asked_corner_is_certified_with_its_nets`, whose
-    /// corner trim has its minimum at parameter exactly 0 of [0, 1.677] -- a G2 blend's
-    /// tangent end, whose radius grows as `|t - t_end|` from 0 (WR-668). No Bezier of the shape
-    /// `(0,0) (h,0) (a,b) (1,1)` puts the solver's minimum on the domain end (from h = 1e-3
-    /// down to 1e-6 the reported minimum sits at 1.22e-4 .. 2.44e-4, interior), so a minimal
-    /// synthetic case would not reach the skip; the nearest this file can pin is that the
-    /// skip leaves an interior minimum alone, which the two tests above already assert.
+    /// The direct-call side of the boundary-end rule (#2785): `assert_valid` with no edge
+    /// and no trim surface has no joint at the curve's ends, so a radius minimum on the
+    /// boundary is retained and reported; the same curve with an edge's context is the
+    /// other side -- the end is the joint's, the skip takes it, and the curve is accepted.
+    ///
+    /// The curve is a cubic Bezier whose first control span is 1e-7 of its size and
+    /// whose remaining spans run flat: its radius of curvature at `t = 0` is `1.5e-14`
+    /// (the WR-668 tangent-end shape: the radius grows as `|t - t_end|` from the end), and
+    /// it is above the length tolerance `sqrt(2)/1e4 = 1.4e-4` past `t = 4.9e-5` -- inside
+    /// the search's first interior sample -- so the search's only sub-tolerance solution
+    /// is the boundary one.
+    #[test]
+    fn issue_2785_a_bare_curve_reports_a_boundary_radius_minimum() {
+        let mut k = Kernel::default();
+        k.fixes.bspline_check_min_radius = true;
+        let c = curve(
+            3,
+            &[
+                [0.0, 0.0, 0.0],
+                [1e-7, 0.0, 0.0],
+                [2e-7, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        );
+        // bare: the boundary solution is kept and reported
+        let mut list = AssertArray::new();
+        assert!(!c
+            .assert_valid(&k, Some(&mut list), true, ObjectKey(9))
+            .unwrap());
+        let reports: Vec<_> = list
+            .reports()
+            .iter()
+            .filter(|r| r.test_index == 14)
+            .collect();
+        assert_eq!(reports.len(), 1, "{list:?}");
+        assert_eq!(reports[0].owner_param.x, 0.0, "{:?}", reports[0]);
+
+        // with an edge's context: the end is the joint's, and the skip takes it
+        let tangent = ends((0.0, 1.0), true);
+        let mut list = AssertArray::new();
+        let ok = c
+            .assert_valid_on_edge(
+                &k,
+                Some(&mut list),
+                true,
+                ObjectKey(9),
+                None,
+                Some(&tangent),
+            )
+            .unwrap();
+        assert!(ok && list.is_empty(), "{list:?}");
+    }
 
     #[test]
     fn subdivide_single_span() {
