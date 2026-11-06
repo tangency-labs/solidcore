@@ -148,8 +148,8 @@ impl Caches {
     }
 }
 
-/// Counts of the work done by the steps of a boolean whose cost once grew with the square
-/// of the body's size, so a test can check how that work grows: the same on every
+/// Counts of the work done by the steps of a boolean or a blend whose cost once grew with
+/// the square of the body's size, so a test can check how that work grows: the same on every
 /// machine, where a ratio of times is not (the SolidCraft fork's `SmWorkCounters`,
 /// tangency-labs/smlib@2e9e6b2 and @edf7414).
 ///
@@ -161,6 +161,7 @@ impl Caches {
 pub struct WorkCounters {
     face_pairs: Cell<u64>,
     loops_classified: Cell<u64>,
+    wall_body_copies: Cell<u64>,
 }
 
 impl WorkCounters {
@@ -181,10 +182,19 @@ impl WorkCounters {
         self.loops_classified.get()
     }
 
+    /// Copies keep features makes of the body a feature's walls lie in (the sheet of
+    /// rounds for a boss, the target for a cut) to read the walls' boxes and creases from.
+    /// Not the fork's.
+    #[must_use]
+    pub fn wall_body_copies(&self) -> u64 {
+        self.wall_body_copies.get()
+    }
+
     /// Zeroes every count (`SmWorkCounters::Reset`).
     pub fn reset(&self) {
         self.face_pairs.set(0);
         self.loops_classified.set(0);
+        self.wall_body_copies.set(0);
     }
 
     /// Counts one face pair examined for intersection.
@@ -196,6 +206,12 @@ impl WorkCounters {
     pub(crate) fn add_loop_classified(&self) {
         self.loops_classified
             .set(self.loops_classified.get().saturating_add(1));
+    }
+
+    /// Counts one copy of a body keep features reads feature walls from.
+    pub(crate) fn add_wall_body_copy(&self) {
+        self.wall_body_copies
+            .set(self.wall_body_copies.get().saturating_add(1));
     }
 }
 
@@ -430,10 +446,6 @@ pub struct UpstreamFixes {
     pub revolution_frame_from_profile_origin: bool,
     /// With extended convex edges, `piecewise_merge` relates the mated offsets of a manifold edge instead of intersecting them again (WR-344, #469; the fork's tangency-labs/smlib@9c21c9a (was 85bbfaf)), except an edge whose mate failed in `EdgeuseOffset`, which is intersected even where it is a tangent sector (#1795; the fork's tangency-labs/smlib@9d8ace9). A shell of a solid whose result is then no closed manifold solid is refused (`SM_ERR`) instead of returned: the merge no longer refuses some broken offsets, and the difference hands back a wall that bounds nothing (#1818; the fork's `ShellBrep` returns it, its C API refuses it as `SMLIB_ERR_NOT_SOLID`). Needs no other flag.
     pub offset_extended_edges_mated: bool,
-    /// The extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) extends a cone or cylinder as itself, along its rulings and around its axis with `SM_CT_CINFINITY` (around by no more than half the turn it leaves open on each side), where upstream extends every surface by a tangent extension (`SM_CT_G1R`) that leaves a cylinder at once; a face that reaches a hair into that extension is later fitted back into a cylinder off its radius (WR-532; the fork's tangency-labs/smlib@b283ea2).
-    pub offset_extends_cones_as_themselves: bool,
-    /// The extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) extends a ball patch (the blend corner's Ball) as itself, a ball patch on its sphere: its net carried on with `SM_CT_CINFINITY`, which stays on the sphere, around its pole by no more than a quarter of the turn its third side leaves open on each side and away from the pole by no more than half the arc left to the pole's antipode. Upstream extends every surface by a tangent extension (`SM_CT_G1R`), a plain B-spline off the sphere; a shell's face that reaches a hair into it (rounding in its trims) keeps that B-spline, so 7 of the 8 inner corners of a shelled rounded box lost their sphere (WR-728, #2484; the fork's b439d73 notes it).
-    pub offset_extends_ball_patches_as_themselves: bool,
     /// `SmOffsetSurface::SwapUV` negates the distance once for the extended surface and
     /// again for the base, so an owning offset that has a stored extension comes back
     /// with its distance unchanged and lies on the wrong side of its base; with this
@@ -1160,8 +1172,6 @@ pub struct UpstreamFixes {
     pub sheet_sweep_joins_profile_wires: bool,
     /// `FindPolygonGuess` keeps a suspicious control-net triangle guess as a candidate against the nearest control point's, and returns the nearer one on the surface, so a rational surface whose control points are farther apart than its neighbouring parts does not lose a good guess (WR-444, #1164).
     pub point_solve_keeps_triangle_guess: bool,
-    /// `SmFilletVertex::CalcSetBackVert` measures a corner setback from the vertex `GetStartVertex()` marks over the edge's own interval, not from `GetVertex()` over the curve's natural interval, so an edge whose primary edge use runs against its curve is not measured from its far end (WR-445, #1169).
-    pub fillet_setback_from_start_vertex: bool,
     /// `CreateSphereFromArcs` also makes the sphere through four arcs of one centre and radius that close a loop (a corner where four equal rounds meet, such as a pyramid's apex), where upstream's "only works for 3 now" refuses and the corner falls back to an approximating blend (WR-502; SolidCraft oracle case 37).
     pub fillet_corner_sphere_from_four_arcs: bool,
     /// `SmFilletCorner::MakeAnalyticCornerSurface`'s `SER` / `NER` exits return their failing status as an `SmBoolean`, which `SmFilletCorner::CreateCornerPatch` reads as `TRUE` (an analytic surface was made, though none was added) and so skips the Coons patch. With this fix those exits read as `FALSE` and the caller builds the patch. Only the exits that return an upstream status (`SM_ERR` 1001 / `SM_ERR_NULL_POINTER` 1006) change; the port's `Unported`, `InvalidInput` and `PortInvariant` still propagate (WR-254, `plan/upstream-issues/WR-254--smfilletcorner-makeanalyticcornersurface-reports-its-ser-ner--dup2.md`; off by default for pinned C++ parity).
@@ -1182,8 +1192,6 @@ pub struct UpstreamFixes {
     pub fillet_trace_from_tangent_point_toward_next: bool,
     /// `SmBSplineSurface::CopyAndAddAnalytics` keeps an exact copy where the recognised analytic surface does not give the same points at the same parameters (7 x 7 grid), so a face split by `MakeEdgeInFaceWithVU` keeps trims that still lie on its edges (WR-450, #387; the fork's tangency-labs/smlib@7af1987 (was 276b509)).
     pub analytic_copy_keeps_parameterization: bool,
-    /// `SmFilletSolver::ComputePointValues`' bigger-step retry of the forward finite-difference step solves with the bigger step (`dBigStep`), not with the small `dStep` again (WR-456, #1181).
-    pub fillet_point_bigger_step_retry: bool,
     /// `SmFilletSolver::ComputePointValues` sets a tangent point's curve tangent from the forward finite-difference step alone (along the trace, the previous point's tangent), and from the backward step only when the forward one finds nothing, not from their central difference: the intersection curve ends or branches at a tangent point, and where the offset surfaces touch only to within the model's accuracy (a sketch's 1e-10 residues) the backward step lands on the near-tangent crossing beyond it, 18 degrees off the curve, so every step after the point failed the angle test and the trace crept on in steps down to 8e-10 (repeated rail control points, an internal pole) (WR-595; the fork's tangency-labs/smlib@f8fd83e). Use with `fillet_trace_from_tangent_point_toward_next`, as the fork has both: alone, the forward step from a trace's tangent first point runs along the edge's end tangent, and `Fillet/nurb_cone.smb` edge 8 at r 0.5, which upstream builds, fails.
     pub fillet_tangent_point_one_sided_step: bool,
     /// `SmFace::ComputePreciseProperties` scales the volume and moment error bounds by the body size (ten times the root of the estimated area, or the origin's distance when larger), not 1.0.1's tenth of it, so the integration converges at tight accuracies instead of returning `SM_ERR` (WR-472; the SolidCraft fork's tangency-labs/smlib@073d4740).
@@ -1202,12 +1210,6 @@ pub struct UpstreamFixes {
     /// Degenerate intervals shorter than `SM_EFF_ZERO` still return `0.0` without
     /// evaluating. Off by default for pinned C++ parity.
     pub integrator_propagates_failure: bool,
-    /// `SmFace::ComputePreciseProperties` integrates each UV trim curve piece by piece between its knots and its crossings of the surface's u knot lines, and each iso-u integral of `SmODEAreaIFEO` piece by piece between the surface's v knots, so no Runge-Kutta step crosses a knot of a B-spline surface (a NURB cylinder's, sphere's or torus's rational-circle double knots) where the integrand's derivatives jump and the step's error estimate does not bound its error; the requested accuracy then holds at 1e-8 (WR-494, #1435; the SolidCraft fork's tangency-labs/smlib@08d9a14).
-    pub precise_properties_split_at_surface_knots: bool,
-    /// With `precise_properties_split_at_surface_knots`, each iso-u piece of `SmODEAreaIFEO` evaluates the surface at its end from the knot span below it (`bVFromLeft = FALSE`), not the span above (upstream's `TRUE`, kept by the fork's tangency-labs/smlib@08d9a14): where the piece stops at a v knot with a derivative jump (a G2-not-C2 loft merged into one face across its 19 spans, #2091), the integrand's last point came from the next span, the Runge-Kutta steps shrank toward every knot, and each piece took about 5x the evaluations it needs: the #2091 model's precise volume took 26.7 s, 5.8 s with this fix (WR-670, #2091). No effect without `precise_properties_split_at_surface_knots`.
-    pub precise_properties_span_end_from_below: bool,
-    /// `SmFace::ComputePreciseProperties` starts each iso-u integral of `SmODEAreaIFEO` at the lowest v of the face's UV trim curves (the union of their bounding boxes, kept no lower than the face's UV domain), not at the UV domain's lowest v: on a face whose domain is the surface's unbounded one (`±INFINITE_PARAMETER` in v) the integrals ran about 1.2e6 parameter units below the face and the area came out as a small difference of large terms, off by up to 190% (WR-563, #1556).
-    pub precise_properties_trim_base_v: bool,
     /// `SmBrep::ComputePreciseProperties` adds a volume-separating faceuse's volume and mass only where it bounds a non void region and its area only where the area behaviour selects it, where upstream adds both whenever either behaviour selects the faceuse: a face between two solid regions (a merge of overlapping bodies) was counted in the area once per side (WR-535; the fork's tangency-labs/smlib@d2d9586).
     pub brep_area_between_solid_and_void: bool,
     /// `SmVertex::IsTopologicalVertex` ([`crate::topology::vertex::is_topological_vertex`])
@@ -1733,8 +1735,8 @@ pub struct Kernel {
     /// own count, never this one.
     pub blend_operation_scopes: Arc<core::sync::atomic::AtomicU32>,
     /// Not upstream (the SolidCraft fork's `SmWorkCounters`): counts of the work done by
-    /// the steps of a boolean whose cost once grew with the square of the body's size, for
-    /// tests and profiling. They change no result.
+    /// the steps of a boolean or a blend whose cost once grew with the square of the body's
+    /// size, for tests and profiling. They change no result.
     pub work_counters: WorkCounters,
     /// Not upstream (tangency-labs/solidcore#2489): while `Some`, each fillet session that
     /// finishes filleting appends the faces it made in its target, each with what made it
@@ -1928,15 +1930,18 @@ mod tests {
     fn work_counters_count_until_reset() {
         let k = Kernel::default();
         let w = &k.work_counters;
-        assert_eq!((w.face_pairs(), w.loops_classified()), (0, 0));
+        let counts =
+            |w: &WorkCounters| (w.face_pairs(), w.loops_classified(), w.wall_body_copies());
+        assert_eq!(counts(w), (0, 0, 0));
         w.add_face_pair();
         w.add_face_pair();
         w.add_loop_classified();
-        assert_eq!((w.face_pairs(), w.loops_classified()), (2, 1));
+        w.add_wall_body_copy();
+        assert_eq!(counts(w), (2, 1, 1));
         // each kernel counts its own work
         assert_eq!(Kernel::default().work_counters.face_pairs(), 0);
         w.reset();
-        assert_eq!((w.face_pairs(), w.loops_classified()), (0, 0));
+        assert_eq!(counts(w), (0, 0, 0));
     }
 
     #[test]
