@@ -45,7 +45,7 @@ use solidcore::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, Sur
 use solidcore::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use solidcore::nurbs::crv_basic::Curve;
 use solidcore::nurbs::knots::Side;
-use solidcore::nurbs::math::{CPoint, NOW, NOZ};
+use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::srf_basic::Surface as NlSurface;
 use solidcore::surface::curve_bounded_surface::{self as cbs, CurveBoundedSurface};
 use solidcore::surface::surface::p2::{Surface, SurfaceKind};
@@ -53,7 +53,7 @@ use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 
 use crate::case::CaseContext;
-use crate::cases::contract;
+use crate::cases::contract::{self, Limits};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -896,70 +896,27 @@ fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
 
 // ---- input contract -----------------------------------------------------------------
 
-/// The largest control point index of a basis direction or boundary.
-const MAX_INDEX: usize = 32;
-/// The largest degree.
-const MAX_DEGREE: usize = 7;
+/// The size bounds of the basis and the boundaries.
+const LIMITS: Limits = Limits {
+    max_index: 32,
+    max_degree: 7,
+    max_coord: 1e6,
+};
 /// The most boundaries of each kind.
 const MAX_CURVES: usize = 6;
-/// The largest magnitude of a coordinate, knot or scalar.
-const MAX_COORD: f64 = 1e6;
 
 fn fin(v: f64) -> bool {
-    contract::finite(v, MAX_COORD)
+    contract::finite(v, LIMITS.max_coord)
 }
 
-/// Whether control points are 3D-stored, of one rationality, with weights in `[1e-3, 1e3]`
-/// and coordinates within range.
-fn points(pts: &[[f64; 4]]) -> bool {
-    let rat = pts.first().is_some_and(|p| p[3] != NOW);
-    pts.iter().all(|&[x, y, z, w]| {
-        z != NOZ
-            && (w != NOW) == rat
-            && (!rat || (1e-3..=1e3).contains(&w))
-            && [x, y, z].iter().all(|&c| fin(c))
-    })
-}
-
-/// The domain `[u0, v0, u1, v1]` of a basis within the size bounds (`1 ≤ p ≤ n`,
-/// `1 ≤ q ≤ m`, full rows), with [`points`] and clamped knots within range.
+/// The domain of a [`contract::surface_block`] basis.
 fn basis(s: &InlineSrf) -> Option<[f64; 4]> {
-    let n = s.net.len().checked_sub(1)?;
-    let cols = s.net.first()?.len();
-    let m = cols.checked_sub(1)?;
-    let (r, q_) = (s.u.len().checked_sub(1)?, s.v.len().checked_sub(1)?);
-    let ok = n <= MAX_INDEX
-        && m <= MAX_INDEX
-        && (1..=n.min(MAX_DEGREE)).contains(&s.p)
-        && (1..=m.min(MAX_DEGREE)).contains(&s.q)
-        && r == n + s.p + 1
-        && q_ == m + s.q + 1
-        && s.net.iter().all(|row| row.len() == cols && points(row))
-        && s.u.iter().chain(&s.v).all(|&k| fin(k));
-    if !ok {
-        return None;
-    }
-    let (u0, u1) = contract::clamped(&s.u, s.p)?;
-    let (v0, v1) = contract::clamped(&s.v, s.q)?;
-    Some([u0, v0, u1, v1])
+    contract::surface_block(&s.net, s.p, s.q, &s.u, &s.v, &LIMITS).map(|b| b.dom)
 }
 
-/// Whether a boundary is a 2D or 3D B-spline within the size bounds with [`points`] and
-/// clamped knots within range.
+/// Whether a boundary is a [`contract::curve_block`].
 fn boundary(c: &CrvIn) -> bool {
-    let Ok(c) = crv(c) else {
-        return false;
-    };
-    let Some(n) = c.cpts.len().checked_sub(1) else {
-        return false;
-    };
-    (2..=3).contains(&c.dim)
-        && n <= MAX_INDEX
-        && (1..=n.min(MAX_DEGREE)).contains(&c.p)
-        && c.u.len() == n + c.p + 2
-        && points(&c.cpts)
-        && c.u.iter().all(|&k| fin(k))
-        && contract::clamped(&c.u, c.p).is_some()
+    crv(c).is_ok_and(|c| contract::curve_block(c.dim, &c.cpts, c.p, &c.u, &LIMITS))
 }
 
 fn boundaries(cs: &[CrvIn]) -> bool {
@@ -1033,13 +990,13 @@ fn keeps_contract(i: &Inputs) -> bool {
         OpIn::Queries { types } => {
             types.len() <= 16 && types.iter().all(|t| (0..=1 << 20).contains(t))
         }
-        OpIn::Defaults { v } => contract::vec3(v, MAX_COORD),
+        OpIn::Defaults { v } => contract::vec3(v, LIMITS.max_coord),
         OpIn::EqOther { other } => {
             this.c3d.len() <= this.cuv.len() && surface_block(other).is_some()
         }
         OpIn::Singular { uv, tol } => uv_in(*uv, dom) && fin(*tol) && *tol > 0.0,
         OpIn::NormalSection { uv, dir, .. } => {
-            uv_in(*uv, dom) && contract::vec3(dir, MAX_COORD) && contract::len_sq(*dir) >= 1e-12
+            uv_in(*uv, dom) && contract::vec3(dir, LIMITS.max_coord) && contract::len_sq(*dir) >= 1e-12
         }
         OpIn::ReadDb { .. } => false,
     }
