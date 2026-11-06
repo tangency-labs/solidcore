@@ -1195,11 +1195,24 @@ mod tests {
         assert!((0.25e-6..=1e-6).contains(&bound), "{bound}");
     }
 
+    /// The rounding the enclosure carries for this fixture: one part `[0, 1]` (no inner
+    /// knots; its bound is under the tolerance at once), its Taylor form (`lift_over`)
+    /// with `r = 1/2`, every interval operation widened by `2.3e-16 |x|` on each side
+    /// (`round_down`, `round_up`), exact or not. The UV cubic's `u''([0, 1])`, from its
+    /// Taylor polynomial at `1/2` with third-derivative basis values up to 18 in size, is
+    /// about `4.4e-13` wide, times `r^2 / 2 = 1/8`: about `5.7e-14` in x, with `g(m)`
+    /// (`1.5e-14`) and `g'(m) [-r, r]` (`2.7e-14`); y the same way, from `v''`. That
+    /// gives x `9.89e-14`, y `5.38e-14`, and a norm of `1.1253786587070681e-13`: this
+    /// operation sequence replayed in IEEE doubles gives that bound to the bit. The
+    /// lift's true distance is the rounding of the control points `1/3` and `2/3`, under
+    /// `1e-16`.
+    const EXACT_LIFT_ROUNDING: f64 = 1.125_378_658_707_068_1e-13;
+
     #[test]
     fn an_exact_lift_is_bounded_by_rounding() {
         let k = Kernel::default();
         let bound = bumped_lift(&k, 0.0).unwrap();
-        assert!(bound <= 1e-13, "{bound}");
+        assert!((0.0..=EXACT_LIFT_ROUNDING).contains(&bound), "{bound}");
     }
 
     #[test]
