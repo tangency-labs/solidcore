@@ -53,8 +53,8 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
-       - run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-       - run: scripts/ci/test-wasm-digest.sh
+      - run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+      - run: scripts/ci/test-wasm-digest.sh
       - run: python3 -I scripts/ci/check_record_ids.py
 
   fmt:
