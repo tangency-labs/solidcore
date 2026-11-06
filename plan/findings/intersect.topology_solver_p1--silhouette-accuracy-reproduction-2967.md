@@ -71,3 +71,24 @@ that trim endpoints are correct, or that the optimizer found every required
 candidate. Next checks must cover those errors, nonunit normals, other surfaces,
 and the surrounding public topology query. No arbitrary tolerance multiplier,
 native mismatch parking or golden blessing is proposed by this experiment.
+
+## Follow-up: lifting does not certify the UV trace
+
+A second diagnostic tilts the view 45 degrees in the x-z plane. With a unit
+normal, the analytic maximum is `2.502498439450079`; the fitted-curve solve
+returns `2.502491230322871` and the lifted solve `2.502498439368356`.
+The latter is much closer, but still differs by about `8.17e-11`.
+
+Scaling the same normal to length 1000 preserves the silhouette locus and scales
+the double-cross metric by one million. The analytic maximum becomes
+`2502498.439450079`; the lifted solve returns `2502498.439368355`, a gap of about
+`8.17e-5`, exceeding the unchanged `1e-5` query tolerance. These experiments used
+the validated #2840 library. The example now accepts tilt and normal length as
+arguments so the checks are reproducible (`-- 45 1` and `-- 45 1000`).
+
+The WIP production change removes the independent 3D fitting error for all
+callers of `face_silhouettes`, including cache hits. It is not a complete repair
+of #2967. `compute_span_deviation_base` tests finitely many span points against
+locally corrected points, and supplies no global UV-trace enclosure. The next
+construction must control that remaining error in the actual query metric,
+including the projection scale, and verify trimmed endpoints and enumeration.
