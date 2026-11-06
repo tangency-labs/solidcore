@@ -328,6 +328,8 @@ fn call(c: &Value, ins: &mut [Slot]) -> Result<Result<Slot, String>, Stop> {
     call_with_copy(c, ins, Slot::copied)
 }
 
+/// Dispatches a single-output call with an injectable preparation copy; replay failures
+/// remain separate from a traced operation refusal.
 fn call_with_copy(
     c: &Value,
     ins: &mut [Slot],
@@ -591,6 +593,8 @@ fn run_case(entry: &Path, e: &Value) -> Result<Option<f64>, Stop> {
     run_case_with_records(e, || records(entry, e))
 }
 
+/// Loads named operand records, binds each call's outputs in order, and grades the selected
+/// final bodies; the record supplier also permits closed-form tests without corpus files.
 fn run_case_with_records(
     e: &Value,
     records: impl FnOnce() -> serde_json::Map<String, Value>,
@@ -1339,6 +1343,8 @@ fn a_discarded_thicken_preserves_the_retained_sheet() {
     );
 }
 
+/// The sheet normal orders unequal box parts; grading each output name catches aliasing,
+/// and neither the solid nor the tool record may change.
 #[test]
 fn split_sheet_keeps_distinct_parts_in_normal_order_and_preserves_inputs() {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
@@ -1413,6 +1419,7 @@ fn split_sheet_keeps_distinct_parts_in_normal_order_and_preserves_inputs() {
     }
 }
 
+/// The recorded spline sheet cuts the cup into two parts and remains as the third body.
 #[test]
 fn split_sheet_replays_the_cup_and_retains_the_tool() {
     session::set_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
