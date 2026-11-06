@@ -1,7 +1,9 @@
 //! Differential coverage for `blend.feature_executive` (`SmFeatureExecutive`).
 //!
-//! The fixtures are upstream `.smb` solids, read by the native `SmBrep::ReadFromFile` and
-//! by the Rust reader (no C++ state reaches the Rust side). A case is a script: features
+//! Ported from upstream `SmFeatureExecutive`; checked against its golden. Rust:
+//! `solidcore::blend::feature_executive`.
+//!
+//! The fixtures are upstream `.smb` solids, read by the Rust reader. A case is a script: features
 //! added by faces (`AddFeature(sFaces, ..)`), by a face and loop edges
 //! (`AddFeature(pFace, rLoopEdges, ..)`) or by a face and caller-made loops
 //! (`AddFeature(pFace, rFLoops)`), given as indices of the fixture's `GetFaces` /
@@ -27,12 +29,10 @@ use solidcore::kernel::Kernel;
 use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::{Brep, EdgeId, FaceId};
 use solidcore::Result as SolidResult;
-use solidcore_ffi::units::blend_feature_executive as ffi;
-use solidcore_ffi::FfiError;
 
 use super::boolean_merge_p1::graph;
 use super::topology_brep_mirror::{geometry, herr, normalize_face_shells, status};
-use super::topology_vertexuse::{import_raw_with_owners, path_of, BrepIn};
+use super::topology_vertexuse::{path_of, BrepIn};
 use crate::{Case, HarnessError, Output, UnitDiff};
 
 /// The runner of `SmFeatureExecutive`.
@@ -128,68 +128,6 @@ impl Default for Inputs {
     }
 }
 
-fn kind_code(kind: &str) -> Result<f64, HarnessError> {
-    match kind {
-        "faces" => Ok(0.),
-        "edges" => Ok(1.),
-        "loops" => Ok(2.),
-        _ => Err(herr(format!("feature kind {kind}"))),
-    }
-}
-
-/// The shim's script (layout in `solidcore_ffi::units::blend_feature_executive`).
-fn script(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
-    let mut s = vec![i.attributes.len() as f64];
-    for a in &i.attributes {
-        let kind = match a.kind.as_str() {
-            "face" => 0.,
-            "edge" => 1.,
-            other => return Err(herr(format!("attribute kind {other}"))),
-        };
-        s.extend([kind, f64::from(a.index), f64::from(a.id), f64::from(a.behavior)]);
-    }
-    s.push(i.features.len() as f64);
-    let list = |s: &mut Vec<f64>, v: &[u32]| {
-        s.push(v.len() as f64);
-        s.extend(v.iter().map(|&x| f64::from(x)));
-    };
-    for f in &i.features {
-        s.extend([kind_code(&f.kind)?, f64::from(f.base_rb), f64::from(f.feat_rb)]);
-        match f.kind.as_str() {
-            "faces" => list(&mut s, &f.faces),
-            "edges" => {
-                s.push(f64::from(f.face));
-                list(&mut s, &f.edges);
-            }
-            _ => {
-                s.push(f64::from(f.face));
-                s.push(f.loops.len() as f64);
-                for l in &f.loops {
-                    s.extend([f64::from(l.base_rb), f64::from(l.feat_rb)]);
-                    list(&mut s, &l.edges);
-                }
-            }
-        }
-    }
-    s.push(i.ops.len() as f64);
-    for op in &i.ops {
-        match op {
-            OpSpec::Defeature => s.push(0.),
-            OpSpec::SetBaseRb { t } => s.extend([1., f64::from(*t)]),
-            OpSpec::SetFeatureRb { t } => s.extend([2., f64::from(*t)]),
-            OpSpec::SetBaseExtDist { d } => s.extend([3., *d]),
-            OpSpec::SetFeatureExtDist { d } => s.extend([4., *d]),
-            OpSpec::Restore => s.push(5.),
-        }
-    }
-    Ok(s)
-}
-
-/// The shared B-rep block of `ReadFromFile(file, rebuild)`; no validate-only, no gaps.
-fn block(i: &Inputs) -> Vec<f64> {
-    vec![0.0, f64::from(i.rebuild), 0.0, 0.0]
-}
-
 fn path(i: &Inputs) -> Result<String, HarnessError> {
     if i.file.starts_with("fixtures/") {
         let p = crate::fixtures::repo_fixture_file(&crate::case::repo_root(), &i.file)?;
@@ -200,9 +138,6 @@ fn path(i: &Inputs) -> Result<String, HarnessError> {
         rebuild: i.rebuild,
     })
 }
-
-/// The native import's refusal of a face surface that is neither a B-spline nor a plane.
-const NOT_EXPORTABLE: &str = "a surface is not a B-spline or plane";
 
 /// Whether every face surface of `b` is an `SmBSplineSurface` (or absent).
 fn graph_exportable(b: &Brep) -> SolidResult<bool> {
@@ -237,32 +172,6 @@ fn merge(out: &mut Output, prefix: &str, o: Output) {
     }
     for (k, v) in o.ints {
         out.ints.insert(format!("{prefix}{k}"), v);
-    }
-}
-
-/// Reads one `put_brep` block from the native output at `*at`.
-fn native_brep(raw: &[f64], at: &mut usize) -> Result<Output, HarnessError> {
-    let take = |at: &mut usize| -> Result<Vec<f64>, HarnessError> {
-        let n = *raw.get(*at).ok_or_else(|| herr("short brep"))? as usize;
-        let v = raw
-            .get(*at + 1..*at + 1 + n)
-            .ok_or_else(|| herr("short brep"))?
-            .to_vec();
-        *at += 1 + n;
-        Ok(v)
-    };
-    let geom = take(at)?;
-    let g = take(at)?;
-    match import_raw_with_owners(&g) {
-        Ok((mut b, _)) => {
-            strip_unrecorded(&mut b).map_err(herr)?;
-            normalize_face_shells(&mut b).map_err(herr)?;
-            Ok(graph(&b, geom))
-        }
-        Err(e) if e.to_string().contains(NOT_EXPORTABLE) => {
-            Ok(Output::new().values("record", geom))
-        }
-        Err(e) => Err(e),
     }
 }
 
@@ -475,70 +384,6 @@ fn run_script(k: &mut Kernel, b: &mut Brep, i: &Inputs) -> SolidResult<RustRun> 
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.feature_executive"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let raw = match ffi::eval(&path(&i)?, &block(&i), &script(&i)?) {
-            Ok(raw) if raw.first() == Some(&-999.) => {
-                return Ok(Output::rejected(format!(
-                    "fixture constructor status {}",
-                    raw.get(1).copied().unwrap_or(-1.)
-                )))
-            }
-            Ok(raw) if raw.first() == Some(&-998.) => {
-                return Ok(Output::rejected("index past the fixture's faces or edges"))
-            }
-            Ok(raw) if raw.first() == Some(&-997.) => {
-                return Ok(Output::rejected(
-                    "RestoreFeatures with two or more restorable features (upstream deletes \
-                     a feature it keeps; upstream issue \
-                     UB-277)",
-                ))
-            }
-            Ok(raw) if raw.first() == Some(&-996.) => {
-                return Ok(Output::rejected(
-                    "DoDefeature with a loop edge an applied patch's stitch deleted (upstream \
-                     reads it; UB-279)",
-                ))
-            }
-            Ok(raw) if raw.first() == Some(&-995.) => {
-                return Ok(Output::rejected(
-                    "DoDefeature extends a surface without an extension (upstream \
-                     dereferences the NULL surface; upstream issue \
-                     UB-278)",
-                ))
-            }
-            Err(FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => {
-                return Ok(Output::rejected(
-                    "the native script crashed (or ran past 60 s) in its fresh \
-                     child process (UB-280, \
-                     HANG-52)",
-                ))
-            }
-            Ok(raw) => raw,
-            Err(e @ FfiError::InvalidArgument(_)) => {
-                return Ok(Output::rejected(format!("ffi guard: {e}")))
-            }
-            Err(e) => return Err(herr(e)),
-        };
-        let n = *raw.first().ok_or_else(|| herr("short record"))? as usize;
-        let record = raw.get(1..=n).ok_or_else(|| herr("short record"))?.to_vec();
-        let mut at = n + 1;
-        let mut out = Output::new().values("record", record);
-        merge(&mut out, "base_", native_brep(&raw, &mut at)?);
-        let mut fi = 0;
-        while at < raw.len() {
-            let has = *raw.get(at).ok_or_else(|| herr("short feature"))?;
-            at += 1;
-            if has == 0. {
-                out = out.int(&format!("feature{fi}_none"), 1);
-            } else {
-                merge(&mut out, &format!("feature{fi}_"), native_brep(&raw, &mut at)?);
-            }
-            fi += 1;
-        }
-        Ok(out)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
