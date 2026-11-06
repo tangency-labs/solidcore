@@ -242,3 +242,106 @@ pub fn plane(
         && dom[2] - dom[0] >= 1e-6
         && dom[3] - dom[1] >= 1e-6
 }
+
+/// Whether control points stored `[x, y, z, w]` are 3D (`z` not `NOZ`), of one rationality
+/// with weights in `[1e-3, 1e3]`, with coordinates within `max` (the surface wrappers'
+/// `check_points`).
+#[must_use]
+pub fn points3<'a>(pts: impl IntoIterator<Item = &'a [f64; 4]>, max: f64) -> bool {
+    let mut rat = None;
+    pts.into_iter().all(|&[x, y, z, w]| {
+        let r = w != NOW;
+        z != NOZ
+            && *rat.get_or_insert(r) == r
+            && (!r || (1e-3..=1e3).contains(&w))
+            && [x, y, z].iter().all(|&c| finite(c, max))
+    })
+}
+
+/// What a B-spline surface block that keeps the contract tells the rest of a case.
+#[derive(Debug, Clone, Copy)]
+pub struct SurfaceBlock {
+    /// The parameter domain `[u0, v0, u1, v1]`.
+    pub dom: [f64; 4],
+    /// The number of distinct u knots.
+    pub u_distinct: usize,
+    /// The number of distinct v knots.
+    pub v_distinct: usize,
+}
+
+fn distinct(k: &[f64]) -> usize {
+    1 + k.windows(2).filter(|w| w.first() != w.last()).count()
+}
+
+/// A B-spline surface of control net `net` (rows in u), degrees `p`, `q` and knots `u`, `v`,
+/// if it keeps the surface wrappers' contract: `1 ≤ p ≤ n`, `1 ≤ q ≤ m` within the limits,
+/// full rows, `n + p + 2` and `m + q + 2` knots, [`points3`] over the whole net, and
+/// [`clamped`] knots within range.
+#[must_use]
+pub fn surface_block(
+    net: &[Vec<[f64; 4]>],
+    p: usize,
+    q: usize,
+    u: &[f64],
+    v: &[f64],
+    lim: &Limits,
+) -> Option<SurfaceBlock> {
+    let n = net.len().checked_sub(1)?;
+    let cols = net.first()?.len();
+    let m = cols.checked_sub(1)?;
+    let ok = n <= lim.max_index
+        && m <= lim.max_index
+        && (1..=n.min(lim.max_degree)).contains(&p)
+        && (1..=m.min(lim.max_degree)).contains(&q)
+        && u.len() == n + p + 2
+        && v.len() == m + q + 2
+        && net.iter().all(|row| row.len() == cols)
+        && points3(net.iter().flatten(), lim.max_coord)
+        && u.iter().chain(v).all(|&k| finite(k, lim.max_coord));
+    if !ok {
+        return None;
+    }
+    let (u0, u1) = clamped(u, p)?;
+    let (v0, v1) = clamped(v, q)?;
+    Some(SurfaceBlock {
+        dom: [u0, v0, u1, v1],
+        u_distinct: distinct(u),
+        v_distinct: distinct(v),
+    })
+}
+
+/// Whether a B-spline curve of dimension `dim`, control points `cpts`, degree `p` and knots
+/// `u` keeps the surface wrappers' curve contract: dimension 2 or 3, `1 ≤ p ≤ n` within the
+/// limits, `n + p + 2` knots, [`points3`] and [`clamped`] knots within range.
+#[must_use]
+pub fn curve_block(dim: u64, cpts: &[[f64; 4]], p: usize, u: &[f64], lim: &Limits) -> bool {
+    let Some(n) = cpts.len().checked_sub(1) else {
+        return false;
+    };
+    (2..=3).contains(&dim)
+        && n <= lim.max_index
+        && (1..=n.min(lim.max_degree)).contains(&p)
+        && u.len() == n + p + 2
+        && points3(cpts, lim.max_coord)
+        && u.iter().all(|&k| finite(k, lim.max_coord))
+        && clamped(u, p).is_some()
+}
+
+/// Whether `d` is a finite domain `[umin, vmin, umax, vmax]` within `max`, ordered.
+#[must_use]
+pub fn domain(d: &[f64; 4], max: f64) -> bool {
+    d.iter().all(|&c| finite(c, max)) && d[0] <= d[2] && d[1] <= d[3]
+}
+
+/// Whether `d` is a [`domain`] inside `outer`, and when `strict` has sides of at least
+/// `1e-6` of `outer`'s.
+#[must_use]
+pub fn domain_in(d: &[f64; 4], outer: &[f64; 4], strict: bool, max: f64) -> bool {
+    let o = outer;
+    domain(d, max)
+        && d[0] >= o[0]
+        && d[1] >= o[1]
+        && d[2] <= o[2]
+        && d[3] <= o[3]
+        && (!strict || (d[2] - d[0] >= 1e-6 * (o[2] - o[0]) && d[3] - d[1] >= 1e-6 * (o[3] - o[1])))
+}
