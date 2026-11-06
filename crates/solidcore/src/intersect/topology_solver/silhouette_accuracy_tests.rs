@@ -125,7 +125,7 @@ fn check_sphere_projection(tilt: f64, scale: f64) {
             .cross(query - Vec3::new(0.0, 0.0, -1.0))
             .cross(normal)
             .length();
-    check_face_projection(k, Surface::from(sphere), normal, expected);
+    check_face_projection(k, &Surface::from(sphere), normal, expected);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn projected_trimmed_sphere_maximum_keeps_the_trim_endpoint() {
     // The unconstrained farthest equator point is outside this half-longitude
     // face. Its farthest included point is the trim endpoint (-0.5, 0, -1).
     let expected = (0.7_f64 * 0.7 + 0.3 * 0.3).sqrt();
-    check_face_projection(k, Surface::from(sphere), Vec3::new(0.0, 0.0, 1.0), expected);
+    check_face_projection(k, &Surface::from(sphere), Vec3::new(0.0, 0.0, 1.0), expected);
 }
 
 #[test]
@@ -166,10 +166,10 @@ fn projected_torus_maximum_matches_the_capsule_projection() {
     // The projected torus is the radius-0.25 capsule around the y-axis segment
     // [-1, 1]. The farther cap is centered at (0, -1).
     let expected = (0.2_f64 * 0.2 + 1.3 * 1.3).sqrt() + 0.25;
-    check_face_projection(k, Surface::from(torus), Vec3::new(0.0, 0.0, 1.0), expected);
+    check_face_projection(k, &Surface::from(torus), Vec3::new(0.0, 0.0, 1.0), expected);
 }
 
-fn check_face_projection(mut k: Kernel, surface: Surface, normal: Vec3, expected: f64) {
+fn check_face_projection(mut k: Kernel, surface: &Surface, normal: Vec3, expected: f64) {
     let domain = surface.natural_uv_domain_with_nurb(&k).unwrap();
     let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT).unwrap();
     let mut state = ArenaNotifyState::new(&b);
