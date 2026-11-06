@@ -2931,11 +2931,13 @@ impl OffsetGeometryCreation {
             trim_ivl.add_value(found_param);
         } // end iter twice
 
-        // `Kernel::fixes.offset_closed_curve_trim_arc` (WR-463, #403): on a closed curve the
-        // two trim points bound two arcs and the interval between them is only one of them.
-        // The edge takes the arc that runs where the base edge does; when a trim point lies
-        // on the curve's seam the other arc is an interval too, else the edge is not trimmed.
-        if k.fixes.offset_closed_curve_trim_arc {
+        // (WR-463, #403): on a closed curve the two trim points bound two arcs and the
+        // interval between them is only one of them. The edge takes the arc that runs where
+        // the base edge does; when a trim point lies on the curve's seam the other arc is an
+        // interval too, else the edge is not trimmed. A trim point at the seam has two
+        // parameters at one point, so which of them the search above found is a matter of
+        // rounding: without this the edge can take the whole other arc.
+        {
             let nat_ivl = curve_of(brep, curve_3d)?.natural_interval();
             let seam_tol = EFF_ZERO * (1.0 + nat_ivl.max_dimension());
             let tol = self.this_approx_tol_3d;
