@@ -976,6 +976,7 @@ fn merge_point_solution<O: Copy>(
 // residual to zero in a raw knot interval with only a few thousand f64 values.
 use crate::blend::fillet_section::interval::Ivl;
 
+/// Report that no representable parameter was certified within the requested objective tolerance.
 fn affine_refusal() -> SolidError {
     SolidError::Upstream {
         operation: "curve::curve::p1::projected_affine_certificate",
@@ -985,6 +986,7 @@ fn affine_refusal() -> SolidError {
 }
 
 // f64::next_up/next_down postdate the crate's Rust 1.85 minimum.
+/// Return the next representable parameter toward positive infinity on Rust 1.85.
 fn next_parameter_up(value: f64) -> f64 {
     if value.is_nan() || value == f64::INFINITY {
         value
@@ -997,28 +999,34 @@ fn next_parameter_up(value: f64) -> f64 {
     }
 }
 
+/// Return the next representable parameter toward negative infinity on Rust 1.85.
 fn next_parameter_down(value: f64) -> f64 {
     -next_parameter_up(-value)
 }
 
+/// Enclose each coordinate of an exactly specified binary64 point.
 fn iv_point(p: Vec3) -> [Ivl; 3] {
     [p.x, p.y, p.z].map(Ivl::from)
 }
+/// Enclose coordinate-wise subtraction without discarding rounding error.
 fn iv_sub(a: [Ivl; 3], b: [Ivl; 3]) -> [Ivl; 3] {
     let [ax, ay, az] = a;
     let [bx, by, bz] = b;
     [ax - bx, ay - by, az - bz]
 }
+/// Enclose the cross product using the original component operation order.
 fn iv_cross(a: [Ivl; 3], b: [Ivl; 3]) -> [Ivl; 3] {
     let [ax, ay, az] = a;
     let [bx, by, bz] = b;
     [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
 }
+/// Enclose the dot product with a fixed accumulation order.
 fn iv_dot(a: [Ivl; 3], b: [Ivl; 3]) -> Ivl {
     a.into_iter()
         .zip(b)
         .fold(Ivl::from(0.0), |s, (x, y)| s + x * y)
 }
+/// Enclose Euclidean length, including intervals that cross zero.
 fn iv_length(a: [Ivl; 3]) -> Ivl {
     a.into_iter()
         .fold(Ivl::from(0.0), |s, v| {
@@ -1026,6 +1034,7 @@ fn iv_length(a: [Ivl; 3]) -> Ivl {
         })
         .sqrt()
 }
+/// Enclose affine interpolation at an interval-valued fraction.
 fn iv_lerp(a: [Ivl; 3], b: [Ivl; 3], t: Ivl) -> [Ivl; 3] {
     let [ax, ay, az] = a;
     let [bx, by, bz] = b;
@@ -1036,7 +1045,9 @@ fn iv_lerp(a: [Ivl; 3], b: [Ivl; 3], t: Ivl) -> [Ivl; 3] {
 // product has at most 106 significand bits and exponent in [-2148, 1942].
 // Four same-sign products need at most 4198 bits above 2^-2148; 66 u64 words
 // supply 4224 bits. This fixed bound is independent of caller magnitudes.
+/// Test a signed sum of four binary64 products exactly using bounded integer storage.
 fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
+    /// Split a finite binary64 value into its sign, integer significand and exponent.
     fn parts(value: f64) -> Option<(bool, u64, i32)> {
         if !value.is_finite() {
             return None;
@@ -1058,6 +1069,7 @@ fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
             },
         ))
     }
+    /// Accumulate one shifted word with checked access to the fixed-capacity sum.
     fn add_word(words: &mut [u64; 66], word: u64, shift: usize) -> bool {
         let mut index = shift / 64;
         let mut carry = u128::from(word) << (shift % 64);
@@ -1097,6 +1109,7 @@ fn dyadic_four_products_zero(terms: [(f64, f64, bool); 4]) -> bool {
     positive == negative
 }
 
+/// Test exact parallelism before rounding the difference of the two input points.
 fn exact_parallel_difference(a: [f64; 3], b: [f64; 3], normal: Vec3) -> bool {
     let [ax, ay, az] = a;
     let [bx, by, bz] = b;
@@ -1126,16 +1139,19 @@ struct AffineDefinition {
     isolated_end: Option<[Ivl; 3]>,
 }
 impl AffineDefinition {
+    /// Enclose the affine point at the caller's raw parameter.
     fn point(&self, t: f64) -> [Ivl; 3] {
         let fraction = (Ivl::from(t) - Ivl::from(self.interval.min()))
             / (Ivl::from(self.interval.max()) - Ivl::from(self.interval.min()));
         iv_lerp(self.start, self.end, fraction)
     }
+    /// Recognize an exactly constant projected objective without a tolerance test.
     fn constant_projection(&self, normal: Vec3) -> bool {
         exact_parallel_difference(self.direction_points.0, self.direction_points.1, normal)
     }
 }
 
+/// Enclose an analytic line or an equal-weight linear span, preserving isolated upper-knot values.
 fn affine_definition(curve: &Curve, interval: Extent1d) -> Option<AffineDefinition> {
     if let CurveKind::Line(line) = curve.kind() {
         let point = iv_point(line.line_point());

@@ -129,8 +129,8 @@ fn unrepresentable_affine_minimum_returns_error_with_default_kernel() {
         },
     );
     assert!(
-        result.is_err(),
-        "an unrepresentable answer must return SolidError, not empty or partial success"
+        matches!(&result, Err(error) if error.kind() == solidcore::error::ErrorKind::NotWithinTolerance),
+        "an unrepresentable answer must return a tolerance refusal, not another error or partial success"
     );
 }
 
@@ -373,5 +373,97 @@ fn unattainable_left_infimum_at_upper_jump_is_refused() {
             ..Default::default()
         },
     );
-    assert!(result.is_err());
+    assert!(
+        matches!(&result, Err(error) if error.kind() == solidcore::error::ErrorKind::NotWithinTolerance)
+    );
+}
+
+/// Reversed and infinite analytic lines retain their parameter maps in projected queries.
+#[test]
+fn projected_line_extrema_cover_reversed_and_unbounded_parameter_maps() {
+    use solidcore::curve::line::Line;
+    let kernel = Kernel::default();
+    for bounded in [true, false] {
+        for inside_out in [false, true] {
+            let line = if bounded {
+                let xs = if inside_out { [7.0, -3.0] } else { [-3.0, 7.0] };
+                let control = xs
+                    .into_iter()
+                    .map(|x| CPoint {
+                        x,
+                        y: 2.0,
+                        z: 3.0,
+                        w: 1.0,
+                    })
+                    .collect();
+                let nurb = NurbCurve::new(control, 1, vec![10.0, 10.0, 20.0, 20.0]).unwrap();
+                Line::from_parts(
+                    BSplineCurve::from_nurb(nurb, 3, true),
+                    Vec3::new(1.0, 2.0, 3.0),
+                    Vec3::X,
+                    Extent1d::from_min_max(-2.0, 3.0),
+                    2.0,
+                    inside_out,
+                )
+            } else {
+                Line::infinite(Vec3::new(1.0, 2.0, 3.0), Vec3::X * 2.0, 3, inside_out)
+            };
+            let (lo, hi) = if bounded { (12.0, 18.0) } else { (-1.0, 2.0) };
+            let x_at = |t: f64| {
+                let step = if bounded {
+                    let fraction = if inside_out {
+                        (20.0 - t) / 10.0
+                    } else {
+                        (t - 10.0) / 10.0
+                    };
+                    -2.0 + 5.0 * fraction
+                } else if inside_out {
+                    -t
+                } else {
+                    t
+                };
+                1.0 + 2.0 * step
+            };
+            for t in [lo, (lo + hi) / 2.0, hi] {
+                let actual = line.evaluate_point(t);
+                assert!((actual.x - x_at(t)).abs() <= 1e-9 * actual.x.abs().max(x_at(t).abs()));
+                assert_eq!((actual.y, actual.z), (2.0, 3.0));
+            }
+            let max_x = x_at(lo).abs().max(x_at(hi).abs());
+            let curve = Curve::from(line);
+            for (operation, expected) in [
+                (SolverOperation::ProjectedMinimize, 2.0),
+                (
+                    SolverOperation::ProjectedMaximize,
+                    (max_x * max_x + 4.0).sqrt(),
+                ),
+            ] {
+                let answers = curve
+                    .global_point_solve::<Object>(
+                        &kernel,
+                        &Extent1d::from_min_max(lo, hi),
+                        operation,
+                        Vec3::new(0.0, 4.0, 9.0),
+                        EFF_ZERO_SQRT,
+                        SolutionRequested::Single,
+                        &GlobalPointSolveOptions {
+                            opt_vectors: Some(&[Vec3::Z]),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(answers.len(), 1);
+                let answer = &answers.as_slice()[0];
+                let t = answer.start.parameters[0];
+                assert!(t >= lo && t <= hi);
+                let expected_at_t = (x_at(t) * x_at(t) + 4.0).sqrt();
+                for value in [answer.start.solution_value, expected_at_t] {
+                    assert!(
+                        (value - expected).abs() <= 1e-9 * value.abs().max(expected.abs()),
+                        "bounded={bounded} inside_out={inside_out}: {value} versus {expected}"
+                    );
+                }
+            }
+        }
+    }
 }
