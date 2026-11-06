@@ -1,7 +1,9 @@
 //! Differential coverage for `blend.fillet_removal` (`SmBrep::DeleteFilletFace`).
 //!
-//! The fixtures are upstream `.smb` solids with fillets, read by the native
-//! `SmBrep::ReadFromFile` and by the Rust reader (no C++ state reaches the Rust side). A
+//! Ported from upstream `SmBrep::DeleteFilletFace`; checked against its golden. Rust:
+//! `solidcore::blend::fillet_removal`.
+//!
+//! The fixtures are upstream `.smb` solids with fillets, read by the Rust reader. A
 //! case removes one face (`GetFaces` order) with `DeleteFilletFace` (default tolerance,
 //! editing enabled for the call), on the native B-rep and by
 //! `blend::fillet_removal::delete_fillet_face`; every face of every fixture solid is a case,
@@ -25,12 +27,10 @@ use solidcore::kernel::Kernel;
 use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::Brep;
 use solidcore::Result as SolidResult;
-use solidcore_ffi::units::blend_fillet_removal as ffi;
-use solidcore_ffi::FfiError;
 
 use super::boolean_merge_p1::{graph_owned, OwnerSource};
 use super::topology_brep_mirror::{geometry, herr, normalize_face_shells, status};
-use super::topology_vertexuse::{import_raw_with_owners, path_of, BrepIn};
+use super::topology_vertexuse::{path_of, BrepIn};
 use crate::{Case, HarnessError, Output, UnitDiff};
 
 /// The runner of `SmBrep::DeleteFilletFace`.
@@ -57,20 +57,12 @@ impl Default for Inputs {
     }
 }
 
-/// The shared B-rep block of `ReadFromFile(file, rebuild)`; no validate-only, no gaps.
-fn block(i: &Inputs) -> Vec<f64> {
-    vec![0.0, f64::from(i.rebuild), 0.0, 0.0]
-}
-
 fn path(i: &Inputs) -> Result<String, HarnessError> {
     path_of(&BrepIn::File {
         file: i.file.clone(),
         rebuild: i.rebuild,
     })
 }
-
-/// The native import's refusal of a face surface that is neither a B-spline nor a plane.
-const NOT_EXPORTABLE: &str = "a surface is not a B-spline or plane";
 
 /// Whether every face surface of `b` is an `SmBSplineSurface` (or absent), which the
 /// native raw graph export carries.
@@ -103,39 +95,6 @@ fn strip_unrecorded(b: &mut Brep) -> SolidResult<()> {
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "blend.fillet_removal"
-    }
-
-    fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        let i: Inputs = case.parse()?;
-        let raw = match ffi::eval(&path(&i)?, &block(&i), i.face) {
-            Ok(raw) if raw.first() == Some(&-999.) => {
-                return Ok(Output::rejected(format!(
-                    "fixture constructor status {}",
-                    raw.get(1).copied().unwrap_or(-1.)
-                )))
-            }
-            Ok(raw) if raw.first() == Some(&-998.) => {
-                return Ok(Output::rejected("face index past the fixture's faces"))
-            }
-            Ok(raw) => raw,
-            Err(e @ FfiError::InvalidArgument(_)) => {
-                return Ok(Output::rejected(format!("ffi guard: {e}")))
-            }
-            Err(e) => return Err(herr(e)),
-        };
-        let n = *raw.first().ok_or_else(|| herr("short record"))? as usize;
-        let record = raw.get(1..=n).ok_or_else(|| herr("short record"))?.to_vec();
-        let (mut b, owners) =
-            match import_raw_with_owners(raw.get(n + 1..).ok_or_else(|| herr("short graph"))?) {
-                Ok(imported) => imported,
-                Err(e) if e.to_string().contains(NOT_EXPORTABLE) => {
-                    return Ok(Output::new().values("record", record));
-                }
-                Err(e) => return Err(e),
-            };
-        strip_unrecorded(&mut b).map_err(herr)?;
-        normalize_face_shells(&mut b).map_err(herr)?;
-        graph_owned(&b, record, OwnerSource::Native(&owners))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
