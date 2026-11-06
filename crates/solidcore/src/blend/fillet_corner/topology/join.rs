@@ -289,8 +289,9 @@ impl FilletCorner {
     /// stands between the blends the section is the one through the vertex: its end on
     /// the first side `SM_FV_JOIN_SECTION`, on the other its mate (`SM_FV_MATE`). Where
     /// one edge stands between them on a side (their faces change there, meeting
-    /// tangentially, or a face's seam runs from the vertex) its end there is where the
-    /// rails cross that edge (`SM_FV_RAIL_X_EDGEUSE`), its mate on the other side, or
+    /// tangentially along it as the classification requires, or a face's seam runs from the
+    /// vertex) its end there is where the rails cross that edge (`SM_FV_RAIL_X_EDGEUSE`):
+    /// the first blend's ball there is the second's. Its mate is on the other side, or
     /// with such an edge on both sides where the rails cross the other one too. More
     /// than one edge on a side is refused ([`JoinTopology::RefusedAcrossEdges`]). The
     /// corner is blending and tangent (`m_bG1Case`), with no patch of its own.
